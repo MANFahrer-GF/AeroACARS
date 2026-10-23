@@ -506,11 +506,40 @@ struct KapitaenWerte {
     ankunft_min: Option<i64>,
 }
 
-/// Auffrischung der Sinkflug-Ansage des Kapitäns.
+/// Stand der Auffrischung: höchstens eine je Flug, keine neue nach der Aufgabe.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum AuffrischStand {
+    #[default]
+    Offen,
+    /// Text oder Ton der frischen Fassung ist unterwegs.
+    Laeuft,
+    /// Gleich, ausgetauscht oder aufgegeben.
+    Erledigt,
+}
+
+/// Auffrischung der Sinkflug-Ansage des Kapitäns: Restzeit und Landezeit
+/// neu einsetzen lassen, kurz bevor sie spielt. Die frischen Texte und Töne
+/// liegen hier, bis jede Sprache Ton hat — erst dann ersetzen sie die alten
+/// gemeinsam (nie Sprachen gemischt). Eigene Felder statt `in_arbeit` und
+/// `ton`: Der alte Ton existiert schon und darf nichts blockieren.
 #[derive(Debug, Default)]
 struct Auffrischung {
     /// Mit dem Teil `ankunft` gesendet (nur, wenn der Kapitän dabei war).
     gesendet: Option<KapitaenWerte>,
+    stand: AuffrischStand,
+    /// Jede Text- und Ton-Antwort trägt sie; eine veraltete wird verworfen.
+    generation: u32,
+    /// `vorab` (vor dem Abspielzeitpunkt) oder `faellig`.
+    anlass: &'static str,
+    /// Sprachen, die frischen Ton brauchen (mit Text und Stimme).
+    sprachen: Vec<String>,
+    texte: HashMap<String, String>,
+    fremd: HashMap<String, Vec<api_client::KabinenFremd>>,
+    toene: HashMap<String, Ton>,
+    /// Bis dahin wartet die fällige Ansage höchstens auf den frischen Ton.
+    frist_bis: Option<i64>,
+    /// Ausgetauscht: Der Kapitän spricht die frischen Werte.
+    frisch: bool,
 }
 
 /// Stand der Kabinen-Reaktion eines Fluges.
@@ -786,6 +815,287 @@ fn rest_min_ab(landung: Option<i64>, bezug: i64) -> Option<i64> {
 /// genau die Mitte zwischen zwei Fünfern.
 fn restzeit_gerundet(rest_min: Option<i64>) -> Option<i64> {
     rest_min.filter(|r| *r > 0).map(|r| ((r + 2) / 5 * 5).max(5))
+}
+
+/// Auffrischen im Hintergrund, sobald der Kapitän höchstens so viele
+/// Sekunden vor seinem Abspielzeitpunkt steht.
+const AUFFRISCHEN_VORLAUF_S: i64 = 180;
+/// So lange wartet die fällige Sinkflug-Ansage höchstens auf den frischen
+/// Ton (gemessen 23.10.2026: beide Sprachen Median 12 s, max. 32,5 s).
+const AUFFRISCHEN_WARTEN_S: i64 = 60;
+
+/// Eine gestartete Auffrischung: Der Host schickt die Text-Anfrage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AuffrischStart {
+    generation: u32,
+    /// Restzeit ab hier (Prognose bzw. jetzt).
+    bezug: i64,
+}
+
+fn werte_json(w: KapitaenWerte) -> serde_json::Value {
+    serde_json::json!({ "rest_min": w.rest_min, "ankunft_min": w.ankunft_min })
+}
+
+/// Sprachen der Sinkflug-Ansage des Kapitäns, die frischen Ton brauchen —
+/// `None`, solange eine Sprache des Fluges noch keinen Text hat (außer
+/// gestrichenen ohne Stimme) oder keine Sprache eine Stimme hat.
+fn kapitaen_sprachen(lauf: &Lauf) -> Option<Vec<String>> {
+    let kap = Slot::KapitaenSinkflug;
+    let mut sprachen = Vec::new();
+    for sp in &lauf.sprachen {
+        let stumm = lauf.ohne_stimme.contains(sp) || matches!(lauf.ton.get(&(kap, sp.clone())), Some(None));
+        if !lauf.texte.contains_key(&(kap, sp.clone())) {
+            if stumm {
+                continue;
+            }
+            return None;
+        }
+        if !stumm {
+            sprachen.push(sp.clone());
+        }
+    }
+    (!sprachen.is_empty()).then_some(sprachen)
+}
+
+/// Ein Takt der Auffrischung (nach dem Einreihen der fälligen Ansagen, vor
+/// dem Abspielen). Startet sie höchstens einmal je Flug: (a) im Hintergrund,
+/// wenn die Prognose höchstens [`AUFFRISCHEN_VORLAUF_S`] entfernt ist und
+/// der alte Ton jeder Sprache da ist, Restzeit ab der Prognose; (b) wenn der
+/// Kapitän wartet, Restzeit ab jetzt, mit Frist. Gleiche Werte: erledigt.
+/// Läuft sie schon, setzt dieser Takt die Frist, sobald der Kapitän wartet,
+/// und gibt nach ihrem Ablauf auf (dann spielt der alte Ton).
+fn auffrischen_schritt(
+    lauf: &mut Lauf,
+    planer: Option<&cabin_announcements::Planer>,
+    landung: Option<i64>,
+    ankunft_min: Option<i64>,
+    jetzt: i64,
+) -> Option<AuffrischStart> {
+    let kap = Slot::KapitaenSinkflug;
+    let wartend = lauf.warteschlange.wartend();
+    let wartet = wartend.contains(&kap);
+    // Wartet die Kabine schon (im Anflug folgt sie einem noch wartenden
+    // Kapitän sofort), hält die Auffrischung den Kapitän nicht auf — sonst
+    // käme die Kabine vor ihm.
+    let kabine_wartet = wartend.contains(&Slot::KabineSinkflug);
+    match lauf.auffrischung.stand {
+        AuffrischStand::Erledigt => return None,
+        AuffrischStand::Laeuft => {
+            if wartet && kabine_wartet {
+                auffrischen_aufgeben(lauf, "kabine_wartet");
+                return None;
+            }
+            if wartet && lauf.auffrischung.frist_bis.is_none() {
+                let bis = jetzt + AUFFRISCHEN_WARTEN_S;
+                lauf.auffrischung.frist_bis = Some(bis);
+                lauf.warteschlange.zurueckhalten(kap, Some(bis));
+            }
+            if lauf.auffrischung.frist_bis.is_some_and(|b| jetzt >= b) {
+                auffrischen_aufgeben(lauf, "frist_abgelaufen");
+            } else if !wartet && planer.is_none_or(|p| p.erledigt(kap)) {
+                // Gespielt, verfallen, stumm: Die frische Fassung braucht keiner.
+                auffrischen_aufgeben(lauf, "nicht_mehr_noetig");
+            }
+            return None;
+        }
+        AuffrischStand::Offen => {}
+    }
+    let alt = lauf.auffrischung.gesendet?;
+    let sprachen = kapitaen_sprachen(lauf)?;
+    if lauf.verlauf.iter().any(|g| g.slot == kap && !g.vorschau) {
+        return None;
+    }
+    let (anlass, bezug) = if wartet {
+        if kabine_wartet {
+            return None;
+        }
+        ("faellig", jetzt)
+    } else {
+        let um = planer?.kapitaen_sinkflug_prognose(landung)?;
+        let ton_da = sprachen.iter().all(|sp| matches!(lauf.ton.get(&(kap, sp.clone())), Some(Some(_))));
+        if um - jetzt > AUFFRISCHEN_VORLAUF_S || !ton_da {
+            return None;
+        }
+        ("vorab", um.max(jetzt))
+    };
+    let neu = KapitaenWerte { rest_min: restzeit_gerundet(rest_min_ab(landung, bezug)), ankunft_min };
+    let a = &mut lauf.auffrischung;
+    if neu == alt {
+        a.stand = AuffrischStand::Erledigt;
+        let details = serde_json::json!({ "ergebnis": "gleich", "anlass": anlass, "alt": werte_json(alt), "neu": werte_json(neu) });
+        notiz(lauf, "auffrischen_ende", Some(kap), None, details);
+        return None;
+    }
+    a.generation += 1;
+    a.stand = AuffrischStand::Laeuft;
+    a.anlass = anlass;
+    a.sprachen = sprachen;
+    a.texte.clear();
+    a.fremd.clear();
+    a.toene.clear();
+    a.frist_bis = None;
+    let generation = a.generation;
+    if wartet {
+        let bis = jetzt + AUFFRISCHEN_WARTEN_S;
+        lauf.auffrischung.frist_bis = Some(bis);
+        lauf.warteschlange.zurueckhalten(kap, Some(bis));
+    }
+    let details = serde_json::json!({ "anlass": anlass, "alt": werte_json(alt), "neu": werte_json(neu), "bezug": bezug, "generation": generation });
+    notiz(lauf, "auffrischen", Some(kap), None, details);
+    Some(AuffrischStart { generation, bezug })
+}
+
+/// Die Text-Anfrage der Auffrischung: wie der Ankunftsteil, nur der Kapitän,
+/// mit `auffrischen: true` und der Restzeit ab dem Bezug.
+fn auffrischen_anfrage(mut basis: serde_json::Value, landung: Option<i64>, bezug: i64) -> serde_json::Value {
+    basis["teil"] = serde_json::json!("ankunft");
+    basis["slots"] = serde_json::json!([slot_name(Slot::KapitaenSinkflug)]);
+    basis["anlass"] = serde_json::json!(0);
+    basis["auffrischen"] = serde_json::json!(true);
+    basis["flug"]["rest_min"] = serde_json::json!(rest_min_ab(landung, bezug));
+    basis
+}
+
+/// Aufgeben: Der alte Text und Ton bleiben, die Ansage ist sofort frei,
+/// spätere Antworten werden verworfen.
+fn auffrischen_aufgeben(lauf: &mut Lauf, grund: &str) {
+    let a = &mut lauf.auffrischung;
+    if a.stand != AuffrischStand::Laeuft {
+        return;
+    }
+    a.stand = AuffrischStand::Erledigt;
+    a.generation += 1;
+    a.texte.clear();
+    a.fremd.clear();
+    a.toene.clear();
+    a.frist_bis = None;
+    let anlass = a.anlass;
+    lauf.warteschlange.zurueckhalten(Slot::KapitaenSinkflug, None);
+    notiz(lauf, "auffrischen_ende", Some(Slot::KapitaenSinkflug), None, serde_json::json!({ "ergebnis": "aufgegeben", "grund": grund, "anlass": anlass }));
+}
+
+/// Gilt eine Antwort noch (gleiche Generation, Auffrischung läuft)?
+fn auffrischung_gilt(lauf: &Lauf, generation: u32) -> bool {
+    lauf.auffrischung.stand == AuffrischStand::Laeuft && lauf.auffrischung.generation == generation
+}
+
+/// Antwort auf die Text-Anfrage der Auffrischung. Nur `aufgefrischt` mit
+/// Text in jeder Sprache zählt; sonst (422, Fehler, altes Modul,
+/// unvollständig) aufgeben. Liefert die Ton-Aufträge (Sprache, Text).
+fn auffrischen_texte(lauf: &mut Lauf, generation: u32, ergebnis: Result<api_client::KabinenDrehbuch, String>) -> Vec<(String, String)> {
+    if !auffrischung_gilt(lauf, generation) {
+        notiz(lauf, "auffrischen_verworfen", Some(Slot::KapitaenSinkflug), None, serde_json::json!({ "generation": generation, "art": "text" }));
+        return Vec::new();
+    }
+    let d = match ergebnis {
+        Ok(d) if d.aufgefrischt => d,
+        Ok(_) => {
+            auffrischen_aufgeben(lauf, "altes_format");
+            return Vec::new();
+        }
+        Err(grund) => {
+            auffrischen_aufgeben(lauf, &grund);
+            return Vec::new();
+        }
+    };
+    let kap = slot_name(Slot::KapitaenSinkflug);
+    let a = &mut lauf.auffrischung;
+    for e in d.eintraege.into_iter().filter(|e| e.slot == kap && a.sprachen.contains(&e.sprache)) {
+        a.fremd.insert(e.sprache.clone(), e.fremd);
+        a.texte.insert(e.sprache, e.text);
+    }
+    if a.sprachen.iter().any(|sp| a.texte.get(sp).is_none_or(|t| t.trim().is_empty())) {
+        auffrischen_aufgeben(lauf, "unvollstaendig");
+        return Vec::new();
+    }
+    a.sprachen.iter().map(|sp| (sp.clone(), a.texte[sp].clone())).collect()
+}
+
+/// Antwort auf einen Ton-Auftrag der Auffrischung. Erst wenn jede Sprache
+/// frischen Ton hat, ersetzen Texte und Töne die alten gemeinsam; ein
+/// Fehler oder „keine Stimme“ gibt auf (der alte Ton bleibt für alle).
+fn auffrischen_ton(lauf: &mut Lauf, generation: u32, sprache: &str, ergebnis: Result<Option<Ton>, String>) {
+    let kap = Slot::KapitaenSinkflug;
+    if !auffrischung_gilt(lauf, generation) {
+        notiz(lauf, "auffrischen_verworfen", Some(kap), Some(sprache), serde_json::json!({ "generation": generation, "art": "ton" }));
+        return;
+    }
+    match ergebnis {
+        Ok(Some(t)) => {
+            lauf.auffrischung.toene.insert(sprache.to_string(), t);
+        }
+        Ok(None) => return auffrischen_aufgeben(lauf, "keine_stimme"),
+        Err(grund) => return auffrischen_aufgeben(lauf, &format!("ton: {grund}")),
+    }
+    let a = &mut lauf.auffrischung;
+    if !a.sprachen.iter().all(|sp| a.toene.contains_key(sp)) {
+        return;
+    }
+    let sprachen = std::mem::take(&mut a.sprachen);
+    for sp in sprachen {
+        let k = (kap, sp.clone());
+        let text = a.texte.remove(&sp).unwrap_or_default();
+        let ton = a.toene.remove(&sp);
+        match a.fremd.remove(&sp).filter(|f| !f.is_empty()) {
+            Some(f) => lauf.fremd.insert(k.clone(), f),
+            None => lauf.fremd.remove(&k),
+        };
+        lauf.ton_fehler.remove(&k);
+        lauf.ton_endgueltig.remove(&k);
+        lauf.ton.insert(k.clone(), ton);
+        lauf.texte.insert(k, text);
+    }
+    a.stand = AuffrischStand::Erledigt;
+    a.frisch = true;
+    a.frist_bis = None;
+    let anlass = a.anlass;
+    lauf.warteschlange.zurueckhalten(kap, None);
+    notiz(lauf, "auffrischen_ende", Some(kap), None, serde_json::json!({ "ergebnis": "frisch", "anlass": anlass }));
+}
+
+/// Holt die aufgefrischten Texte und danach ihren Ton (alle Sprachen
+/// zugleich, dringend). Hält die Sperre nie über ein `await`.
+fn auffrischen_holen(app: AppHandle, flight: Arc<ActiveFlight>, client: Client, anfrage: serde_json::Value, generation: u32) {
+    tauri::async_runtime::spawn(async move {
+        let gestartet = Utc::now();
+        let ergebnis = client.kabinen_drehbuch(&anfrage).await;
+        let dauer_ms = (Utc::now() - gestartet).num_milliseconds();
+        let ergebnis = ergebnis.map_err(|e| match e {
+            api_client::ApiError::Server { status: 422, .. } => "auffrischen_nicht_moeglich".to_string(),
+            e => kurz(&e.to_string()),
+        });
+        let auftraege = {
+            let mut stats = flight.stats.lock().expect("flight stats");
+            let lauf = &mut stats.kabinen_lauf;
+            let details = serde_json::json!({ "dauer_ms": dauer_ms, "generation": generation, "fehler": ergebnis.as_ref().err() });
+            notiz(lauf, "auffrischen_antwort", Some(Slot::KapitaenSinkflug), None, details);
+            let texte = auffrischen_texte(lauf, generation, ergebnis);
+            let rolle = rolle_von(lauf, Slot::KapitaenSinkflug);
+            let maennlich = stimme_maennlich(lauf, rolle);
+            texte
+                .into_iter()
+                .map(|(sp, text)| {
+                    let fremd = lauf.auffrischung.fremd.get(&sp).cloned().unwrap_or_default();
+                    (sp, text, fremd, rolle, maennlich)
+                })
+                .collect::<Vec<_>>()
+        };
+        protokoll_leeren(&app, &flight);
+        for (sprache, text, fremd, rolle, maennlich) in auftraege {
+            let (app, flight) = (app.clone(), Arc::clone(&flight));
+            tauri::async_runtime::spawn(async move {
+                let ordner = flug_ordner(&flight);
+                let flug = flug_kennung(&flight.pirep_id);
+                let wunsch = Wunsch { slot: Some(Slot::KapitaenSinkflug), gebraucht_in_s: Some(0), ordner: &ordner, flug: flug.as_deref(), rolle: server_rolle(rolle), fremd: &fremd };
+                let ergebnis = sprechen(&app, maennlich, &sprache, &text, wunsch).await.map_err(|f| f.meldung);
+                {
+                    let mut stats = flight.stats.lock().expect("flight stats");
+                    auffrischen_ton(&mut stats.kabinen_lauf, generation, &sprache, ergebnis);
+                }
+                protokoll_leeren(&app, &flight);
+            });
+        }
+    });
 }
 
 const ABFLUG: [Slot; 8] = [
@@ -1883,6 +2193,21 @@ fn takt_schritt(
             auftraege.push((schluessel, vec![f.slot], lauf.anlass));
         }
     }
+    // ---- Auffrischung der Sinkflug-Ansage des Kapitäns (vor dem Abspielen,
+    // sonst spielte der alte Ton im Takt seiner Fälligkeit) ----
+    if !STUMM.load(Ordering::SeqCst) {
+        let kap = [Slot::KapitaenSinkflug];
+        // Basis der Anfrage nur, solange eine Auffrischung noch kommen kann.
+        let basis = (stats.kabinen_lauf.auffrischung.stand == AuffrischStand::Offen && stats.kabinen_lauf.auffrischung.gesendet.is_some())
+            .then(|| anfrage_bauen(&stats, flight, &einst, "ankunft", &kap, 0, jetzt));
+        let ankunft_min = basis.as_ref().and_then(|b| b["flug"]["ankunft_erwartet"].as_i64()).map(|a| a.div_euclid(60));
+        let landung = stats.landung_erwartet;
+        let FlightStats { kabinen_lauf, kabinen_planer, .. } = &mut *stats;
+        if let (Some(start), Some(basis)) = (auffrischen_schritt(kabinen_lauf, kabinen_planer.as_ref(), landung, ankunft_min, jetzt), basis) {
+            let anfrage = auffrischen_anfrage(basis, landung, start.bezug);
+            auffrischen_holen(app.clone(), Arc::clone(flight), client.clone(), anfrage, start.generation);
+        }
+    }
     for (schluessel, slots, anlass) in auftraege {
         let mut anfrage = anfrage_bauen(&stats, flight, &einst, &schluessel, &slots, anlass, jetzt);
         // Restzeit zum Abspielzeitpunkt, nicht zum Zeitpunkt der Anfrage
@@ -1928,11 +2253,14 @@ fn takt_schritt(
     verlauf_neu |= neu;
     wartegruende_notieren(&mut stats.kabinen_lauf, jetzt);
     if let Some(g) = &gespielt {
+        let a = &stats.kabinen_lauf.auffrischung;
+        let auffrischung = (g.slot == Slot::KapitaenSinkflug).then_some(if a.frisch { "frisch" } else { "alt" });
         let details = serde_json::json!({
             "dauer_s": g.teile.iter().map(|t| t.dauer_s).sum::<f64>(),
             "sprachen": g.teile.iter().map(|t| t.sprache.clone()).collect::<Vec<_>>(),
             "phase": schritt.phase,
             "hoehe_ft": snap.altitude_msl_ft.round(),
+            "auffrischung": auffrischung,
         });
         notiz(&mut stats.kabinen_lauf, "spielt", Some(g.slot), None, details);
     }
@@ -6734,5 +7062,289 @@ mod auffrischung_tests {
             assert_eq!(restzeit_gerundet(Some(r)), erwartet, "{r}");
         }
         assert_eq!(restzeit_gerundet(None), None);
+    }
+
+    // ---- Auffrischung an der Kette Planer → Warteschlange → Abspielen ----
+
+    const LANDUNG: i64 = 100_000;
+    /// TOD 25 min vor der Landung: Der Kapitän spricht bei TOD − 90 s.
+    const TOD: i64 = LANDUNG - 25 * 60;
+    const UM: i64 = TOD - cabin_announcements::planer::KAPITAEN_VOR_TOD_S;
+    /// Landezeit als Epoch-Minute (unverändert seit der Bestellung).
+    const ANKUNFT_MIN: i64 = LANDUNG / 60;
+
+    fn ton(name: &str) -> Option<Ton> {
+        Some(Ton { datei: format!("f/{name}.wav"), dauer_s: 20.0, stuecke: vec![], herkunft: "server" })
+    }
+
+    /// Reiseflug kurz vor dem TOD; Kapitän und Kabine mit altem Text und Ton
+    /// in Deutsch und Englisch; bestellt mit Restzeit 45 (heute üblich).
+    fn welt(rest_gesendet: i64) -> FlightStats {
+        let mut st = FlightStats::new();
+        st.kabinen_lauf.sprachen = vec!["de-DE".into(), "en-GB".into()];
+        for slot in [Slot::KapitaenSinkflug, Slot::KabineSinkflug] {
+            for sp in ["de-DE", "en-GB"] {
+                st.kabinen_lauf.texte.insert((slot, sp.into()), format!("alt {sp}"));
+                st.kabinen_lauf.ton.insert((slot, sp.into()), ton(&format!("alt-{sp}")));
+            }
+        }
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise));
+        st.landung_erwartet = Some(LANDUNG);
+        st.kabinen_lauf.auffrischung.gesendet = Some(KapitaenWerte { rest_min: Some(rest_gesendet), ankunft_min: Some(ANKUNFT_MIN) });
+        st
+    }
+
+    fn tk(jetzt: i64, phase: FlightPhase, hoehe_ft: f64, vs_fpm: f64) -> cabin_announcements::Tick {
+        cabin_announcements::Tick {
+            jetzt,
+            phase,
+            hoehe_ft,
+            vs_fpm,
+            anschnallzeichen: Some(2),
+            rest_min: Some((LANDUNG - jetzt) as f64 / 60.0),
+            tod_erwartet: Some(TOD),
+            ..Default::default()
+        }
+    }
+
+    /// Ein Takt in der Reihenfolge von `takt_schritt`: Planer, Einreihen,
+    /// Auffrischung, Abspielen.
+    fn takt(st: &mut FlightStats, t: &cabin_announcements::Tick) -> (Option<AuffrischStart>, Option<Gespielt>) {
+        let planer = st.kabinen_planer.as_mut().expect("planer");
+        let faellig = planer.tick(t);
+        let ruhe = planer.ruhephase(t);
+        st.phase = t.phase;
+        st.kabinen_lauf.warteschlange.aufnehmen(faellig);
+        let landung = st.landung_erwartet;
+        let FlightStats { kabinen_lauf, kabinen_planer, .. } = st;
+        let start = auffrischen_schritt(kabinen_lauf, kabinen_planer.as_ref(), landung, Some(ANKUNFT_MIN), t.jetzt);
+        let (g, _) = abspielen_schritt(st, t.jetzt, t.phase, ruhe, false);
+        if let Some(g) = &g {
+            if let Some(e) = st.kabinen_lauf.verlauf.iter_mut().find(|x| x.id == g.id) {
+                e.gestartet = true;
+            }
+        }
+        (start, g)
+    }
+
+    fn frisches_drehbuch(aufgefrischt: bool, sprachen: &[&str]) -> api_client::KabinenDrehbuch {
+        api_client::KabinenDrehbuch {
+            sprachen: vec!["de-DE".into(), "en-GB".into()],
+            eintraege: sprachen
+                .iter()
+                .map(|sp| api_client::KabinenEintrag { slot: "kapitaen_sinkflug".into(), sprache: (*sp).into(), text: format!("frisch {sp}"), rolle: None, art: None, fremd: vec![] })
+                .collect(),
+            crew: None,
+            boarding_lied: None,
+            boarding_lied_spaeter: false,
+            entfaellt: Default::default(),
+            aufgefrischt,
+        }
+    }
+
+    fn notizen(st: &FlightStats, art: &str) -> Vec<serde_json::Value> {
+        st.kabinen_lauf.protokoll.iter().filter(|n| n.art == art).map(|n| n.details.clone()).collect()
+    }
+
+    fn texte_von(g: &Gespielt) -> Vec<String> {
+        g.teile.iter().map(|t| t.text.clone()).collect()
+    }
+
+    /// Läuft die Takte bis `bis` (alle 5 s) und liefert die erste gespielte Ansage.
+    fn bis_gespielt(st: &mut FlightStats, von: i64, bis: i64) -> Option<(i64, Gespielt)> {
+        (von..=bis).step_by(5).find_map(|t| takt(st, &tk(t, Cruise, 37_000.0, 0.0)).1.map(|g| (t, g)))
+    }
+
+    /// Gleiche Werte: keine Anfrage, erledigt. Andere Werte: Anfrage mit
+    /// `auffrischen: true`, nur der Kapitän, Restzeit ab der Prognose.
+    #[test]
+    fn auffrischen_nur_bei_anderen_werten() {
+        // Ab der Prognose UM: 25 min + 90 s → 26 → 25.
+        let mut st = welt(25);
+        for t in (UM - 400..UM).step_by(5) {
+            assert_eq!(takt(&mut st, &tk(t, Cruise, 37_000.0, 0.0)).0, None);
+        }
+        assert_eq!(st.kabinen_lauf.auffrischung.stand, AuffrischStand::Erledigt);
+        assert_eq!(notizen(&st, "auffrischen_ende")[0]["ergebnis"], "gleich");
+        assert!(notizen(&st, "auffrischen").is_empty());
+        // Andere Restzeit: Start genau mit dem Vorlauf, nicht früher.
+        let mut st = welt(45);
+        for t in (UM - 400..UM - AUFFRISCHEN_VORLAUF_S).step_by(5) {
+            assert_eq!(takt(&mut st, &tk(t, Cruise, 37_000.0, 0.0)).0, None, "zu früh ({t})");
+        }
+        let start = takt(&mut st, &tk(UM - AUFFRISCHEN_VORLAUF_S, Cruise, 37_000.0, 0.0)).0.expect("Auffrischung startet");
+        assert_eq!(start.bezug, UM);
+        let n = &notizen(&st, "auffrischen")[0];
+        assert_eq!((n["anlass"].as_str(), n["alt"]["rest_min"].as_i64(), n["neu"]["rest_min"].as_i64()), (Some("vorab"), Some(45), Some(25)));
+        let basis = serde_json::json!({ "teil": "ankunft", "slots": ["kapitaen_sinkflug", "kabine_sinkflug"], "anlass": 0, "flug": { "rest_min": 45, "pax": 150 } });
+        let a = auffrischen_anfrage(basis, Some(LANDUNG), start.bezug);
+        assert_eq!(a["auffrischen"], true);
+        assert_eq!(a["teil"], "ankunft");
+        assert_eq!(a["slots"], serde_json::json!(["kapitaen_sinkflug"]));
+        assert_eq!(a["flug"]["rest_min"], 26);
+        assert_eq!(a["flug"]["pax"], 150);
+        // Höchstens eine je Flug.
+        for t in (UM - 175..UM + 300).step_by(5) {
+            assert_eq!(takt(&mut st, &tk(t, Cruise, 37_000.0, 0.0)).0, None);
+        }
+    }
+
+    /// Frische Antwort und Ton für beide Sprachen: erst dann ausgetauscht,
+    /// der Kapitän spricht frisch, ohne auf die Frist zu warten.
+    #[test]
+    fn frisch_ausgetauscht_und_gespielt() {
+        let mut st = welt(45);
+        let start = takt(&mut st, &tk(UM - 170, Cruise, 37_000.0, 0.0)).0.expect("Start");
+        let auftraege = auffrischen_texte(&mut st.kabinen_lauf, start.generation, Ok(frisches_drehbuch(true, &["de-DE", "en-GB"])));
+        assert_eq!(auftraege, vec![("de-DE".to_string(), "frisch de-DE".to_string()), ("en-GB".to_string(), "frisch en-GB".to_string())]);
+        assert_eq!(st.kabinen_lauf.texte[&(Slot::KapitaenSinkflug, "de-DE".to_string())], "alt de-DE", "noch nicht überschrieben");
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "de-DE", Ok(ton("neu-de")));
+        assert_eq!(st.kabinen_lauf.texte[&(Slot::KapitaenSinkflug, "de-DE".to_string())], "alt de-DE", "eine Sprache reicht nicht");
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "en-GB", Ok(ton("neu-en")));
+        assert_eq!(st.kabinen_lauf.auffrischung.stand, AuffrischStand::Erledigt);
+        let (t, g) = bis_gespielt(&mut st, UM - 165, UM + 30).expect("Kapitän spielt");
+        assert_eq!(g.slot, Slot::KapitaenSinkflug);
+        assert_eq!(t, UM, "zu seiner Zeit");
+        assert_eq!(texte_von(&g), vec!["frisch de-DE", "frisch en-GB"]);
+        assert_eq!(g.teile.iter().map(|x| x.datei.as_str()).collect::<Vec<_>>(), vec!["f/neu-de.wav", "f/neu-en.wav"]);
+        assert!(st.kabinen_lauf.auffrischung.frisch);
+        assert_eq!(notizen(&st, "auffrischen_ende")[0]["ergebnis"], "frisch");
+    }
+
+    /// Nur eine Sprache fertig, wenn die Frist abläuft: alter Ton für beide.
+    /// Der späte zweite Ton wird verworfen.
+    #[test]
+    fn frist_ende_mit_einer_sprache_spielt_alt_fuer_beide() {
+        let mut st = welt(45);
+        let start = takt(&mut st, &tk(UM - 60, Cruise, 37_000.0, 0.0)).0.expect("Start");
+        auffrischen_texte(&mut st.kabinen_lauf, start.generation, Ok(frisches_drehbuch(true, &["de-DE", "en-GB"])));
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "de-DE", Ok(ton("neu-de")));
+        let (t, g) = bis_gespielt(&mut st, UM - 55, UM + 120).expect("Kapitän spielt");
+        assert_eq!(t, UM + AUFFRISCHEN_WARTEN_S, "wartet die Frist, nicht länger");
+        assert_eq!(texte_von(&g), vec!["alt de-DE", "alt en-GB"]);
+        assert_eq!(g.teile.iter().map(|x| x.datei.as_str()).collect::<Vec<_>>(), vec!["f/alt-de-DE.wav", "f/alt-en-GB.wav"]);
+        let ende = notizen(&st, "auffrischen_ende");
+        assert_eq!((ende[0]["ergebnis"].as_str(), ende[0]["grund"].as_str()), (Some("aufgegeben"), Some("frist_abgelaufen")));
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "en-GB", Ok(ton("neu-en")));
+        assert_eq!(st.kabinen_lauf.ton[&(Slot::KapitaenSinkflug, "en-GB".to_string())].as_ref().unwrap().datei, "f/alt-en-GB.wav");
+        assert!(!st.kabinen_lauf.auffrischung.frisch);
+    }
+
+    /// 422, Fehler oder altes Modul ohne `aufgefrischt`: aufgegeben, der
+    /// alte Ton spielt sofort — kein Warten über die Frist.
+    #[test]
+    fn ohne_auffrischung_vom_server_alter_ton_sofort() {
+        for (antwort, grund) in [
+            (Err("auffrischen_nicht_moeglich".to_string()), "auffrischen_nicht_moeglich"),
+            (Err("Netz weg".to_string()), "Netz weg"),
+            (Ok(frisches_drehbuch(false, &["de-DE", "en-GB"])), "altes_format"),
+            (Ok(frisches_drehbuch(true, &["de-DE"])), "unvollstaendig"),
+        ] {
+            // Fällig gestartet (kein Takt im Vorlauf): Die Frist hält ihn.
+            let mut st = welt(45);
+            let (start, g) = takt(&mut st, &tk(UM, Cruise, 37_000.0, 0.0));
+            let start = start.expect("Start bei Fälligkeit");
+            assert!(g.is_none(), "wartet auf den frischen Ton");
+            assert_eq!(notizen(&st, "auffrischen")[0]["anlass"], "faellig");
+            assert_eq!(notizen(&st, "auffrischen")[0]["neu"]["rest_min"], 25);
+            assert!(takt(&mut st, &tk(UM + 5, Cruise, 37_000.0, 0.0)).1.is_none());
+            assert!(auffrischen_texte(&mut st.kabinen_lauf, start.generation, antwort).is_empty());
+            let (t, g) = bis_gespielt(&mut st, UM + 10, UM + 120).expect("Kapitän spielt");
+            assert_eq!(t, UM + 10, "sofort nach der Aufgabe ({grund})");
+            assert_eq!(texte_von(&g), vec!["alt de-DE", "alt en-GB"]);
+            let ende = &notizen(&st, "auffrischen_ende")[0];
+            assert_eq!((ende["ergebnis"].as_str(), ende["grund"].as_str()), (Some("aufgegeben"), Some(grund)));
+        }
+    }
+
+    /// Eine verspätete Antwort einer alten Generation überschreibt nichts.
+    #[test]
+    fn veraltete_generation_wird_verworfen() {
+        let mut st = welt(45);
+        let start = takt(&mut st, &tk(UM - 100, Cruise, 37_000.0, 0.0)).0.expect("Start");
+        let alt = start.generation - 1;
+        assert!(auffrischen_texte(&mut st.kabinen_lauf, alt, Ok(frisches_drehbuch(true, &["de-DE", "en-GB"]))).is_empty());
+        assert!(st.kabinen_lauf.auffrischung.texte.is_empty());
+        assert_eq!(st.kabinen_lauf.auffrischung.stand, AuffrischStand::Laeuft, "die laufende bleibt");
+        auffrischen_texte(&mut st.kabinen_lauf, start.generation, Ok(frisches_drehbuch(true, &["de-DE", "en-GB"])));
+        auffrischen_ton(&mut st.kabinen_lauf, alt, "de-DE", Ok(ton("spaet-de")));
+        auffrischen_ton(&mut st.kabinen_lauf, alt, "en-GB", Ok(ton("spaet-en")));
+        assert!(st.kabinen_lauf.auffrischung.toene.is_empty());
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "de-DE", Ok(ton("neu-de")));
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "en-GB", Ok(ton("neu-en")));
+        // Nach dem Austausch: Eine späte Antwort derselben Auffrischung ändert nichts mehr.
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "de-DE", Ok(ton("spaet-de")));
+        assert_eq!(st.kabinen_lauf.ton[&(Slot::KapitaenSinkflug, "de-DE".to_string())].as_ref().unwrap().datei, "f/neu-de.wav");
+        assert_eq!(notizen(&st, "auffrischen_verworfen").len(), 4);
+    }
+
+    /// Die Frist läuft in Final hinein: Der Kapitän verfällt nicht während
+    /// der Frist; danach gilt sein normaler Verfall.
+    #[test]
+    fn frist_in_final_verfaellt_erst_danach() {
+        let mut st = welt(45);
+        let (start, _) = takt(&mut st, &tk(UM, Descent, 30_000.0, -2_000.0));
+        assert!(start.is_some());
+        for t in (UM + 5..UM + AUFFRISCHEN_WARTEN_S).step_by(5) {
+            let (_, g) = takt(&mut st, &tk(t, Final, 1_000.0, -700.0));
+            // Gong und Kommandos dürfen; der Kapitän nicht.
+            assert!(g.is_none_or(|g| g.slot != Slot::KapitaenSinkflug));
+            assert!(st.kabinen_lauf.warteschlange.wartend().contains(&Slot::KapitaenSinkflug), "verfällt nicht in der Frist ({t})");
+            assert!(!st.kabinen_lauf.verlauf.iter().any(|g| g.slot == Slot::KapitaenSinkflug));
+        }
+        takt(&mut st, &tk(UM + AUFFRISCHEN_WARTEN_S, Final, 900.0, -700.0));
+        assert!(!st.kabinen_lauf.warteschlange.wartend().contains(&Slot::KapitaenSinkflug));
+        let g = st.kabinen_lauf.verlauf.iter().find(|g| g.slot == Slot::KapitaenSinkflug).expect("in „Bisher“");
+        assert_eq!(g.ergebnis.as_deref(), Some("entfallen"));
+        assert_eq!(st.kabinen_lauf.protokoll.iter().filter(|n| n.art == "verfallen" && n.slot == Some(Slot::KapitaenSinkflug)).count(), 1);
+    }
+
+    /// Im Anflug folgt die Kabine einem noch wartenden Kapitän sofort: Dann
+    /// hält die Frist ihn nicht auf, sonst käme die Kabine vor ihm.
+    #[test]
+    fn wartende_kabine_beendet_die_frist() {
+        let mut st = welt(45);
+        assert!(takt(&mut st, &tk(UM, Descent, 30_000.0, -2_000.0)).0.is_some());
+        let (_, g) = takt(&mut st, &tk(UM + 5, Approach, 11_000.0, -1_000.0));
+        assert_eq!(g.map(|g| g.slot), Some(Slot::KapitaenSinkflug), "Kapitän vor der Kabine");
+        let ende = &notizen(&st, "auffrischen_ende")[0];
+        assert_eq!((ende["ergebnis"].as_str(), ende["grund"].as_str()), (Some("aufgegeben"), Some("kabine_wartet")));
+    }
+
+    /// Die Kabine folgt weiter dem echten Ende der (aufgefrischten)
+    /// Kapitänsansage plus zwei Minuten.
+    #[test]
+    fn kabine_folgt_dem_echten_ende_des_kapitaens() {
+        let mut st = welt(45);
+        let (start, g) = takt(&mut st, &tk(UM, Cruise, 37_000.0, 0.0));
+        let start = start.expect("Start bei Fälligkeit");
+        assert!(g.is_none());
+        auffrischen_texte(&mut st.kabinen_lauf, start.generation, Ok(frisches_drehbuch(true, &["de-DE", "en-GB"])));
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "de-DE", Ok(ton("neu-de")));
+        let mut gespielt: Vec<(i64, Slot, i64)> = Vec::new();
+        let mut laufend: Option<(u64, i64)> = None;
+        for t in (UM + 5..UM + 1_200).step_by(5) {
+            if t == UM + 25 {
+                auffrischen_ton(&mut st.kabinen_lauf, start.generation, "en-GB", Ok(ton("neu-en")));
+            }
+            if let Some((id, ende)) = laufend {
+                if t >= ende {
+                    ende_melden(&mut st, id, "gespielt", t, "backend");
+                    laufend = None;
+                }
+            }
+            let sinkflug = t - UM;
+            let hoehe = (37_000.0 - sinkflug as f64 / 60.0 * 2_000.0).max(3_000.0);
+            if let (_, Some(g)) = takt(&mut st, &tk(t, Descent, hoehe, -2_000.0)) {
+                let ende = t + dauer_s(g.slot, &g.teile).ceil() as i64;
+                gespielt.push((t, g.slot, ende));
+                laufend = Some((g.id, ende));
+            }
+        }
+        let kap = gespielt.iter().find(|x| x.1 == Slot::KapitaenSinkflug).expect("Kapitän");
+        let kab = gespielt.iter().find(|x| x.1 == Slot::KabineSinkflug).expect("Kabine");
+        assert_eq!(kap.0, UM + 25, "frisch, sobald beide Sprachen Ton haben");
+        assert!(kab.0 >= kap.2 + cabin_announcements::planer::KABINE_NACH_KAPITAEN_MIN_S, "{gespielt:?}");
+        assert!(st.kabinen_lauf.auffrischung.frisch);
     }
 }
