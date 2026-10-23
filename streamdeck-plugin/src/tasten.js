@@ -10,6 +10,12 @@
 //   jetzt       Date
 //
 // Ein Tastenbild: { label, wert, unter, ton, icon, balken?, stufen?, gross? }
+//
+// Anzeigetasten haben optional
+//   ansichten  wie viele Ansichten ein kurzer Druck durchblättert
+//              (`bild(s, ansicht)` mit ansicht = 0 … ansichten-1)
+//   seite      welche Seite von AeroACARS ein langer Druck öffnet
+//              (muss in DECK_SEITEN in panel_server.rs stehen)
 //   ton: "aus" | "neutral" | "ok" | "warn" | "crit" | "ctl"
 
 const PHASEN = {
@@ -126,12 +132,18 @@ const keinFlug = (label, icon) => ({ label, wert: "–", unter: "kein Flug", ton
 
 /** Tasten, die nur mit aktivem Flug etwas zeigen. */
 function flugTaste(label, icon, bild) {
-  return (s) => {
+  return (s, ansicht = 0) => {
     if (!s.erreichbar) return aus(label, icon);
     if (!s.status) return keinFlug(label, icon);
-    return { label, icon, ton: "neutral", ...bild(s.status, s) };
+    return { label, icon, ton: "neutral", ...bild(s.status, s, ansicht) };
   };
 }
+
+/** Uhrzeit eines ISO-Zeitpunkts in UTC, „18:32Z“; ohne Zeitpunkt „–“. */
+const zeitpunkt = (iso) => {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? `${uhr(new Date(t), true)}Z` : "–";
+};
 
 function kabinenTaste(label, icon, bild) {
   return (s) => {
@@ -152,6 +164,7 @@ export function hinweis(st) {
 
 export const TASTEN = {
   phase: {
+    seite: "cockpit",
     name: "Phase und Zurück",
     tip: "Flugphase und Höhe. Drücken führt zurück ins vorherige Profil.",
     icon: "plane",
@@ -167,31 +180,54 @@ export const TASTEN = {
     name: "Rufzeichen",
     tip: "Rufzeichen und Strecke.",
     icon: "tag",
-    bild: flugTaste("Flug", "tag", (st) => ({ wert: st.callsign || "–", unter: `${st.dpt_airport ?? "?"}›${st.arr_airport ?? "?"}`, klein: true })),
+    ansichten: 2,
+    seite: "cockpit",
+    bild: flugTaste("Flug", "tag", (st, _s, ansicht) =>
+      ansicht === 1
+        ? { label: "Muster", wert: st.aircraft_icao || "–", unter: st.planned_registration || "", klein: true }
+        : { wert: st.callsign || "–", unter: `${st.dpt_airport ?? "?"}›${st.arr_airport ?? "?"}`, klein: true },
+    ),
   },
   gates: {
     name: "Gates",
     tip: "Abflug- und Ankunftsgate.",
     icon: "gate",
+    seite: "cockpit",
     bild: flugTaste("Gates", "gate", (st) => ({ wert: `${st.dep_gate || "–"}›${st.arr_gate || "–"}`, unter: "Start › Ziel", klein: true })),
   },
   block: {
     name: "Blockzeit",
     tip: "Zeit seit Off-Block.",
     icon: "clock",
-    bild: flugTaste("Block", "clock", (st, s) => ({ wert: dauer(st.block_off_at, st.block_on_at, s.jetzt) ?? "–", unter: st.block_off_at ? "seit Off-Block" : "noch am Stand" })),
+    ansichten: 2,
+    seite: "cockpit",
+    bild: flugTaste("Block", "clock", (st, s, ansicht) =>
+      ansicht === 1
+        ? { label: "Off-Block", wert: zeitpunkt(st.block_off_at), unter: "Uhrzeit UTC" }
+        : { wert: dauer(st.block_off_at, st.block_on_at, s.jetzt) ?? "–", unter: st.block_off_at ? "seit Off-Block" : "noch am Stand" },
+    ),
   },
   luft: {
     name: "Flugzeit",
     tip: "Zeit seit dem Abheben.",
     icon: "watch",
-    bild: flugTaste("In Luft", "watch", (st, s) => ({ wert: dauer(st.takeoff_at, st.landing_at, s.jetzt) ?? "–", unter: st.takeoff_at ? "seit Abheben" : "noch nicht" })),
+    ansichten: 2,
+    seite: "cockpit",
+    bild: flugTaste("In Luft", "watch", (st, s, ansicht) =>
+      ansicht === 1
+        ? { label: "Abheben", wert: zeitpunkt(st.takeoff_at), unter: "Uhrzeit UTC" }
+        : { wert: dauer(st.takeoff_at, st.landing_at, s.jetzt) ?? "–", unter: st.takeoff_at ? "seit Abheben" : "noch nicht" },
+    ),
   },
   sprit: {
     name: "Sprit",
     tip: "Sprit an Bord laut Simulator und geplante Reserve.",
     icon: "fuel",
-    bild: flugTaste("Sprit", "fuel", (st) => {
+    ansichten: 3,
+    seite: "briefing",
+    bild: flugTaste("Sprit", "fuel", (st, _s, ansicht) => {
+      if (ansicht === 1) return { label: "Plan Block", wert: tonnen(zahl(st.planned_block_fuel_kg)), unter: "laut OFP" };
+      if (ansicht === 2) return { label: "Plan Trip", wert: tonnen(zahl(st.planned_burn_kg)), unter: "Trip laut OFP" };
       const kg = zahl(st.sim_fuel_kg ?? st.live?.fuel_total_kg ?? st.last_known_fuel_kg);
       const res = zahl(st.planned_reserve_kg);
       const ton = kg != null && res ? (kg <= res ? "crit" : kg <= res * 1.2 ? "warn" : "neutral") : "neutral";
@@ -202,7 +238,10 @@ export const TASTEN = {
     name: "Gewichte",
     tip: "ZFW und Startgewicht, rot über dem Höchstwert.",
     icon: "weight",
-    bild: flugTaste("ZFW", "weight", (st) => {
+    ansichten: 2,
+    seite: "briefing",
+    bild: flugTaste("ZFW", "weight", (st, _s, ansicht) => {
+      if (ansicht === 1) return { label: "Max ZFW", wert: tonnen(zahl(st.planned_max_zfw_kg)), unter: `Max TOW ${tonnen(zahl(st.planned_max_tow_kg))}` };
       const zfw = zahl(st.sim_zfw_kg);
       const tow = zahl(st.sim_tow_kg);
       const ueber = (zfw && st.planned_max_zfw_kg && zfw > st.planned_max_zfw_kg) || (tow && st.planned_max_tow_kg && tow > st.planned_max_tow_kg);
@@ -213,6 +252,7 @@ export const TASTEN = {
     name: "Landegewicht",
     tip: "Geplantes Landegewicht und Höchstwert.",
     icon: "weight",
+    seite: "briefing",
     bild: flugTaste("LDW Plan", "weight", (st) => {
       const ldw = zahl(st.planned_ldw_kg);
       const max = zahl(st.planned_max_ldw_kg);
@@ -223,18 +263,23 @@ export const TASTEN = {
     name: "Wetter Start",
     tip: "Wind und QNH am Startflughafen.",
     icon: "wind",
-    bild: flugTaste("Start", "wind", (st) => wetterBild(st.dep_metar_decoded, st.dpt_airport)),
+    ansichten: 3,
+    seite: "briefing",
+    bild: flugTaste("Start", "wind", (st, _s, ansicht) => wetterBild(st.dep_metar_decoded, st.dpt_airport, ansicht)),
   },
   wetter_ziel: {
     name: "Wetter Ziel",
     tip: "Wind und QNH am Zielflughafen.",
     icon: "wind",
-    bild: flugTaste("Ziel", "wind", (st) => wetterBild(st.arr_metar_decoded, st.arr_airport)),
+    ansichten: 3,
+    seite: "briefing",
+    bild: flugTaste("Ziel", "wind", (st, _s, ansicht) => wetterBild(st.arr_metar_decoded, st.arr_airport, ansicht)),
   },
   bahn: {
     name: "Landebahn",
     tip: "Erwartete oder angeflogene Landebahn.",
     icon: "runway",
+    seite: "briefing",
     bild: flugTaste("Bahn", "runway", (st) => ({
       wert: st.approach_runway || st.predicted_runway || "–",
       unter: st.approach_runway ? "im Anflug" : st.predicted_runway ? "erwartet" : "noch offen",
@@ -244,6 +289,7 @@ export const TASTEN = {
     name: "Ausweichflughafen",
     tip: "Geplanter Ausweichflughafen, gelb bei vermuteter Umleitung.",
     icon: "divert",
+    seite: "briefing",
     bild: flugTaste("Ausweich", "divert", (st) =>
       st.divert_hint?.divert_to
         ? { wert: st.divert_hint.divert_to, unter: "Umleitung?", ton: "warn" }
@@ -254,16 +300,21 @@ export const TASTEN = {
     name: "Landung",
     tip: "Sinkrate und G-Last nach dem Aufsetzen.",
     icon: "land",
-    bild: flugTaste("Landung", "land", (st) =>
+    ansichten: 2,
+    seite: "landing",
+    bild: flugTaste("Landung", "land", (st, _s, ansicht) =>
       st.landing_rate_fpm == null
         ? { wert: "—", unter: "noch nicht" }
-        : { wert: String(Math.round(st.landing_rate_fpm)), unter: `fpm · ${dez(st.landing_g_force ?? 0, 2)} G`, klein: true },
+        : ansicht === 1
+          ? { label: "G-Last", wert: `${dez(st.landing_g_force ?? 0, 2)} G`, unter: `${Math.round(st.landing_rate_fpm)} fpm`, klein: true }
+          : { wert: String(Math.round(st.landing_rate_fpm)), unter: `fpm · ${dez(st.landing_g_force ?? 0, 2)} G`, klein: true },
     ),
   },
   bewertung: {
     name: "Landebewertung",
     tip: "Note und Punkte, dieselbe Bewertung wie in App und PIREP.",
     icon: "medal",
+    seite: "landing",
     bild: flugTaste("Note", "medal", (st, s) => {
       const d = s.debrief;
       if (!st.landing_at || !d || d.score_numeric == null) return { wert: "—", unter: st.landing_at ? "wird bewertet" : "noch nicht" };
@@ -275,18 +326,21 @@ export const TASTEN = {
     name: "Durchstarten",
     tip: "Durchstartmanöver und Touch-and-Go in diesem Flug.",
     icon: "ga",
+    seite: "landing",
     bild: flugTaste("Durchst.", "ga", (st) => ({ wert: String(st.go_around_count ?? 0), unter: `T&G ${st.touch_and_go_count ?? 0}` })),
   },
   hinweis: {
     name: "Hinweis",
     tip: "Die wichtigste Meldung: Sim getrennt, Pause, Abgabe gesperrt, Server, Umleitung.",
     icon: "ok",
+    seite: "cockpit",
     bild: flugTaste("Hinweis", "ok", (st) => hinweis(st)),
   },
   verbindung: {
     name: "Verbindung",
     tip: "Verbindung zum Simulator und zum GSG-Server.",
     icon: "signal",
+    seite: "cockpit",
     bild: flugTaste("Netz", "signal", (st) => {
       const sim = !!st.live;
       const srv = st.connection_state === "live";
@@ -297,6 +351,7 @@ export const TASTEN = {
     name: "Hoppie",
     tip: "Angemeldete Station und offene Freigaben.",
     icon: "msg",
+    seite: "cpdlc",
     bild: (s) => {
       if (!s.erreichbar) return aus("Hoppie", "msg");
       const h = s.hoppie;
@@ -322,13 +377,28 @@ export const TASTEN = {
     name: "UTC-Uhr",
     tip: "Zulu-Zeit, darunter Ortszeit.",
     icon: "globe",
-    bild: (s) => ({ label: "UTC", icon: "globe", wert: `${uhr(s.jetzt, true)}Z`, unter: `lokal ${uhr(s.jetzt, false)}`, ton: "neutral" }),
+    ansichten: 2,
+    bild: (s, ansicht = 0) =>
+      ansicht === 1
+        ? { label: "Lokal", icon: "globe", wert: uhr(s.jetzt, false), unter: `UTC ${uhr(s.jetzt, true)}Z`, ton: "neutral" }
+        : { label: "UTC", icon: "globe", wert: `${uhr(s.jetzt, true)}Z`, unter: `lokal ${uhr(s.jetzt, false)}`, ton: "neutral" },
   },
   tempo: {
     name: "Geschwindigkeit",
     tip: "Geschwindigkeit über Grund, darunter angezeigte Fahrt (IAS).",
     icon: "gauge",
-    bild: flugTaste("GS", "gauge", (st) => {
+    ansichten: 3,
+    seite: "map",
+    bild: flugTaste("GS", "gauge", (st, _s, ansicht) => {
+      const live = st.live;
+      if (ansicht === 1) {
+        const vs = live?.vertical_speed_fpm;
+        return { label: "V/S", wert: vs == null ? "–" : `${vs > 0 ? "+" : ""}${Math.round(vs / 10) * 10}`, unter: "fpm", klein: true };
+      }
+      if (ansicht === 2) {
+        const w = live?.wind_speed_kt == null ? null : wind({ wind_direction_deg: live.wind_dir_deg, wind_speed_kt: live.wind_speed_kt });
+        return { label: "Wind", wert: w ?? "–", unter: "am Flugzeug", klein: true };
+      }
       // Live-Daten tragen keinen Kurs, nur GS und IAS (PanelLiveSnapshot).
       const gs = st.live?.gs_kt ?? st.last_known_gs_kt;
       const ias = st.live?.ias_kt;
@@ -339,12 +409,14 @@ export const TASTEN = {
     name: "Geflogene Strecke",
     tip: "Bisher geflogene Strecke.",
     icon: "route",
+    seite: "map",
     bild: flugTaste("Geflogen", "route", (st) => ({ wert: `${Math.round(st.distance_nm ?? 0)} nm`, unter: "seit Start", klein: true })),
   },
   ansage: {
     name: "Nächste Ansage",
     tip: "Welche Kabinenansage als Nächstes kommt; gelb, wenn sie auf das Anschnallzeichen wartet.",
     icon: "mega",
+    seite: "kabine",
     bild: kabinenTaste("Ansage", "mega", (k) => {
       if (!k.an) return { wert: "aus", unter: "Ansagen aus", ton: "aus" };
       if (k.stumm) return { wert: "stumm", unter: "Kabine", ton: "crit", icon: "mute" };
@@ -422,10 +494,20 @@ export const TASTEN = {
   },
 };
 
-function wetterBild(m, icao) {
+function wetterBild(m, icao, ansicht = 0) {
   const w = wind(m);
   if (!w) return { label: icao || "–", wert: "–", unter: "kein METAR" };
-  return { label: m.icao || icao, wert: w, unter: m.qnh_hpa != null ? `Q${Math.round(m.qnh_hpa)}` : "", klein: true };
+  const label = m.icao || icao;
+  if (ansicht === 1) {
+    const sicht = m.visibility_m == null ? "–" : m.visibility_m >= 9999 ? "10 km+" : m.visibility_m >= 5000 ? `${Math.round(m.visibility_m / 1000)} km` : `${m.visibility_m} m`;
+    const wolke = (m.cloud_layers ?? [])[0];
+    return { label, wert: sicht, unter: wolke ? `${wolke.cover}${wolke.base_ft != null ? ` ${wolke.base_ft} ft` : ""}` : "keine Wolken", klein: true };
+  }
+  if (ansicht === 2) {
+    const t = (v) => (v == null ? "–" : `${Math.round(v)}°`);
+    return { label, wert: `${t(m.temperature_c)}/${t(m.dewpoint_c)}`, unter: "Temp / Taupunkt", klein: true };
+  }
+  return { label, wert: w, unter: m.qnh_hpa != null ? `Q${Math.round(m.qnh_hpa)}` : "", klein: true };
 }
 
 // ---- Drehregler (StreamDeck +) --------------------------------------------

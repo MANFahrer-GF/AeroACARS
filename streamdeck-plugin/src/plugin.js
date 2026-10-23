@@ -10,6 +10,8 @@ import { Zustand } from "./zustand.js";
 import { uuid, profilFuer } from "./belegung.js";
 
 const HALTEN_MS = 1000;
+/** Ab hier gilt ein Druck auf eine Anzeigetaste als „lang“ (App öffnen). */
+const LANG_MS = 600;
 const SPEICHERN_NACH_MS = 800;
 
 const zustand = new Zustand();
@@ -76,12 +78,77 @@ class Taste extends SingletonAction {
   async druecken() {}
 }
 
-class PhaseTaste extends Taste {
-  async onKeyDown(ev) {
+/**
+ * Anzeigetaste: kurz drücken blättert durch ihre Ansichten, lang drücken
+ * holt AeroACARS auf der passenden Seite nach vorn (Thomas 23.10.: „Beides“).
+ */
+class AnzeigeTaste extends Taste {
+  constructor(id) {
+    super(id);
+    this.ansicht = new Map(); // je Taste die gezeigte Ansicht
+    this.uhren = new Map(); // je Taste die Lang-Uhr des laufenden Drucks
+  }
+
+  zeichnen(a, s) {
+    if (!a.isKey?.()) return;
+    const def = TASTEN[this.id];
+    const ansichten = def.ansichten ?? 1;
+    const ansicht = Math.min(this.ansicht.get(a.id) ?? 0, ansichten - 1);
+    const bild = alsDatenUrl(tasteSvg({ ...def.bild(s, ansicht), ansichten, ansicht }));
+    if (this.letztes.get(a.id) === bild) return;
+    this.letztes.set(a.id, bild);
+    a.setImage(bild);
+  }
+
+  onKeyDown(ev) {
+    const a = ev.action;
+    clearTimeout(this.uhren.get(a.id));
+    this.uhren.set(
+      a.id,
+      setTimeout(() => {
+        this.uhren.set(a.id, null); // ausgelöst: Loslassen tut nichts mehr
+        this.lang(a);
+      }, LANG_MS),
+    );
+  }
+
+  async onKeyUp(ev) {
+    const a = ev.action;
+    const uhr = this.uhren.get(a.id);
+    this.uhren.delete(a.id);
+    if (!uhr) return;
+    clearTimeout(uhr);
+    await this.kurz(a);
+  }
+
+  onWillDisappear(ev) {
+    clearTimeout(this.uhren.get(ev.action.id));
+    this.uhren.delete(ev.action.id);
+    super.onWillDisappear(ev);
+  }
+
+  async kurz(a) {
+    const n = TASTEN[this.id].ansichten ?? 1;
+    if (n < 2) return;
+    this.ansicht.set(a.id, ((this.ansicht.get(a.id) ?? 0) + 1) % n);
+    this.zeichnen(a, zustand.s);
+  }
+
+  async lang(a) {
+    const seite = TASTEN[this.id].seite;
+    if (!seite) return;
+    // Ohne die neue Befehlsroute (Client vor dem StreamDeck-Release) geht es nicht.
+    if (!zustand.s.kabine) return a.showAlert();
+    await ausfuehren(a, "fenster_zeigen", { seite });
+  }
+}
+
+class PhaseTaste extends AnzeigeTaste {
+  async kurz(a) {
     // Ohne Profilnamen springt das StreamDeck in das vorherige Profil zurück.
     // Feldbefund 23.10.: Das klappt nur, wenn das Plugin selbst hergewechselt
     // hat (Taste „AeroACARS öffnen“), nicht nach Auswahl von Hand.
-    await streamDeck.profiles.switchToProfile(ev.action.device.id);
+    await streamDeck.profiles.switchToProfile(a.device.id);
   }
 }
 
@@ -291,7 +358,7 @@ const besondere = {
 };
 
 for (const id of Object.keys(TASTEN)) {
-  streamDeck.actions.registerAction((besondere[id] ?? (() => new Taste(id)))());
+  streamDeck.actions.registerAction((besondere[id] ?? (() => new AnzeigeTaste(id)))());
 }
 
 streamDeck.actions.registerAction(

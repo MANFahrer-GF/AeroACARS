@@ -94,6 +94,13 @@ export function tasteSvg(b) {
     `<text x="50" y="34" font-family="${SCHRIFT}" font-size="${passend(String(b.label ?? "").toUpperCase(), 19, 84, 1)}" font-weight="700" fill="#8a96a3" letter-spacing="1">${esc(String(b.label ?? "").toUpperCase())}</text>`,
   ];
   if (b.zurueck) teile.push(icon("back", 112, 112, 22, "#c7d0d9"));
+  // Mehrere Ansichten: kleine Punkte oben rechts, der aktuelle hell.
+  if (b.ansichten > 1) {
+    for (let i = 0; i < b.ansichten; i++) {
+      const x = 131 - (b.ansichten - 1 - i) * 12;
+      teile.push(`<circle cx="${x}" cy="11" r="4" fill="${i === b.ansicht ? farbe : "#ffffff"}" opacity="${i === b.ansicht ? 1 : 0.3}"/>`);
+    }
+  }
   if (b.gross) {
     teile.push(icon(b.gross, 44, 50, 56, farbe));
   } else {

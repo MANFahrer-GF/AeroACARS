@@ -51,7 +51,8 @@
 //!
 //! Das StreamDeck-Plugin läuft wie das Panel auf DEMSELBEN PC und liest
 //! hier mit. Neu ist, dass es auch BEDIENT: Kabine stumm, beide
-//! Lautstärken, Boarding-Musik, das VATSIM-CDM-Fenster. Genau diese Befehle
+//! Lautstärken, Boarding-Musik, das VATSIM-CDM-Fenster, und das Hauptfenster
+//! auf einer festen Seite nach vorn holen (langer Druck auf eine Anzeigetaste). Genau diese Befehle
 //! sperrt die LAN-Brücke („der Ton spielt auf dem Sim-PC“) — das Deck steht
 //! am Sim-PC, für das Tablet bleibt die Sperre richtig.
 //!
@@ -653,7 +654,16 @@ enum DeckBefehl {
     MusikLautstaerke { wert: f32, speichern: bool },
     BoardingMusik(bool),
     CdmFenster,
+    /// Hauptfenster nach vorn holen, auf eine Seite aus [`DECK_SEITEN`].
+    Fenster(&'static str),
 }
+
+/// Seiten der App, die das Deck per langem Druck öffnen darf. Die Namen sind
+/// die `Tab`-Werte in `client/src/App.tsx`.
+const DECK_SEITEN: &[&str] = &["cockpit", "briefing", "landing", "kabine", "map", "cpdlc"];
+
+/// Ereignis an die Oberfläche: auf diese Seite wechseln.
+pub(crate) const EREIGNIS_DECK_SEITE: &str = "deck-seite";
 
 impl DeckBefehl {
     /// 404 für jeden Namen außerhalb der Liste, 422 für fehlende oder
@@ -678,6 +688,14 @@ impl DeckBefehl {
             }
             "kabinen_boarding_musik" => Ok(Self::BoardingMusik(wahr("an")?)),
             "vdgs_fenster_oeffnen" => Ok(Self::CdmFenster),
+            "fenster_zeigen" => {
+                let seite = args.get("seite").and_then(Value::as_str).unwrap_or("");
+                DECK_SEITEN
+                    .iter()
+                    .find(|s| **s == seite)
+                    .map(|s| Self::Fenster(s))
+                    .ok_or(StatusCode::UNPROCESSABLE_ENTITY)
+            }
             _ => Err(StatusCode::NOT_FOUND),
         }
     }
@@ -808,6 +826,16 @@ async fn cmd_handler(
         }
         DeckBefehl::BoardingMusik(an) => crate::kabinenansagen::kabinen_boarding_musik(app.clone(), an),
         DeckBefehl::CdmFenster => crate::vdgs_fenster_oeffnen(app.clone()).await,
+        DeckBefehl::Fenster(seite) => {
+            // Wie „Anzeigen“ im Tray-Menü, dazu der Seitenwechsel.
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+            let _ = tauri::Emitter::emit(&app, EREIGNIS_DECK_SEITE, seite);
+            Ok(())
+        }
     };
     match ergebnis {
         // Antwort = frischer Kabinenzustand, damit die Taste sofort stimmt.
@@ -866,6 +894,18 @@ mod deck_tests {
         );
         assert_eq!(DeckBefehl::lesen("kabinen_boarding_musik", &json!({"an": false})), Ok(DeckBefehl::BoardingMusik(false)));
         assert_eq!(DeckBefehl::lesen("vdgs_fenster_oeffnen", &json!({})), Ok(DeckBefehl::CdmFenster));
+        assert_eq!(
+            DeckBefehl::lesen("fenster_zeigen", &json!({"seite": "cpdlc"})),
+            Ok(DeckBefehl::Fenster("cpdlc"))
+        );
+        // Nur Seiten aus der Liste: keine Einstellungen, kein Logbuch-Löschen o. Ä.
+        for seite in ["settings", "logbook", "", "../x"] {
+            assert_eq!(
+                DeckBefehl::lesen("fenster_zeigen", &json!({"seite": seite})),
+                Err(StatusCode::UNPROCESSABLE_ENTITY),
+                "{seite}"
+            );
+        }
         // Alles, was einen Flug beendet, abbricht oder abgibt, bleibt draußen.
         for name in [
             "flight_end",

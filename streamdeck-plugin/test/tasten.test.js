@@ -240,3 +240,38 @@ test("„AeroACARS öffnen“ findet das Profil im Manifest je Gerätetyp", () =
   }
   assert.equal(profilFuer(1), null); // Mini: kein Profil
 });
+
+test("jede Ansicht jeder Taste zeichnet ohne Lücken, voll und mit fehlenden Feldern", () => {
+  const leer = { ...voll, status: { phase: "boarding" }, kabine: { an: true }, hoppie: {} };
+  const mitLive = { ...voll, status: { ...status, live: { gs_kt: 300, ias_kt: 250, vertical_speed_fpm: -1234, wind_dir_deg: 250, wind_speed_kt: 45 }, landing_rate_fpm: -142, landing_g_force: 1.18,
+    arr_metar_decoded: { ...status.arr_metar_decoded, visibility_m: 9999, cloud_layers: [{ cover: "BKN", base_ft: 2500 }], temperature_c: 12.4, dewpoint_c: 8 } } };
+  for (const [id, t] of Object.entries(TASTEN)) {
+    for (let i = 0; i < (t.ansichten ?? 1); i++) {
+      for (const s of [leer, mitLive]) {
+        const b = t.bild(s, i);
+        const text = `${b.label} ${b.wert ?? ""} ${b.unter ?? ""}`;
+        assert.ok(!/undefined|NaN|null/.test(text), `${id}/${i}: ${text}`);
+      }
+    }
+  }
+  assert.equal(TASTEN.tempo.bild(mitLive, 1).wert, "-1230");
+  assert.equal(TASTEN.tempo.bild(mitLive, 2).wert, "250/45");
+  assert.equal(TASTEN.wetter_ziel.bild(mitLive, 1).wert, "10 km+");
+  assert.equal(TASTEN.wetter_ziel.bild(mitLive, 1).unter, "BKN 2500 ft");
+  assert.equal(TASTEN.wetter_ziel.bild(mitLive, 2).wert, "12°/8°");
+  assert.equal(TASTEN.landung.bild(mitLive, 1).wert, "1,18 G");
+  assert.equal(TASTEN.block.bild(voll, 1).wert, "12:00Z");
+});
+
+test("jede Zielseite für den langen Druck erlaubt der Client (DECK_SEITEN in panel_server.rs)", () => {
+  const rust = fs.readFileSync(path.resolve(import.meta.dirname, "../../client/src-tauri/src/panel_server.rs"), "utf8");
+  const liste = rust.match(/const DECK_SEITEN: &\[&str\] = &\[([^\]]*)\]/);
+  assert.ok(liste, "DECK_SEITEN nicht gefunden");
+  const erlaubt = new Set([...liste[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]));
+  const genutzt = Object.entries(TASTEN).filter(([, t]) => t.seite);
+  assert.ok(genutzt.length >= 15);
+  for (const [id, t] of genutzt) assert.ok(erlaubt.has(t.seite), `${id}: ${t.seite}`);
+  // Die App kennt diese Tabs (Tab-Typ in App.tsx).
+  const app = fs.readFileSync(path.resolve(import.meta.dirname, "../../client/src/App.tsx"), "utf8");
+  for (const seite of erlaubt) assert.ok(app.includes(`"${seite}"`), seite);
+});

@@ -39,10 +39,21 @@ auch mehrfach und auf mehreren Decks gleichzeitig.
      Normale Tasten-Aktionen funktionieren auf den 8 Tasten des +.
 
 5. WAS DIE TASTEN TUN
-   Bedienen:  AeroACARS öffnen (Profil), Kabine stumm (1 s halten), Ansagen/Musik leiser/lauter,
-              Musik-Lautstärke (drücken = Musik stumm), Boarding-Musik
-              an/aus, VATSIM CDM (öffnet das Fenster), Phase (zurück).
-   Anzeigen:  alle anderen. Sie zeigen nur an.
+   Anzeigetasten:
+     - kurz drücken   = nächste Ansicht (die Punkte oben rechts zeigen,
+                        wie viele es gibt), z. B. Sprit an Bord -> Plan Block
+                        -> Plan Trip, Wetter Wind -> Sicht/Wolken -> Temp,
+                        GS -> V/S -> Wind, UTC -> Ortszeit, Flug -> Muster
+     - lang drücken   = AeroACARS kommt nach vorn, auf der passenden Seite
+                        (Hoppie -> CPDLC, Landung/Note -> Landung,
+                        Sprit/Wetter/Bahn -> Briefing, GS/Strecke -> Karte,
+                        Ansage -> Kabine, sonst Cockpit)
+     - Phase: kurz = zurück ins vorige Profil, lang = Cockpit
+   Bedientasten: AeroACARS öffnen (Profil), Kabine stumm (1 s halten),
+     Ansagen/Musik leiser/lauter, Musik-Lautstärke (drücken = Musik stumm),
+     Boarding-Musik an/aus, VATSIM CDM (öffnet das Fenster).
+   Langer Druck, Kabine und CDM brauchen das neue AeroACARS (Dev-Build im
+   Ordner); mit v2.1.10 zeigen sie ein Warnzeichen bzw. "Client zu alt".
 
 Hinweis: Eigene Titel braucht keine Taste – Beschriftung und Icon kommen
 vom Plugin. Ein Titel aus der StreamDeck-Software würde darübergelegt.
