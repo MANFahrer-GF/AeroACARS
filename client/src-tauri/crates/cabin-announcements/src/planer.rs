@@ -208,9 +208,10 @@ enum Service {
     Offen,
     /// Gemeldet, das Ende steht noch aus (wartet auf Ton, Pause, spielt …).
     Gemeldet,
-    /// Zu Ende gespielt.
+    /// Zu Ende gespielt — oder abgewählt (2.1.1 C: dann spielt ihn GSX oder
+    /// das Flugzeug).
     Gespielt,
-    /// Kommt nicht (abgewählt, stumm, abgebrochen, Fehler, verfallen).
+    /// Kommt nicht (stumm, abgebrochen, Fehler, verfallen).
     KommtNicht,
 }
 
@@ -564,8 +565,11 @@ impl Planer {
             if slot == Slot::KapitaenSinkflug {
                 self.kapitaen_sinkflug = KapitaenSinkflug::KommtNicht;
             }
+            // 2.1.1 C (Thomas): Abgewählt heißt, GSX oder das Flugzeug spielt
+            // den Service selbst — er findet statt, das Ende kommt wie nach
+            // einem gespielten.
             if slot == Slot::Reiseflug25 {
-                self.service = Service::KommtNicht;
+                self.service = Service::Gespielt;
             }
             return;
         }
@@ -979,7 +983,8 @@ impl Planer {
         }
         // 2.1.1 C (Entscheidung 4): nie vor dem Service. EWG 221: nur nach
         // einem gespielten (Rückmeldung des Hosts, [`Self::service_ende`]).
-        // Lief er nicht (kam nie, entfiel, abgewählt, stumm, verfallen),
+        // Lief er nicht (kam nie, entfiel, stumm, verfallen; abgewählt zählt als
+        // gelaufen, 2.1.1 C),
         // entfällt das Ende beim Sinkflug als übersprungen; ein gemeldeter
         // Service, dessen Ende noch aussteht, hält es bis zum Ende des
         // Sinkflugs zurück (er kann noch zu Ende spielen).
@@ -2778,8 +2783,8 @@ mod tests {
         let mut gelaufen = Planer::fortsetzen(f.clone(), Descent);
         gelaufen.schon_gespielt([Slot::EndeService]);
         assert!(!gelaufen.tick(&tick(bis + 60, Descent, 25_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
-        // EWG 221: Ein abgewählter Service gibt das Ende nicht frei (2.1.1 C
-        // gab es frei wie ein gespielter) — beim Sinkflug „übersprungen“.
+        // 2.1.1 C (bleibt): Ein abgewählter Service gibt das Ende frei wie ein
+        // gespielter — abgewählt heißt, GSX oder das Flugzeug spielt ihn.
         let mut ab = Planer::fortsetzen(f.clone(), Cruise);
         ab.abwaehlen([Slot::Reiseflug25]);
         let mut gesehen = false;
@@ -2787,8 +2792,8 @@ mod tests {
             gesehen |= ab.tick(&tick(s, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService);
         }
         gesehen |= ab.tick(&tick(bis, Descent, 30_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService);
-        assert!(!gesehen, "nach abgewähltem Service kein Ende");
-        assert_eq!(ab.entfallene_abholen(), vec![(Slot::EndeService, Entfall::Uebersprungen)]);
+        assert!(gesehen, "nach abgewähltem Service");
+        assert!(ab.entfallene_abholen().is_empty());
         // Darf in der Ruhephase (Sinkflug unter 10.000 ft) spielen, sonst verfiele sie.
         assert!(Slot::EndeService.in_ruhephase_erlaubt());
         // Bizjet: nicht.
