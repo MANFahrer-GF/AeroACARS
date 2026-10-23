@@ -11,7 +11,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::kabinen_musik::{Dekoder, Umrechner};
@@ -25,11 +25,28 @@ pub(crate) const AUSBLENDEN_S: f32 = 2.0;
 /// Ordner der Aufnahmen unter den Programm-Ressourcen.
 pub(crate) const ORDNER: &str = "kabine-reaktionen";
 
-/// Erhöht sich mit jedem Auftrag; ein Faden mit älterer Fassung endet.
-static FASSUNG: AtomicU64 = AtomicU64::new(0);
-static LAEUFT: AtomicBool = AtomicBool::new(false);
-/// Warum die letzte Reaktion endete — holt der Kabinen-Takt fürs Protokoll ab.
-static ENDE: Mutex<Option<&'static str>> = Mutex::new(None);
+/// Zustand des Players unter EINER Sperre (Codex: getrennte Atomics ließen
+/// einen alten Faden das Ende einer neuen Reaktion überschreiben).
+struct Zustand {
+    /// Erhöht sich mit jedem Auftrag und mit `aus()`; ein Faden mit älterer
+    /// Fassung endet und meldet nichts mehr.
+    fassung: u64,
+    laeuft: bool,
+    /// Warum die letzte Reaktion endete — holt der Kabinen-Takt fürs
+    /// Protokoll ab.
+    ende: Option<&'static str>,
+}
+
+static ZUSTAND: Mutex<Zustand> = Mutex::new(Zustand { fassung: 0, laeuft: false, ende: None });
+
+fn zustand() -> std::sync::MutexGuard<'static, Zustand> {
+    ZUSTAND.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Gilt der Auftrag `fassung` noch?
+fn aktuell(fassung: u64) -> bool {
+    zustand().fassung == fassung
+}
 
 /// Aufnahmen einer Art (`<art>-<n>.mp3`), sortiert.
 pub(crate) fn aufnahmen(ordner: &Path, art: &str) -> Vec<PathBuf> {
@@ -49,8 +66,14 @@ pub(crate) fn aufnahmen(ordner: &Path, art: &str) -> Vec<PathBuf> {
 
 /// Spielt `datei` einmal. Eine laufende Reaktion wird ersetzt.
 pub(crate) fn spielen(datei: PathBuf, geraet: Option<String>) {
-    let fassung = FASSUNG.fetch_add(1, Ordering::SeqCst) + 1;
-    LAEUFT.store(true, Ordering::SeqCst);
+    let fassung = {
+        let mut z = zustand();
+        z.fassung += 1;
+        z.laeuft = true;
+        // Ein nicht abgeholtes Ende gehört zur vorigen Reaktion.
+        z.ende = None;
+        z.fassung
+    };
     let _ = std::thread::Builder::new().name("kabinen-reaktion".into()).spawn(move || {
         let grund = match wiedergabe::abspielen(&datei, geraet.as_deref(), fassung) {
             Ok(g) => g,
@@ -59,32 +82,42 @@ pub(crate) fn spielen(datei: PathBuf, geraet: Option<String>) {
                 "fehler"
             }
         };
-        if FASSUNG.load(Ordering::SeqCst) == fassung {
-            LAEUFT.store(false, Ordering::SeqCst);
-            *ENDE.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(grund);
-        }
+        faden_ende(fassung, grund);
     });
+}
+
+/// Ende eines Wiedergabefadens: zählt nur, wenn sein Auftrag noch gilt.
+fn faden_ende(fassung: u64, grund: &'static str) {
+    let mut z = zustand();
+    if z.fassung == fassung {
+        z.laeuft = false;
+        z.ende = Some(grund);
+    }
 }
 
 /// Sofort still (Flugende, Ansagen aus, Stumm, Schalter aus).
 pub(crate) fn aus() {
-    if LAEUFT.swap(false, Ordering::SeqCst) {
-        FASSUNG.fetch_add(1, Ordering::SeqCst);
-        *ENDE.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some("aus");
+    let mut z = zustand();
+    if z.laeuft {
+        z.fassung += 1;
+        z.laeuft = false;
+        z.ende = Some("aus");
     }
 }
 
 /// Ende der letzten Reaktion, einmal: `gespielt`, `ansage`, `musik`, `aus`,
 /// `fehler`.
 pub(crate) fn ende_abholen() -> Option<&'static str> {
-    ENDE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
+    zustand().ende.take()
 }
 
 /// Was die Reaktion verdrängt: eine Ansage (auch kurz danach) oder die Musik.
+/// Schon der Musik-Auftrag zählt, nicht erst hörbare Musik — sonst liefen
+/// beide kurz zusammen, wenn die Musik im selben Takt startet (Codex).
 pub(crate) fn verdraengt(jetzt_ms: u64) -> Option<&'static str> {
     if crate::kabinen_musik::ansage_haelt(jetzt_ms) {
         Some("ansage")
-    } else if crate::kabinen_musik::flug_aktiv() && crate::kabinen_musik::hoerbar() {
+    } else if crate::kabinen_musik::flug_aktiv() {
         Some("musik")
     } else {
         None
@@ -95,15 +128,20 @@ fn jetzt_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-/// Ein Abtastschritt zum Ziel: aufwärts sofort (das Einblenden steckt in der
-/// Aufnahme), abwärts über [`AUSBLENDEN_S`] — für den ganzen Weg von `voll`
-/// (eingestellter Pegel) bis 0, gleich wie laut gerade eingestellt ist.
-pub(crate) fn pegel_schritt(pegel: f32, ziel: f32, voll: f32, rate: f32) -> f32 {
-    if ziel >= pegel {
-        ziel
-    } else {
-        (pegel - voll.max(0.01) / (rate * AUSBLENDEN_S)).max(ziel)
+/// Ein Abtastschritt: ohne `weg` der eingestellte Pegel `voll` (das
+/// Einblenden steckt in der Aufnahme); mit `weg` von dem Pegel, bei dem das
+/// Ausblenden begann (`ab`, 0 = noch nicht begonnen), linear in
+/// [`AUSBLENDEN_S`] auf 0 — auch wenn währenddessen die Lautstärke
+/// verstellt wird (Codex).
+pub(crate) fn pegel_schritt(pegel: f32, weg: bool, voll: f32, ab: &mut f32, rate: f32) -> f32 {
+    if !weg {
+        *ab = 0.0;
+        return voll;
     }
+    if *ab <= 0.0 {
+        *ab = pegel.max(0.001);
+    }
+    (pegel - *ab / (rate * AUSBLENDEN_S)).max(0.0)
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -136,11 +174,12 @@ mod wiedergabe {
         ) -> Result<cpal::Stream, String> {
             let rate = cfg.sample_rate.max(1) as f32;
             let mut pegel = crate::kabinenansagen::ausgabe::lautstaerke() * PEGEL;
+            let mut ab = 0.0f32;
             dev.build_output_stream(
                 cfg,
                 move |aus: &mut [T], _: &cpal::OutputCallbackInfo| {
                     let voll = crate::kabinenansagen::ausgabe::lautstaerke() * PEGEL;
-                    let ziel = if weg.load(Ordering::Relaxed) { 0.0 } else { voll };
+                    let ist_weg = weg.load(Ordering::Relaxed);
                     // Nie blockierend warten (Echtzeit-Faden): belegt → Block still.
                     let Ok(mut q) = puffer.try_lock() else {
                         for k in aus.iter_mut() {
@@ -149,7 +188,7 @@ mod wiedergabe {
                         return;
                     };
                     for rahmen in aus.chunks_mut(kanaele) {
-                        pegel = pegel_schritt(pegel, ziel, voll, rate);
+                        pegel = pegel_schritt(pegel, ist_weg, voll, &mut ab, rate);
                         for k in rahmen {
                             let x = q.pop_front().unwrap_or(0.0);
                             *k = T::from_sample((x * pegel).clamp(-1.0, 1.0));
@@ -176,13 +215,13 @@ mod wiedergabe {
         let mut um = Umrechner::neu(rate, kanaele);
         let mut dekodiert = false;
         loop {
-            if FASSUNG.load(Ordering::SeqCst) != fassung {
+            if !aktuell(fassung) {
                 return Ok("aus");
             }
             if let Some(grund) = verdraengt(jetzt_ms()) {
                 weg.store(true, Ordering::Relaxed);
                 let bis = std::time::Instant::now() + std::time::Duration::from_secs_f32(AUSBLENDEN_S + 0.5);
-                while std::time::Instant::now() < bis && !still.load(Ordering::Relaxed) && FASSUNG.load(Ordering::SeqCst) == fassung {
+                while std::time::Instant::now() < bis && !still.load(Ordering::Relaxed) && aktuell(fassung) {
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
                 return Ok(grund);
@@ -228,21 +267,54 @@ mod tests {
     #[test]
     fn ausblenden_dauert_zwei_sekunden_einblenden_steckt_in_der_aufnahme() {
         let rate = 1000.0;
-        // Aufwärts sofort.
-        assert_eq!(pegel_schritt(0.0, 0.56, 0.56, rate), 0.56);
-        // Abwärts: vom eingestellten Pegel bis 0 genau AUSBLENDEN_S — auch
-        // leise (der echte Test fand 1,15 s bei 0,56, als der Schritt auf 1,0
-        // gerechnet war).
-        for voll in [1.0f32, 0.56, 0.1] {
-            let mut p = voll;
-            let mut schritte = 0;
+        let mut ab = 0.0;
+        // Ohne Ausblenden sofort der eingestellte Pegel.
+        assert_eq!(pegel_schritt(0.0, false, 0.56, &mut ab, rate), 0.56);
+        let soll = (rate * AUSBLENDEN_S) as i32;
+        // Abwärts: vom Pegel bei Beginn bis 0 genau AUSBLENDEN_S — auch leise
+        // (der echte Test fand 1,15 s bei 0,56, als der Schritt auf 1,0
+        // gerechnet war) und auch, wenn die Lautstärke währenddessen auf 0
+        // gedreht wird (Codex: sonst ~112 s).
+        for (voll, danach) in [(1.0f32, 1.0f32), (0.56, 0.56), (0.1, 0.1), (0.56, 0.0)] {
+            let (mut p, mut ab, mut schritte) = (voll, 0.0, 0);
             while p > 0.0 {
-                p = pegel_schritt(p, 0.0, voll, rate);
+                p = pegel_schritt(p, true, if schritte == 0 { voll } else { danach }, &mut ab, rate);
                 schritte += 1;
+                assert!(schritte < soll * 2, "{voll}→{danach}: läuft zu lange");
             }
-            let soll = (rate * AUSBLENDEN_S) as i32;
-            assert!((schritte - soll).abs() <= 1, "{voll}: {schritte} statt {soll}");
+            assert!((schritte - soll).abs() <= 1, "{voll}→{danach}: {schritte} statt {soll}");
         }
+        // Zurück auf „nicht weg“: neuer Beginn beim nächsten Mal.
+        assert_eq!(pegel_schritt(0.3, false, 0.56, &mut ab, rate), 0.56);
+        assert_eq!(ab, 0.0);
+    }
+
+    /// Codex: Ein alter Faden darf weder das Ende noch den Lauf-Zustand einer
+    /// neuen Reaktion verändern; `aus()` stoppt die neue sicher.
+    #[test]
+    fn alter_faden_ueberschreibt_die_neue_reaktion_nicht() {
+        let alt = {
+            let mut z = zustand();
+            z.fassung += 1;
+            z.laeuft = true;
+            z.fassung
+        };
+        // Neue Reaktion (wie `spielen`, ohne Faden).
+        let neu = {
+            let mut z = zustand();
+            z.fassung += 1;
+            z.laeuft = true;
+            z.ende = None;
+            z.fassung
+        };
+        faden_ende(alt, "gespielt");
+        assert!(zustand().laeuft, "neue Reaktion gilt weiter als laufend");
+        assert_eq!(ende_abholen(), None, "altes Ende nicht der neuen zugeordnet");
+        aus();
+        assert!(!aktuell(neu), "aus() beendet die neue Fassung");
+        assert_eq!(ende_abholen(), Some("aus"));
+        faden_ende(neu, "gespielt");
+        assert_eq!(ende_abholen(), None, "Faden nach aus() meldet nichts mehr");
     }
 
     #[test]

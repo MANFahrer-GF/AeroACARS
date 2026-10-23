@@ -212,6 +212,10 @@ pub(crate) fn kabinen_einstellungen_setzen(
     // 19.10.2026) und haben eigene Kommandos.
     neu.musik_lautstaerke = bisher.musik_lautstaerke;
     neu.boarding_musik = bisher.boarding_musik;
+    // Reaktion: Aus heißt sofort still, nicht erst im nächsten Takt (Codex).
+    if !neu.an || !neu.reaktionen {
+        crate::kabinen_reaktion::aus();
+    }
     if !neu.an {
         // „Ansagen aus“ stoppt auch die Musik sofort.
         crate::kabinen_musik::aus();
@@ -3165,6 +3169,7 @@ pub(crate) fn kabinen_stumm(app: AppHandle, state: tauri::State<'_, AppState>, s
         return;
     }
     ausgabe::stoppen();
+    crate::kabinen_reaktion::aus();
     // Stumm stoppt auch die Boarding-Musik sofort (Pflichtenheft G1).
     if crate::kabinen_musik::flug_aktiv() {
         crate::kabinen_musik::aus();
