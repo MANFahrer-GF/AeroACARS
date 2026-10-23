@@ -58,9 +58,11 @@ pub const PAUSE_MIN_S: f64 = 1.0;
 pub const PAUSE_MAX_S: f64 = 4.0;
 /// Raunen kommt sofort nach der Note.
 pub const PAUSE_RAUNEN_S: f64 = 0.0;
-/// Nach der Note so lange darf die Reaktion noch beginnen; später (Neustart,
-/// lange Ansage davor) entfällt sie — sie gehört zum Aufsetzen.
-pub const SPAETESTENS_NACH_NOTE_S: i64 = 30;
+/// Nach dem Aufsetzen so lange darf die Reaktion noch beginnen; später
+/// (Neustart, lange Ansage davor) entfällt sie — sie gehört zum Aufsetzen.
+/// Die Note steht nach ~9 s fest, „nach der Landung“ kam gemessen nach
+/// 35–52 s.
+pub const SPAETESTENS_NACH_AUFSETZEN_S: i64 = 45;
 
 /// Was der Host über die Landung weiß.
 #[derive(Debug, Clone, Copy)]

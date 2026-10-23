@@ -38,7 +38,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "crates/sim-msfs/ffi/lib/SimConnect.dll": "SimConnect.dll"
+      "crates/sim-msfs/ffi/lib/SimConnect.dll": "SimConnect.dll",
+      "kabine-reaktionen/": "kabine-reaktionen/"
     },
     "createUpdaterArtifacts": true,
     "publisher": "AeroACARS Project",

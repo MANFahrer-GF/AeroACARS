@@ -83,6 +83,10 @@ pub struct Einstellungen {
     pub boarding_musik: bool,
     /// Eigener Pegel der Musik 0.0 … 1.0, ab Werk 20 % (Entscheidung 14).
     pub musik_lautstaerke: f32,
+    /// Kabinen-Reaktionen nach der Landung (Applaus, Murmeln, Raunen; Thomas
+    /// 23.10.2026). Ab Werk an, auch für bestehende Einstellungen (fehlendes
+    /// Feld = Standard). Lautstärke folgt den Ansagen.
+    pub reaktionen: bool,
 }
 
 impl Default for Einstellungen {
@@ -100,6 +104,7 @@ impl Default for Einstellungen {
             aus: Vec::new(),
             boarding_musik: true,
             musik_lautstaerke: 0.2,
+            reaktionen: true,
         }
     }
 }
@@ -481,6 +486,20 @@ pub(crate) struct Lauf {
     /// Texte, die auch die Nachholung nicht brachte — je Slot UND Sprache
     /// (1f), damit „Aufgegeben“ nur dort steht, wo wirklich etwas fehlt.
     texte_fehlen: Fehlen,
+    /// Kabinen-Reaktion nach der Landung: einmal je Flug.
+    reaktion: ReaktionStand,
+}
+
+/// Stand der Kabinen-Reaktion eines Fluges.
+#[derive(Debug, Default)]
+struct ReaktionStand {
+    /// Entschieden (auch „keine“): danach wird nichts mehr gewählt.
+    entschieden: bool,
+    /// Wartet auf den Einsatz: ab wann (ms), welche Art, welche Aufnahme.
+    einsatz: Option<(i64, cabin_announcements::reaktion::Art, PathBuf)>,
+    /// Aufsetzen (ms) — die Frist gilt ab da.
+    aufsetzen_ms: i64,
+    laeuft: bool,
 }
 
 /// Fehlende Texte je (Slot, Sprache) mit Grund.
@@ -833,6 +852,7 @@ pub(crate) fn takt(
 ) {
     takt_schritt(app, flight, client, snap, now);
     musik_takt(app, flight, snap, now);
+    reaktion_takt(app, flight, now);
     protokoll_leeren(app, flight);
 }
 
@@ -956,6 +976,7 @@ fn flug_beendet_notieren(stats: &mut FlightStats, einst: &Einstellungen, jetzt: 
 /// Beim Einreichen (beide Abgabewege) aufrufen, vor `pirep_filed`: Danach
 /// kommt kein Takt mehr, deshalb gleich ins Protokoll schreiben.
 pub(crate) fn flug_beendet(app: &AppHandle, flight: &ActiveFlight) {
+    crate::kabinen_reaktion::aus();
     let einst = einstellungen(app);
     flug_beendet_notieren(&mut flight.stats.lock().expect("flight stats"), &einst, Utc::now().timestamp());
     protokoll_leeren(app, flight);
@@ -1179,6 +1200,168 @@ fn musik_takt(app: &AppHandle, flight: &Arc<ActiveFlight>, snap: &SimSnapshot, n
     if let Some(l) = holen {
         lied_holen(app.clone(), Arc::clone(flight), l);
     }
+}
+
+/// Was die Kabinen-Reaktion nach diesem Takt tun soll.
+#[derive(Debug, Clone, PartialEq)]
+enum ReaktionTun {
+    Nichts,
+    Spielen(PathBuf),
+    Aus,
+}
+
+/// Ein Wurf in `[0, 1)` — zufällige Schlüssel je Aufruf, kein eigenes Crate.
+fn wurf() -> f64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(Utc::now().timestamp_nanos_opt().unwrap_or(0) as u128);
+    (h.finish() >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Zuletzt gespielte Aufnahme je Art (nie zweimal hintereinander, über
+/// Flüge hinweg, solange das Programm läuft).
+static REAKTION_ZULETZT: std::sync::Mutex<Vec<(cabin_announcements::reaktion::Art, usize)>> = std::sync::Mutex::new(Vec::new());
+
+/// Eingang der Kabinen-Reaktion je Takt. Sperren wie die Kabine: Ansagen
+/// aus, Schalter aus, Stumm → still; Replay, Fracht, keine Passagiere, Sim
+/// angehalten → nicht anfangen (`sperre_name`); Bizjet hat kein „nach der
+/// Landung“ und damit auch keine Kabine, die klatscht.
+fn reaktion_takt(app: &AppHandle, flight: &Arc<ActiveFlight>, now: DateTime<Utc>) {
+    let einst = einstellungen(app);
+    let an = einst.an && einst.reaktionen && !STUMM.load(Ordering::SeqCst);
+    let ordner = app.path().resource_dir().ok().map(|d| d.join(crate::kabinen_reaktion::ORDNER));
+    let aufnahmen = |art: cabin_announcements::reaktion::Art| ordner.as_deref().map(|o| crate::kabinen_reaktion::aufnahmen(o, art.name())).unwrap_or_default();
+    let jetzt_ms = now.timestamp_millis();
+    let tun = {
+        let mut stats = flight.stats.lock().expect("flight stats");
+        let mut zuletzt = REAKTION_ZULETZT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        reaktion_schritt(
+            &mut stats,
+            ReaktionEingang {
+                an,
+                kabine_an: einst.an,
+                airline: &flight.airline_icao,
+                ziel_geplant: &flight.arr_airport,
+                muster: &flight.aircraft_icao,
+                jetzt_ms,
+                verdraengt: crate::kabinen_reaktion::verdraengt(jetzt_ms.max(0) as u64),
+                ende: crate::kabinen_reaktion::ende_abholen(),
+                wuerfe: [wurf(), wurf(), wurf()],
+            },
+            &aufnahmen,
+            &mut zuletzt,
+        )
+    };
+    match tun {
+        ReaktionTun::Spielen(datei) => crate::kabinen_reaktion::spielen(datei, einst.ausgabe.clone()),
+        ReaktionTun::Aus => crate::kabinen_reaktion::aus(),
+        ReaktionTun::Nichts => {}
+    }
+}
+
+/// Was der Host je Takt für die Reaktion weiß.
+struct ReaktionEingang<'a> {
+    /// Ansagen an, Schalter an, nicht stumm.
+    an: bool,
+    /// Ansagen an (für die Sperren der Kabine).
+    kabine_an: bool,
+    airline: &'a str,
+    ziel_geplant: &'a str,
+    muster: &'a str,
+    jetzt_ms: i64,
+    /// Läuft gerade eine Ansage oder die Musik?
+    verdraengt: Option<&'static str>,
+    /// Ende der laufenden Reaktion, falls gerade abgeholt.
+    ende: Option<&'static str>,
+    wuerfe: [f64; 3],
+}
+
+fn reaktion_schritt(
+    stats: &mut FlightStats,
+    e: ReaktionEingang<'_>,
+    aufnahmen: &dyn Fn(cabin_announcements::reaktion::Art) -> Vec<PathBuf>,
+    zuletzt: &mut Vec<(cabin_announcements::reaktion::Art, usize)>,
+) -> ReaktionTun {
+    use cabin_announcements::{flugart, reaktion};
+    if let Some(grund) = e.ende {
+        if stats.kabinen_lauf.reaktion.laeuft {
+            stats.kabinen_lauf.reaktion.laeuft = false;
+            notiz(&mut stats.kabinen_lauf, "reaktion_ende", None, None, serde_json::json!({ "grund": grund }));
+        }
+    }
+    if !e.an {
+        stats.kabinen_lauf.reaktion.einsatz = None;
+        return if stats.kabinen_lauf.reaktion.laeuft { ReaktionTun::Aus } else { ReaktionTun::Nichts };
+    }
+    let sperre = sperre_name(e.kabine_an, stats);
+    if !stats.kabinen_lauf.reaktion.entschieden {
+        let Some(p) = stats.landung_payload.as_deref() else { return ReaktionTun::Nichts };
+        let pax = stats.pax_count.and_then(|n| u32::try_from(n).ok());
+        if sperre.is_some() || !flugart::eingeordnet(stats.flight_type.as_deref(), pax) {
+            return ReaktionTun::Nichts;
+        }
+        let note = p.score_grade.clone().unwrap_or_default();
+        let hopser = p.bounce_count.unwrap_or(0) > 0;
+        let ziel = p.airport.clone().filter(|z| !z.is_empty()).unwrap_or_else(|| e.ziel_geplant.to_string());
+        let ferien = reaktion::ferienflieger(e.airline, &ziel);
+        let aufsetzen_ms = p.ts;
+        let r = &mut stats.kabinen_lauf.reaktion;
+        r.entschieden = true;
+        r.aufsetzen_ms = aufsetzen_ms;
+        let mut details = serde_json::json!({ "note": note, "hopser": hopser, "ferien": ferien, "ziel": ziel, "wurf": (e.wuerfe[0] * 1000.0).round() / 1000.0 });
+        let art = flugart::einordnen(stats.flight_type.as_deref(), pax, e.muster);
+        let gewaehlt = if !art.erlaubt(Slot::NachDerLandung) {
+            details["grund"] = "flugart".into();
+            None
+        } else if e.jetzt_ms > aufsetzen_ms + reaktion::SPAETESTENS_NACH_AUFSETZEN_S * 1000 {
+            details["grund"] = "zu_spaet".into();
+            None
+        } else {
+            reaktion::waehlen(reaktion::Landung { note: &note, echter_hopser: hopser, ferienflieger: ferien }, e.wuerfe[0])
+        };
+        match gewaehlt {
+            None => details["art"] = serde_json::Value::Null,
+            Some(a) => {
+                let liste = aufnahmen(a);
+                let vorher = zuletzt.iter().find(|(x, _)| *x == a).map(|(_, i)| *i);
+                details["art"] = a.name().into();
+                match reaktion::aufnahme(liste.len(), vorher, e.wuerfe[2]) {
+                    Some(i) => {
+                        zuletzt.retain(|(x, _)| *x != a);
+                        zuletzt.push((a, i));
+                        let pause_ms = (reaktion::pause_s(a, e.wuerfe[1]) * 1000.0) as i64;
+                        details["aufnahme"] = liste[i].file_name().map(|n| n.to_string_lossy().into_owned()).into();
+                        details["pause_s"] = (pause_ms as f64 / 1000.0).into();
+                        stats.kabinen_lauf.reaktion.einsatz = Some((e.jetzt_ms + pause_ms, a, liste[i].clone()));
+                    }
+                    None => details["grund"] = "keine_aufnahme".into(),
+                }
+            }
+        }
+        notiz(&mut stats.kabinen_lauf, "reaktion", None, None, details);
+    }
+    let Some((ab, _, datei)) = stats.kabinen_lauf.reaktion.einsatz.clone() else { return ReaktionTun::Nichts };
+    if e.jetzt_ms < ab {
+        return ReaktionTun::Nichts;
+    }
+    let frist = stats.kabinen_lauf.reaktion.aufsetzen_ms + cabin_announcements::reaktion::SPAETESTENS_NACH_AUFSETZEN_S * 1000;
+    let grund = if e.jetzt_ms > frist {
+        Some("zu_spaet")
+    } else if sperre.is_some() {
+        // Sim angehalten o. Ä.: warten, solange die Frist reicht.
+        return ReaktionTun::Nichts;
+    } else {
+        e.verdraengt
+    };
+    stats.kabinen_lauf.reaktion.einsatz = None;
+    if let Some(g) = grund {
+        notiz(&mut stats.kabinen_lauf, "reaktion_entfallen", None, None, serde_json::json!({ "grund": g }));
+        return ReaktionTun::Nichts;
+    }
+    stats.kabinen_lauf.reaktion.laeuft = true;
+    let name = datei.file_name().map(|n| n.to_string_lossy().into_owned());
+    notiz(&mut stats.kabinen_lauf, "reaktion_start", None, None, serde_json::json!({ "aufnahme": name }));
+    ReaktionTun::Spielen(datei)
 }
 
 /// Holt das Lied vom Ton-Server (`POST /api/kabine/lied`) in den Ordner des
@@ -6177,5 +6360,178 @@ mod rundumschlag_p1_tests {
         stimme_streichen(&mut st.kabinen_lauf, "en-GB");
         assert!(!st.kabinen_lauf.ohne_stimme.contains("en-GB"));
         assert_eq!(arten(&st.kabinen_lauf).iter().filter(|(a, _)| a == "entfaellt").count(), 1, "einmal für den Flug");
+    }
+}
+
+/// Kabinen-Reaktion nach der Landung über die ganze Kette: Landungsdaten →
+/// Entscheidung → Pause → Einsatz → Ende, mit Sperren und Protokoll.
+#[cfg(test)]
+mod reaktion_tests {
+    use super::*;
+    use cabin_announcements::reaktion::Art;
+
+    const AUFSETZEN_MS: i64 = 1_000_000;
+
+    fn stats(flight_type: &str, pax: Option<i32>, note: Option<&str>, hopser: u8) -> FlightStats {
+        let mut st = FlightStats::new();
+        st.phase = crate::FlightPhase::Landing;
+        st.flight_type = Some(flight_type.into());
+        st.pax_count = pax;
+        st.kabinen_lauf.beta = Beta::Ja;
+        if let Some(n) = note {
+            st.landung_payload = Some(Box::new(aeroacars_mqtt::TouchdownPayload {
+                ts: AUFSETZEN_MS,
+                score_grade: Some(n.into()),
+                bounce_count: Some(hopser),
+                airport: Some("EDDH".into()),
+                ..Default::default()
+            }));
+        }
+        st
+    }
+
+    fn eingang(jetzt_ms: i64, airline: &'static str, wuerfe: [f64; 3]) -> ReaktionEingang<'static> {
+        ReaktionEingang { an: true, kabine_an: true, airline, ziel_geplant: "EDDH", muster: "A320", jetzt_ms, verdraengt: None, ende: None, wuerfe }
+    }
+
+    fn aufnahmen(art: Art) -> Vec<PathBuf> {
+        vec![PathBuf::from(format!("{}-1.mp3", art.name())), PathBuf::from(format!("{}-2.mp3", art.name()))]
+    }
+
+    fn notizen(st: &FlightStats) -> Vec<(&'static str, serde_json::Value)> {
+        st.kabinen_lauf.protokoll.iter().filter(|n| n.art.starts_with("reaktion")).map(|n| (n.art, n.details.clone())).collect()
+    }
+
+    fn schritt(st: &mut FlightStats, e: ReaktionEingang<'_>, zuletzt: &mut Vec<(Art, usize)>) -> ReaktionTun {
+        reaktion_schritt(st, e, &aufnahmen, zuletzt)
+    }
+
+    #[test]
+    fn applaus_auf_dem_ferienflieger_nach_der_pause_bis_zur_ansage() {
+        let mut st = stats("J", Some(150), Some("A+"), 0);
+        let mut z = Vec::new();
+        let t0 = AUFSETZEN_MS + 9_000;
+        // Condor, kleiner Wurf → Applaus; Pause 1 + 3 × 0,5 = 2,5 s.
+        assert_eq!(schritt(&mut st, eingang(t0, "CFG", [0.1, 0.5, 0.0]), &mut z), ReaktionTun::Nichts);
+        let n = notizen(&st);
+        assert_eq!(n.len(), 1);
+        assert_eq!(n[0].0, "reaktion");
+        assert_eq!(n[0].1["art"], "applaus-ferienflieger");
+        assert_eq!(n[0].1["note"], "A+");
+        assert_eq!(n[0].1["ferien"], true);
+        assert_eq!(n[0].1["pause_s"], 2.5);
+        assert_eq!(schritt(&mut st, eingang(t0 + 2_000, "CFG", [0.9; 3]), &mut z), ReaktionTun::Nichts);
+        assert_eq!(schritt(&mut st, eingang(t0 + 2_500, "CFG", [0.9; 3]), &mut z), ReaktionTun::Spielen(PathBuf::from("applaus-ferienflieger-1.mp3")));
+        // Einmal je Flug: weitere Takte entscheiden nichts neu.
+        assert_eq!(schritt(&mut st, eingang(t0 + 3_000, "CFG", [0.0; 3]), &mut z), ReaktionTun::Nichts);
+        // Die Ansage beginnt: der Player meldet das Ende.
+        let mut e = eingang(t0 + 20_000, "CFG", [0.0; 3]);
+        e.ende = Some("ansage");
+        schritt(&mut st, e, &mut z);
+        let arten: Vec<_> = notizen(&st).iter().map(|(a, _)| *a).collect();
+        assert_eq!(arten, ["reaktion", "reaktion_start", "reaktion_ende"]);
+        assert_eq!(notizen(&st)[2].1["grund"], "ansage");
+    }
+
+    #[test]
+    fn hopser_raunt_sofort_und_geht_der_note_vor() {
+        let mut st = stats("J", Some(150), Some("A+"), 1);
+        let mut z = Vec::new();
+        let tun = schritt(&mut st, eingang(AUFSETZEN_MS + 9_000, "CFG", [0.0; 3]), &mut z);
+        assert_eq!(tun, ReaktionTun::Spielen(PathBuf::from("raunen-hopser-1.mp3")));
+        assert_eq!(notizen(&st)[0].1["art"], "raunen-hopser");
+    }
+
+    #[test]
+    fn mittlere_note_bleibt_still_und_steht_im_protokoll() {
+        let mut st = stats("J", Some(150), Some("B+"), 0);
+        let mut z = Vec::new();
+        for s in 0..60 {
+            assert_eq!(schritt(&mut st, eingang(AUFSETZEN_MS + 9_000 + s * 1000, "DLH", [0.0; 3]), &mut z), ReaktionTun::Nichts);
+        }
+        let n = notizen(&st);
+        assert_eq!(n.len(), 1);
+        assert!(n[0].1["art"].is_null());
+    }
+
+    #[test]
+    fn laufende_ansage_beim_einsatz_laesst_die_reaktion_entfallen() {
+        let mut st = stats("J", Some(150), Some("D"), 0);
+        let mut z = Vec::new();
+        let mut e = eingang(AUFSETZEN_MS + 9_000, "DLH", [0.0; 3]);
+        e.verdraengt = Some("ansage");
+        assert_eq!(schritt(&mut st, e, &mut z), ReaktionTun::Nichts);
+        assert_eq!(notizen(&st).last().unwrap().0, "reaktion_entfallen");
+        assert_eq!(notizen(&st).last().unwrap().1["grund"], "ansage");
+    }
+
+    #[test]
+    fn ohne_note_wird_gewartet_dann_entschieden() {
+        let mut st = stats("J", Some(150), None, 0);
+        let mut z = Vec::new();
+        assert_eq!(schritt(&mut st, eingang(AUFSETZEN_MS, "DLH", [0.0; 3]), &mut z), ReaktionTun::Nichts);
+        assert!(!st.kabinen_lauf.reaktion.entschieden);
+        st.landung_payload = stats("J", Some(150), Some("F"), 0).landung_payload;
+        assert_eq!(schritt(&mut st, eingang(AUFSETZEN_MS + 9_000, "DLH", [0.0; 3]), &mut z), ReaktionTun::Spielen(PathBuf::from("raunen-hart-1.mp3")));
+    }
+
+    #[test]
+    fn nach_neustart_zu_spaet_kein_applaus() {
+        let mut st = stats("J", Some(150), Some("A+"), 0);
+        let mut z = Vec::new();
+        let spaet = AUFSETZEN_MS + (cabin_announcements::reaktion::SPAETESTENS_NACH_AUFSETZEN_S + 1) * 1000;
+        assert_eq!(schritt(&mut st, eingang(spaet, "CFG", [0.0; 3]), &mut z), ReaktionTun::Nichts);
+        assert_eq!(notizen(&st)[0].1["grund"], "zu_spaet");
+        assert!(st.kabinen_lauf.reaktion.einsatz.is_none());
+    }
+
+    #[test]
+    fn fracht_bizjet_und_ohne_passagiere_klatscht_niemand() {
+        let mut z = Vec::new();
+        // Fracht und keine Passagiere: Sperre der Kabine, gar keine Entscheidung.
+        for mut st in [stats("F", Some(0), Some("A+"), 0), stats("J", Some(0), Some("A+"), 0)] {
+            assert_eq!(schritt(&mut st, eingang(AUFSETZEN_MS + 9_000, "CFG", [0.0; 3]), &mut z), ReaktionTun::Nichts);
+            assert!(notizen(&st).is_empty());
+        }
+        // Bizjet: kein „nach der Landung“ → keine Reaktion, mit Grund.
+        let mut st = stats("J", Some(6), Some("A+"), 0);
+        let mut e = eingang(AUFSETZEN_MS + 9_000, "GSG", [0.0; 3]);
+        e.muster = "C68A";
+        assert_eq!(schritt(&mut st, e, &mut z), ReaktionTun::Nichts);
+        assert_eq!(notizen(&st)[0].1["grund"], "flugart");
+    }
+
+    #[test]
+    fn schalter_aus_stoppt_und_entscheidet_nicht() {
+        let mut st = stats("J", Some(150), Some("D"), 0);
+        let mut z = Vec::new();
+        let mut e = eingang(AUFSETZEN_MS + 9_000, "DLH", [0.0; 3]);
+        e.an = false;
+        assert_eq!(schritt(&mut st, e, &mut z), ReaktionTun::Nichts);
+        assert!(!st.kabinen_lauf.reaktion.entschieden);
+        // Läuft schon → aus.
+        assert!(matches!(schritt(&mut st, eingang(AUFSETZEN_MS + 9_000, "DLH", [0.0; 3]), &mut z), ReaktionTun::Spielen(_)));
+        let mut e = eingang(AUFSETZEN_MS + 10_000, "DLH", [0.0; 3]);
+        e.an = false;
+        assert_eq!(schritt(&mut st, e, &mut z), ReaktionTun::Aus);
+    }
+
+    #[test]
+    fn nie_dieselbe_aufnahme_zweimal_hintereinander() {
+        let mut z = Vec::new();
+        let mut vorher = None;
+        for _ in 0..5 {
+            let mut st = stats("J", Some(150), Some("F"), 0);
+            let ReaktionTun::Spielen(p) = schritt(&mut st, eingang(AUFSETZEN_MS + 9_000, "DLH", [0.0; 3]), &mut z) else { panic!() };
+            assert_ne!(Some(p.clone()), vorher);
+            vorher = Some(p);
+        }
+    }
+
+    #[test]
+    fn alte_einstellungen_ohne_feld_haben_reaktionen_an() {
+        let e: Einstellungen = serde_json::from_str(r#"{"an":true,"boarding_musik":false}"#).unwrap();
+        assert!(e.reaktionen);
+        assert!(Einstellungen::default().reaktionen);
     }
 }

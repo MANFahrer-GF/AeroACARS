@@ -17,6 +17,8 @@
       "kommandos": "Riproduci i comandi all'equipaggio",
       "doppelt_hint": "Disattiva se il tuo aereo ha annunci o segnali propri (ad esempio FlyByWire). Mai due sistemi insieme.",
       "chimes": "Segnale a 10.000 piedi",
+      "reaktionen": "Reazioni della cabina dopo l'atterraggio",
+      "reaktionen_hint": "La cabina applaude o mormora soddisfatta dopo un ottimo atterraggio e sussulta dopo uno duro, piano, attraverso la porta della cabina di pilotaggio. Stesso volume degli annunci.",
       "lautstaerke": "Volume",
       "probe": "Ascolta una prova",
       "lizenzen": "Licenze",

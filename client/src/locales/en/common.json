@@ -17,6 +17,8 @@
       "kommandos": "Play crew commands",
       "doppelt_hint": "Turn off if your aircraft has its own announcements or chimes (for example FlyByWire). Never run two systems at once.",
       "chimes": "Chime at 10,000 ft",
+      "reaktionen": "Cabin reactions after landing",
+      "reaktionen_hint": "The cabin applauds or murmurs happily after a great landing and gasps after a hard one, quietly through the cockpit door. Same volume as the announcements.",
       "lautstaerke": "Volume",
       "probe": "Voice sample",
       "lizenzen": "Licences",

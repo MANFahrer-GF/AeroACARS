@@ -17,6 +17,8 @@
       "kommandos": "Crew-Kommandos abspielen",
       "doppelt_hint": "Ausschalten, wenn dein Flugzeug eigene Ansagen oder Gongs hat (etwa FlyByWire). Nie zwei Systeme gleichzeitig.",
       "chimes": "Gong bei 10.000 Fuß",
+      "reaktionen": "Kabinen-Reaktionen nach der Landung",
+      "reaktionen_hint": "Die Kabine klatscht oder murmelt zufrieden nach einer sehr guten Landung und raunt nach einer harten, leise durch die Cockpittür. Lautstärke wie die Ansagen.",
       "lautstaerke": "Lautstärke",
       "probe": "Hörprobe",
       "lizenzen": "Lizenzen",
