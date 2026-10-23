@@ -68,3 +68,20 @@ test("Einzeltasten im neuen Stil: kein Text verlässt die Taste, in jeder Ansich
   }
   assert.deepEqual([...new Set(alle)], []);
 });
+
+test("Breiten-Tabelle gegen echte Pixel: rechnet nie schmaler als B612 wirklich ist", async () => {
+  const path = await import("node:path");
+  const { vorbereiten, rastern } = await import("../src/render.js");
+  await vorbereiten(path.resolve(import.meta.dirname, "../eu.german-sky-group.aeroacars.sdPlugin"));
+  const proben = [["REISEFLUG", 15, true], ["160/12G22", 22, true], ["BOARDING-MUSIK", 15, true], ["Off-Block Plan", 17, false], ["2. SERVICE", 15, true], ["GEGENWIND", 14, true], ["WMW%", 30, true], ["ÄÖÜß 19:16Z", 40, true]];
+  for (const [txt, g, fett] of proben) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="700" height="80"><rect width="700" height="80" fill="#000"/><text x="10" y="60" font-family="B612" font-size="${g}" font-weight="${fett ? 700 : 400}" fill="#fff">${txt}</text></svg>`;
+    const b = rastern(svg);
+    let rechts = 0, links = 700;
+    for (let y = 0; y < b.hoehe; y++) for (let x = 0; x < b.breite; x++) if (b.pixel[(y * b.breite + x) * 4] > 40) { rechts = Math.max(rechts, x); links = Math.min(links, x); }
+    const gemessen = rechts - 10 + 1;
+    const tabelle = textBreite(txt, g, fett);
+    assert.ok(gemessen <= tabelle + 2, `${txt}: Pixel ${gemessen} > Tabelle ${tabelle.toFixed(1)}`);
+    assert.ok(gemessen >= tabelle * 0.8, `${txt}: Tabelle ${tabelle.toFixed(1)} viel zu breit für Pixel ${gemessen}`);
+  }
+});

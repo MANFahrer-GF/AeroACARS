@@ -1,7 +1,7 @@
 // Gemeinsamer Zustand und Befehlsweg für alle Aktionen.
 
 import streamDeck from "@elgato/streamdeck";
-import { befehl } from "./aeroacars.js";
+import { befehl, lesen } from "./aeroacars.js";
 import { Zustand } from "./zustand.js";
 
 export const zustand = new Zustand();
@@ -24,6 +24,10 @@ export function ausfuehren(aktion, name, args) {
       zustand.kabineSetzen(await befehl(name, werte));
     } catch (e) {
       streamDeck.logger.warn(`${name} fehlgeschlagen: ${e.message}`);
+      // Bei Zeitüberschreitung kann AeroACARS den Befehl trotzdem ausgeführt
+      // haben: Kabinenstand sofort neu holen, damit der nächste Schritt (z. B.
+      // „lauter“) nicht vom alten Wert rechnet (Codex 23.10.).
+      await lesen("/panel/kabine").then((k) => zustand.kabineSetzen(k)).catch(() => {});
       await aktion.showAlert();
     }
   });

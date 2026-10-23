@@ -16,6 +16,8 @@ const aeroacars = http.createServer((req, res) => {
   req.on("data", (d) => (body += d));
   req.on("end", () => {
     if (req.method === "POST") befehle.push([req.url, req.headers["x-aeroacars-deck"], req.headers.origin ?? null, body]);
+    // Ein abgelehnter Befehl: das Plugin muss danach weiterzeichnen.
+    if (req.url === "/panel/cmd/fenster_zeigen") { res.statusCode = 422; return res.end('{"code":"test","message":"abgelehnt"}'); }
     const antw = req.url === "/panel/status" ? s.status : req.url === "/panel/kabine" ? s.kabine : req.url.startsWith("/panel/cmd/") ? s.kabine : null;
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(antw));
@@ -27,6 +29,7 @@ const wss = new WebSocketServer({ port: 0 });
 const port = wss.address().port;
 const bilder = new Map();
 let feedback = 0;
+let abgelehntUm = Infinity, letztesBild = 0, warnung = false;
 wss.on("connection", (ws) => {
   ws.on("message", (m) => {
     const d = JSON.parse(m);
@@ -39,13 +42,18 @@ wss.on("connection", (ws) => {
       setTimeout(() => {
         ws.send(JSON.stringify({ event: "keyDown", action: UUID, context: "k3-3", device: "xl1", payload: { coordinates: { column: 3, row: 3 }, settings: {}, state: 0, isInMultiAction: false } }));
         ws.send(JSON.stringify({ event: "keyUp", action: UUID, context: "k3-3", device: "xl1", payload: { coordinates: { column: 3, row: 3 }, settings: {}, state: 0, isInMultiAction: false } }));
+        // Kurzer Druck aufs Band (0,0) → fenster_zeigen → 422.
+        ws.send(JSON.stringify({ event: "keyDown", action: UUID, context: "k0-0", device: "xl1", payload: { coordinates: { column: 0, row: 0 }, settings: {}, state: 0, isInMultiAction: false } }));
+        ws.send(JSON.stringify({ event: "keyUp", action: UUID, context: "k0-0", device: "xl1", payload: { coordinates: { column: 0, row: 0 }, settings: {}, state: 0, isInMultiAction: false } }));
+        abgelehntUm = Date.now();
         // Kurzer Druck auf das Ansagen-Rad des + → Kabine stumm.
         const RAD = "eu.german-sky-group.aeroacars.regler-ansage";
         ws.send(JSON.stringify({ event: "dialDown", action: RAD, context: "rad0", device: "plus1", payload: { controller: "Encoder", coordinates: { column: 0, row: 0 }, settings: {} } }));
         ws.send(JSON.stringify({ event: "dialUp", action: RAD, context: "rad0", device: "plus1", payload: { controller: "Encoder", coordinates: { column: 0, row: 0 }, settings: {} } }));
       }, 2500);
     }
-    if (d.event === "setImage") bilder.set(d.context, d.payload.image);
+    if (d.event === "setImage") { bilder.set(d.context, d.payload.image); letztesBild = Date.now(); }
+    if (d.event === "showAlert" && d.context === "k0-0") warnung = true;
     if (d.event === "setFeedback") feedback++;
   });
 });
@@ -65,7 +73,8 @@ const probe = pngs[0] ? Buffer.from(pngs[0].split(",")[1], "base64") : null;
 console.log(`Kacheln mit Bild: ${pngs.length}/32, verschiedene Bilder: ${verschieden}, Streifen-Updates: ${feedback}`);
 console.log(`erste Kachel: ${probe ? `${probe.readUInt32BE(16)}x${probe.readUInt32BE(20)} PNG` : "keine"}`);
 console.log("Befehle:", JSON.stringify(befehle));
+console.log(`abgelehnter Befehl: Warnzeichen ${warnung ? "ja" : "nein"}, danach weitergezeichnet ${letztesBild > abgelehntUm + 500 ? "ja" : "nein"}`);
 if (pngs[0]) fs.writeFileSync(process.argv[2] ?? "/dev/null", probe);
-const ok = pngs.length === 32 && verschieden > 20 && feedback > 0 && befehle.some(([u, k, o]) => u === "/panel/cmd/kabinen_lautstaerke" && k === "1" && o === null) && befehle.some(([u, , , b]) => u === "/panel/cmd/kabinen_stumm" && b.includes('"stumm":true'));
+const ok = pngs.length === 32 && verschieden > 20 && feedback > 0 && befehle.some(([u, k, o]) => u === "/panel/cmd/kabinen_lautstaerke" && k === "1" && o === null) && befehle.some(([u, , , b]) => u === "/panel/cmd/kabinen_stumm" && b.includes('"stumm":true')) && warnung && letztesBild > abgelehntUm + 500;
 if (!ok || process.env.LOG) console.log("LOG:\n" + log.slice(-3000));
 process.exit(ok ? 0 : 1);

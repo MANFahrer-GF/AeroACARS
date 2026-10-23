@@ -86,6 +86,12 @@ export class Zustand {
    */
   metarNachladen(s) {
     if (!s.status || !s.kabine) return;
+    // Neuer Flug: Sperre zurücksetzen (Codex 23.10.: sonst bis zu 5 min kein Wetter).
+    const flug = s.status.pirep_id ?? `${s.status.callsign}|${s.status.dpt_airport}|${s.status.arr_airport}`;
+    if (flug !== this.metarFlug) {
+      this.metarFlug = flug;
+      this.metarVersuch = { start: 0, ziel: 0 };
+    }
     const jetzt = Date.now();
     for (const [ort, feld] of [["start", "dep_metar_decoded"], ["ziel", "arr_metar_decoded"]]) {
       if (s.status[feld] || jetzt - this.metarVersuch[ort] < METAR_ABSTAND_MS) continue;

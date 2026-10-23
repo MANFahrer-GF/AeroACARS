@@ -288,3 +288,27 @@ test("METAR ohne Windangabe: Sicht, Wolken und Temperatur bleiben sichtbar (Code
   assert.equal(TASTEN.wetter_ziel.bild(s, 2).wert, "20°/15°");
   assert.equal(TASTEN.wetter_ziel.bild({ ...voll, status: { ...status, arr_metar_decoded: null } }, 0).unter, "kein METAR");
 });
+
+test("erzeugtes XL-Profil: Kacheln überall, Zurück als Elgato-Profilwechsel mit eigenem Bild", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const os = await import("node:os");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aa-profiltest-"));
+  try {
+    execFileSync("unzip", ["-q", path.resolve(import.meta.dirname, "../eu.german-sky-group.aeroacars.sdPlugin/profiles/AeroACARS XL.streamDeckProfile"), "-d", tmp]);
+    const seiten = [];
+    const suche = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, f.name); if (f.isDirectory()) suche(p); else if (f.name === "manifest.json" && p.includes("/Profiles/") && p.split("/Profiles/").length > 2) seiten.push(p); } };
+    suche(tmp);
+    const voll = seiten.map((p) => [p, JSON.parse(fs.readFileSync(p, "utf8"))]).find(([, m]) => Object.keys(m.Controllers[0].Actions ?? {}).length);
+    assert.ok(voll, "keine belegte Seite");
+    const [datei, m] = voll;
+    const tasten = m.Controllers[0].Actions;
+    assert.equal(Object.keys(tasten).length, 32);
+    const zurueck = tasten["0,3"];
+    assert.equal(zurueck.UUID, "com.elgato.streamdeck.profile.rotate");
+    assert.deepEqual(zurueck.Settings, { DeviceUUID: "", PageIndex: 0, ProfileUUID: "" });
+    assert.ok(fs.existsSync(path.join(path.dirname(datei), zurueck.States[0].Image)), "Bild der Zurück-Taste fehlt im Profil");
+    assert.equal(Object.values(tasten).filter((a) => a.UUID === uuid("kachel")).length, 31);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

@@ -109,7 +109,12 @@ test("fehlendes METAR lädt das Plugin selbst, höchstens alle 5 Minuten", async
   const { Zustand } = await import("../src/zustand.js");
   const http = await import("node:http");
   const anfragen = [];
-  const server = http.createServer((req, res) => { anfragen.push(req.url); res.end("{}"); });
+  const voll = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => { anfragen.push(req.url); voll.push([req.method, req.headers["x-aeroacars-deck"], req.headers.origin ?? null, body]); res.end("{}"); });
+  });
   await new Promise((ok, f) => server.once("error", f).listen(47847, "127.0.0.1", ok));
   try {
     const z = new Zustand();
@@ -120,6 +125,12 @@ test("fehlendes METAR lädt das Plugin selbst, höchstens alle 5 Minuten", async
     for (let i = 0; i < 50 && !anfragen.length; i++) await new Promise((ok) => setTimeout(ok, 50));
     await new Promise((ok) => setTimeout(ok, 300));
     assert.deepEqual(anfragen, ["/panel/cmd/metar_laden"]);
+    assert.deepEqual(voll[0], ["POST", "1", null, '{"ort":"ziel"}']);
+    // Neuer Flug innerhalb der 5 Minuten: Sperre gilt nicht mehr.
+    z.metarNachladen({ ...s, status: { ...s.status, pirep_id: "neu-2" } });
+    for (let i = 0; i < 50 && anfragen.length < 2; i++) await new Promise((ok) => setTimeout(ok, 50));
+    assert.equal(anfragen.length, 2);
+    anfragen.length = 1;
     // Ohne neue Befehlsroute (alter Client, kabine null): nichts.
     new Zustand().metarNachladen({ ...s, kabine: null });
     await new Promise((ok) => setTimeout(ok, 100));

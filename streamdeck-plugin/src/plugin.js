@@ -29,6 +29,7 @@ class Taste extends SingletonAction {
     this.manifestId = uuid(id);
     this.abos = new Map();
     this.letztes = new Map();
+    this.laufnummer = new Map();
   }
 
   onWillAppear(ev) {
@@ -53,8 +54,12 @@ class Taste extends SingletonAction {
     const schluessel = JSON.stringify(b);
     if (this.letztes.get(a.id) === schluessel) return;
     this.letztes.set(a.id, schluessel);
+    // Laufnummer: nur das zuletzt angeforderte Bild darf auf die Taste —
+    // ein langsamer älterer Render käme sonst danach an (Codex/Advisor 23.10.).
+    const nr = (this.laufnummer.get(a.id) ?? 0) + 1;
+    this.laufnummer.set(a.id, nr);
     malen(b)
-      .then((url) => a.setImage(url))
+      .then((url) => this.laufnummer.get(a.id) === nr && a.setImage(url))
       .catch((e) => streamDeck.logger.error(`Taste ${this.id}: ${e.stack ?? e}`));
   }
 

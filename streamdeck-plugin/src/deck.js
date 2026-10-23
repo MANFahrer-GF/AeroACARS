@@ -275,7 +275,10 @@ class Rad extends SingletonAction {
     const l = this.lageVon(a);
     const ansage = this.art === "ans";
     const befehlName = ansage ? "kabinen_lautstaerke" : "kabinen_musik_lautstaerke";
-    const basis = l.entwurf ?? (ansage ? k.lautstaerke_live : k.musik_live) ?? 0;
+    // Nach dem Speichern noch kurz vom eigenen Wert weiterrechnen: die
+    // Sekundenabfrage kann noch den Stand von vor dem Speichern tragen.
+    const eigener = l.zuletzt && Date.now() - l.zuletzt.zeit < 3000 ? l.zuletzt.wert : null;
+    const basis = l.entwurf ?? eigener ?? (ansage ? k.lautstaerke_live : k.musik_live) ?? 0;
     const wert = Math.min(1, Math.max(0, Math.round((basis + schritte * 0.02) * 100) / 100));
     l.entwurf = wert;
     this.zeigen(a, { wert });
@@ -286,7 +289,10 @@ class Rad extends SingletonAction {
       const letzter = l.entwurf;
       if (letzter == null) return;
       await ausfuehren(a, befehlName, { lautstaerke: letzter, speichern: true });
-      if (l.entwurf === letzter && !l.speicherUhr) l.entwurf = null;
+      if (l.entwurf === letzter && !l.speicherUhr) {
+        l.entwurf = null;
+        l.zuletzt = { wert: letzter, zeit: Date.now() };
+      }
     }, SPEICHERN_NACH_MS);
     await ausfuehren(a, befehlName, { lautstaerke: wert, speichern: false });
   }
