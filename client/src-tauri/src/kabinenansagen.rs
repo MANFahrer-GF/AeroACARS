@@ -711,6 +711,16 @@ pub(crate) fn service_gespielt(lauf: &Lauf) -> bool {
 /// sein (entfallen, stumm, abgebrochen, Fehler …)? Dann weiß der neue Planer
 /// sofort, dass „Ende des Service“ nicht kommt (Codex 23.10.2026: sonst zeigte
 /// die Seite es bis zum Sinkflug wieder an).
+/// Neustart: Ist der Service laut Verlauf vom Planer entfallen, weil die
+/// Zeit nicht reichte (nicht stumm, abgebrochen oder Ansagen aus)? Dann schlägt
+/// das auch eine Abwahl (Codex 23.10.2026).
+pub(crate) fn service_entfallen(lauf: &Lauf) -> bool {
+    !service_gespielt(lauf)
+        && lauf.verlauf.iter().any(|g| {
+            g.slot == Slot::Reiseflug25 && !g.vorschau && g.ergebnis.as_deref() == Some("entfallen") && g.grund.as_deref() == Some("zu_wenig_zeit")
+        })
+}
+
 pub(crate) fn service_ausgefallen(lauf: &Lauf) -> bool {
     !service_gespielt(lauf)
         && lauf.verlauf.iter().any(|g| g.slot == Slot::Reiseflug25 && !g.vorschau && g.ergebnis.as_deref().is_some_and(|e| e != "gespielt"))
@@ -7091,6 +7101,11 @@ mod rundumschlag_p1_tests {
         a.verlauf.push(eintrag("stumm", false));
         assert!(service_ausgefallen(&a));
         assert!(!service_ausgefallen(&Lauf::default()), "noch nichts gelaufen");
+        assert!(!service_entfallen(&a), "stumm ist nicht entfallen");
+        a.verlauf.push(Gespielt { grund: Some("ansagen_aus".into()), ..eintrag("entfallen", false) });
+        assert!(!service_entfallen(&a), "Ansagen aus schlägt die Abwahl nicht");
+        a.verlauf.push(Gespielt { grund: Some("zu_wenig_zeit".into()), ..eintrag("entfallen", false) });
+        assert!(service_entfallen(&a));
     }
 }
 

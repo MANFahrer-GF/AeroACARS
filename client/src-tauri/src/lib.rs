@@ -47935,6 +47935,9 @@ fn kabinen_schritt(
             planer.service_ende(true);
         } else if kabinenansagen::service_ausgefallen(&stats.kabinen_lauf) {
             planer.service_ende(false);
+            if kabinenansagen::service_entfallen(&stats.kabinen_lauf) {
+                planer.service_entfallen();
+            }
         }
         stats.kabinen_planer = Some(planer);
     }
