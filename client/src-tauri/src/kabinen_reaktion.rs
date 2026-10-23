@@ -96,12 +96,13 @@ fn jetzt_ms() -> u64 {
 }
 
 /// Ein Abtastschritt zum Ziel: aufwärts sofort (das Einblenden steckt in der
-/// Aufnahme), abwärts über [`AUSBLENDEN_S`].
-pub(crate) fn pegel_schritt(pegel: f32, ziel: f32, rate: f32) -> f32 {
+/// Aufnahme), abwärts über [`AUSBLENDEN_S`] — für den ganzen Weg von `voll`
+/// (eingestellter Pegel) bis 0, gleich wie laut gerade eingestellt ist.
+pub(crate) fn pegel_schritt(pegel: f32, ziel: f32, voll: f32, rate: f32) -> f32 {
     if ziel >= pegel {
         ziel
     } else {
-        (pegel - 1.0 / (rate * AUSBLENDEN_S)).max(ziel)
+        (pegel - voll.max(0.01) / (rate * AUSBLENDEN_S)).max(ziel)
     }
 }
 
@@ -138,7 +139,8 @@ mod wiedergabe {
             dev.build_output_stream(
                 cfg,
                 move |aus: &mut [T], _: &cpal::OutputCallbackInfo| {
-                    let ziel = if weg.load(Ordering::Relaxed) { 0.0 } else { crate::kabinenansagen::ausgabe::lautstaerke() * PEGEL };
+                    let voll = crate::kabinenansagen::ausgabe::lautstaerke() * PEGEL;
+                    let ziel = if weg.load(Ordering::Relaxed) { 0.0 } else { voll };
                     // Nie blockierend warten (Echtzeit-Faden): belegt → Block still.
                     let Ok(mut q) = puffer.try_lock() else {
                         for k in aus.iter_mut() {
@@ -147,7 +149,7 @@ mod wiedergabe {
                         return;
                     };
                     for rahmen in aus.chunks_mut(kanaele) {
-                        pegel = pegel_schritt(pegel, ziel, rate);
+                        pegel = pegel_schritt(pegel, ziel, voll, rate);
                         for k in rahmen {
                             let x = q.pop_front().unwrap_or(0.0);
                             *k = T::from_sample((x * pegel).clamp(-1.0, 1.0));
@@ -227,15 +229,20 @@ mod tests {
     fn ausblenden_dauert_zwei_sekunden_einblenden_steckt_in_der_aufnahme() {
         let rate = 1000.0;
         // Aufwärts sofort.
-        assert_eq!(pegel_schritt(0.0, 0.56, rate), 0.56);
-        // Abwärts: von 1,0 bis 0 genau AUSBLENDEN_S.
-        let mut p = 1.0;
-        let mut schritte = 0;
-        while p > 0.0 {
-            p = pegel_schritt(p, 0.0, rate);
-            schritte += 1;
+        assert_eq!(pegel_schritt(0.0, 0.56, 0.56, rate), 0.56);
+        // Abwärts: vom eingestellten Pegel bis 0 genau AUSBLENDEN_S — auch
+        // leise (der echte Test fand 1,15 s bei 0,56, als der Schritt auf 1,0
+        // gerechnet war).
+        for voll in [1.0f32, 0.56, 0.1] {
+            let mut p = voll;
+            let mut schritte = 0;
+            while p > 0.0 {
+                p = pegel_schritt(p, 0.0, voll, rate);
+                schritte += 1;
+            }
+            let soll = (rate * AUSBLENDEN_S) as i32;
+            assert!((schritte - soll).abs() <= 1, "{voll}: {schritte} statt {soll}");
         }
-        assert_eq!(schritte, (rate * AUSBLENDEN_S) as usize);
     }
 
     #[test]
@@ -251,6 +258,42 @@ mod tests {
         assert_eq!(namen("raunen-hart"), ["raunen-hart-2.mp3"]);
         assert!(namen("murmeln-zufrieden").is_empty());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Echt auf dem Ausgabegerät (nur von Hand, Windows/macOS):
+    /// `cargo test -p aeroacars-app echte_reaktion -- --ignored --nocapture`
+    /// Spielt eine Aufnahme ganz, dann eine zweite, in die nach 2 s eine
+    /// Ansage fällt — die muss ausblenden und mit „ansage“ enden.
+    #[test]
+    #[ignore]
+    fn echte_reaktion_spielen_und_der_ansage_weichen() {
+        let ordner = Path::new(env!("CARGO_MANIFEST_DIR")).join(ORDNER);
+        let kurz = aufnahmen(&ordner, "raunen-hart").remove(0);
+        let lang = aufnahmen(&ordner, "applaus-begeistert").remove(0);
+        let warte_ende = |max_s: f32| {
+            let t = std::time::Instant::now();
+            loop {
+                if let Some(g) = ende_abholen() {
+                    return (g, t.elapsed().as_secs_f32());
+                }
+                assert!(t.elapsed().as_secs_f32() < max_s, "kein Ende nach {max_s} s");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        let dauer = Dekoder::oeffnen(&kurz).unwrap().dauer_s().unwrap() as f32;
+        spielen(kurz, None);
+        let (g, s) = warte_ende(dauer + 3.0);
+        println!("ganz: {g} nach {s:.2} s (Aufnahme {dauer:.2} s)");
+        assert_eq!(g, "gespielt");
+        assert!((s - dauer).abs() < 1.5, "{s} vs {dauer}");
+
+        spielen(lang, None);
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let _ansage = crate::kabinen_musik::AnsageLaeuft::neu();
+        let (g, s) = warte_ende(5.0);
+        println!("Ansage: {g} nach {s:.2} s");
+        assert_eq!(g, "ansage");
+        assert!((1.5..=3.0).contains(&s), "Ausblenden {s} s");
     }
 
     /// Die mitgelieferten Aufnahmen: jede Art hat welche, und jede lässt sich
