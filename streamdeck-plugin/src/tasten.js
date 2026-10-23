@@ -410,7 +410,9 @@ export const TASTEN = {
     name: "VATSIM CDM",
     tip: "Öffnet das VATSIM-CDM-Fenster von AeroACARS oder holt es nach vorn.",
     icon: "win",
-    bild: (s) => (s.erreichbar ? { label: "VATSIM", icon: "win", wert: "CDM", unter: "öffnen", ton: "ctl", klein: true } : aus("VATSIM", "win")),
+    // Geht über dieselbe neue Befehlsroute wie die Kabine: ohne sie (Client
+    // vor dem StreamDeck-Release) ehrlich „Client zu alt“ statt blau „öffnen“.
+    bild: kabinenTaste("VATSIM", "win", () => ({ wert: "CDM", unter: "öffnen", klein: true })),
   },
 };
 

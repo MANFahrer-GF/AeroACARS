@@ -147,7 +147,8 @@ class BoardingMusikTaste extends Taste {
 }
 
 class CdmTaste extends Taste {
-  async druecken(a) {
+  async druecken(a, s) {
+    if (!s.kabine) return a.showAlert(); // Client ohne Befehlsroute
     await ausfuehren(a, "vdgs_fenster_oeffnen", {});
   }
 }

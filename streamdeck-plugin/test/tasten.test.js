@@ -75,6 +75,9 @@ test("ohne AeroACARS sind alle Tasten aus, ohne Flug die Flugtasten", () => {
 test("ein Client ohne Kabinen-Route zeigt das an statt zu raten", () => {
   const alt = { ...voll, kabine: null };
   assert.equal(TASTEN.kabine_stumm.bild(alt).unter, "Client zu alt");
+  // CDM nutzt dieselbe neue Befehlsroute (Feldbefund: blau „öffnen“, ging aber nicht).
+  assert.equal(TASTEN.cdm.bild(alt).unter, "Client zu alt");
+  assert.equal(TASTEN.cdm.bild(voll).ton, "ctl");
 });
 
 test("Beispielflug im Reiseflug", () => {
