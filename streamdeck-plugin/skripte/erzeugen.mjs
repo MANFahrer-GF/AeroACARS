@@ -30,9 +30,9 @@ for (const [id, t] of Object.entries(TASTEN)) {
   schreiben(`${ORDNER}/imgs/actions/${id}.svg`, listenIconSvg(t.icon));
   // Standardbild (bevor das Plugin zeichnet) im neuen Stil, als PNG mit B612.
   fs.rmSync(`${ORDNER}/imgs/actions/${id}_taste.svg`, { force: true });
-  {
-    const bild = rastern(einzelSvg(t.bild(ruhe)));
-    schreiben(`${ORDNER}/imgs/actions/${id}_taste.png`, pngAusschnitt(bild, 0, 0, bild.breite, bild.hoehe));
+  for (const [name, breite] of [["", 72], ["@2x", 144]]) {
+    const bild = rastern(einzelSvg(t.bild(ruhe)), breite);
+    schreiben(`${ORDNER}/imgs/actions/${id}_taste${name}.png`, pngAusschnitt(bild, 0, 0, bild.breite, bild.hoehe));
   }
 }
 for (const [id, r] of Object.entries(REGLER)) schreiben(`${ORDNER}/imgs/actions/${id}.svg`, listenIconSvg(r.icon));

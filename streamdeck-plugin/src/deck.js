@@ -134,7 +134,7 @@ async function tun(was, aktion) {
     case "ans_lauter": return ausfuehren(aktion, "kabinen_lautstaerke", (j) => j && { lautstaerke: schritt(j.lautstaerke_gespeichert, +1), speichern: true });
     case "mus_leiser": return ausfuehren(aktion, "kabinen_musik_lautstaerke", (j) => j && { lautstaerke: schritt(j.musik_gespeichert, -1), speichern: true });
     case "mus_lauter": return ausfuehren(aktion, "kabinen_musik_lautstaerke", (j) => j && { lautstaerke: schritt(j.musik_gespeichert, +1), speichern: true });
-    case "ans_aus": return ausfuehren(aktion, "kabinen_stumm", { stumm: true }).then(() => aktion.showOk());
+    case "ans_aus": return ausfuehren(aktion, "kabinen_stumm", { stumm: true }).then(() => aktion.showOk?.()); // Rad hat kein showOk
     case "ans_an": return ausfuehren(aktion, "kabinen_stumm", { stumm: false });
     case "mus_stumm":
     case "musik_stumm":
@@ -146,7 +146,7 @@ async function tun(was, aktion) {
       // An der Befehlskette vorbei: der Abruf geht übers Internet und darf
       // Lautstärke-Drücke nicht aufhalten. Haken bei Erfolg, Dreieck nur bei echtem Fehler.
       return befehl("metar_laden", { ort: was === "metar_ziel" ? "ziel" : "start" })
-        .then(() => aktion.showOk())
+        .then(() => aktion.showOk?.())
         .catch((e) => {
           streamDeck.logger.warn(`metar_laden fehlgeschlagen: ${e.message}`);
           return aktion.showAlert();
@@ -297,13 +297,14 @@ class Rad extends SingletonAction {
     l.gehalten = false;
     l.warStumm = !!zustand.s.kabine?.stumm;
     clearTimeout(l.halteUhr);
-    // Ansagen: halten = stumm (nur wenn noch nicht stumm). Musik: halten = Boarding-Musik an/aus.
-    const halten = this.art === "ans" ? (l.warStumm ? null : "ans_aus") : this.art === "mus" ? "boarding" : null;
+    // Musik: halten = Boarding-Musik an/aus. Ansagen: kein Halten — am Rad
+    // schaltet ein kurzer Druck stumm/an (Thomas 23.10.: Halten am Plus ging
+    // „nicht so richtig“; das Rad wird nicht versehentlich gedrückt wie eine Taste).
+    const halten = this.art === "mus" ? "boarding" : null;
     if (halten) {
       l.halteUhr = setTimeout(() => {
         l.gehalten = true;
-        tun(halten, a);
-        this.zeigen(a);
+        Promise.resolve(tun(halten, a)).then(() => this.zeigen(a));
       }, HALTEN_MS);
     }
   }
@@ -314,7 +315,7 @@ class Rad extends SingletonAction {
     clearTimeout(l.halteUhr);
     if (l.gehalten) return;
     const g = geraetVon(a);
-    if (this.art === "ans" && l.warStumm) await tun("ans_an", a);
+    if (this.art === "ans") await tun(l.warStumm ? "ans_an" : "ans_aus", a);
     else if (this.art === "mus") await tun("mus_stumm", a);
     else if (this.art === "wetter") await tun(g.wetterSeite === 1 ? "metar_ziel" : "metar_start", a);
     else if (this.art === "info") await tun(INFO_LANG[INFO_RAD[g.infoSeite]] ?? "cockpit", a);

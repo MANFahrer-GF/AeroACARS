@@ -22,8 +22,8 @@ export function vorbereiten(ordner) {
 }
 
 /** SVG → RGBA-Pixel. */
-export function rastern(svg) {
-  const bild = new Resvg(svg, { font: { fontBuffers: schriften, defaultFontFamily: "B612", loadSystemFonts: false } }).render();
+export function rastern(svg, breite) {
+  const bild = new Resvg(svg, { font: { fontBuffers: schriften, defaultFontFamily: "B612", loadSystemFonts: false }, fitTo: breite ? { mode: "width", value: breite } : undefined }).render();
   return { breite: bild.width, hoehe: bild.height, pixel: bild.pixels };
 }
 
