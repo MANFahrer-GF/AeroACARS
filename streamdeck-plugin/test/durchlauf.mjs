@@ -63,5 +63,5 @@ console.log(`erste Kachel: ${probe ? `${probe.readUInt32BE(16)}x${probe.readUInt
 console.log("Befehle:", JSON.stringify(befehle));
 if (pngs[0]) fs.writeFileSync(process.argv[2] ?? "/dev/null", probe);
 const ok = pngs.length === 32 && verschieden > 20 && feedback > 0 && befehle.some(([u, k, o]) => u === "/panel/cmd/kabinen_lautstaerke" && k === "1" && o === null);
-if (!ok) console.log("LOG:\n" + log.slice(-3000));
+if (!ok || process.env.LOG) console.log("LOG:\n" + log.slice(-3000));
 process.exit(ok ? 0 : 1);
