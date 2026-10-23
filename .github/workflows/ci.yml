@@ -75,9 +75,14 @@ jobs:
       # Ohne Recommends (= frueheres --no-install-recommends in ci.yml). Muss in
       # ci.yml und release.yml gleich sein: gleiche Paketliste + gleiche
       # `version` = gleicher Cache-Key, und der Release-Tag liest den Cache,
-      # den ci.yml auf main gespeichert hat.
-      - name: apt ohne Recommends
-        run: echo 'APT::Install-Recommends "false";' | sudo tee /etc/apt/apt.conf.d/99-no-recommends
+      # den ci.yml auf main gespeichert hat. `apt-get update` (7 s, nicht der
+      # langsame Teil) macht die Action selbst nicht: ohne frische Listen
+      # liefe ein Cache-Miss auf veraltete Versionen und 404.
+      - name: apt vorbereiten (Listen aktualisieren, ohne Recommends)
+        timeout-minutes: 3
+        run: |
+          echo 'APT::Install-Recommends "false";' | sudo tee /etc/apt/apt.conf.d/99-no-recommends
+          sudo apt-get update
 
       # Pakete aus dem Actions-Cache statt vom Ubuntu-Mirror: azure.archive.
       # ubuntu.com lieferte in Lauf 39844274945 (v2.1.8) nur 29.8 kB/s, der
