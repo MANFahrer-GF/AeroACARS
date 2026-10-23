@@ -648,7 +648,10 @@ export const INFO_RAD = ["hoehe", "gs", "wind", "eta", "sprit", "luft"];
 export function streifen(s, t = 0, dreh = null) {
   const st = s.erreichbar ? s.status : null;
   const kopf = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="100" viewBox="0 0 800 100"><defs>${LEUCHTEN}<clipPath id="ls"><rect x="110" y="66" width="580" height="34"/></clipPath></defs><rect width="800" height="100" fill="${FARBE.grund}"/>`;
-  if (dreh) return kopf + radAnzeige(s, st, dreh) + "</svg>";
+  // Beim Drehen gehört nur das Feld über dem gedrehten Rad dem Regler; die
+  // anderen drei zeigen weiter das Band (Feldbefund 23.10.: die Anzeige lag
+  // immer links — beim Musik-Rad erschien „MUSIK“ über dem Ansagen-Rad).
+  const feld = dreh ? radFeld(s, st, dreh) : "";
   const p = fortschritt(st, s.jetzt);
   const x0 = 120, x1 = 680, ly = 44;
   const px = x0 + (x1 - x0) * p;
@@ -663,53 +666,53 @@ ${text(784, 44, st?.arr_airport ?? "----", { groesse: 34, fett: true, farbe: FAR
 <line x1="${x0}" y1="${ly}" x2="${x1}" y2="${ly}" stroke="${FARBE.magenta}" stroke-width="3" stroke-dasharray="12 9"/>
 <line x1="${x0}" y1="${ly}" x2="${px}" y2="${ly}" stroke="${FARBE.gruen}" stroke-width="4" stroke-linecap="round"/>
 ${flugzeug(px, ly, 30, FARBE.text)}
-<g clip-path="url(#ls)">${text(690 - v, 90, lauf, { groesse: 18, fett: true, farbe: FARBE.amber, abstand: 1 })}${text(690 - v + textBreite, 90, lauf, { groesse: 18, fett: true, farbe: FARBE.amber, abstand: 1 })}</g></svg>`;
+<g clip-path="url(#ls)">${text(690 - v, 90, lauf, { groesse: 18, fett: true, farbe: FARBE.amber, abstand: 1 })}${text(690 - v + textBreite, 90, lauf, { groesse: 18, fett: true, farbe: FARBE.amber, abstand: 1 })}</g>${feld}</svg>`;
 }
 
-/** Ganzer Streifen für das gedrehte Rad: große Skala bzw. großer Wert. */
-function radAnzeige(s, st, dreh) {
+/** Das Feld (200 × 100) über dem gedrehten Rad, über das Band gelegt. */
+export function radFeld(s, st, dreh) {
+  const x = Math.min(3, Math.max(0, dreh.spalte ?? 0)) * 200;
   const k = s.kabine;
-  // Kleine Markierung über dem Rad, das gerade dran ist.
-  const rad = dreh.spalte ?? { ans: 0, mus: 1, info: 2, wetter: 3 }[dreh.rad] ?? 0;
-  const marker = `<rect x="${rad * 200 + 70}" y="0" width="60" height="4" rx="2" fill="${FARBE.cyan}"/>`;
+  const B = 168; // nutzbare Breite im Feld
+  const kopf = `<rect x="${x}" y="0" width="200" height="100" fill="${FARBE.grund}"/><rect x="${x + 4}" y="4" width="192" height="92" rx="12" fill="${FARBE.flaeche}" stroke="${FARBE.cyan}" stroke-opacity="0.5" stroke-width="2"/>`;
   if (dreh.rad === "ans" || dreh.rad === "mus") {
     const ansage = dreh.rad === "ans";
     const pegel = !k ? 0 : (dreh.wert ?? (ansage ? k.lautstaerke_live : k.musik_live));
-    const stumm = !!k && (ansage ? k.stumm : k.musik_live <= 0.001 && k.musik_gespeichert > 0.001 && dreh.wert == null);
+    const stumm = !!k && (ansage ? k.stumm : dreh.wert == null && k.musik_live <= 0.001 && k.musik_gespeichert > 0.001);
     const farbe = !k ? FARBE.leise : stumm ? (ansage ? FARBE.rot : FARBE.amber) : FARBE.cyan;
-    const striche = Array.from({ length: 11 }, (_, i) => `<rect x="${200 + i * 52}" y="${i % 5 === 0 ? 58 : 64}" width="3" height="${i % 5 === 0 ? 22 : 12}" fill="${FARBE.leise}" opacity="0.6"/>`).join("");
-    return marker + (ansage ? lautsprecher(52, 50, 46, farbe, stumm) : note(52, 50, 42, farbe)) +
-      text(96, 38, ansage ? "ANSAGEN" : "MUSIK", { groesse: 15, fett: true, farbe: FARBE.leise, abstand: 1.5 }) +
-      text(96, 80, !k ? "–" : stumm ? "STUMM" : `${Math.round(pegel * 100)} %`, { groesse: 34, fett: true, farbe }) +
-      `<rect x="200" y="36" width="523" height="14" rx="7" fill="#ffffff" opacity="0.10"/>` +
-      `<rect x="200" y="36" width="${Math.round(523 * (stumm ? 0 : pegel))}" height="14" rx="7" fill="${farbe}"/>` + striche +
-      text(784, 94, ansage ? "drücken: stumm" : "drücken: stumm · halten: an/aus", { groesse: 12, farbe: FARBE.leise, anker: "end" });
+    return kopf + (ansage ? lautsprecher(x + 30, 34, 30, farbe, stumm) : note(x + 30, 34, 28, farbe)) +
+      text(x + 54, 30, ansage ? "ANSAGEN" : "MUSIK", { groesse: 14, fett: true, farbe: FARBE.leise, abstand: 1.5, max: 130 }) +
+      text(x + 54, 58, !k ? "–" : stumm ? "STUMM" : `${Math.round(pegel * 100)} %`, { groesse: 24, fett: true, farbe, max: 130 }) +
+      `<rect x="${x + 16}" y="72" width="${B}" height="10" rx="5" fill="#ffffff" opacity="0.12"/><rect x="${x + 16}" y="72" width="${Math.round(B * (stumm ? 0 : pegel))}" height="10" rx="5" fill="${farbe}"/>`;
   }
   if (dreh.rad === "info") {
-    const art = INFO_RAD[(dreh.seite ?? 0) % INFO_RAD.length];
-    const live = st?.live ?? {};
-    const werte = {
-      hoehe: ["HÖHE", hoehe(zahl(live.altitude_pressure_ft) ?? zahl(live.altitude_msl_ft)), `V/S ${zahl(live.vertical_speed_fpm) == null ? "–" : Math.round(live.vertical_speed_fpm / 10) * 10} ft/min`],
-      gs: ["GESCHWINDIGKEIT", `${zahl(live.gs_kt) == null ? "–" : Math.round(live.gs_kt)} KT`, `IAS ${zahl(live.ias_kt) == null ? "–" : Math.round(live.ias_kt)} kt`],
-      wind: ["WIND", `${zahl(live.wind_dir_deg) == null ? "–" : String(Math.round(live.wind_dir_deg)).padStart(3, "0")}° / ${zahl(live.wind_speed_kt) == null ? "–" : Math.round(live.wind_speed_kt)} KT`, "am Flugzeug"],
-      eta: ["ETA", zahl(live.ete_min) == null ? "--:--" : `${uhrZ(s.jetzt + live.ete_min * 60000)}Z`, zahl(live.ete_min) == null ? "" : `noch ${Math.floor(live.ete_min / 60)}:${zwei(Math.round(live.ete_min % 60))}`],
-      sprit: ["SPRIT", `${tonnen(zahl(st?.sim_fuel_kg ?? live.fuel_total_kg))} T`, `Reserve ${tonnen(zahl(st?.planned_reserve_kg))} t · Block ${tonnen(zahl(st?.planned_block_fuel_kg))} t`],
-      luft: ["IN DER LUFT", dauer(iso(st?.takeoff_at), iso(st?.landing_at) ?? s.jetzt), st?.takeoff_at ? `abgehoben ${uhrZ(iso(st.takeoff_at))}Z` : ""],
-    }[art];
-    const punkte = INFO_RAD.map((_, i) => `<circle cx="${700 + i * 14}" cy="22" r="4" fill="${i === (dreh.seite ?? 0) % INFO_RAD.length ? FARBE.cyan : "#ffffff"}" opacity="${i === (dreh.seite ?? 0) % INFO_RAD.length ? 1 : 0.3}"/>`).join("");
-    return marker + punkte + text(24, 34, werte[0], { groesse: 15, fett: true, farbe: FARBE.leise, abstand: 1.5 }) +
-      text(24, 84, werte[1], { groesse: 44, fett: true, farbe: FARBE.gruen }) + text(784, 84, werte[2], { groesse: 18, farbe: FARBE.leise, anker: "end" });
+    const seite = (((dreh.seite ?? 0) % INFO_RAD.length) + INFO_RAD.length) % INFO_RAD.length;
+    const [m1, wert, unter] = radInfo(INFO_RAD[seite], st, s);
+    const punkte = INFO_RAD.map((_, i) => `<circle cx="${x + 184 - (INFO_RAD.length - 1 - i) * 10}" cy="20" r="3" fill="${i === seite ? FARBE.cyan : "#ffffff"}" opacity="${i === seite ? 1 : 0.3}"/>`).join("");
+    return kopf + punkte + text(x + 16, 26, m1, { groesse: 13, fett: true, farbe: FARBE.leise, abstand: 1.5, max: 100 }) +
+      text(x + 16, 62, wert, { groesse: 30, fett: true, farbe: FARBE.gruen, max: B }) + text(x + 16, 86, unter, { groesse: 14, farbe: FARBE.leise, max: B });
   }
-  // Wetter: Start oder Ziel
-  const ziel = (dreh.seite ?? 1) % 2 === 1;
+  const ziel = (((dreh.seite ?? 1) % 2) + 2) % 2 === 1;
   const m = ziel ? st?.arr_metar_decoded : st?.dep_metar_decoded;
   const icao = ziel ? st?.arr_airport : st?.dpt_airport;
-  if (!m) return marker + text(24, 34, `WETTER ${ziel ? "ZIEL" : "START"} ${icao ?? ""}`, { groesse: 15, fett: true, farbe: FARBE.leise, abstand: 1.5 }) + text(24, 80, "kein METAR", { groesse: 30, fett: true, farbe: FARBE.leise }) + text(784, 80, "drücken: laden", { groesse: 18, fett: true, farbe: FARBE.cyan, anker: "end" });
+  const kopfText = text(x + 16, 26, `WETTER ${ziel ? "ZIEL" : "START"} ${m?.icao ?? icao ?? ""}`, { groesse: 13, fett: true, farbe: FARBE.leise, abstand: 1.5, max: B });
+  if (!m) return kopf + kopfText + text(x + 16, 62, "kein METAR", { groesse: 22, fett: true, farbe: FARBE.leise, max: B }) + text(x + 16, 86, "drücken: laden", { groesse: 14, farbe: FARBE.cyan, max: B });
   const dir = zahl(m.wind_direction_deg), kt = zahl(m.wind_speed_kt);
-  return marker + text(24, 34, `WETTER ${ziel ? "ZIEL" : "START"} ${m.icao ?? icao ?? ""}`, { groesse: 15, fett: true, farbe: FARBE.leise, abstand: 1.5 }) +
-    (dir != null && kt > 0 ? pfeil(60, 66, 40, dir + 180, FARBE.cyan, 4) : "") +
-    text(100, 80, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : String(Math.round(kt)).padStart(2, "0")}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`, { groesse: 34, fett: true }) +
-    text(400, 80, `Q${Math.round(m.qnh_hpa ?? 0)}`, { groesse: 34, fett: true, farbe: FARBE.cyan }) +
-    text(784, 62, m.visibility_m >= 9999 ? "10 km+" : m.visibility_m != null ? `${Math.round(m.visibility_m / 100) / 10} km` : "", { groesse: 18, anker: "end" }) +
-    text(784, 88, (m.cloud_layers ?? [])[0] ? `${m.cloud_layers[0].cover} ${m.cloud_layers[0].base_ft ?? ""}` : "", { groesse: 16, farbe: FARBE.leise, anker: "end" });
+  return kopf + kopfText +
+    text(x + 16, 62, `${dir == null ? "VRB" : String(Math.round(dir)).padStart(3, "0")}/${kt == null ? "–" : String(Math.round(kt)).padStart(2, "0")}${m.gust_kt ? `G${Math.round(m.gust_kt)}` : ""}`, { groesse: 26, fett: true, max: 112 }) +
+    text(x + 184, 62, `Q${Math.round(m.qnh_hpa ?? 0)}`, { groesse: 18, fett: true, farbe: FARBE.cyan, anker: "end", max: 52 }) +
+    text(x + 16, 86, m.visibility_m >= 9999 ? "10 km+" : m.visibility_m != null ? `${Math.round(m.visibility_m / 100) / 10} km` : "", { groesse: 14, farbe: FARBE.leise, max: B });
+}
+
+/** Werte der Seiten von Rad 3: [Marke, Wert, Unterzeile]. */
+function radInfo(art, st, s) {
+  const live = st?.live ?? {};
+  return {
+    hoehe: ["HÖHE", hoehe(zahl(live.altitude_pressure_ft) ?? zahl(live.altitude_msl_ft)), `V/S ${zahl(live.vertical_speed_fpm) == null ? "–" : Math.round(live.vertical_speed_fpm / 10) * 10} ft/min`],
+    gs: ["GS", `${zahl(live.gs_kt) == null ? "–" : Math.round(live.gs_kt)} kt`, `IAS ${zahl(live.ias_kt) == null ? "–" : Math.round(live.ias_kt)} kt`],
+    wind: ["WIND", `${zahl(live.wind_dir_deg) == null ? "–" : String(Math.round(live.wind_dir_deg)).padStart(3, "0")}/${zahl(live.wind_speed_kt) == null ? "–" : Math.round(live.wind_speed_kt)}`, "am Flugzeug"],
+    eta: ["ETA", zahl(live.ete_min) == null ? "--:--" : `${uhrZ(s.jetzt + live.ete_min * 60000)}Z`, zahl(live.ete_min) == null ? "" : `noch ${Math.floor(live.ete_min / 60)}:${zwei(Math.round(live.ete_min % 60))}`],
+    sprit: ["SPRIT", `${tonnen(zahl(st?.sim_fuel_kg ?? live.fuel_total_kg))} t`, `Reserve ${tonnen(zahl(st?.planned_reserve_kg))} t`],
+    luft: ["IN DER LUFT", dauer(iso(st?.takeoff_at), iso(st?.landing_at) ?? s.jetzt), st?.takeoff_at ? `ab ${uhrZ(iso(st.takeoff_at))}Z` : ""],
+  }[art];
 }
