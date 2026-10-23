@@ -47933,6 +47933,8 @@ fn kabinen_schritt(
         planer.schon_gespielt(kabinenansagen::erledigte_slots(&stats.kabinen_lauf));
         if kabinenansagen::service_gespielt(&stats.kabinen_lauf) {
             planer.service_ende(true);
+        } else if kabinenansagen::service_ausgefallen(&stats.kabinen_lauf) {
+            planer.service_ende(false);
         }
         stats.kabinen_planer = Some(planer);
     }

@@ -334,6 +334,9 @@ pub struct Planer {
     kapitaen_sinkflug: KapitaenSinkflug,
     /// Lief der Service? Daran hängt „Ende des Service“.
     service: Service,
+    /// Der Planer hat den Service entfallen lassen (z. B. zu wenig Zeit): Dann
+    /// gibt auch eine Abwahl das Ende nicht frei (Codex 23.10.2026).
+    service_entfallen: bool,
     /// Nicht gemeldete Ansagen mit Grund, bis der Host sie abholt.
     entfallen: Vec<(Slot, Entfall)>,
     /// Wiedereinstieg im Reiseflug: Was beim ersten Reiseflug-Takt schon
@@ -524,12 +527,12 @@ impl Planer {
     /// nach einem Neustart und wenn sie erst kommt, als der Service schon in
     /// der Schlange stand (Codex 23.10.2026).
     fn service_gelaufen(&self) -> bool {
-        self.service == Service::Gespielt || self.abgewaehlt.contains(&Slot::Reiseflug25)
+        self.service == Service::Gespielt || (self.abgewaehlt.contains(&Slot::Reiseflug25) && !self.service_entfallen)
     }
 
     /// Kommt „Ende des Service“ sicher nicht mehr (Service ausgefallen)?
     fn service_ausgefallen(&self) -> bool {
-        self.service == Service::KommtNicht && !self.service_gelaufen()
+        (self.service == Service::KommtNicht || self.service_entfallen) && !self.service_gelaufen()
     }
 
     fn entfaellt(&mut self, slot: Slot, grund: Entfall) {
@@ -538,8 +541,11 @@ impl Planer {
             self.entfallen.push((slot, grund));
             // Entfällt der Service (z. B. zu wenig Zeit), ist er ausgefallen
             // (Codex 23.10.2026: sonst zeigte die Seite das Ende weiter an).
-            if slot == Slot::Reiseflug25 && self.service == Service::Offen {
-                self.service = Service::KommtNicht;
+            if slot == Slot::Reiseflug25 {
+                self.service_entfallen = true;
+                if self.service == Service::Offen {
+                    self.service = Service::KommtNicht;
+                }
             }
         }
     }
@@ -2899,6 +2905,13 @@ mod tests {
         assert_eq!(kurz.zeitpunkt(Slot::EndeService, None), None);
         assert!(!ende(&mut kurz, bis, Descent));
         assert!(uebersprungen(&mut kurz));
+        // Codex: abgewählt, aber zu wenig Zeit für einen Service → kein Ende.
+        let mut ab_kurz = Planer::fortsetzen(f.clone(), Cruise);
+        ab_kurz.abwaehlen([Slot::Reiseflug25]);
+        ab_kurz.entfaellt(Slot::Reiseflug25, Entfall::ZuWenigZeit);
+        assert!(!ab_kurz.kommt_noch(Slot::EndeService, Cruise), "abgewählt + entfallen: kein Ende");
+        assert!(!ende(&mut ab_kurz, bis, Descent));
+        assert!(uebersprungen(&mut ab_kurz));
         // Codex: Abwahl erst, als der Service schon in der Schlange stand —
         // zählt trotzdem als gelaufen (2.1.1 C), auch wenn er danach abbricht.
         let mut spaet = mit_service();

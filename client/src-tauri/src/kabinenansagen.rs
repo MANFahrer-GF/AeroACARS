@@ -707,6 +707,15 @@ pub(crate) fn service_gespielt(lauf: &Lauf) -> bool {
     lauf.verlauf.iter().any(|g| g.slot == Slot::Reiseflug25 && !g.vorschau && g.ergebnis.as_deref() == Some("gespielt"))
 }
 
+/// Neustart: Lief der Service laut Verlauf schon zu Ende, ohne gespielt zu
+/// sein (entfallen, stumm, abgebrochen, Fehler …)? Dann weiß der neue Planer
+/// sofort, dass „Ende des Service“ nicht kommt (Codex 23.10.2026: sonst zeigte
+/// die Seite es bis zum Sinkflug wieder an).
+pub(crate) fn service_ausgefallen(lauf: &Lauf) -> bool {
+    !service_gespielt(lauf)
+        && lauf.verlauf.iter().any(|g| g.slot == Slot::Reiseflug25 && !g.vorschau && g.ergebnis.as_deref().is_some_and(|e| e != "gespielt"))
+}
+
 /// Wartet Reiseflug 80 als zweiter Service, obwohl weniger als
 /// [`cabin_announcements::planer::ZWEITER_SERVICE_REST_MIN`] Restflug bleiben?
 fn zweiter_service_zu_spaet(lauf: &Lauf, rest_min: Option<f64>) -> bool {
@@ -7075,6 +7084,13 @@ mod rundumschlag_p1_tests {
         assert!(!service_gespielt(&l), "entfallen oder Vorhören zählt nicht");
         l.verlauf.push(eintrag("gespielt", false));
         assert!(service_gespielt(&l));
+        assert!(!service_ausgefallen(&l), "gespielt geht vor");
+        let mut a = Lauf::default();
+        a.verlauf.push(eintrag("gespielt", true));
+        assert!(!service_ausgefallen(&a), "nur Vorhören: nichts bekannt");
+        a.verlauf.push(eintrag("stumm", false));
+        assert!(service_ausgefallen(&a));
+        assert!(!service_ausgefallen(&Lauf::default()), "noch nichts gelaufen");
     }
 }
 
