@@ -532,7 +532,7 @@
 				"Encoder"
 			],
 			"Encoder": {
-				"layout": "$B1",
+				"layout": "layouts/regler.json",
 				"TriggerDescription": {
 					"Rotate": "Lautstärke",
 					"Push": "Halten = stumm, kurz = Ton an"
@@ -555,7 +555,7 @@
 				"Encoder"
 			],
 			"Encoder": {
-				"layout": "$B1",
+				"layout": "layouts/regler.json",
 				"TriggerDescription": {
 					"Rotate": "Lautstärke",
 					"Push": "Kurz = stumm/laut, halten = an/aus"
@@ -578,7 +578,7 @@
 				"Encoder"
 			],
 			"Encoder": {
-				"layout": "$B1",
+				"layout": "layouts/regler.json",
 				"TriggerDescription": {
 					"Rotate": "Seite wechseln"
 				}
@@ -600,7 +600,7 @@
 				"Encoder"
 			],
 			"Encoder": {
-				"layout": "$B1",
+				"layout": "layouts/regler.json",
 				"TriggerDescription": {
 					"Rotate": "Seite wechseln"
 				}

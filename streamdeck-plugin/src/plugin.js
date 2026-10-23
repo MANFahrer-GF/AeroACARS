@@ -5,7 +5,7 @@
 import streamDeck, { SingletonAction } from "@elgato/streamdeck";
 import { befehl } from "./aeroacars.js";
 import { TASTEN, INFO_SEITEN, WETTER_SEITEN, musikStumm, schritt } from "./tasten.js";
-import { tasteSvg, alsDatenUrl, icon } from "./bild.js";
+import { tasteSvg, reglerSvg, alsDatenUrl, alsBase64 } from "./bild.js";
 import { Zustand } from "./zustand.js";
 import { uuid } from "./belegung.js";
 
@@ -154,7 +154,6 @@ class CdmTaste extends Taste {
 
 // ---- Drehregler (StreamDeck +) --------------------------------------------
 
-const pixmap = (name, farbe) => `data:image/svg+xml;base64,${Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">${icon(name, 6, 6, 36, farbe)}</svg>`).toString("base64")}`;
 
 /** Lautstärke-Regler: drehen = live ändern, kurz danach speichern. */
 class PegelRegler extends Taste {
@@ -180,17 +179,24 @@ class PegelRegler extends Taste {
     if (!a.isDial?.()) return;
     const k = s.kabine;
     const wert = this.lageVon(a).entwurf ?? (k ? k[this.live] : null);
-    const stumm = k && (this.id === "regler_ansage" ? k.stumm : musikStumm(k));
-    const text = !s.erreichbar ? "aus" : !k ? "–" : stumm ? "stumm" : `${Math.round((wert ?? 0) * 100)} %`;
-    const fb = JSON.stringify([text, wert, stumm]);
-    if (this.letztes.get(a.id) === fb) return;
-    this.letztes.set(a.id, fb);
-    a.setFeedback({
-      title: this.titel,
-      icon: pixmap(stumm ? (this.id === "regler_ansage" ? "mute" : "musicOff") : this.symbol, stumm ? "#ff8a7a" : "#8fbaff"),
-      value: text,
-      indicator: { value: Math.round((wert ?? 0) * 100) },
-    });
+    const ansage = this.id === "regler_ansage";
+    const stumm = !!k && (ansage ? k.stumm : musikStumm(k));
+    const kopf = { label: this.titel, icon: this.symbol };
+    const b = !s.erreichbar
+      ? { ...kopf, wert: "aus", unter: "AeroACARS", ton: "aus" }
+      : !k
+        ? { ...kopf, wert: "–", unter: "Client zu alt", ton: "aus" }
+        : stumm
+          ? { ...kopf, icon: ansage ? "mute" : "musicOff", wert: "stumm", unter: ansage ? "kurz drücken = Ton an" : "drücken = laut", ton: ansage ? "crit" : "warn" }
+          : { ...kopf, wert: `${Math.round((wert ?? 0) * 100)} %`, balken: wert ?? 0, ton: "ctl" };
+    this.feld(a, b);
+  }
+
+  feld(a, b) {
+    const bild = alsBase64(reglerSvg(b));
+    if (this.letztes.get(a.id) === bild) return;
+    this.letztes.set(a.id, bild);
+    a.setFeedback({ bild });
   }
 
   async onDialRotate(ev) {
@@ -239,16 +245,12 @@ class BlaetterRegler extends Taste {
 
   zeichnen(a, s) {
     if (!a.isDial?.()) return;
-    const b = TASTEN[this.seiten[this.seiten_.get(a.id) ?? 0]].bild(s);
-    const fb = JSON.stringify([b.label, b.wert, b.unter]);
-    if (this.letztes.get(a.id) === fb) return;
-    this.letztes.set(a.id, fb);
-    a.setFeedback({
-      title: `${this.titel} · ${b.label}`,
-      icon: pixmap(b.icon, "#8fbaff"),
-      value: `${b.wert ?? ""} ${b.unter ?? ""}`.trim(),
-      indicator: { enabled: false },
-    });
+    const seite = this.seiten_.get(a.id) ?? 0;
+    const b = TASTEN[this.seiten[seite]].bild(s);
+    const bild = alsBase64(reglerSvg({ ...b, label: `${this.titel} ${seite + 1}/${this.seiten.length} · ${b.label}`, stufen: undefined }));
+    if (this.letztes.get(a.id) === bild) return;
+    this.letztes.set(a.id, bild);
+    a.setFeedback({ bild });
   }
 
   onDialRotate(ev) {

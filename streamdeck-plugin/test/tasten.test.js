@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { TASTEN, INFO_SEITEN, WETTER_SEITEN, hinweis, musikStumm, schritt, dauer, hoehe, wind, flughoehe } from "../src/tasten.js";
 import { REGLER, PROFILE, uuid } from "../src/belegung.js";
-import { tasteSvg, passend } from "../src/bild.js";
+import { tasteSvg, reglerSvg, passend } from "../src/bild.js";
 
 // Feldnamen wie ActiveFlightInfo (lib.rs) sie serialisiert.
 const status = {
@@ -217,4 +217,14 @@ test("lange Texte werden kleiner statt aus der Taste zu laufen (Feldbefund Windo
   }
   const svg = tasteSvg({ label: "Phase", wert: "Reiseflug", unter: "FL380", ton: "ok", icon: "plane" });
   assert.match(svg, /font-size="2\d"[^>]*>Reiseflug</);
+});
+
+test("Regler-Feld am StreamDeck +: eigenes Bild statt $B1, Werte passen hinein", () => {
+  const svg = reglerSvg({ label: "Wetter 2/3 · YBBN", icon: "wind", wert: "160/12G22", unter: "Q1013" });
+  assert.match(svg, /^<svg [^>]*width="200" height="100"/);
+  assert.ok(!svg.includes("…"));
+  const manifest = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../eu.german-sky-group.aeroacars.sdPlugin/manifest.json"), "utf8"));
+  for (const a of manifest.Actions.filter((x) => x.Controllers.includes("Encoder"))) assert.equal(a.Encoder.layout, "layouts/regler.json");
+  const layout = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../eu.german-sky-group.aeroacars.sdPlugin/layouts/regler.json"), "utf8"));
+  assert.deepEqual(layout.items, [{ key: "bild", type: "pixmap", rect: [0, 0, 200, 100] }]);
 });

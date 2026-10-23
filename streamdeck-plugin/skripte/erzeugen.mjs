@@ -40,6 +40,10 @@ if (process.platform === "darwin") {
 }
 fs.rmSync(symbolDatei);
 
+// Eigenes Regler-Layout: ein Bild über das ganze Feld (200 × 100), gezeichnet
+// von bild.js/reglerSvg. Elgatos `$B1` schnitt Werte ab und war grau.
+schreiben(`${ORDNER}/layouts/regler.json`, JSON.stringify({ id: `${PRAEFIX}.regler`, items: [{ key: "bild", type: "pixmap", rect: [0, 0, 200, 100] }] }, null, 2) + "\n");
+
 // ---- Manifest -------------------------------------------------------------
 
 const aktionen = [
@@ -58,7 +62,7 @@ const aktionen = [
     Icon: `imgs/actions/${id}`,
     Tooltip: r.tip,
     Controllers: ["Encoder"],
-    Encoder: { layout: "$B1", TriggerDescription: r.ausloeser },
+    Encoder: { layout: "layouts/regler.json", TriggerDescription: r.ausloeser },
     States: [{ Image: `imgs/actions/${id}`, ShowTitle: false }],
     UserTitleEnabled: false,
   })),

@@ -116,6 +116,33 @@ export function tasteSvg(b) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">${teile.join("")}</svg>`;
 }
 
+/**
+ * Ein Feld des Touch-Streifens am StreamDeck + (200 × 100 je Regler), im
+ * Stil der Tasten. Ersetzt Elgatos `$B1`: grauer Grund, Werte mit „…“
+ * abgeschnitten, keine eigenen Farben (Feldbefund 23.10.).
+ */
+export function reglerSvg(b) {
+  const [grund, farbe] = TOENE[b.ton] ?? TOENE.neutral;
+  const hell = b.ton === "aus" ? "#7c8792" : "#e9edf2";
+  const label = String(b.label ?? "").toUpperCase();
+  const teile = [
+    `<rect width="200" height="100" rx="12" fill="${grund}"/>`,
+    `<rect width="200" height="46" rx="12" fill="#ffffff" opacity="0.05"/>`,
+    icon(b.icon, 10, 9, 22, farbe),
+    `<text x="40" y="27" font-family="${SCHRIFT}" font-size="${passend(label, 15, 150, 1)}" font-weight="700" fill="#8a96a3" letter-spacing="1">${esc(label)}</text>`,
+  ];
+  teile.push(`<text x="10" y="64" font-family="${SCHRIFT}" font-size="${passend(b.wert, 32, 180)}" font-weight="700" fill="${hell}">${esc(b.wert)}</text>`);
+  if (b.balken != null) {
+    const w = Math.round(180 * Math.min(1, Math.max(0, b.balken)));
+    teile.push(`<rect x="10" y="80" width="180" height="8" rx="4" fill="#ffffff" opacity="0.12"/>`, `<rect x="10" y="80" width="${w}" height="8" rx="4" fill="${farbe}"/>`);
+  } else if (b.unter) {
+    teile.push(`<text x="10" y="90" font-family="${SCHRIFT}" font-size="${passend(b.unter, 15, 180)}" fill="#8a96a3">${esc(b.unter)}</text>`);
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">${teile.join("")}</svg>`;
+}
+
+export const alsBase64 = (svg) => `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+
 export const alsDatenUrl = (svg) => `data:image/svg+xml;charset=utf8,${encodeURIComponent(svg)}`;
 
 /** Icon für die Aktionsliste der StreamDeck-Software (weiß auf transparent). */
