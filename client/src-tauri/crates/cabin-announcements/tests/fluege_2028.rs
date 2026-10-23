@@ -73,6 +73,9 @@ fn fliegen_mit(datei: &str, flugzeit_min: u32, reise_ft: u32, zweiter_service: O
                 if s == Slot::KapitaenSinkflug {
                     p.kapitaen_sinkflug_ende(true, e);
                 }
+                if s == Slot::Reiseflug25 {
+                    p.service_ende(true);
+                }
                 ende = None;
             }
         }

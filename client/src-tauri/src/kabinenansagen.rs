@@ -432,7 +432,14 @@ pub(crate) struct Lauf {
     beta_netzfehler: bool,
     /// Freigeschaltet, aber Monatsdeckel erreicht (`bereit` falsch).
     kontingent_erschoepft: bool,
+    /// Sprachen der jüngsten Drehbuch-Antwort: gelten für künftige Anfragen
+    /// und für Ansagen, deren Text noch nicht kam.
     sprachen: Vec<String>,
+    /// Sprachen je Slot, mit denen sein Text geliefert bzw. angekündigt
+    /// wurde. Daran misst sich die Ansage, nicht an der jüngsten Liste
+    /// (THA 638: Abflug th+de, Ankunft en+de — „Ende des Service“ aus dem
+    /// Abflug wartete auf einen englischen Text, den es nie gab).
+    slot_sprachen: HashMap<Slot, Vec<String>>,
     texte: HashMap<(Slot, String), String>,
     angefragt: HashSet<String>,
     fehlversuche: HashMap<String, (u8, i64)>,
@@ -694,6 +701,31 @@ pub(crate) fn erledigte_slots(lauf: &Lauf) -> Vec<Slot> {
     lauf.verlauf.iter().filter(|g| !g.vorschau && g.ergebnis.is_some()).map(|g| g.slot).collect()
 }
 
+/// Lief der Service (Reiseflug 25) laut Verlauf wirklich? Nach einem
+/// Neustart gibt nur das „Ende des Service“ frei (EWG 221).
+pub(crate) fn service_gespielt(lauf: &Lauf) -> bool {
+    lauf.verlauf.iter().any(|g| g.slot == Slot::Reiseflug25 && !g.vorschau && g.ergebnis.as_deref() == Some("gespielt"))
+}
+
+/// Neustart: Lief der Service laut Verlauf schon zu Ende, ohne gespielt zu
+/// sein (entfallen, stumm, abgebrochen, Fehler …)? Dann weiß der neue Planer
+/// sofort, dass „Ende des Service“ nicht kommt (Codex 23.10.2026: sonst zeigte
+/// die Seite es bis zum Sinkflug wieder an).
+/// Neustart: Ist der Service laut Verlauf vom Planer entfallen, weil die
+/// Zeit nicht reichte (nicht stumm, abgebrochen oder Ansagen aus)? Dann schlägt
+/// das auch eine Abwahl (Codex 23.10.2026).
+pub(crate) fn service_entfallen(lauf: &Lauf) -> bool {
+    !service_gespielt(lauf)
+        && lauf.verlauf.iter().any(|g| {
+            g.slot == Slot::Reiseflug25 && !g.vorschau && g.ergebnis.as_deref() == Some("entfallen") && g.grund.as_deref() == Some("zu_wenig_zeit")
+        })
+}
+
+pub(crate) fn service_ausgefallen(lauf: &Lauf) -> bool {
+    !service_gespielt(lauf)
+        && lauf.verlauf.iter().any(|g| g.slot == Slot::Reiseflug25 && !g.vorschau && g.ergebnis.as_deref().is_some_and(|e| e != "gespielt"))
+}
+
 /// Wartet Reiseflug 80 als zweiter Service, obwohl weniger als
 /// [`cabin_announcements::planer::ZWEITER_SERVICE_REST_MIN`] Restflug bleiben?
 fn zweiter_service_zu_spaet(lauf: &Lauf, rest_min: Option<f64>) -> bool {
@@ -781,10 +813,11 @@ fn verbuchen(lauf: &mut Lauf, slot: Slot, ergebnis: &str, grund: Option<&str>, j
 fn stumm_anwenden(stats: &mut FlightStats, jetzt: i64) -> bool {
     let lauf = &mut stats.kabinen_lauf;
     let mut geaendert = false;
-    let mut kapitaen = false;
+    let (mut kapitaen, mut service) = (false, false);
     for g in lauf.verlauf.iter_mut().filter(|g| g.ergebnis.is_none() && !g.vorschau) {
         g.ergebnis = Some("stumm".into());
         kapitaen |= g.slot == Slot::KapitaenSinkflug;
+        service |= g.slot == Slot::Reiseflug25;
         geaendert = true;
     }
     lauf.vorschau = None;
@@ -792,11 +825,17 @@ fn stumm_anwenden(stats: &mut FlightStats, jetzt: i64) -> bool {
     for slot in lauf.warteschlange.alle_entnehmen() {
         verbuchen(lauf, slot, "stumm", None, jetzt);
         kapitaen |= slot == Slot::KapitaenSinkflug;
+        service |= slot == Slot::Reiseflug25;
         geaendert = true;
     }
     if kapitaen {
         if let Some(p) = stats.kabinen_planer.as_mut() {
             p.kapitaen_sinkflug_ende(false, jetzt);
+        }
+    }
+    if service {
+        if let Some(p) = stats.kabinen_planer.as_mut() {
+            p.service_ende(false);
         }
     }
     geaendert
@@ -862,7 +901,7 @@ fn werte_json(w: KapitaenWerte) -> serde_json::Value {
 fn kapitaen_sprachen(lauf: &Lauf) -> Option<Vec<String>> {
     let kap = Slot::KapitaenSinkflug;
     let mut sprachen = Vec::new();
-    for sp in &lauf.sprachen {
+    for sp in sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, kap) {
         let stumm = lauf.ohne_stimme.contains(sp) || matches!(lauf.ton.get(&(kap, sp.clone())), Some(None));
         if !lauf.texte.contains_key(&(kap, sp.clone())) {
             if stumm {
@@ -2150,16 +2189,22 @@ fn takt_schritt(
     // (kommt auch nach dem Aufheben nicht nach — Thomas 18.10.2026).
     if STUMM.load(Ordering::SeqCst) {
         verlauf_neu |= stumm_anwenden(&mut stats, jetzt);
-        let mut kapitaen = false;
+        let (mut kapitaen, mut service) = (false, false);
         for f in faellig.drain(..) {
             notiz(&mut stats.kabinen_lauf, "stumm", Some(f.slot), None, serde_json::Value::Null);
             verbuchen(&mut stats.kabinen_lauf, f.slot, "stumm", None, jetzt);
             kapitaen |= f.slot == Slot::KapitaenSinkflug;
+            service |= f.slot == Slot::Reiseflug25;
             verlauf_neu = true;
         }
         if kapitaen {
             if let Some(p) = stats.kabinen_planer.as_mut() {
                 p.kapitaen_sinkflug_ende(false, jetzt);
+            }
+        }
+        if service {
+            if let Some(p) = stats.kabinen_planer.as_mut() {
+                p.service_ende(false);
             }
         }
     }
@@ -2332,6 +2377,8 @@ fn hinweis_pruefen(stats: &mut FlightStats, snap: &SimSnapshot, phase: FlightPha
 fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ruhephase: bool, tief_nach_start: bool) -> (Option<Gespielt>, bool) {
     let mut verlauf_neu = false;
     let mut kapitaen_kommt_nicht = false;
+    // EWG 221: Ebenso erfährt der Planer, dass der Service nicht lief.
+    let mut service_kommt_nicht = false;
     let lauf = &mut stats.kabinen_lauf;
     // Sicher entfallende Slots (Bizjet ohne Kurzfassung) nicht warten lassen.
     let mut weg: Vec<(Slot, String)> = lauf.entfaellt.iter().map(|(s, g)| (*s, g.clone())).collect();
@@ -2358,6 +2405,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
             // Codex-Nachprüfung: Der Planer muss es wissen, sonst wartet die
             // Kabine auf einen Kapitän, der nie kommt.
             kapitaen_kommt_nicht |= slot == Slot::KapitaenSinkflug;
+            service_kommt_nicht |= slot == Slot::Reiseflug25;
             verlauf_neu = true;
         }
     }
@@ -2365,6 +2413,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     for g in lauf.verlauf.iter_mut().filter(|g| g.ergebnis.is_none() && !g.vorschau && !g.gestartet && jetzt - g.zeit > START_SPAETESTENS_S) {
         g.ergebnis = Some("unbekannt".into());
         kapitaen_kommt_nicht |= g.slot == Slot::KapitaenSinkflug;
+        service_kommt_nicht |= g.slot == Slot::Reiseflug25;
         lauf.warteschlange.frei();
         verlauf_neu = true;
     }
@@ -2373,6 +2422,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     for g in lauf.verlauf.iter_mut().filter(|g| g.ergebnis.is_none() && !g.vorschau && g.gestartet && jetzt - g.zeit > dauer_s(g.slot, &g.teile).ceil() as i64 + ABLAUF_FRIST_S) {
         g.ergebnis = Some("unbekannt".into());
         kapitaen_kommt_nicht |= g.slot == Slot::KapitaenSinkflug;
+        service_kommt_nicht |= g.slot == Slot::Reiseflug25;
         lauf.warteschlange.frei();
         verlauf_neu = true;
     }
@@ -2381,18 +2431,19 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     // gab nur `belegt_bis` (geschätzte Dauer) die nächste frei, und ein
     // spätes Ende der Oberfläche setzte die Belegung der neuen Ansage zurück.
     let offen = laeuft(lauf);
-    let sprachen = lauf.sprachen.clone();
+    let (je_slot, sprachen) = (&lauf.slot_sprachen, &lauf.sprachen);
     let (texte, toene, fehlt, fehlen, ohne_st, ohne_vl) = (&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.ohne_stimme, &lauf.ohne_vorlage);
-    let bereit = |slot: Slot| ansage_bereit(texte, toene, fehlt, fehlen, &sprachen, ohne_st, ohne_vl, slot) && !(tief_nach_start && slot == Slot::KapitaenBegruessung);
+    let bereit = |slot: Slot| ansage_bereit(texte, toene, fehlt, fehlen, sprachen_je_slot(je_slot, sprachen, slot), ohne_st, ohne_vl, slot) && !(tief_nach_start && slot == Slot::KapitaenBegruessung);
     let naechstes = if offen { None } else { lauf.warteschlange.naechstes_bereit(jetzt, phase, ruhephase, bereit) };
     // Verfallene in jedem Takt abholen (nicht nur, wenn nichts spielt) und in
     // „Bisher“ mit Grund zeigen: Ton nicht rechtzeitig fertig oder zu spät dran.
     for weg in lauf.warteschlange.verfallene_abholen() {
-        let grund = if ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.sprachen, &lauf.ohne_stimme, &lauf.ohne_vorlage, weg) { "zu_spaet" } else { "ton_nicht_fertig" };
+        let grund = if ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, weg), &lauf.ohne_stimme, &lauf.ohne_vorlage, weg) { "zu_spaet" } else { "ton_nicht_fertig" };
         notiz(lauf, "verfallen", Some(weg), None, serde_json::json!({ "grund": grund }));
         verbuchen(lauf, weg, "entfallen", Some(grund), jetzt);
         verfallen_aufraeumen(lauf, weg);
         kapitaen_kommt_nicht |= weg == Slot::KapitaenSinkflug;
+        service_kommt_nicht |= weg == Slot::Reiseflug25;
         verlauf_neu = true;
     }
     let gespielt = naechstes.and_then(|slot| match teile_von(lauf, slot) {
@@ -2428,6 +2479,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
             notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": "keine_stimme" }));
             verbuchen(lauf, slot, "entfallen", Some("keine_stimme"), jetzt);
             kapitaen_kommt_nicht |= slot == Slot::KapitaenSinkflug;
+            service_kommt_nicht |= slot == Slot::Reiseflug25;
             verlauf_neu = true;
             None
         }
@@ -2437,7 +2489,20 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
             p.kapitaen_sinkflug_ende(false, jetzt);
         }
     }
+    if service_kommt_nicht {
+        if let Some(p) = stats.kabinen_planer.as_mut() {
+            p.service_ende(false);
+        }
+    }
     (gespielt, verlauf_neu)
+}
+
+/// Sprachen, an denen sich eine Ansage misst: die der Antwort, die ihren
+/// Text geliefert oder angekündigt hat (THA 638), sonst — ihr Text kam noch
+/// nicht — die des Flugs. Felder statt `Lauf`, damit es neben der
+/// geliehenen Warteschlange geht.
+fn sprachen_je_slot<'a>(je_slot: &'a HashMap<Slot, Vec<String>>, flug: &'a [String], slot: Slot) -> &'a [String] {
+    je_slot.get(&slot).map_or(flug, Vec::as_slice)
 }
 
 /// Ton für alle Sprachen mit Text da (Kommando: Englisch, Gong: immer)?
@@ -2485,7 +2550,7 @@ fn teile_von(lauf: &Lauf, slot: Slot) -> Option<Vec<Teil>> {
     if slot.rolle() == Rolle::Chime {
         return Some(Vec::new());
     }
-    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { lauf.sprachen.clone() };
+    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, slot).to_vec() };
     let teile: Vec<Teil> = sprachen
         .iter()
         .filter_map(|sp| {
@@ -2513,9 +2578,10 @@ fn dauer_s(slot: Slot, teile: &[Teil]) -> f64 {
 /// Punkt 4; Sicherheit ohne Vorlage) und es liegt kein Text vor. Gong und
 /// Kommandos (Englisch, nie gestrichen) nie.
 fn alle_sprachen_gestrichen(lauf: &Lauf, slot: Slot) -> bool {
+    let sprachen = sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, slot);
     matches!(slot.rolle(), Rolle::Kapitaen | Rolle::Kabine)
-        && !lauf.sprachen.is_empty()
-        && lauf.sprachen.iter().all(|sp| {
+        && !sprachen.is_empty()
+        && sprachen.iter().all(|sp| {
             !lauf.texte.contains_key(&(slot, sp.clone()))
                 && (lauf.ohne_stimme.contains(sp) || (slot == Slot::Sicherheit && lauf.ohne_vorlage.contains(sp)))
         })
@@ -2525,7 +2591,7 @@ fn alle_sprachen_gestrichen(lauf: &Lauf, slot: Slot) -> bool {
 /// endgültig abgelehnt, oder kein Text und das Abflug-Drehbuch ist nach drei
 /// Versuchen aufgegeben. Ohne bekannte Sprachen: nein (es kommt noch).
 fn ton_kommt_nie(lauf: &Lauf, slot: Slot) -> bool {
-    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { lauf.sprachen.clone() };
+    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, slot).to_vec() };
     let text_aufgegeben = lauf.texte_fehler.contains_key(&slot)
         && !lauf.angefragt.contains("abflug")
         && lauf.fehlversuche.get("abflug").is_some_and(|(n, _)| *n >= 3);
@@ -2625,9 +2691,9 @@ fn ton_kandidaten(stats: &FlightStats, kommandos: bool, flugart: Flugart, jetzt:
                 .filter_map(|s| s.kommando_text().map(|t| (s, "en-GB".to_string(), t.to_string()))),
         );
     }
-    let sprach_rang = |sp: &str| lauf.sprachen.iter().position(|x| x == sp).unwrap_or(usize::MAX);
+    let sprach_rang = |s: Slot, sp: &str| sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, s).iter().position(|x| x == sp).unwrap_or(usize::MAX);
     kandidaten.retain(|(s, sp, _)| ton_noetig(lauf, &(*s, sp.clone()), jetzt) && kommt_noch(stats, &wartend, *s));
-    kandidaten.sort_by_key(|(s, sp, _)| (!wartend.contains(s), *s, sprach_rang(sp)));
+    kandidaten.sort_by_key(|(s, sp, _)| (!wartend.contains(s), *s, sprach_rang(*s, sp)));
     kandidaten
 }
 
@@ -2842,6 +2908,17 @@ fn drehbuch_uebernehmen(lauf: &mut Lauf, d: api_client::KabinenDrehbuch, slots: 
     }
     if !d.sprachen.is_empty() {
         lauf.sprachen = d.sprachen.clone();
+        // Je Slot die Sprachen dieser Antwort merken (THA 638). Die
+        // Nachholung ergänzt nur fehlende Sprachen: Die angekündigten
+        // bleiben, sonst blockierte die nachzuholende Sprache nicht mehr.
+        let geliefert: Vec<Slot> = d.eintraege.iter().filter_map(|e| slot_aus_name(&e.slot)).collect();
+        for s in slots.iter().copied().chain(geliefert) {
+            if nachholung {
+                lauf.slot_sprachen.entry(s).or_insert_with(|| d.sprachen.clone());
+            } else {
+                lauf.slot_sprachen.insert(s, d.sprachen.clone());
+            }
+        }
     }
     if d.crew.is_some() {
         lauf.crew = d.crew.clone();
@@ -2907,7 +2984,7 @@ fn drehbuch_uebernehmen(lauf: &mut Lauf, d: api_client::KabinenDrehbuch, slots: 
     // Reihenfolge der Dringlichkeit.
     let mut fehlend = Vec::new();
     for s in slots.iter().copied().filter(|s| !lauf.entfaellt.contains_key(s)) {
-        for sp in &lauf.sprachen {
+        for sp in sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, s) {
             let k = (s, sp.clone());
             let gestrichen = lauf.ohne_stimme.contains(sp) || (s == Slot::Sicherheit && lauf.ohne_vorlage.contains(sp));
             if !lauf.texte.contains_key(&k) && !gestrichen {
@@ -3450,6 +3527,10 @@ fn ende_melden(stats: &mut FlightStats, id: u64, ergebnis: &str, jetzt: i64, que
     if let (Some((Slot::KapitaenSinkflug, gespielt)), Some(p)) = (ende, stats.kabinen_planer.as_mut()) {
         p.kapitaen_sinkflug_ende(gespielt, jetzt);
     }
+    // EWG 221: „Ende des Service“ nur nach einem gespielten Service.
+    if let (Some((Slot::Reiseflug25, gespielt)), Some(p)) = (ende, stats.kabinen_planer.as_mut()) {
+        p.service_ende(gespielt);
+    }
     true
 }
 
@@ -3655,7 +3736,7 @@ fn anhoeren(lauf: &mut Lauf, slot: Slot, id: Option<u64>, jetzt: i64) -> Result<
     }
     let teile = match id {
         Some(id) => lauf.verlauf.iter().find(|g| g.id == id && !g.vorschau && !g.teile.is_empty()).map(|g| g.teile.clone()),
-        None => teile_von(lauf, slot).filter(|_| ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.sprachen, &lauf.ohne_stimme, &lauf.ohne_vorlage, slot)),
+        None => teile_von(lauf, slot).filter(|_| ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, slot), &lauf.ohne_stimme, &lauf.ohne_vorlage, slot)),
     }
     .ok_or_else(|| UiError::new("nicht_bereit", "no audio for this announcement yet"))?;
     lauf.naechste_id += 1;
@@ -3695,7 +3776,7 @@ pub(crate) fn kabinen_erneut(state: tauri::State<'_, AppState>) {
             "halbzeit" => &HALBZEIT,
             _ => &ANKUNFT,
         };
-        slots.iter().any(|s| lauf.sprachen.iter().any(|sp| !lauf.texte.contains_key(&(*s, sp.clone())) && !lauf.texte_fehlen.contains_key(&(*s, sp.clone())) && !lauf.ohne_stimme.contains(sp)))
+        slots.iter().any(|s| sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, *s).iter().any(|sp| !lauf.texte.contains_key(&(*s, sp.clone())) && !lauf.texte_fehlen.contains_key(&(*s, sp.clone())) && !lauf.ohne_stimme.contains(sp)))
     };
     let neu: Vec<String> = ["abflug", "halbzeit", "ankunft"].into_iter().filter(|t| fehlt(t)).map(str::to_string).collect();
     for t in neu {
@@ -3795,7 +3876,7 @@ fn wartegrund(lauf: &Lauf, slot: Slot, jetzt: i64) -> Option<Wartet> {
         Some(Wartet::Pause)
     } else if lauf.ruhephase && !slot.in_ruhephase_erlaubt() && !lauf.warteschlange.trotz_ruhephase(slot) {
         Some(Wartet::Ruhephase)
-    } else if !ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, &lauf.sprachen, &lauf.ohne_stimme, &lauf.ohne_vorlage, slot) {
+    } else if !ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, slot), &lauf.ohne_stimme, &lauf.ohne_vorlage, slot) {
         Some(Wartet::Ton)
     } else {
         None // spielt im nächsten Takt
@@ -3926,9 +4007,10 @@ fn teil_stand(lauf: &Lauf, teil: &str, slots: &[Slot], landung: Option<i64>, kur
         let k = (s, sp.clone());
         lauf.texte.contains_key(&k) || lauf.texte_fehlen.contains_key(&k) || lauf.ohne_stimme.contains(sp)
     };
-    let fertig = !lauf.sprachen.is_empty() && slots.iter().all(|s| lauf.sprachen.iter().all(|sp| erledigt(*s, sp)));
+    let je = |s: &Slot| sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, *s);
+    let fertig = !lauf.sprachen.is_empty() && slots.iter().all(|s| je(s).iter().all(|sp| erledigt(*s, sp)));
     if fertig {
-        let mit_text = slots.iter().any(|s| lauf.sprachen.iter().any(|sp| lauf.texte.contains_key(&(*s, sp.clone()))));
+        let mit_text = slots.iter().any(|s| je(s).iter().any(|sp| lauf.texte.contains_key(&(*s, sp.clone()))));
         let meldung = slots.iter().find_map(|s| lauf.texte_fehlen.iter().find(|((x, _), _)| x == s).map(|(_, m)| m.clone()));
         return match meldung.filter(|_| !mit_text) {
             Some(meldung) => TeilStand::Aufgegeben { meldung },
@@ -3961,7 +4043,7 @@ fn slot_stand(lauf: &Lauf, slot: Slot, landung: Option<i64>, kurz: bool, halbzei
     if slot.rolle() == Rolle::Chime {
         return (Stand::Bereit, Vec::new());
     }
-    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { lauf.sprachen.clone() };
+    let sprachen: Vec<String> = if slot.rolle() == Rolle::Kommando { vec!["en-GB".into()] } else { sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, slot).to_vec() };
     let text_von = |sp: &String| lauf.texte.get(&(slot, sp.clone())).cloned().or_else(|| slot.kommando_text().map(str::to_string));
     let teile: Vec<TeilAnsicht> = sprachen
         .iter()
@@ -5307,7 +5389,16 @@ mod tests {
             }
             // Neustart: Planer einmal frisch aus Phase und echtem Abheben.
             if einstieg && st.kabinen_lauf.angefragt.is_empty() {
-                st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug(Some(abheben)), phase));
+                // Der Service lief vor dem Neustart (Verlauf); daraus der
+                // Planer wie in `lib.rs` (EWG 221: nur ein gespielter Service
+                // gibt „Ende des Service“ frei).
+                st.kabinen_lauf.verlauf.push(Gespielt { id: 0, slot: Slot::Reiseflug25, rolle: Rolle::Kabine, zeit: jetzt, teile: vec![], vorschau: false, ergebnis: Some("gespielt".into()), gestartet: true, grund: None });
+                let mut p = cabin_announcements::Planer::fortsetzen(flug(Some(abheben)), phase);
+                p.schon_gespielt(erledigte_slots(&st.kabinen_lauf));
+                if service_gespielt(&st.kabinen_lauf) {
+                    p.service_ende(true);
+                }
+                st.kabinen_planer = Some(p);
                 st.kabinen_lauf.angefragt.insert("neustart".into());
             }
             if let Some((id, ende)) = laufend {
@@ -6805,6 +6896,216 @@ mod rundumschlag_p1_tests {
         stimme_streichen(&mut st.kabinen_lauf, "en-GB");
         assert!(!st.kabinen_lauf.ohne_stimme.contains("en-GB"));
         assert_eq!(arten(&st.kabinen_lauf).iter().filter(|(a, _)| a == "entfaellt").count(), 1, "einmal für den Flug");
+    }
+
+    // ---- Sprachen je Slot (THA 638) ----
+
+    /// Drehbuch-Antwort mit eigener Sprachliste; Text je (Slot, Sprache).
+    fn antwort(sprachen: &[&str], eintraege: &[(Slot, &str)]) -> api_client::KabinenDrehbuch {
+        let mut d = drehbuch(&[]);
+        d.sprachen = sprachen.iter().map(|sp| (*sp).to_string()).collect();
+        d.eintraege = eintraege
+            .iter()
+            .map(|(s, sp)| api_client::KabinenEintrag { slot: slot_name(*s), sprache: (*sp).into(), text: format!("{s:?} {sp}"), rolle: None, art: None, fremd: Vec::new() })
+            .collect();
+        d
+    }
+
+    fn je_sprache(slots: &[Slot], sprachen: &[&'static str]) -> Vec<(Slot, &'static str)> {
+        slots.iter().flat_map(|s| sprachen.iter().map(move |sp| (*s, *sp))).collect()
+    }
+
+    fn gespielte_sprachen(g: &Gespielt) -> Vec<&str> {
+        g.teile.iter().map(|t| t.sprache.as_str()).collect()
+    }
+
+    /// Abflug mit th+de (th ohne Stimme), wie THA 638.
+    fn tha638_abflug() -> FlightStats {
+        use crate::FlightPhase::*;
+        let mut st = FlightStats::new();
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(Default::default(), Cruise));
+        let l = &mut st.kabinen_lauf;
+        drehbuch_uebernehmen(l, antwort(&["th-TH", "de-DE"], &je_sprache(&ABFLUG, &["th-TH", "de-DE"])), &ABFLUG, false, false);
+        // Erstes „keine Stimme“ des Ton-Servers (wie `ton_auftrag`).
+        l.ton.insert((Slot::EndeService, "th-TH".into()), None);
+        stimme_streichen(l, "th-TH");
+        for s in ABFLUG {
+            l.ton.insert((s, "de-DE".into()), ton_s(20.0));
+        }
+        st
+    }
+
+    /// THA 638: Die Ankunft kommt mit en+de (Modul v0.2.0 dazwischen). „Ende
+    /// des Service“ aus dem Abflug misst sich an th+de und spielt Deutsch,
+    /// statt auf einen englischen Text zu warten und zu verfallen. Rot auf
+    /// v2.1.9: kein Ton (en-GB fehlt), `ton_nicht_fertig`.
+    #[test]
+    fn tha638_spaeterer_teil_mit_anderen_sprachen_blockiert_fruehere_ansage_nicht() {
+        use crate::FlightPhase::*;
+        let mut st = tha638_abflug();
+        drehbuch_uebernehmen(&mut st.kabinen_lauf, antwort(&["en-GB", "de-DE"], &je_sprache(&ANKUNFT, &["en-GB", "de-DE"])), &ANKUNFT, false, false);
+        assert_eq!(st.kabinen_lauf.sprachen, vec!["en-GB".to_string(), "de-DE".to_string()], "künftige Anfragen in den neuen Sprachen");
+        st.kabinen_lauf.warteschlange.aufnehmen([faellig(Slot::EndeService)]);
+        let (g, _) = abspielen_schritt(&mut st, 100, Cruise, false, false);
+        let g = g.expect("„Ende des Service“ spielt");
+        assert_eq!(g.slot, Slot::EndeService);
+        assert_eq!(gespielte_sprachen(&g), vec!["de-DE"]);
+        assert!(!st.kabinen_lauf.verlauf.iter().any(|v| v.grund.as_deref() == Some("ton_nicht_fertig")));
+        // Die Ankunftsansagen messen sich an en+de.
+        let l = &st.kabinen_lauf;
+        assert_eq!(sprachen_je_slot(&l.slot_sprachen, &l.sprachen, Slot::KapitaenSinkflug), ["en-GB", "de-DE"]);
+        assert!(!ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, sprachen_je_slot(&l.slot_sprachen, &l.sprachen, Slot::KapitaenSinkflug), &l.ohne_stimme, &l.ohne_vorlage, Slot::KapitaenSinkflug), "ohne Ton noch nicht bereit");
+    }
+
+    /// Gegenprobe: gleiche Sprachen in beiden Teilen — wie bisher.
+    #[test]
+    fn gleiche_sprachen_in_beiden_teilen_wie_bisher() {
+        use crate::FlightPhase::*;
+        let mut st = tha638_abflug();
+        drehbuch_uebernehmen(&mut st.kabinen_lauf, antwort(&["th-TH", "de-DE"], &je_sprache(&ANKUNFT, &["th-TH", "de-DE"])), &ANKUNFT, false, false);
+        st.kabinen_lauf.warteschlange.aufnehmen([faellig(Slot::EndeService)]);
+        let (g, _) = abspielen_schritt(&mut st, 100, Cruise, false, false);
+        assert_eq!(gespielte_sprachen(&g.expect("spielt")), vec!["de-DE"]);
+        // Ohne den deutschen Ton wartet sie weiter (Thai zählt als gestrichen).
+        let mut st = tha638_abflug();
+        st.kabinen_lauf.ton.remove(&(Slot::EndeService, "de-DE".to_string()));
+        st.kabinen_lauf.warteschlange.aufnehmen([faellig(Slot::EndeService)]);
+        assert!(abspielen_schritt(&mut st, 100, Cruise, false, false).0.is_none(), "wartet auf den deutschen Ton");
+    }
+
+    /// Eine angekündigte, noch fehlende Sprache blockiert weiter, bis die
+    /// Nachholung sie bringt oder aufgibt (`fehlen`) — auch wenn die
+    /// Nachholung mit einer anderen Sprachliste antwortet.
+    #[test]
+    fn angekuendigte_fehlende_sprache_blockiert_weiter() {
+        use crate::FlightPhase::*;
+        let mut st = tha638_abflug();
+        let l = &mut st.kabinen_lauf;
+        let fehlend = drehbuch_uebernehmen(l, antwort(&["en-GB", "de-DE"], &[(Slot::KapitaenSinkflug, "de-DE")]), &[Slot::KapitaenSinkflug], false, false);
+        assert_eq!(fehlend, vec![(Slot::KapitaenSinkflug, "en-GB".to_string())]);
+        l.ton.insert((Slot::KapitaenSinkflug, "de-DE".into()), ton_s(20.0));
+        let bereit = |l: &Lauf| ansage_bereit(&l.texte, &l.ton, &l.texte_fehler, &l.texte_fehlen, sprachen_je_slot(&l.slot_sprachen, &l.sprachen, Slot::KapitaenSinkflug), &l.ohne_stimme, &l.ohne_vorlage, Slot::KapitaenSinkflug);
+        assert!(!bereit(l), "wartet auf den englischen Text");
+        // Die Nachholung antwortet ohne Text und mit anderer Liste: Die
+        // angekündigte Sprache bleibt, „fehlt“ gibt sie frei (wie `holen`).
+        let f2 = drehbuch_uebernehmen(l, antwort(&["de-DE"], &[]), &[Slot::KapitaenSinkflug], false, true);
+        assert_eq!(f2, vec![(Slot::KapitaenSinkflug, "en-GB".to_string())]);
+        assert!(!bereit(l), "noch nicht aufgegeben");
+        for k in f2 {
+            l.texte_fehlen.insert(k, "Der Server hat keinen Text geliefert.".into());
+        }
+        assert!(bereit(l));
+        st.kabinen_lauf.warteschlange.aufnehmen([faellig(Slot::KapitaenSinkflug)]);
+        let (g, _) = abspielen_schritt(&mut st, 100, Cruise, false, false);
+        assert_eq!(gespielte_sprachen(&g.expect("spielt")), vec!["de-DE"]);
+    }
+
+    /// Der Pilot stellt mitten im Flug die zweite Sprache um: Neue Teile
+    /// kommen in den neuen Sprachen, alte Ansagen bleiben in ihren.
+    #[test]
+    fn umstellung_mitten_im_flug_alte_ansagen_in_ihren_sprachen() {
+        use crate::FlightPhase::*;
+        let mut st = FlightStats::new();
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(Default::default(), Cruise));
+        let l = &mut st.kabinen_lauf;
+        drehbuch_uebernehmen(l, antwort(&["de-DE", "en-GB"], &je_sprache(&ABFLUG, &["de-DE", "en-GB"])), &ABFLUG, false, false);
+        let halbzeit = drehbuch_uebernehmen(l, antwort(&["de-DE", "fr-FR"], &je_sprache(&HALBZEIT, &["de-DE", "fr-FR"])), &HALBZEIT, false, false);
+        assert!(halbzeit.is_empty());
+        for (s, sp) in je_sprache(&ABFLUG, &["de-DE", "en-GB"]).into_iter().chain(je_sprache(&HALBZEIT, &["de-DE", "fr-FR"])) {
+            l.ton.insert((s, sp.into()), ton_s(20.0));
+        }
+        assert_eq!(teile_von(l, Slot::EndeService).unwrap().iter().map(|t| t.sprache.as_str()).collect::<Vec<_>>(), vec!["de-DE", "en-GB"]);
+        assert_eq!(teile_von(l, Slot::Reiseflug50).unwrap().iter().map(|t| t.sprache.as_str()).collect::<Vec<_>>(), vec!["de-DE", "fr-FR"]);
+        // Ansagen ohne Text richten sich nach der jüngsten Liste.
+        assert_eq!(sprachen_je_slot(&l.slot_sprachen, &l.sprachen, Slot::KabineSinkflug), ["de-DE", "fr-FR"]);
+        l.warteschlange.aufnehmen([faellig(Slot::EndeService)]);
+        let (g, _) = abspielen_schritt(&mut st, 100, Cruise, false, false);
+        assert_eq!(gespielte_sprachen(&g.expect("spielt")), vec!["de-DE", "en-GB"], "wartet nicht auf Französisch");
+    }
+
+    // ---- Ende des Service nur nach gespieltem Service (EWG 221) ----
+
+    /// Flug im Reiseflug, bis der Planer den Service meldet; der steht dann
+    /// in der Warteschlange (wie `takt`).
+    fn mit_gemeldetem_service(ton: bool) -> FlightStats {
+        use crate::FlightPhase::*;
+        let mut st = flug(Cruise, if ton { &[Slot::Reiseflug25] } else { &[] });
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(120), reiseflughoehe_ft: Some(36_000), abheben_epoch: Some(0), ..Default::default() },
+            Cruise,
+        ));
+        let p = st.kabinen_planer.as_mut().unwrap();
+        let mut s = 0;
+        let service = loop {
+            s += 10;
+            let tk = cabin_announcements::Tick { jetzt: s, phase: Cruise, hoehe_ft: 36_000.0, anschnallzeichen: Some(0), ..Default::default() };
+            if let Some(f) = p.tick(&tk).into_iter().find(|f| f.slot == Slot::Reiseflug25) {
+                break f;
+            }
+            assert!(s < 7_200, "Service kam nicht");
+        };
+        st.kabinen_lauf.warteschlange.aufnehmen([service]);
+        st
+    }
+
+    /// Kommt „Ende des Service“ beim Sinkflug? Und wurde sie übersprungen?
+    fn beim_sinkflug(st: &mut FlightStats, jetzt: i64) -> (bool, bool) {
+        let p = st.kabinen_planer.as_mut().unwrap();
+        let tk = cabin_announcements::Tick { jetzt, phase: crate::FlightPhase::Descent, hoehe_ft: 30_000.0, vs_fpm: -2_000.0, ..Default::default() };
+        let kommt = p.tick(&tk).iter().any(|f| f.slot == Slot::EndeService);
+        (kommt, p.entfallene_abholen().contains(&(Slot::EndeService, cabin_announcements::Entfall::Uebersprungen)))
+    }
+
+    /// Wie beim Kapitän meldet der Host das Ende des Service an den Planer:
+    /// Nur „gespielt“ gibt „Ende des Service“ frei; abgebrochen oder
+    /// verfallen nicht — dann entfällt sie beim Sinkflug als übersprungen.
+    #[test]
+    fn ewg221_host_meldet_dem_planer_ob_der_service_lief() {
+        use crate::FlightPhase::*;
+        // Gespielt (Peter DLH454: früher Sinkflug): kommt beim Sinkflug.
+        let mut st = mit_gemeldetem_service(true);
+        let g = abspielen_schritt(&mut st, 8_000, Cruise, false, false).0.expect("Service spielt");
+        assert!(ende_melden(&mut st, g.id, "gespielt", 8_030, "backend"));
+        assert_eq!(beim_sinkflug(&mut st, 8_100), (true, false));
+        // Abgebrochen: kein Ende, übersprungen.
+        let mut st = mit_gemeldetem_service(true);
+        let g = abspielen_schritt(&mut st, 8_000, Cruise, false, false).0.expect("Service spielt");
+        assert!(ende_melden(&mut st, g.id, "abgebrochen", 8_010, "backend"));
+        assert_eq!(beim_sinkflug(&mut st, 8_100), (false, true));
+        // Ohne Ton verfallen (Sinkflug): Der Host meldet es, das Ende entfällt
+        // sofort (sonst hielte der gemeldete Service es bis zum Anflug zurück).
+        let mut st = mit_gemeldetem_service(false);
+        abspielen_schritt(&mut st, 8_100, Descent, false, false);
+        assert_eq!(st.kabinen_lauf.verlauf.last().map(|g| (g.slot, g.grund.as_deref())), Some((Slot::Reiseflug25, Some("ton_nicht_fertig"))));
+        assert_eq!(beim_sinkflug(&mut st, 8_110), (false, true));
+        // Stumm: ebenso.
+        let mut st = mit_gemeldetem_service(true);
+        stumm_anwenden(&mut st, 8_000);
+        assert_eq!(beim_sinkflug(&mut st, 8_100), (false, true));
+    }
+
+    /// Neustart: Nur ein laut Verlauf gespielter Service zählt.
+    #[test]
+    fn neustart_service_nur_wenn_gespielt() {
+        let mut l = Lauf::default();
+        let eintrag = |ergebnis: &str, vorschau: bool| Gespielt { id: 1, slot: Slot::Reiseflug25, rolle: Rolle::Kabine, zeit: 0, teile: vec![], vorschau, ergebnis: Some(ergebnis.into()), gestartet: true, grund: None };
+        l.verlauf.push(eintrag("entfallen", false));
+        l.verlauf.push(eintrag("gespielt", true));
+        assert!(!service_gespielt(&l), "entfallen oder Vorhören zählt nicht");
+        l.verlauf.push(eintrag("gespielt", false));
+        assert!(service_gespielt(&l));
+        assert!(!service_ausgefallen(&l), "gespielt geht vor");
+        let mut a = Lauf::default();
+        a.verlauf.push(eintrag("gespielt", true));
+        assert!(!service_ausgefallen(&a), "nur Vorhören: nichts bekannt");
+        a.verlauf.push(eintrag("stumm", false));
+        assert!(service_ausgefallen(&a));
+        assert!(!service_ausgefallen(&Lauf::default()), "noch nichts gelaufen");
+        assert!(!service_entfallen(&a), "stumm ist nicht entfallen");
+        a.verlauf.push(Gespielt { grund: Some("ansagen_aus".into()), ..eintrag("entfallen", false) });
+        assert!(!service_entfallen(&a), "Ansagen aus schlägt die Abwahl nicht");
+        a.verlauf.push(Gespielt { grund: Some("zu_wenig_zeit".into()), ..eintrag("entfallen", false) });
+        assert!(service_entfallen(&a));
     }
 }
 

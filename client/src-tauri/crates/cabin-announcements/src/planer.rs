@@ -198,6 +198,23 @@ enum KapitaenSinkflug {
     KommtNicht,
 }
 
+/// Stand des Service (Reiseflug 25): „Ende des Service“ folgt nur einem
+/// wirklich gespielten (EWG 221: ohne Service kam beim Sinkflug „Der
+/// Service ist beendet“ in die Schlange). Wie [`KapitaenSinkflug`] meldet
+/// der Host das Ende.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Service {
+    #[default]
+    Offen,
+    /// Gemeldet, das Ende steht noch aus (wartet auf Ton, Pause, spielt …).
+    Gemeldet,
+    /// Zu Ende gespielt (abgewählt zählt ebenso, siehe
+    /// [`Planer::service_gelaufen`]).
+    Gespielt,
+    /// Kommt nicht (stumm, abgebrochen, Fehler, verfallen).
+    KommtNicht,
+}
+
 /// Grenze für „Kurzstrecke“: darunter nur die Service-Ansage (Reiseflug 25),
 /// keine Zwischenstände (Thomas 18.10.2026).
 pub const KURZSTRECKE_MIN: u32 = 60;
@@ -315,6 +332,11 @@ pub struct Planer {
     hoechste_hoehe_ft: Option<f64>,
     /// Die Kabine folgt dem Kapitän erst später ([`KABINE_NACH_KAPITAEN_MIN_S`]).
     kapitaen_sinkflug: KapitaenSinkflug,
+    /// Lief der Service? Daran hängt „Ende des Service“.
+    service: Service,
+    /// Der Planer hat den Service entfallen lassen (z. B. zu wenig Zeit): Dann
+    /// gibt auch eine Abwahl das Ende nicht frei (Codex 23.10.2026).
+    service_entfallen: bool,
     /// Nicht gemeldete Ansagen mit Grund, bis der Host sie abholt.
     entfallen: Vec<(Slot, Entfall)>,
     /// Wiedereinstieg im Reiseflug: Was beim ersten Reiseflug-Takt schon
@@ -490,10 +512,47 @@ impl Planer {
         }
     }
 
+    /// Der Host meldet das Ende des Service (Reiseflug 25), wie
+    /// [`Self::kapitaen_sinkflug_ende`]: Nur `gespielt` gibt „Ende des
+    /// Service“ frei. Nach einem Neustart meldet er so einen laut Verlauf
+    /// gespielten Service.
+    pub fn service_ende(&mut self, gespielt: bool) {
+        if matches!(self.service, Service::Offen | Service::Gemeldet) {
+            self.service = if gespielt { Service::Gespielt } else { Service::KommtNicht };
+        }
+    }
+
+    /// Fand der Service statt? Gespielt — oder abgewählt (2.1.1 C, Thomas:
+    /// dann spielt ihn GSX oder das Flugzeug). Die Abwahl gilt jederzeit, auch
+    /// nach einem Neustart und wenn sie erst kommt, als der Service schon in
+    /// der Schlange stand (Codex 23.10.2026).
+    fn service_gelaufen(&self) -> bool {
+        self.service == Service::Gespielt || (self.abgewaehlt.contains(&Slot::Reiseflug25) && !self.service_entfallen)
+    }
+
+    /// Kommt „Ende des Service“ sicher nicht mehr (Service ausgefallen)?
+    fn service_ausgefallen(&self) -> bool {
+        (self.service == Service::KommtNicht || self.service_entfallen) && !self.service_gelaufen()
+    }
+
+    /// Neustart: Der Service ist laut Verlauf entfallen (z. B. zu wenig Zeit) —
+    /// dann gibt auch eine Abwahl das Ende nicht frei (Codex 23.10.2026).
+    pub fn service_entfallen(&mut self) {
+        self.service_entfallen = true;
+        if self.service == Service::Offen {
+            self.service = Service::KommtNicht;
+        }
+    }
+
     fn entfaellt(&mut self, slot: Slot, grund: Entfall) {
         if !self.schon(slot) && self.flugart().erlaubt(slot) {
             self.gemeldet.insert(slot);
             self.entfallen.push((slot, grund));
+            // Entfällt der Service (z. B. zu wenig Zeit), ist er ausgefallen
+            // (Codex 23.10.2026: sonst zeigte die Seite das Ende weiter an).
+            if slot == Slot::Reiseflug25 {
+                self.service_entfallen();
+            }
         }
     }
 
@@ -537,6 +596,9 @@ impl Planer {
                 self.kapitaen_sinkflug = KapitaenSinkflug::KommtNicht;
             }
             return;
+        }
+        if slot == Slot::Reiseflug25 {
+            self.service = Service::Gemeldet;
         }
         aus.push(Faellig { slot, verfall, trotz_ruhephase: false });
     }
@@ -583,6 +645,8 @@ impl Planer {
             && !(matches!(slot, Slot::Chime10000Steigflug | Slot::Chime10000Sinkflug)
                 && self.flug.reiseflughoehe_ft.is_some_and(|h| h < 10_000))
             && spaetestens_vor(slot).is_none_or(|grenze| rang(phase) < rang(grenze))
+            // Ende des Service: nicht mehr, wenn der Service ausgefallen ist (Codex).
+            && !(slot == Slot::EndeService && self.service_ausgefallen())
     }
 
     /// Ohne bekannte Flugzeit zählt der Flug als Kurzstrecke (ohne
@@ -636,7 +700,7 @@ impl Planer {
             Slot::EndeService => {
                 // Hängt am Service (2.1.1 C): solange er nicht durch ist,
                 // keine Uhrzeit, die nicht stimmen muss.
-                if !self.schon(Slot::Reiseflug25) {
+                if !self.schon(Slot::Reiseflug25) || self.service_ausgefallen() {
                     return None;
                 }
                 let b = self.bis_sinkflug_s()?;
@@ -943,18 +1007,36 @@ impl Planer {
         if self.zweiter_service == Some(false) && !self.schon(Slot::EndeService) {
             self.gemeldet.insert(Slot::EndeService);
         }
-        // 2.1.1 C (Entscheidung 4): nie vor dem Service — frühestens, wenn
-        // Reiseflug 25 gespielt, entfallen oder abgewählt ist (`schon`; ein
-        // gemeldeter, noch wartender Service hält sie in der Warteschlange
-        // zurück), sonst spätestens beim Sinkflug.
-        if in_luft && (rang(Climb)..=rang(Descent)).contains(&r) && !self.schon(Slot::EndeService) {
-            let geplant = self.schon(Slot::Reiseflug25)
-                && self
-                    .abheben_epoch
-                    .zip(self.bis_sinkflug_s())
-                    .is_some_and(|(ab, b)| t.jetzt >= ab + b.round() as i64 - REISEFLUG80_VOR_TOD_S);
-            if geplant || r >= rang(Descent) {
-                self.melde(&mut aus, Slot::EndeService, Verfall::AbPhase(Approach));
+        // 2.1.1 C (Entscheidung 4): nie vor dem Service. EWG 221: nur nach
+        // einem gespielten (Rückmeldung des Hosts, [`Self::service_ende`]).
+        // Lief er nicht (kam nie, entfiel, stumm, verfallen; abgewählt zählt als
+        // gelaufen, 2.1.1 C),
+        // entfällt das Ende beim Sinkflug als übersprungen; ein gemeldeter
+        // Service, dessen Ende noch aussteht, hält es bis zum Ende des
+        // Sinkflugs zurück (er kann noch zu Ende spielen).
+        if !self.schon(Slot::EndeService) {
+            let geplant = self
+                .abheben_epoch
+                .zip(self.bis_sinkflug_s())
+                .is_some_and(|(ab, b)| t.jetzt >= ab + b.round() as i64 - REISEFLUG80_VOR_TOD_S);
+            let im_fenster = in_luft && (rang(Climb)..=rang(Descent)).contains(&r);
+            match self.service {
+                _ if self.service_gelaufen() => {
+                    if im_fenster && (geplant || r >= rang(Descent)) {
+                        self.melde(&mut aus, Slot::EndeService, Verfall::AbPhase(Approach));
+                    }
+                }
+                Service::Gespielt => {}
+                Service::Gemeldet => {
+                    if r > rang(Descent) {
+                        self.entfaellt(Slot::EndeService, Entfall::Uebersprungen);
+                    }
+                }
+                Service::Offen | Service::KommtNicht => {
+                    if r >= rang(Descent) {
+                        self.entfaellt(Slot::EndeService, Entfall::Uebersprungen);
+                    }
+                }
             }
         }
 
@@ -1237,11 +1319,15 @@ mod tests {
     fn normalflug_mit(mut p: Planer, min: u32) -> Vec<Slot> {
         let mut alle = Vec::new();
         let mut t = 0i64;
-        // Der Host meldet die Sinkflug-Ansage des Kapitäns gleich als gespielt.
+        // Der Host meldet die Sinkflug-Ansage des Kapitäns und den Service
+        // gleich als gespielt.
         let lauf = |p: &mut Planer, tk: Tick, alle: &mut Vec<Slot>| {
             for f in p.tick(&tk) {
                 if f.slot == Slot::KapitaenSinkflug {
                     p.kapitaen_sinkflug_ende(true, tk.jetzt);
+                }
+                if f.slot == Slot::Reiseflug25 {
+                    p.service_ende(true);
                 }
                 alle.push(f.slot);
             }
@@ -1718,6 +1804,8 @@ mod tests {
     #[test]
     fn wiedereinstieg_im_sinkflug_bringt_nur_noch_die_landung() {
         let mut p = Planer::fortsetzen(flug(120), Descent);
+        // Der Service lief vor dem Neustart (Host laut Verlauf, EWG 221).
+        p.service_ende(true);
         let mut alle = Vec::new();
         for (i, (ph, h)) in [(Descent, 12_000.0), (Approach, 4_000.0), (Final, 1_000.0), (TaxiIn, 0.0)].into_iter().enumerate() {
             alle.extend(p.tick(&tick(1_000 + i as i64 * 10, ph, h, -800.0)).into_iter().map(|f| f.slot));
@@ -2695,36 +2783,44 @@ mod tests {
         let bis = (120.0 - SINKFLUG_MIN) as i64 * 60;
         assert_eq!(p.zeitpunkt(Slot::EndeService, None), None, "2.1.1 C: hängt am Service");
         p.schon_gespielt([Slot::Reiseflug25]);
+        p.service_ende(true);
         assert_eq!(p.zeitpunkt(Slot::EndeService, None), Some(bis - REISEFLUG80_VOR_TOD_S));
         assert!(!p.tick(&tick(bis - REISEFLUG80_VOR_TOD_S - 10, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
         assert!(p.tick(&tick(bis - REISEFLUG80_VOR_TOD_S, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
-        // Früher Sinkflug (DLH454): kommt beim Sinkflugbeginn.
+        // Früher Sinkflug (DLH454, Service gespielt): kommt beim Sinkflugbeginn.
         let mut q = Planer::fortsetzen(f.clone(), Cruise);
         q.tick(&tick(30 * 60, Cruise, 37_000.0, 0.0));
+        q.service_ende(true);
         assert!(q.tick(&tick(31 * 60, Descent, 36_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
-        // Kurzstrecke unter einer Stunde: kommt auch.
+        // Kurzstrecke unter einer Stunde mit Service: kommt auch.
         let mut k = flug(45);
         k.abheben_epoch = Some(0);
         let mut ks = Planer::fortsetzen(k, Climb);
+        ks.service_ende(true);
         assert!(ks.tick(&tick(20 * 60, Descent, 15_000.0, -1_500.0)).iter().any(|x| x.slot == Slot::EndeService));
         // Altes Modul (Reiseflug 80 = Ende des Bordverkaufs): keine zweite Ende-Ansage.
         let mut alt = Planer::fortsetzen(f.clone(), Cruise);
         alt.reiseflug80_art(Some(false));
         assert!(!alt.tick(&tick(bis, Descent, 30_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
-        // Neustart im Sinkflug: kommt noch — außer sie lief laut Verlauf schon.
+        // Neustart im Sinkflug nach gespieltem Service: kommt noch — außer
+        // sie lief laut Verlauf schon.
         let mut neu = Planer::fortsetzen(f.clone(), Descent);
+        neu.service_ende(true);
         assert!(neu.tick(&tick(bis + 60, Descent, 25_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
         let mut gelaufen = Planer::fortsetzen(f.clone(), Descent);
         gelaufen.schon_gespielt([Slot::EndeService]);
         assert!(!gelaufen.tick(&tick(bis + 60, Descent, 25_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
-        // 2.1.1 C: Abgewählter Service gibt das Ende frei wie ein gespielter.
+        // 2.1.1 C (bleibt): Ein abgewählter Service gibt das Ende frei wie ein
+        // gespielter — abgewählt heißt, GSX oder das Flugzeug spielt ihn.
         let mut ab = Planer::fortsetzen(f.clone(), Cruise);
         ab.abwaehlen([Slot::Reiseflug25]);
         let mut gesehen = false;
         for s in (0..bis).step_by(10) {
             gesehen |= ab.tick(&tick(s, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService);
         }
+        gesehen |= ab.tick(&tick(bis, Descent, 30_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService);
         assert!(gesehen, "nach abgewähltem Service");
+        assert!(ab.entfallene_abholen().is_empty());
         // Darf in der Ruhephase (Sinkflug unter 10.000 ft) spielen, sonst verfiele sie.
         assert!(Slot::EndeService.in_ruhephase_erlaubt());
         // Bizjet: nicht.
@@ -2733,6 +2829,127 @@ mod tests {
         b.abheben_epoch = Some(0);
         let mut bz = Planer::fortsetzen(b, Cruise);
         assert!(!bz.tick(&tick(bis, Descent, 30_000.0, -2_000.0)).iter().any(|x| x.slot == Slot::EndeService));
+    }
+
+    /// EWG 221 (22.10.2026): sehr kurzer Flug, Zeichen blieb an, kein
+    /// Service. „Ende des Service“ kam beim Sinkflug trotzdem in die
+    /// Schlange und verfiel `zu_spaet` (Verlust). Jetzt: nicht gemeldet,
+    /// sondern entfallen als übersprungen (Regelgrund).
+    #[test]
+    fn ewg221_ohne_service_kein_ende_sondern_uebersprungen() {
+        let mut p = Planer::neu(flug(25));
+        let mut gemeldet = Vec::new();
+        let mut s = 0;
+        for (phase, h, vs, schritte) in [(Takeoff, 500.0, 2_000.0, 3), (Climb, 3_000.0, 2_000.0, 30), (Cruise, 7_000.0, 0.0, 12), (Descent, 6_000.0, -1_500.0, 3), (Approach, 2_500.0, -800.0, 3)] {
+            for _ in 0..schritte {
+                s += 10;
+                let mut tk = tick(s, phase, h, vs);
+                tk.anschnallzeichen = Some(1);
+                gemeldet.extend(p.tick(&tk).into_iter().map(|f| f.slot));
+            }
+        }
+        assert!(!gemeldet.contains(&Slot::Reiseflug25), "Vorbedingung: kein Service");
+        assert!(!gemeldet.contains(&Slot::EndeService), "{gemeldet:?}");
+        assert!(p.entfallene_abholen().contains(&(Slot::EndeService, Entfall::Uebersprungen)));
+        assert!(!p.kommt_noch(Slot::EndeService, Approach));
+    }
+
+    /// Nur ein gespielter Service gibt das Ende frei: gemeldet, aber noch
+    /// nicht zu Ende, hält es bis zum Ende des Sinkflugs zurück; verfallen,
+    /// stumm, abgebrochen oder Fehler (`service_ende(false)`) nicht.
+    #[test]
+    fn ende_service_nur_nach_gespieltem_service() {
+        let mut f = flug(120);
+        f.abheben_epoch = Some(0);
+        let bis = (120.0 - SINKFLUG_MIN) as i64 * 60;
+        let ende = |p: &mut Planer, s: i64, ph: FlightPhase| p.tick(&tick(s, ph, 30_000.0, if ph == Cruise { 0.0 } else { -2_000.0 })).iter().any(|x| x.slot == Slot::EndeService);
+        let uebersprungen = |p: &mut Planer| p.entfallene_abholen().contains(&(Slot::EndeService, Entfall::Uebersprungen));
+        let mit_service = || {
+            let mut p = Planer::fortsetzen(f.clone(), Cruise);
+            let mut s = 0;
+            while !p.erledigt(Slot::Reiseflug25) {
+                s += 10;
+                let mut tk = tick(s, Cruise, 37_000.0, 0.0);
+                tk.anschnallzeichen = Some(0);
+                p.tick(&tk);
+            }
+            p
+        };
+        // Gemeldet, Ende steht aus: hält beim Sinkflug zurück …
+        let mut p = mit_service();
+        assert!(!ende(&mut p, bis - REISEFLUG80_VOR_TOD_S, Cruise), "nicht zur geplanten Zeit");
+        assert!(!ende(&mut p, bis, Descent), "nicht beim Sinkflug");
+        assert!(!uebersprungen(&mut p), "noch nicht übersprungen");
+        // … und kommt, wenn der Service noch im Sinkflug zu Ende spielt.
+        p.service_ende(true);
+        assert!(ende(&mut p, bis + 30, Descent));
+        // Kein Ende bis zum Anflug: übersprungen.
+        let mut q = mit_service();
+        assert!(!ende(&mut q, bis, Descent));
+        assert!(!ende(&mut q, bis + 300, Approach));
+        assert!(uebersprungen(&mut q));
+        // Verfallen/stumm/Fehler: beim Sinkflug übersprungen.
+        let mut r = mit_service();
+        r.service_ende(false);
+        assert!(!ende(&mut r, bis - REISEFLUG80_VOR_TOD_S, Cruise));
+        assert!(!ende(&mut r, bis, Descent));
+        assert!(uebersprungen(&mut r));
+        // Ein spätes „gespielt“ nach dem Aus ändert nichts mehr.
+        r.service_ende(true);
+        assert!(!ende(&mut r, bis + 30, Descent));
+        // Codex: ausgefallener Service → die Seite zeigt das Ende nicht mehr
+        // als kommend und ohne Uhrzeit.
+        let mut aus = mit_service();
+        assert!(aus.kommt_noch(Slot::EndeService, Cruise) && aus.zeitpunkt(Slot::EndeService, None).is_some());
+        aus.service_ende(false);
+        assert!(!aus.kommt_noch(Slot::EndeService, Cruise), "ausgefallen: kommt nicht mehr");
+        assert_eq!(aus.zeitpunkt(Slot::EndeService, None), None);
+        // Codex: Service entfällt (zu wenig Zeit) → ebenso ausgefallen.
+        let mut kurz = Planer::fortsetzen(f.clone(), Cruise);
+        kurz.entfaellt(Slot::Reiseflug25, Entfall::ZuWenigZeit);
+        assert!(!kurz.kommt_noch(Slot::EndeService, Cruise), "entfallener Service: kein Ende angezeigt");
+        assert_eq!(kurz.zeitpunkt(Slot::EndeService, None), None);
+        assert!(!ende(&mut kurz, bis, Descent));
+        assert!(uebersprungen(&mut kurz));
+        // Codex: abgewählt, aber zu wenig Zeit für einen Service → kein Ende.
+        let mut ab_kurz = Planer::fortsetzen(f.clone(), Cruise);
+        ab_kurz.abwaehlen([Slot::Reiseflug25]);
+        ab_kurz.entfaellt(Slot::Reiseflug25, Entfall::ZuWenigZeit);
+        assert!(!ab_kurz.kommt_noch(Slot::EndeService, Cruise), "abgewählt + entfallen: kein Ende");
+        assert!(!ende(&mut ab_kurz, bis, Descent));
+        assert!(uebersprungen(&mut ab_kurz));
+        // Codex: Neustart nach entfallenem Service, weiter abgewählt → kein Ende.
+        let mut neu_ab = Planer::fortsetzen(f.clone(), Cruise);
+        neu_ab.service_entfallen();
+        neu_ab.abwaehlen([Slot::Reiseflug25]);
+        assert!(!neu_ab.kommt_noch(Slot::EndeService, Cruise));
+        assert!(!ende(&mut neu_ab, bis, Descent), "Neustart: entfallen schlägt Abwahl");
+        // Codex: Abwahl erst, als der Service schon in der Schlange stand —
+        // zählt trotzdem als gelaufen (2.1.1 C), auch wenn er danach abbricht.
+        let mut spaet = mit_service();
+        spaet.abwaehlen([Slot::Reiseflug25]);
+        spaet.service_ende(false);
+        assert!(spaet.kommt_noch(Slot::EndeService, Cruise));
+        assert!(ende(&mut spaet, bis, Descent), "Abwahl gibt das Ende frei");
+        // Codex: Neustart im Sinkflug mit abgewähltem Service → Ende kommt.
+        let mut neu = Planer::fortsetzen(f.clone(), Descent);
+        neu.abwaehlen([Slot::Reiseflug25]);
+        assert!(ende(&mut neu, bis + 60, Descent), "nach Neustart mit Abwahl");
+        assert!(!uebersprungen(&mut neu));
+        // Gespielt: zur geplanten Zeit, wie bisher.
+        let mut g = mit_service();
+        g.service_ende(true);
+        assert!(ende(&mut g, bis - REISEFLUG80_VOR_TOD_S, Cruise));
+        // Neustart nach gespieltem Service (Host meldet es laut Verlauf).
+        let mut n = Planer::fortsetzen(f.clone(), Descent);
+        n.schon_gespielt([Slot::Reiseflug25]);
+        n.service_ende(true);
+        assert!(ende(&mut n, bis + 60, Descent));
+        // Neustart ohne gespielten Service: übersprungen.
+        let mut o = Planer::fortsetzen(f.clone(), Descent);
+        o.schon_gespielt([Slot::Reiseflug25]);
+        assert!(!ende(&mut o, bis + 60, Descent));
+        assert!(uebersprungen(&mut o));
     }
 
     /// Planer und Warteschlange zusammen: Was spielt wann (alles spielbereit,
@@ -2746,6 +2963,9 @@ mod tests {
             if let Some((s, bis)) = laeuft {
                 if t.jetzt >= bis {
                     if s.loest_pause_aus() { w.ansage_zu_ende_nach(bis, s) } else { w.frei() }
+                    if s == Slot::Reiseflug25 {
+                        p.service_ende(true);
+                    }
                     laeuft = None;
                 }
             }
