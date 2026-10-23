@@ -1,0 +1,85 @@
+// Fragt AeroACARS regelmäßig ab, solange mindestens eine Taste sichtbar ist.
+// Status und Kabine jede Sekunde, Hoppie alle drei Sekunden, die Landung
+// nur nach dem Aufsetzen und dann alle fünf Sekunden (der Panel-Server
+// protokolliert gehäufte Landungsabfragen).
+
+import { lesen } from "./aeroacars.js";
+
+const TAKT_MS = 1000;
+
+export class Zustand {
+  constructor() {
+    this.s = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: new Date() };
+    this.hoerer = new Set();
+    this.takt = null;
+    this.runde = 0;
+  }
+
+  /** `fn(s)` bei jeder Runde; liefert eine Abmelde-Funktion. */
+  abonnieren(fn) {
+    this.hoerer.add(fn);
+    if (!this.takt) this.starten();
+    fn(this.s);
+    return () => {
+      this.hoerer.delete(fn);
+      if (this.hoerer.size === 0) this.stoppen();
+    };
+  }
+
+  starten() {
+    this.takt = setInterval(() => this.abfragen(), TAKT_MS);
+    this.abfragen();
+  }
+
+  stoppen() {
+    clearInterval(this.takt);
+    this.takt = null;
+  }
+
+  /** Kabine sofort übernehmen (Antwort eines Befehls). */
+  kabineSetzen(kabine) {
+    this.s = { ...this.s, kabine };
+    this.melden();
+  }
+
+  async abfragen() {
+    // Hängt AeroACARS, dauert eine Runde länger als der Takt: nicht stapeln.
+    if (this.laeuft) return;
+    this.laeuft = true;
+    try {
+      await this.runde_();
+    } finally {
+      this.laeuft = false;
+    }
+  }
+
+  async runde_() {
+    const runde = this.runde++;
+    const s = { ...this.s, jetzt: new Date() };
+    try {
+      s.status = await lesen("/panel/status");
+      s.erreichbar = true;
+    } catch {
+      this.s = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: s.jetzt };
+      this.melden();
+      return;
+    }
+    // Ältere Clients kennen die Kabinen-Route nicht: dann bleibt sie null.
+    s.kabine = await lesen("/panel/kabine").catch(() => null);
+    if (runde % 3 === 0) s.hoppie = await lesen("/panel/hoppie").catch(() => null);
+    if (!s.status?.landing_at) s.debrief = null;
+    else if (runde % 5 === 0 || !s.debrief) s.debrief = await lesen("/panel/debrief").catch(() => s.debrief);
+    this.s = s;
+    this.melden();
+  }
+
+  melden() {
+    for (const fn of this.hoerer) {
+      try {
+        fn(this.s);
+      } catch {
+        // Eine kaputte Taste darf die anderen nicht anhalten.
+      }
+    }
+  }
+}

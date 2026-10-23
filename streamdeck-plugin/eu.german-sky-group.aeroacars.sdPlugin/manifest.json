@@ -1,0 +1,637 @@
+{
+	"Name": "AeroACARS",
+	"Version": "1.0.0.0",
+	"Author": "German Sky Group",
+	"Description": "Flugstatus, Kabinenansagen und Boarding-Musik von AeroACARS auf dem StreamDeck.",
+	"Category": "AeroACARS",
+	"CategoryIcon": "imgs/plugin/kategorie",
+	"Icon": "imgs/plugin/symbol",
+	"CodePath": "bin/plugin.js",
+	"SDKVersion": 3,
+	"Software": {
+		"MinimumVersion": "7.1"
+	},
+	"OS": [
+		{
+			"Platform": "mac",
+			"MinimumVersion": "12"
+		},
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
+	],
+	"Nodejs": {
+		"Version": "24",
+		"Debug": "disabled"
+	},
+	"UUID": "eu.german-sky-group.aeroacars",
+	"Actions": [
+		{
+			"Name": "Phase und Zurück",
+			"UUID": "eu.german-sky-group.aeroacars.phase",
+			"Icon": "imgs/actions/phase",
+			"Tooltip": "Flugphase und Höhe. Drücken führt zurück ins vorherige Profil.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/phase_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Rufzeichen",
+			"UUID": "eu.german-sky-group.aeroacars.flug",
+			"Icon": "imgs/actions/flug",
+			"Tooltip": "Rufzeichen und Strecke.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/flug_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Gates",
+			"UUID": "eu.german-sky-group.aeroacars.gates",
+			"Icon": "imgs/actions/gates",
+			"Tooltip": "Abflug- und Ankunftsgate.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/gates_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Blockzeit",
+			"UUID": "eu.german-sky-group.aeroacars.block",
+			"Icon": "imgs/actions/block",
+			"Tooltip": "Zeit seit Off-Block.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/block_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Flugzeit",
+			"UUID": "eu.german-sky-group.aeroacars.luft",
+			"Icon": "imgs/actions/luft",
+			"Tooltip": "Zeit seit dem Abheben.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/luft_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Sprit",
+			"UUID": "eu.german-sky-group.aeroacars.sprit",
+			"Icon": "imgs/actions/sprit",
+			"Tooltip": "Sprit an Bord laut Simulator und geplante Reserve.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/sprit_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Gewichte",
+			"UUID": "eu.german-sky-group.aeroacars.gewicht",
+			"Icon": "imgs/actions/gewicht",
+			"Tooltip": "ZFW und Startgewicht, rot über dem Höchstwert.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/gewicht_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Landegewicht",
+			"UUID": "eu.german-sky-group.aeroacars.ldw",
+			"Icon": "imgs/actions/ldw",
+			"Tooltip": "Geplantes Landegewicht und Höchstwert.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/ldw_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Wetter Start",
+			"UUID": "eu.german-sky-group.aeroacars.wetter-start",
+			"Icon": "imgs/actions/wetter_start",
+			"Tooltip": "Wind und QNH am Startflughafen.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/wetter_start_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Wetter Ziel",
+			"UUID": "eu.german-sky-group.aeroacars.wetter-ziel",
+			"Icon": "imgs/actions/wetter_ziel",
+			"Tooltip": "Wind und QNH am Zielflughafen.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/wetter_ziel_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Landebahn",
+			"UUID": "eu.german-sky-group.aeroacars.bahn",
+			"Icon": "imgs/actions/bahn",
+			"Tooltip": "Erwartete oder angeflogene Landebahn.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/bahn_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Ausweichflughafen",
+			"UUID": "eu.german-sky-group.aeroacars.ausweich",
+			"Icon": "imgs/actions/ausweich",
+			"Tooltip": "Geplanter Ausweichflughafen, gelb bei vermuteter Umleitung.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/ausweich_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Landung",
+			"UUID": "eu.german-sky-group.aeroacars.landung",
+			"Icon": "imgs/actions/landung",
+			"Tooltip": "Sinkrate und G-Last nach dem Aufsetzen.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/landung_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Landebewertung",
+			"UUID": "eu.german-sky-group.aeroacars.bewertung",
+			"Icon": "imgs/actions/bewertung",
+			"Tooltip": "Note und Punkte, dieselbe Bewertung wie in App und PIREP.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/bewertung_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Durchstarten",
+			"UUID": "eu.german-sky-group.aeroacars.durchstarten",
+			"Icon": "imgs/actions/durchstarten",
+			"Tooltip": "Durchstartmanöver und Touch-and-Go in diesem Flug.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/durchstarten_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Hinweis",
+			"UUID": "eu.german-sky-group.aeroacars.hinweis",
+			"Icon": "imgs/actions/hinweis",
+			"Tooltip": "Die wichtigste Meldung: Sim getrennt, Pause, Abgabe gesperrt, Server, Umleitung.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/hinweis_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Verbindung",
+			"UUID": "eu.german-sky-group.aeroacars.verbindung",
+			"Icon": "imgs/actions/verbindung",
+			"Tooltip": "Verbindung zum Simulator und zum GSG-Server.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/verbindung_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Hoppie",
+			"UUID": "eu.german-sky-group.aeroacars.hoppie",
+			"Icon": "imgs/actions/hoppie",
+			"Tooltip": "Angemeldete Station und offene Freigaben.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/hoppie_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "UTC-Uhr",
+			"UUID": "eu.german-sky-group.aeroacars.utc",
+			"Icon": "imgs/actions/utc",
+			"Tooltip": "Zulu-Zeit, darunter Ortszeit.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/utc_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Geschwindigkeit",
+			"UUID": "eu.german-sky-group.aeroacars.tempo",
+			"Icon": "imgs/actions/tempo",
+			"Tooltip": "Geschwindigkeit über Grund und Kurs.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/tempo_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Geflogene Strecke",
+			"UUID": "eu.german-sky-group.aeroacars.strecke",
+			"Icon": "imgs/actions/strecke",
+			"Tooltip": "Bisher geflogene Strecke.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/strecke_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Nächste Ansage",
+			"UUID": "eu.german-sky-group.aeroacars.ansage",
+			"Icon": "imgs/actions/ansage",
+			"Tooltip": "Welche Kabinenansage als Nächstes kommt; gelb, wenn sie auf das Anschnallzeichen wartet.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/ansage_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Kabine stumm",
+			"UUID": "eu.german-sky-group.aeroacars.kabine-stumm",
+			"Icon": "imgs/actions/kabine_stumm",
+			"Tooltip": "Eine Sekunde halten: Kabine stumm (laufende und wartende Ansagen entfallen). Kurz drücken: Ton wieder an.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/kabine_stumm_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Ansagen leiser",
+			"UUID": "eu.german-sky-group.aeroacars.ansage-leiser",
+			"Icon": "imgs/actions/ansage_leiser",
+			"Tooltip": "Ansagen 10 % leiser.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/ansage_leiser_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Ansagen-Lautstärke",
+			"UUID": "eu.german-sky-group.aeroacars.ansage-pegel",
+			"Icon": "imgs/actions/ansage_pegel",
+			"Tooltip": "Lautstärke der Ansagen.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/ansage_pegel_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Ansagen lauter",
+			"UUID": "eu.german-sky-group.aeroacars.ansage-lauter",
+			"Icon": "imgs/actions/ansage_lauter",
+			"Tooltip": "Ansagen 10 % lauter.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/ansage_lauter_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Boarding-Musik",
+			"UUID": "eu.german-sky-group.aeroacars.boarding-musik",
+			"Icon": "imgs/actions/boarding_musik",
+			"Tooltip": "Boarding-Musik an oder aus. Aus stoppt sofort.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/boarding_musik_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Musik leiser",
+			"UUID": "eu.german-sky-group.aeroacars.musik-leiser",
+			"Icon": "imgs/actions/musik_leiser",
+			"Tooltip": "Boarding-Musik 10 % leiser.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/musik_leiser_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Musik-Lautstärke und stumm",
+			"UUID": "eu.german-sky-group.aeroacars.musik-pegel",
+			"Icon": "imgs/actions/musik_pegel",
+			"Tooltip": "Drücken schaltet nur die Musik stumm und wieder laut. Das Stück läuft weiter, die Einstellung bleibt.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/musik_pegel_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Musik lauter",
+			"UUID": "eu.german-sky-group.aeroacars.musik-lauter",
+			"Icon": "imgs/actions/musik_lauter",
+			"Tooltip": "Boarding-Musik 10 % lauter.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/musik_lauter_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "VATSIM CDM",
+			"UUID": "eu.german-sky-group.aeroacars.cdm",
+			"Icon": "imgs/actions/cdm",
+			"Tooltip": "Öffnet das VATSIM-CDM-Fenster von AeroACARS oder holt es nach vorn.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/cdm_taste",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Regler Ansagen",
+			"UUID": "eu.german-sky-group.aeroacars.regler-ansage",
+			"Icon": "imgs/actions/regler_ansage",
+			"Tooltip": "Drehen: Lautstärke der Ansagen. Halten: Kabine stumm. Kurz drücken: Ton wieder an.",
+			"Controllers": [
+				"Encoder"
+			],
+			"Encoder": {
+				"layout": "$B1",
+				"TriggerDescription": {
+					"Rotate": "Lautstärke",
+					"Push": "Halten = stumm, kurz = Ton an"
+				}
+			},
+			"States": [
+				{
+					"Image": "imgs/actions/regler_ansage",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Regler Musik",
+			"UUID": "eu.german-sky-group.aeroacars.regler-musik",
+			"Icon": "imgs/actions/regler_musik",
+			"Tooltip": "Drehen: Lautstärke der Boarding-Musik. Kurz drücken: Musik stumm/laut. Halten: Boarding-Musik an/aus.",
+			"Controllers": [
+				"Encoder"
+			],
+			"Encoder": {
+				"layout": "$B1",
+				"TriggerDescription": {
+					"Rotate": "Lautstärke",
+					"Push": "Kurz = stumm/laut, halten = an/aus"
+				}
+			},
+			"States": [
+				{
+					"Image": "imgs/actions/regler_musik",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Regler Flugdaten",
+			"UUID": "eu.german-sky-group.aeroacars.regler-info",
+			"Icon": "imgs/actions/regler_info",
+			"Tooltip": "Drehen blättert durch Blockzeit, Flugzeit, Sprit, Gewicht, Geschwindigkeit und Strecke.",
+			"Controllers": [
+				"Encoder"
+			],
+			"Encoder": {
+				"layout": "$B1",
+				"TriggerDescription": {
+					"Rotate": "Seite wechseln"
+				}
+			},
+			"States": [
+				{
+					"Image": "imgs/actions/regler_info",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		},
+		{
+			"Name": "Regler Wetter",
+			"UUID": "eu.german-sky-group.aeroacars.regler-wetter",
+			"Icon": "imgs/actions/regler_wetter",
+			"Tooltip": "Drehen wechselt zwischen Wetter am Start, Wetter am Ziel und Landebahn.",
+			"Controllers": [
+				"Encoder"
+			],
+			"Encoder": {
+				"layout": "$B1",
+				"TriggerDescription": {
+					"Rotate": "Seite wechseln"
+				}
+			},
+			"States": [
+				{
+					"Image": "imgs/actions/regler_wetter",
+					"ShowTitle": false
+				}
+			],
+			"UserTitleEnabled": false
+		}
+	],
+	"Profiles": [
+		{
+			"Name": "profiles/AeroACARS 15",
+			"DeviceType": 0,
+			"Readonly": false,
+			"DontAutoSwitchWhenInstalled": true
+		},
+		{
+			"Name": "profiles/AeroACARS XL",
+			"DeviceType": 2,
+			"Readonly": false,
+			"DontAutoSwitchWhenInstalled": true
+		},
+		{
+			"Name": "profiles/AeroACARS Plus",
+			"DeviceType": 7,
+			"Readonly": false,
+			"DontAutoSwitchWhenInstalled": true
+		}
+	]
+}
