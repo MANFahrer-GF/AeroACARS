@@ -42,6 +42,7 @@ mod xplane_band;
 mod xplane_plugin_install;
 mod kabinenansagen;
 mod kabinen_musik;
+mod kabinen_reaktion;
 mod flug_aktivitaet;
 mod stats_sperre;
 

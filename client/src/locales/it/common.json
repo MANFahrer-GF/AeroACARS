@@ -1,11 +1,11 @@
 {
   "kabine": {
     "einstellungen": {
-      "titel": "Annunci di cabina (beta)",
+      "titel": "Annunci di cabina",
       "an_label": "Attiva gli annunci di cabina",
-      "an_hint": "Annunci IA del comandante e dell'equipaggio nello stile della compagnia. Solo per i piloti beta; i testi li scrive il server GSG.",
+      "an_hint": "Annunci IA del comandante e dell'equipaggio nello stile della compagnia. I testi li scrive il server GSG.",
       "beta_ja": "Abilitato per il tuo account.",
-      "beta_nein": "Non ancora abilitato per il tuo account.",
+      "beta_nein": "Bloccato per il tuo account.",
       "beta_unbekannt": "L'abilitazione viene verificata all'inizio del volo.",
       "zweite_sprache": "Lingue",
       "sprache_airline": "Lingua della compagnia + inglese",
@@ -17,6 +17,8 @@
       "kommandos": "Riproduci i comandi all'equipaggio",
       "doppelt_hint": "Disattiva se il tuo aereo ha annunci o segnali propri (ad esempio FlyByWire). Mai due sistemi insieme.",
       "chimes": "Segnale a 10.000 piedi",
+      "reaktionen": "Reazioni della cabina dopo l'atterraggio",
+      "reaktionen_hint": "La cabina applaude o mormora soddisfatta dopo un ottimo atterraggio e sussulta dopo uno duro, piano, attraverso la porta della cabina di pilotaggio. Stesso volume degli annunci.",
       "lautstaerke": "Volume",
       "probe": "Ascolta una prova",
       "lizenzen": "Licenze",
@@ -91,7 +93,7 @@
     "seite": {
       "titel": "Cabina",
       "kein_flug": "Nessun volo in corso.",
-      "nicht_freigeschaltet": "Non ancora abilitato per il tuo account.",
+      "nicht_freigeschaltet": "Bloccato per il tuo account.",
       "warte_auf_texte": "I testi per questo volo sono in preparazione.",
       "ausschalten": "Disattiva gli annunci",
       "einstellungen": "Apri le impostazioni",
@@ -137,11 +139,11 @@
       },
       "beta_pruefung": {
         "titel": "Verifica dell'accesso",
-        "text": "AeroACARS chiede al server GSG se il tuo account è abilitato alla beta."
+        "text": "AeroACARS chiede al server GSG se gli annunci sono disponibili per il tuo account."
       },
       "nicht_freigeschaltet": {
-        "titel": "Non abilitato",
-        "text": "Il tuo account non è abilitato alla beta degli annunci di cabina. L'abilitazione la fa il team GSG."
+        "titel": "Bloccato",
+        "text": "Gli annunci di cabina sono bloccati per il tuo account. Contatta il team GSG."
       },
       "wiedergabe": {
         "titel": "Audio non riproducibile",

@@ -60,6 +60,9 @@ export interface Einstellungen {
   klang: "klar" | "lautsprecher" | "tuer";
   /** Abgewählte Ansagen (Slot-Namen), z. B. weil GSX oder das Flugzeug sie spielt. */
   aus: string[];
+  /** Kabinen-Reaktionen nach der Landung (Applaus, Murmeln, Raunen); ab Werk an.
+   *  Lautstärke folgt den Ansagen. */
+  reaktionen: boolean;
 }
 
 export interface Geraet {

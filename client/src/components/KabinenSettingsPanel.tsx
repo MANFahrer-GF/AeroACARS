@@ -158,6 +158,13 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
               <strong>{t("kabine.einstellungen.chimes")}</strong>
             </span>
           </label>
+          <label className="settings__checkbox">
+            <input type="checkbox" checked={e.reaktionen} onChange={(ev) => void aendern({ reaktionen: ev.target.checked })} />
+            <span>
+              <strong>{t("kabine.einstellungen.reaktionen")}</strong>
+              <span className="settings__row-hint">{t("kabine.einstellungen.reaktionen_hint")}</span>
+            </span>
+          </label>
 
           <details className="kabine-einzeln" data-testid="kabine-einzeln">
             <summary>

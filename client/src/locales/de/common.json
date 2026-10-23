@@ -1,11 +1,11 @@
 {
   "kabine": {
     "einstellungen": {
-      "titel": "Kabinenansagen (Beta)",
+      "titel": "Kabinenansagen",
       "an_label": "Kabinenansagen einschalten",
-      "an_hint": "KI-Ansagen von Kapitän und Kabine im Stil der Airline. Nur für freigeschaltete Beta-Piloten; die Texte schreibt der GSG-Server.",
+      "an_hint": "KI-Ansagen von Kapitän und Kabine im Stil der Airline. Die Texte schreibt der GSG-Server.",
       "beta_ja": "Freigeschaltet.",
-      "beta_nein": "Für dein Konto noch nicht freigeschaltet.",
+      "beta_nein": "Für dein Konto gesperrt.",
       "beta_unbekannt": "Freischaltung wird beim Flugstart geprüft.",
       "zweite_sprache": "Sprachen",
       "sprache_airline": "Airline-Sprache + Englisch",
@@ -17,6 +17,8 @@
       "kommandos": "Crew-Kommandos abspielen",
       "doppelt_hint": "Ausschalten, wenn dein Flugzeug eigene Ansagen oder Gongs hat (etwa FlyByWire). Nie zwei Systeme gleichzeitig.",
       "chimes": "Gong bei 10.000 Fuß",
+      "reaktionen": "Kabinen-Reaktionen nach der Landung",
+      "reaktionen_hint": "Die Kabine klatscht oder murmelt zufrieden nach einer sehr guten Landung und raunt nach einer harten, leise durch die Cockpittür. Lautstärke wie die Ansagen.",
       "lautstaerke": "Lautstärke",
       "probe": "Hörprobe",
       "lizenzen": "Lizenzen",
@@ -91,7 +93,7 @@
     "seite": {
       "titel": "Kabine",
       "kein_flug": "Kein laufender Flug.",
-      "nicht_freigeschaltet": "Für dein Konto noch nicht freigeschaltet.",
+      "nicht_freigeschaltet": "Für dein Konto gesperrt.",
       "warte_auf_texte": "Die Texte für diesen Flug werden geschrieben.",
       "ausschalten": "Ansagen ausschalten",
       "einstellungen": "Einstellungen öffnen",
@@ -137,11 +139,11 @@
       },
       "beta_pruefung": {
         "titel": "Freischaltung wird geprüft",
-        "text": "AeroACARS fragt den GSG-Server, ob dein Konto für die Beta freigeschaltet ist."
+        "text": "AeroACARS fragt den GSG-Server, ob die Ansagen für dein Konto frei sind."
       },
       "nicht_freigeschaltet": {
-        "titel": "Nicht freigeschaltet",
-        "text": "Dein Konto ist für die Kabinenansagen-Beta nicht freigeschaltet. Die Freischaltung macht das GSG-Team."
+        "titel": "Gesperrt",
+        "text": "Die Kabinenansagen sind für dein Konto gesperrt. Wende dich an das GSG-Team."
       },
       "wiedergabe": {
         "titel": "Ton nicht abspielbar",

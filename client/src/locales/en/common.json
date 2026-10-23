@@ -1,11 +1,11 @@
 {
   "kabine": {
     "einstellungen": {
-      "titel": "Cabin announcements (beta)",
+      "titel": "Cabin announcements",
       "an_label": "Turn on cabin announcements",
-      "an_hint": "AI announcements by captain and cabin crew in the airline's style. Only for beta pilots; the GSG server writes the texts.",
+      "an_hint": "AI announcements by captain and cabin crew in the airline's style. The GSG server writes the texts.",
       "beta_ja": "Enabled for your account.",
-      "beta_nein": "Not enabled for your account yet.",
+      "beta_nein": "Blocked for your account.",
       "beta_unbekannt": "Access is checked when the flight starts.",
       "zweite_sprache": "Languages",
       "sprache_airline": "Airline's language + English",
@@ -17,6 +17,8 @@
       "kommandos": "Play crew commands",
       "doppelt_hint": "Turn off if your aircraft has its own announcements or chimes (for example FlyByWire). Never run two systems at once.",
       "chimes": "Chime at 10,000 ft",
+      "reaktionen": "Cabin reactions after landing",
+      "reaktionen_hint": "The cabin applauds or murmurs happily after a great landing and gasps after a hard one, quietly through the cockpit door. Same volume as the announcements.",
       "lautstaerke": "Volume",
       "probe": "Voice sample",
       "lizenzen": "Licences",
@@ -91,7 +93,7 @@
     "seite": {
       "titel": "Cabin",
       "kein_flug": "No flight in progress.",
-      "nicht_freigeschaltet": "Not enabled for your account yet.",
+      "nicht_freigeschaltet": "Blocked for your account.",
       "warte_auf_texte": "The texts for this flight are being written.",
       "ausschalten": "Turn off announcements",
       "einstellungen": "Open settings",
@@ -137,11 +139,11 @@
       },
       "beta_pruefung": {
         "titel": "Checking access",
-        "text": "AeroACARS is asking the GSG server whether your account is enabled for the beta."
+        "text": "AeroACARS is asking the GSG server whether announcements are available for your account."
       },
       "nicht_freigeschaltet": {
-        "titel": "Not enabled",
-        "text": "Your account is not enabled for the cabin announcements beta. The GSG team enables accounts."
+        "titel": "Blocked",
+        "text": "Cabin announcements are blocked for your account. Please contact the GSG team."
       },
       "wiedergabe": {
         "titel": "Audio could not be played",
