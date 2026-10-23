@@ -47931,6 +47931,9 @@ fn kabinen_schritt(
         };
         let mut planer = cabin_announcements::Planer::fortsetzen(flug, phase);
         planer.schon_gespielt(kabinenansagen::erledigte_slots(&stats.kabinen_lauf));
+        if kabinenansagen::service_gespielt(&stats.kabinen_lauf) {
+            planer.service_ende(true);
+        }
         stats.kabinen_planer = Some(planer);
     }
     let durchgestartet = stats.go_around_count > stats.kabinen_durchstarts;

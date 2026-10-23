@@ -701,6 +701,12 @@ pub(crate) fn erledigte_slots(lauf: &Lauf) -> Vec<Slot> {
     lauf.verlauf.iter().filter(|g| !g.vorschau && g.ergebnis.is_some()).map(|g| g.slot).collect()
 }
 
+/// Lief der Service (Reiseflug 25) laut Verlauf wirklich? Nach einem
+/// Neustart gibt nur das „Ende des Service“ frei (EWG 221).
+pub(crate) fn service_gespielt(lauf: &Lauf) -> bool {
+    lauf.verlauf.iter().any(|g| g.slot == Slot::Reiseflug25 && !g.vorschau && g.ergebnis.as_deref() == Some("gespielt"))
+}
+
 /// Wartet Reiseflug 80 als zweiter Service, obwohl weniger als
 /// [`cabin_announcements::planer::ZWEITER_SERVICE_REST_MIN`] Restflug bleiben?
 fn zweiter_service_zu_spaet(lauf: &Lauf, rest_min: Option<f64>) -> bool {
@@ -788,10 +794,11 @@ fn verbuchen(lauf: &mut Lauf, slot: Slot, ergebnis: &str, grund: Option<&str>, j
 fn stumm_anwenden(stats: &mut FlightStats, jetzt: i64) -> bool {
     let lauf = &mut stats.kabinen_lauf;
     let mut geaendert = false;
-    let mut kapitaen = false;
+    let (mut kapitaen, mut service) = (false, false);
     for g in lauf.verlauf.iter_mut().filter(|g| g.ergebnis.is_none() && !g.vorschau) {
         g.ergebnis = Some("stumm".into());
         kapitaen |= g.slot == Slot::KapitaenSinkflug;
+        service |= g.slot == Slot::Reiseflug25;
         geaendert = true;
     }
     lauf.vorschau = None;
@@ -799,11 +806,17 @@ fn stumm_anwenden(stats: &mut FlightStats, jetzt: i64) -> bool {
     for slot in lauf.warteschlange.alle_entnehmen() {
         verbuchen(lauf, slot, "stumm", None, jetzt);
         kapitaen |= slot == Slot::KapitaenSinkflug;
+        service |= slot == Slot::Reiseflug25;
         geaendert = true;
     }
     if kapitaen {
         if let Some(p) = stats.kabinen_planer.as_mut() {
             p.kapitaen_sinkflug_ende(false, jetzt);
+        }
+    }
+    if service {
+        if let Some(p) = stats.kabinen_planer.as_mut() {
+            p.service_ende(false);
         }
     }
     geaendert
@@ -2157,16 +2170,22 @@ fn takt_schritt(
     // (kommt auch nach dem Aufheben nicht nach — Thomas 18.10.2026).
     if STUMM.load(Ordering::SeqCst) {
         verlauf_neu |= stumm_anwenden(&mut stats, jetzt);
-        let mut kapitaen = false;
+        let (mut kapitaen, mut service) = (false, false);
         for f in faellig.drain(..) {
             notiz(&mut stats.kabinen_lauf, "stumm", Some(f.slot), None, serde_json::Value::Null);
             verbuchen(&mut stats.kabinen_lauf, f.slot, "stumm", None, jetzt);
             kapitaen |= f.slot == Slot::KapitaenSinkflug;
+            service |= f.slot == Slot::Reiseflug25;
             verlauf_neu = true;
         }
         if kapitaen {
             if let Some(p) = stats.kabinen_planer.as_mut() {
                 p.kapitaen_sinkflug_ende(false, jetzt);
+            }
+        }
+        if service {
+            if let Some(p) = stats.kabinen_planer.as_mut() {
+                p.service_ende(false);
             }
         }
     }
@@ -2339,6 +2358,8 @@ fn hinweis_pruefen(stats: &mut FlightStats, snap: &SimSnapshot, phase: FlightPha
 fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ruhephase: bool, tief_nach_start: bool) -> (Option<Gespielt>, bool) {
     let mut verlauf_neu = false;
     let mut kapitaen_kommt_nicht = false;
+    // EWG 221: Ebenso erfährt der Planer, dass der Service nicht lief.
+    let mut service_kommt_nicht = false;
     let lauf = &mut stats.kabinen_lauf;
     // Sicher entfallende Slots (Bizjet ohne Kurzfassung) nicht warten lassen.
     let mut weg: Vec<(Slot, String)> = lauf.entfaellt.iter().map(|(s, g)| (*s, g.clone())).collect();
@@ -2365,6 +2386,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
             // Codex-Nachprüfung: Der Planer muss es wissen, sonst wartet die
             // Kabine auf einen Kapitän, der nie kommt.
             kapitaen_kommt_nicht |= slot == Slot::KapitaenSinkflug;
+            service_kommt_nicht |= slot == Slot::Reiseflug25;
             verlauf_neu = true;
         }
     }
@@ -2372,6 +2394,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     for g in lauf.verlauf.iter_mut().filter(|g| g.ergebnis.is_none() && !g.vorschau && !g.gestartet && jetzt - g.zeit > START_SPAETESTENS_S) {
         g.ergebnis = Some("unbekannt".into());
         kapitaen_kommt_nicht |= g.slot == Slot::KapitaenSinkflug;
+        service_kommt_nicht |= g.slot == Slot::Reiseflug25;
         lauf.warteschlange.frei();
         verlauf_neu = true;
     }
@@ -2380,6 +2403,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     for g in lauf.verlauf.iter_mut().filter(|g| g.ergebnis.is_none() && !g.vorschau && g.gestartet && jetzt - g.zeit > dauer_s(g.slot, &g.teile).ceil() as i64 + ABLAUF_FRIST_S) {
         g.ergebnis = Some("unbekannt".into());
         kapitaen_kommt_nicht |= g.slot == Slot::KapitaenSinkflug;
+        service_kommt_nicht |= g.slot == Slot::Reiseflug25;
         lauf.warteschlange.frei();
         verlauf_neu = true;
     }
@@ -2400,6 +2424,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
         verbuchen(lauf, weg, "entfallen", Some(grund), jetzt);
         verfallen_aufraeumen(lauf, weg);
         kapitaen_kommt_nicht |= weg == Slot::KapitaenSinkflug;
+        service_kommt_nicht |= weg == Slot::Reiseflug25;
         verlauf_neu = true;
     }
     let gespielt = naechstes.and_then(|slot| match teile_von(lauf, slot) {
@@ -2435,6 +2460,7 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
             notiz(lauf, "entfallen", Some(slot), None, serde_json::json!({ "grund": "keine_stimme" }));
             verbuchen(lauf, slot, "entfallen", Some("keine_stimme"), jetzt);
             kapitaen_kommt_nicht |= slot == Slot::KapitaenSinkflug;
+            service_kommt_nicht |= slot == Slot::Reiseflug25;
             verlauf_neu = true;
             None
         }
@@ -2442,6 +2468,11 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     if kapitaen_kommt_nicht {
         if let Some(p) = stats.kabinen_planer.as_mut() {
             p.kapitaen_sinkflug_ende(false, jetzt);
+        }
+    }
+    if service_kommt_nicht {
+        if let Some(p) = stats.kabinen_planer.as_mut() {
+            p.service_ende(false);
         }
     }
     (gespielt, verlauf_neu)
@@ -3476,6 +3507,10 @@ fn ende_melden(stats: &mut FlightStats, id: u64, ergebnis: &str, jetzt: i64, que
     }
     if let (Some((Slot::KapitaenSinkflug, gespielt)), Some(p)) = (ende, stats.kabinen_planer.as_mut()) {
         p.kapitaen_sinkflug_ende(gespielt, jetzt);
+    }
+    // EWG 221: „Ende des Service“ nur nach einem gespielten Service.
+    if let (Some((Slot::Reiseflug25, gespielt)), Some(p)) = (ende, stats.kabinen_planer.as_mut()) {
+        p.service_ende(gespielt);
     }
     true
 }
@@ -5335,7 +5370,16 @@ mod tests {
             }
             // Neustart: Planer einmal frisch aus Phase und echtem Abheben.
             if einstieg && st.kabinen_lauf.angefragt.is_empty() {
-                st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flug(Some(abheben)), phase));
+                // Der Service lief vor dem Neustart (Verlauf); daraus der
+                // Planer wie in `lib.rs` (EWG 221: nur ein gespielter Service
+                // gibt „Ende des Service“ frei).
+                st.kabinen_lauf.verlauf.push(Gespielt { id: 0, slot: Slot::Reiseflug25, rolle: Rolle::Kabine, zeit: jetzt, teile: vec![], vorschau: false, ergebnis: Some("gespielt".into()), gestartet: true, grund: None });
+                let mut p = cabin_announcements::Planer::fortsetzen(flug(Some(abheben)), phase);
+                p.schon_gespielt(erledigte_slots(&st.kabinen_lauf));
+                if service_gespielt(&st.kabinen_lauf) {
+                    p.service_ende(true);
+                }
+                st.kabinen_planer = Some(p);
                 st.kabinen_lauf.angefragt.insert("neustart".into());
             }
             if let Some((id, ende)) = laufend {
@@ -6958,6 +7002,79 @@ mod rundumschlag_p1_tests {
         l.warteschlange.aufnehmen([faellig(Slot::EndeService)]);
         let (g, _) = abspielen_schritt(&mut st, 100, Cruise, false, false);
         assert_eq!(gespielte_sprachen(&g.expect("spielt")), vec!["de-DE", "en-GB"], "wartet nicht auf Französisch");
+    }
+
+    // ---- Ende des Service nur nach gespieltem Service (EWG 221) ----
+
+    /// Flug im Reiseflug, bis der Planer den Service meldet; der steht dann
+    /// in der Warteschlange (wie `takt`).
+    fn mit_gemeldetem_service(ton: bool) -> FlightStats {
+        use crate::FlightPhase::*;
+        let mut st = flug(Cruise, if ton { &[Slot::Reiseflug25] } else { &[] });
+        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+            cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(120), reiseflughoehe_ft: Some(36_000), abheben_epoch: Some(0), ..Default::default() },
+            Cruise,
+        ));
+        let p = st.kabinen_planer.as_mut().unwrap();
+        let mut s = 0;
+        let service = loop {
+            s += 10;
+            let tk = cabin_announcements::Tick { jetzt: s, phase: Cruise, hoehe_ft: 36_000.0, anschnallzeichen: Some(0), ..Default::default() };
+            if let Some(f) = p.tick(&tk).into_iter().find(|f| f.slot == Slot::Reiseflug25) {
+                break f;
+            }
+            assert!(s < 7_200, "Service kam nicht");
+        };
+        st.kabinen_lauf.warteschlange.aufnehmen([service]);
+        st
+    }
+
+    /// Kommt „Ende des Service“ beim Sinkflug? Und wurde sie übersprungen?
+    fn beim_sinkflug(st: &mut FlightStats, jetzt: i64) -> (bool, bool) {
+        let p = st.kabinen_planer.as_mut().unwrap();
+        let tk = cabin_announcements::Tick { jetzt, phase: crate::FlightPhase::Descent, hoehe_ft: 30_000.0, vs_fpm: -2_000.0, ..Default::default() };
+        let kommt = p.tick(&tk).iter().any(|f| f.slot == Slot::EndeService);
+        (kommt, p.entfallene_abholen().contains(&(Slot::EndeService, cabin_announcements::Entfall::Uebersprungen)))
+    }
+
+    /// Wie beim Kapitän meldet der Host das Ende des Service an den Planer:
+    /// Nur „gespielt“ gibt „Ende des Service“ frei; abgebrochen oder
+    /// verfallen nicht — dann entfällt sie beim Sinkflug als übersprungen.
+    #[test]
+    fn ewg221_host_meldet_dem_planer_ob_der_service_lief() {
+        use crate::FlightPhase::*;
+        // Gespielt (Peter DLH454: früher Sinkflug): kommt beim Sinkflug.
+        let mut st = mit_gemeldetem_service(true);
+        let g = abspielen_schritt(&mut st, 8_000, Cruise, false, false).0.expect("Service spielt");
+        assert!(ende_melden(&mut st, g.id, "gespielt", 8_030, "backend"));
+        assert_eq!(beim_sinkflug(&mut st, 8_100), (true, false));
+        // Abgebrochen: kein Ende, übersprungen.
+        let mut st = mit_gemeldetem_service(true);
+        let g = abspielen_schritt(&mut st, 8_000, Cruise, false, false).0.expect("Service spielt");
+        assert!(ende_melden(&mut st, g.id, "abgebrochen", 8_010, "backend"));
+        assert_eq!(beim_sinkflug(&mut st, 8_100), (false, true));
+        // Ohne Ton verfallen (Sinkflug): Der Host meldet es, das Ende entfällt
+        // sofort (sonst hielte der gemeldete Service es bis zum Anflug zurück).
+        let mut st = mit_gemeldetem_service(false);
+        abspielen_schritt(&mut st, 8_100, Descent, false, false);
+        assert_eq!(st.kabinen_lauf.verlauf.last().map(|g| (g.slot, g.grund.as_deref())), Some((Slot::Reiseflug25, Some("ton_nicht_fertig"))));
+        assert_eq!(beim_sinkflug(&mut st, 8_110), (false, true));
+        // Stumm: ebenso.
+        let mut st = mit_gemeldetem_service(true);
+        stumm_anwenden(&mut st, 8_000);
+        assert_eq!(beim_sinkflug(&mut st, 8_100), (false, true));
+    }
+
+    /// Neustart: Nur ein laut Verlauf gespielter Service zählt.
+    #[test]
+    fn neustart_service_nur_wenn_gespielt() {
+        let mut l = Lauf::default();
+        let eintrag = |ergebnis: &str, vorschau: bool| Gespielt { id: 1, slot: Slot::Reiseflug25, rolle: Rolle::Kabine, zeit: 0, teile: vec![], vorschau, ergebnis: Some(ergebnis.into()), gestartet: true, grund: None };
+        l.verlauf.push(eintrag("entfallen", false));
+        l.verlauf.push(eintrag("gespielt", true));
+        assert!(!service_gespielt(&l), "entfallen oder Vorhören zählt nicht");
+        l.verlauf.push(eintrag("gespielt", false));
+        assert!(service_gespielt(&l));
     }
 }
 
