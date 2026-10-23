@@ -38,6 +38,16 @@ function geraetVon(a) {
   return geraete.get(id);
 }
 
+/** Kachel/Rad abmelden; ein Gerät ohne beides wird vergessen. */
+function abmelden(geraetId, wie) {
+  const g = geraete.get(geraetId);
+  if (g) {
+    wie(g);
+    if (!g.kacheln.size && !g.raeder.size) geraete.delete(geraetId);
+  }
+  laufen();
+}
+
 let takt = null;
 let abo = null;
 
@@ -150,16 +160,16 @@ class Kachel extends SingletonAction {
     const a = ev.action;
     if (!a.isKey?.()) return;
     const { column: c = 0, row: r = 0 } = a.coordinates ?? {};
-    geraetVon(a).kacheln.set(a.id, { aktion: a, c, r, letztes: null });
+    const g = geraetVon(a);
+    g.kacheln.set(a.id, { aktion: a, c, r, letztes: null });
+    g.letzteSvg = ""; // neue Kachel: beim nächsten Takt zeichnen, auch wenn sich nichts bewegt
     laufen();
   }
 
   onWillDisappear(ev) {
-    const g = geraete.get(ev.action.device.id);
-    g?.kacheln.delete(ev.action.id);
     clearTimeout(this.druecke.get(ev.action.id)?.uhr);
     this.druecke.delete(ev.action.id);
-    laufen();
+    abmelden(ev.action.device.id, (g) => g.kacheln.delete(ev.action.id));
   }
 
   onKeyDown(ev) {
@@ -209,14 +219,26 @@ class Rad extends SingletonAction {
     const a = ev.action;
     if (!a.isDial?.()) return;
     a.setFeedbackLayout?.("layouts/regler.json");
-    geraetVon(a).raeder.set(a.id, { aktion: a, spalte: a.coordinates?.column ?? 0, letztes: null });
+    const g = geraetVon(a);
+    g.raeder.set(a.id, { aktion: a, spalte: a.coordinates?.column ?? 0, letztes: null });
+    g.letzterStreifen = null;
     laufen();
   }
 
   onWillDisappear(ev) {
-    geraete.get(ev.action.device.id)?.raeder.delete(ev.action.id);
-    clearTimeout(this.lage.get(ev.action.id)?.halteUhr);
-    laufen();
+    const a = ev.action;
+    const l = this.lage.get(a.id);
+    if (l) {
+      clearTimeout(l.halteUhr);
+      // Gedrehte, noch nicht gespeicherte Lautstärke jetzt speichern statt
+      // später aus einem verschwundenen Rad heraus.
+      if (l.speicherUhr) {
+        clearTimeout(l.speicherUhr);
+        if (l.entwurf != null) ausfuehren(a, this.art === "ans" ? "kabinen_lautstaerke" : "kabinen_musik_lautstaerke", { lautstaerke: l.entwurf, speichern: true });
+      }
+      this.lage.delete(a.id);
+    }
+    abmelden(a.device.id, (g) => g.raeder.delete(a.id));
   }
 
   zeigen(a, extra = {}) {
@@ -231,11 +253,12 @@ class Rad extends SingletonAction {
     const g = geraetVon(a);
     const schritte = ev.payload.ticks;
     if (this.art === "info") {
-      g.infoSeite = (((g.infoSeite + Math.sign(schritte)) % INFO_RAD.length) + INFO_RAD.length) % INFO_RAD.length;
+      // Jeder Rastschritt zählt (schnelles Drehen überspringt Seiten).
+      g.infoSeite = (((g.infoSeite + schritte) % INFO_RAD.length) + INFO_RAD.length) % INFO_RAD.length;
       return this.zeigen(a);
     }
     if (this.art === "wetter") {
-      g.wetterSeite = (g.wetterSeite + 1) % 2;
+      g.wetterSeite = (((g.wetterSeite + schritte) % 2) + 2) % 2;
       return this.zeigen(a);
     }
     const k = zustand.s.kabine;

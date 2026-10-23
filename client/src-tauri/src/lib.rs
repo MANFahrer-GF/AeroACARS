@@ -32146,9 +32146,11 @@ async fn metar_get(icao: String) -> Result<MetarSnapshot, UiError> {
 /// Landungsdatensatz — ein im Reiseflug nachgeladenes Wetter darf dort nicht
 /// landen, falls der spätere Abruf scheitert. Die `*_requested`-Flags bleiben
 /// unberührt, der reguläre Abruf läuft also weiter und überschreibt.
-/// Höchstens ein Abruf je Seite pro Minute (aviationweather.gov schonen).
+/// Höchstens ein erfolgreicher Abruf je Flughafen pro Minute
+/// (aviationweather.gov schonen); ein Fehlschlag gibt die Sperre sofort frei.
 pub(crate) async fn metar_nachladen(app: &AppHandle, ziel: bool) -> Result<(), UiError> {
-    static ZULETZT: Mutex<[Option<std::time::Instant>; 2]> = Mutex::new([None, None]);
+    static ZULETZT: std::sync::OnceLock<Mutex<HashMap<String, std::time::Instant>>> = std::sync::OnceLock::new();
+    let zuletzt = || ZULETZT.get_or_init(|| Mutex::new(HashMap::new())).lock().expect("metar nachladen");
     let flight = app
         .state::<AppState>()
         .active_flight
@@ -32157,16 +32159,21 @@ pub(crate) async fn metar_nachladen(app: &AppHandle, ziel: bool) -> Result<(), U
         .as_ref()
         .cloned()
         .ok_or_else(|| UiError::new("kein_flug", "kein aktiver Flug"))?;
+    let icao = if ziel { flight.arr_airport.clone() } else { flight.dpt_airport.clone() };
     {
-        let mut zuletzt = ZULETZT.lock().expect("metar nachladen");
-        let i = usize::from(ziel);
-        if zuletzt[i].is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60)) {
+        let mut z = zuletzt();
+        if z.get(&icao).is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60)) {
             return Ok(());
         }
-        zuletzt[i] = Some(std::time::Instant::now());
+        z.insert(icao.clone(), std::time::Instant::now());
     }
-    let icao = if ziel { flight.arr_airport.clone() } else { flight.dpt_airport.clone() };
-    let snap = metar_get(icao).await?;
+    let snap = match metar_get(icao.clone()).await {
+        Ok(snap) => snap,
+        Err(e) => {
+            zuletzt().remove(&icao);
+            return Err(e);
+        }
+    };
     let mut stats = flight.stats.lock().expect("flight stats");
     if ziel {
         stats.arr_metar_snap = Some(snap);
