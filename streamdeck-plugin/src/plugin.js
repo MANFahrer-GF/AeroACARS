@@ -19,10 +19,17 @@ const zustand = new Zustand();
 // Drehen nach dem Speichern eintreffen und den Klang wieder zurückstellen.
 let kette = Promise.resolve();
 
+/**
+ * `args` darf eine Funktion des Kabinenzustands sein: Sie wird erst
+ * ausgewertet, wenn der Befehl an der Reihe ist — dann rechnen zwei schnelle
+ * Drücke auf „lauter“ vom Ergebnis des ersten aus, nicht beide vom selben Wert.
+ */
 function ausfuehren(aktion, name, args) {
   const lauf = kette.then(async () => {
     try {
-      zustand.kabineSetzen(await befehl(name, args));
+      const werte = typeof args === "function" ? args(zustand.s.kabine) : args;
+      if (werte == null) return;
+      zustand.kabineSetzen(await befehl(name, werte));
     } catch (e) {
       streamDeck.logger.warn(`${name} fehlgeschlagen: ${e.message}`);
       await aktion.showAlert();
@@ -80,30 +87,33 @@ class PhaseTaste extends Taste {
 class StummTaste extends Taste {
   constructor(id) {
     super(id);
-    this.uhren = new Map();
+    // Je Taste der laufende Druck: ob die Kabine bei Druckbeginn schon stumm
+    // war, und die Halte-Uhr (null, sobald sie ausgelöst hat).
+    this.druecke = new Map();
   }
 
   onKeyDown(ev) {
     const a = ev.action;
-    if (zustand.s.kabine?.stumm) return; // Aufheben beim Loslassen.
-    this.uhren.set(
-      a.id,
-      setTimeout(() => {
-        this.uhren.delete(a.id);
+    const warStumm = !!zustand.s.kabine?.stumm;
+    const druck = { warStumm, uhr: null };
+    if (!warStumm) {
+      druck.uhr = setTimeout(() => {
+        druck.uhr = null;
         ausfuehren(a, "kabinen_stumm", { stumm: true }).then(() => a.showOk());
-      }, HALTEN_MS),
-    );
+      }, HALTEN_MS);
+    }
+    this.druecke.set(a.id, druck);
   }
 
   async onKeyUp(ev) {
     const a = ev.action;
-    const uhr = this.uhren.get(a.id);
-    if (uhr) {
-      clearTimeout(uhr);
-      this.uhren.delete(a.id);
-      return; // Zu kurz gehalten: nichts.
-    }
-    if (zustand.s.kabine?.stumm) await ausfuehren(a, "kabinen_stumm", { stumm: false });
+    const druck = this.druecke.get(a.id);
+    this.druecke.delete(a.id);
+    if (!druck) return;
+    clearTimeout(druck.uhr);
+    // Nur ein Druck, der auf einer schon stummen Kabine BEGANN, hebt auf.
+    // Das Loslassen nach dem Halten, das gerade stumm geschaltet hat, nicht.
+    if (druck.warStumm) await ausfuehren(a, "kabinen_stumm", { stumm: false });
   }
 }
 
@@ -115,24 +125,24 @@ class SchrittTaste extends Taste {
 
   async druecken(a, s) {
     if (!s.kabine) return a.showAlert();
-    await ausfuehren(a, this.befehlName, { lautstaerke: schritt(s.kabine[this.feld], this.richtung), speichern: true });
+    await ausfuehren(a, this.befehlName, (k) => (k ? { lautstaerke: schritt(k[this.feld], this.richtung), speichern: true } : null));
   }
 }
 
 class MusikPegelTaste extends Taste {
   async druecken(a, s) {
-    const k = s.kabine;
-    if (!k) return a.showAlert();
+    if (!s.kabine) return a.showAlert();
     // Stumm = live auf 0, ohne zu speichern; laut = zurück auf die Einstellung.
-    const wert = musikStumm(k) ? k.musik_gespeichert : 0;
-    await ausfuehren(a, "kabinen_musik_lautstaerke", { lautstaerke: wert, speichern: false });
+    await ausfuehren(a, "kabinen_musik_lautstaerke", (k) =>
+      k ? { lautstaerke: musikStumm(k) ? k.musik_gespeichert : 0, speichern: false } : null,
+    );
   }
 }
 
 class BoardingMusikTaste extends Taste {
   async druecken(a, s) {
     if (!s.kabine) return a.showAlert();
-    await ausfuehren(a, "kabinen_boarding_musik", { an: !s.kabine.boarding_musik });
+    await ausfuehren(a, "kabinen_boarding_musik", (k) => (k ? { an: !k.boarding_musik } : null));
   }
 }
 
@@ -291,8 +301,8 @@ streamDeck.actions.registerAction(
     // Kurz = Musik stumm/laut, halten = Boarding-Musik an/aus.
     druecken: (a, k, gehalten) => {
       if (!k) return;
-      if (gehalten) ausfuehren(a, "kabinen_boarding_musik", { an: !k.boarding_musik });
-      else ausfuehren(a, "kabinen_musik_lautstaerke", { lautstaerke: musikStumm(k) ? k.musik_gespeichert : 0, speichern: false });
+      if (gehalten) ausfuehren(a, "kabinen_boarding_musik", (j) => (j ? { an: !j.boarding_musik } : null));
+      else ausfuehren(a, "kabinen_musik_lautstaerke", (j) => (j ? { lautstaerke: musikStumm(j) ? j.musik_gespeichert : 0, speichern: false } : null));
     },
   }),
 );
