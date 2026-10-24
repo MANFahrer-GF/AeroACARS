@@ -34,6 +34,9 @@ auch mehrfach und auf mehreren Decks gleichzeitig.
    - Die vier Regler-Aktionen ("Regler Ansagen", "Regler Musik",
      "Regler Flugdaten", "Regler Wetter") auf einen Drehregler ziehen.
      Normale Tasten-Aktionen funktionieren auf den 8 Tasten des +.
+   - Schaltet der Streifen beim Drehen nicht mehr um (zeigt immer nur das
+     Streckenband): StreamDeck + einmal kurz vom USB trennen und wieder
+     einstecken.
 
 5. WAS DIE TASTEN TUN
    Anzeigetasten:
