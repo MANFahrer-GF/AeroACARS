@@ -637,13 +637,16 @@ mod gespeicherter_punkt_tests {
         assert_eq!(gespeicherter_punkt(&stats), Some((21.2929, 86.2577)));
         // Sim nach dem Absturz in Singapur, in der Luft gespeichert → verdächtig.
         stats.phase = FlightPhase::Cruise;
-        assert!(is_resume_position_suspect(
-            stats.phase,
-            gespeicherter_punkt(&stats),
-            true,
-            1.3502,
-            103.984
-        ));
+        let jetzt = SimSnapshot {
+            lat: 1.3502,
+            lon: 103.984,
+            altitude_msl_ft: 22.0,
+            on_ground: true,
+            ..SimSnapshot::default()
+        };
+        let referenz = lage_referenz(&stats).expect("Referenz");
+        assert_eq!((referenz.lat, referenz.lon), (21.2929, 86.2577));
+        assert!(lage_abweichung(&referenz, &jetzt, Utc::now(), true).is_some());
         // Ohne dauerhaften Punkt: die alte Basis als Rückfall.
         let mut alt = FlightStats::default();
         alt.last_lat = Some(50.0);
@@ -652,24 +655,94 @@ mod gespeicherter_punkt_tests {
     }
 }
 
-/// v0.12.1 (Stream E LE14): does the first post-resume sim position look
-/// like a glitchy crash-reload rather than the flight we persisted?
-/// Suspicious when:
-///   1. the persisted phase was airborne but the sim now reports on-ground
-///      (classic sim-crash → reload-on-a-runway), OR
-///   2. the sim position is implausibly far from the last known position.
-/// A separate altitude-delta condition was deliberately dropped (QS-R5):
-/// a pilot legitimately restarting the app mid-climb/descent would almost
-/// always show an altitude delta — too restrictive.
-fn is_resume_position_suspect(
-    persisted_phase: FlightPhase,
-    persisted_pos: Option<(f64, f64)>,
-    snap_on_ground: bool,
-    snap_lat: f64,
-    snap_lon: f64,
-) -> bool {
-    let persisted_airborne = matches!(
-        persisted_phase,
+/// Warum die Lage im Sim nach einer Unterbrechung nicht zum Flug passt.
+/// Siehe `lage_abweichung`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum LageAbweichung {
+    /// Der Sim liefert noch keinen echten Messwert (Ladebild, Menue).
+    KeinEchterWert,
+    /// Vorher in der Luft, jetzt am Boden — oder knapp ueber dem Boden nach
+    /// einem grossen Hoehenverlust.
+    AmBoden,
+    /// Sprit in der Luft gestiegen: neu geladener Zustand.
+    SpritGestiegen,
+    /// Weiter weg, als der Flieger in der Luecke kommen konnte.
+    ZuWeitWeg { drift_nm: f64, erlaubt_nm: f64 },
+}
+
+/// Der Stand vor der Unterbrechung, gegen den die Lage geprueft wird.
+#[derive(Debug, Clone, Copy)]
+struct LageReferenz {
+    phase: FlightPhase,
+    lat: f64,
+    lon: f64,
+    alt_ft: Option<f64>,
+    fuel_kg: Option<f32>,
+    on_ground: bool,
+    gs_kt: Option<f32>,
+    /// Wann der Punkt zuletzt galt — daraus folgt die Luecke.
+    at: Option<DateTime<Utc>>,
+}
+
+/// Referenz aus dem Flugstand: der dauerhafte letzte Punkt, dazu Sprit und
+/// Bodenlage aus dem Pausen- bzw. Ablage-Snapshot.
+fn lage_referenz(stats: &FlightStats) -> Option<LageReferenz> {
+    let snap = stats
+        .paused_last_known
+        .as_ref()
+        .or(stats.last_persisted_snapshot.as_ref());
+    let (lat, lon) = gespeicherter_punkt(stats).or(snap.map(|s| (s.lat, s.lon)))?;
+    Some(LageReferenz {
+        phase: stats.phase,
+        lat,
+        lon,
+        alt_ft: stats.last_known_alt_ft.or(snap.map(|s| s.altitude_ft)),
+        fuel_kg: snap.map(|s| s.fuel_total_kg),
+        on_ground: snap.is_some_and(|s| s.on_ground),
+        gs_kt: stats.last_known_gs_kt,
+        at: stats.last_known_at,
+    })
+}
+
+/// Durfte der Flieger in der Unterbrechung weiterfliegen? Nein bei einer
+/// Sim-Pause und wenn der Sim-Prozess beim Ausfall weg war (abgestuerzt) —
+/// dann muss er dort stehen, wo der Flug abbrach.
+fn darf_weitergeflogen_sein(stats: &FlightStats) -> bool {
+    match stats.current_pause_reason {
+        Some(PauseReason::SimPause) => false,
+        _ => !matches!(
+            stats.disconnect_sim_liveness,
+            Some(sim_core::process_probe::ProcessLiveness::Gone)
+        ),
+    }
+}
+
+/// Passt die Lage im Sim nach einer Unterbrechung (Sim-Absturz, Sim-Pause,
+/// App-Neustart) zum Flug? `None` heisst: ja, der Flug darf von selbst
+/// weiterlaufen. Sonst muss der Pilot im Resume-Banner bestaetigen.
+///
+/// ⚠ GAF 278 (Adrian, 24.10.2026): Im Sinkflug FL323 stuerzte der Sim ab, 16
+/// Minuten spaeter stand der A321 in Zagreb am Boden, Tank voll. Der Client
+/// setzte von selbst fort und meldete eine Minute spaeter ARRIVED — in
+/// Zagreb, 112 nm vor Wien. Der erste Wert nach dem Laden meldete dabei noch
+/// `on_ground=false` auf 354 ft (Platzhoehe 353 ft); darum zaehlt knapp ueber
+/// dem Boden nach grossem Hoehenverlust ebenfalls als „am Boden".
+///
+/// Weite: Durfte der Flieger weiterfliegen (nur die Datenverbindung war weg),
+/// gilt die in der Luecke erreichbare Strecke; sonst `RESUME_DRIFT_CLEAN_NM`.
+/// Bewusst keine Hochrechnung entlang des Kurses — Kurven und Holdings
+/// loesten sonst Fehlalarme aus (Codex-Pruefung 24.10.2026).
+fn lage_abweichung(
+    vorher: &LageReferenz,
+    jetzt: &SimSnapshot,
+    zeitpunkt: DateTime<Utc>,
+    darf_weitergeflogen: bool,
+) -> Option<LageAbweichung> {
+    if !snapshot_plausibel(jetzt) || !snapshot_position_is_usable(jetzt) {
+        return Some(LageAbweichung::KeinEchterWert);
+    }
+    let vorher_in_der_luft = matches!(
+        vorher.phase,
         FlightPhase::Climb
             | FlightPhase::Cruise
             | FlightPhase::Holding
@@ -677,16 +750,295 @@ fn is_resume_position_suspect(
             | FlightPhase::Approach
             | FlightPhase::Final
     );
-    if persisted_airborne && snap_on_ground {
-        return true;
+    let hoehe_verloren_ft = vorher
+        .alt_ft
+        .map_or(0.0, |alt| alt - jetzt.altitude_msl_ft);
+    let jetzt_am_boden =
+        jetzt.on_ground || (jetzt.altitude_agl_ft < 100.0 && hoehe_verloren_ft > 1_000.0);
+    if vorher_in_der_luft && jetzt_am_boden {
+        return Some(LageAbweichung::AmBoden);
     }
-    if let Some((plat, plon)) = persisted_pos {
-        let drift_nm = ::geo::distance_m(plat, plon, snap_lat, snap_lon) / 1852.0;
-        if drift_nm > RESUME_DRIFT_WARN_NM {
-            return true;
+    if let Some(fuel) = vorher.fuel_kg {
+        let durchgehend_am_boden = vorher.on_ground && jetzt.on_ground;
+        if !durchgehend_am_boden
+            && (jetzt.fuel_total_kg - fuel) as f64 > RESUME_FUEL_JUMP_IMPOSSIBLE_KG
+        {
+            return Some(LageAbweichung::SpritGestiegen);
         }
     }
-    false
+    let drift_nm = ::geo::distance_m(vorher.lat, vorher.lon, jetzt.lat, jetzt.lon) / 1852.0;
+    let erlaubt_nm = if !darf_weitergeflogen {
+        RESUME_DRIFT_CLEAN_NM
+    } else {
+        match (vorher.gs_kt, vorher.at) {
+            (Some(gs), Some(at)) => {
+                let luecke_h = (zeitpunkt - at).num_seconds().max(0) as f64 / 3600.0;
+                // 25 % Luft fuer Wind und Beschleunigung.
+                RESUME_DRIFT_CLEAN_NM + gs.max(0.0) as f64 * 1.25 * luecke_h
+            }
+            // Altstand ohne Zeit/Tempo: die fruehere Grenze.
+            _ => RESUME_DRIFT_WARN_NM,
+        }
+    };
+    if drift_nm > erlaubt_nm {
+        return Some(LageAbweichung::ZuWeitWeg {
+            drift_nm,
+            erlaubt_nm,
+        });
+    }
+    None
+}
+
+/// `lage_abweichung` fuer den laufenden Flug. Ohne gespeicherten Punkt gibt
+/// es nichts zu vergleichen — dann passt die Lage (wie bisher).
+fn lage_abweichung_fuer(flight: &ActiveFlight, jetzt: &SimSnapshot) -> Option<LageAbweichung> {
+    let (referenz, darf_weitergeflogen) = {
+        let stats = flight.stats.lock().expect("flight stats");
+        (lage_referenz(&stats), darf_weitergeflogen_sein(&stats))
+    };
+    lage_abweichung(&referenz?, jetzt, Utc::now(), darf_weitergeflogen)
+}
+
+#[cfg(test)]
+mod lage_nach_luecke_tests {
+    use super::*;
+    use sim_core::process_probe::ProcessLiveness;
+
+    fn utc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    /// GAF 278, letzter Punkt vor dem Absturz (Recorder, 17:51:12 UTC).
+    fn gaf278_vorher() -> LageReferenz {
+        LageReferenz {
+            phase: FlightPhase::Descent,
+            lat: 46.2368800281314,
+            lon: 16.4724032106752,
+            alt_ft: Some(32_313.0),
+            fuel_kg: Some(5_822.0),
+            on_ground: false,
+            gs_kt: Some(453.0),
+            at: Some(utc("2026-10-24T17:51:12Z")),
+        }
+    }
+
+    fn sim(lat: f64, lon: f64, msl: f64, agl: f64, on_ground: bool, fuel: f32) -> SimSnapshot {
+        SimSnapshot {
+            lat,
+            lon,
+            altitude_msl_ft: msl,
+            altitude_agl_ft: agl,
+            on_ground,
+            fuel_total_kg: fuel,
+            ..SimSnapshot::default()
+        }
+    }
+
+    /// Erster Wert nach dem Laden: Zagreb, Platzhoehe, meldet noch „in der Luft".
+    #[test]
+    fn gaf278_erster_wert_nach_dem_laden_haelt_an() {
+        let jetzt = sim(45.7490476111413, 16.080041805556, 354.0, 1.0, false, 11_800.0);
+        assert_eq!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T18:07:13Z"), true),
+            Some(LageAbweichung::AmBoden)
+        );
+    }
+
+    #[test]
+    fn gaf278_am_boden_haelt_an() {
+        let jetzt = sim(45.7490476111413, 16.080041805556, 366.0, 0.0, true, 11_800.0);
+        assert_eq!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T18:07:19Z"), true),
+            Some(LageAbweichung::AmBoden)
+        );
+    }
+
+    /// Neu geladen in der Luft, aber mit vollem Tank: haelt an.
+    #[test]
+    fn sprit_in_der_luft_gestiegen_haelt_an() {
+        let jetzt = sim(46.2369, 16.4724, 32_000.0, 31_600.0, false, 11_800.0);
+        assert_eq!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T18:07:13Z"), true),
+            Some(LageAbweichung::SpritGestiegen)
+        );
+    }
+
+    /// Sim-Prozess war weg: Der Flieger konnte nicht weiterfliegen — 34 nm
+    /// in der Luft sind „weit weg".
+    #[test]
+    fn sim_abgestuerzt_und_weit_weg_haelt_an() {
+        let jetzt = sim(45.7490, 16.0800, 32_000.0, 31_600.0, false, 5_800.0);
+        assert!(matches!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T18:07:13Z"), false),
+            Some(LageAbweichung::ZuWeitWeg { erlaubt_nm, .. }) if erlaubt_nm == RESUME_DRIFT_CLEAN_NM
+        ));
+    }
+
+    /// Gegenprobe: nur die Datenverbindung war weg, der Sim flog weiter —
+    /// 34 nm in 16 Minuten bei 453 kt sind erreichbar.
+    #[test]
+    fn verbindung_weg_sim_flog_weiter_laeuft_von_selbst() {
+        let jetzt = sim(45.7490, 16.0800, 12_000.0, 11_600.0, false, 5_300.0);
+        assert_eq!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T18:07:13Z"), true),
+            None
+        );
+    }
+
+    /// Gegenprobe: 60 s Verbindungsluecke bei 450 kt, 7,5 nm weiter.
+    #[test]
+    fn kurze_luecke_im_reiseflug_laeuft_von_selbst() {
+        let jetzt = sim(46.3618, 16.4724, 32_000.0, 31_600.0, false, 5_810.0);
+        assert_eq!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T17:52:12Z"), true),
+            None
+        );
+    }
+
+    /// Gegenprobe: Holding — nach 10 Minuten 3 nm vom letzten Punkt.
+    #[test]
+    fn holding_kurve_laeuft_von_selbst() {
+        let jetzt = sim(46.2868, 16.4724, 32_000.0, 31_600.0, false, 5_500.0);
+        assert_eq!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T18:01:12Z"), true),
+            None
+        );
+    }
+
+    /// Gegenprobe: Esc-Pause 10 Minuten, dieselbe Stelle.
+    #[test]
+    fn sim_pause_an_derselben_stelle_laeuft_von_selbst() {
+        let jetzt = sim(46.2369, 16.4724, 32_313.0, 31_900.0, false, 5_822.0);
+        assert_eq!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T18:01:12Z"), false),
+            None
+        );
+    }
+
+    /// In der Pause kann der Flieger nicht weiter: 20 nm sind zu weit.
+    #[test]
+    fn sim_pause_und_versetzt_haelt_an() {
+        let jetzt = sim(46.57, 16.4724, 32_313.0, 31_900.0, false, 5_822.0);
+        assert!(matches!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T18:01:12Z"), false),
+            Some(LageAbweichung::ZuWeitWeg { .. })
+        ));
+    }
+
+    /// Gegenprobe: am Boden nachgetankt, vorher und nachher am Boden.
+    #[test]
+    fn nachtanken_am_boden_laeuft_von_selbst() {
+        let vorher = LageReferenz {
+            phase: FlightPhase::Boarding,
+            alt_ft: Some(600.0),
+            on_ground: true,
+            gs_kt: Some(0.0),
+            ..gaf278_vorher()
+        };
+        let jetzt = sim(46.2369, 16.4724, 600.0, 0.0, true, 11_800.0);
+        assert_eq!(
+            lage_abweichung(&vorher, &jetzt, utc("2026-10-24T18:01:12Z"), true),
+            None
+        );
+    }
+
+    /// Ladebild-Scheinposition zaehlt nie als „passt".
+    #[test]
+    fn menue_scheinposition_haelt_an() {
+        let jetzt = sim(-0.0, 90.0003, 228.0, 0.0, false, 5_822.0);
+        assert_eq!(
+            lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T17:52:12Z"), true),
+            Some(LageAbweichung::KeinEchterWert)
+        );
+    }
+
+    #[test]
+    fn weiterfliegen_nur_ohne_pause_und_mit_laufendem_sim() {
+        let mut stats = FlightStats::default();
+        assert!(darf_weitergeflogen_sein(&stats), "App-Neustart: unbekannt, darf");
+        stats.current_pause_reason = Some(PauseReason::SimDisconnect);
+        stats.disconnect_sim_liveness = Some(ProcessLiveness::Alive);
+        assert!(darf_weitergeflogen_sein(&stats));
+        stats.disconnect_sim_liveness = Some(ProcessLiveness::Gone);
+        assert!(!darf_weitergeflogen_sein(&stats), "Sim-Prozess weg");
+        stats.disconnect_sim_liveness = None;
+        stats.current_pause_reason = Some(PauseReason::SimPause);
+        assert!(!darf_weitergeflogen_sein(&stats), "Sim-Pause");
+    }
+
+    /// Die Referenz kommt aus dem Stand vor der Pause — Sprit und Bodenlage
+    /// aus `paused_last_known`, Zeit und Tempo aus `last_known_*`.
+    #[test]
+    fn referenz_aus_dem_pausenstand() {
+        let mut stats = FlightStats::default();
+        stats.phase = FlightPhase::Descent;
+        stats.last_known_lat = Some(46.2369);
+        stats.last_known_lon = Some(16.4724);
+        stats.last_known_alt_ft = Some(32_313.0);
+        stats.last_known_gs_kt = Some(453.0);
+        stats.last_known_at = Some(utc("2026-10-24T17:51:12Z"));
+        stats.paused_last_known = Some(PausedSnapshot {
+            lat: 46.2369,
+            lon: 16.4724,
+            heading_deg: 320.0,
+            altitude_ft: 32_313.0,
+            fuel_total_kg: 5_822.0,
+            zfw_kg: None,
+            on_ground: false,
+        });
+        let r = lage_referenz(&stats).expect("Referenz");
+        assert_eq!(r.fuel_kg, Some(5_822.0));
+        assert_eq!(r.gs_kt, Some(453.0));
+        assert!(!r.on_ground);
+        let jetzt = sim(45.7490, 16.0800, 354.0, 1.0, false, 11_800.0);
+        assert_eq!(
+            lage_abweichung(&r, &jetzt, utc("2026-10-24T18:07:13Z"), true),
+            Some(LageAbweichung::AmBoden)
+        );
+    }
+
+    /// Der Absturz-Detektor im laufenden Flug bekommt „am Boden" auch fuer
+    /// den Ladebild-Wert auf Platzhoehe.
+    #[test]
+    fn absturz_detektor_mit_ladebild_wert() {
+        let jetzt = sim(45.7490476111413, 16.080041805556, 354.0, 1.0, false, 11_800.0);
+        assert!(is_mid_session_sim_crash_recovery(
+            FlightPhase::Descent,
+            false,
+            32_313.0,
+            am_boden_fuer_absturzerkennung(&jetzt),
+            jetzt.altitude_msl_ft,
+        ));
+    }
+}
+
+/// Fuer Protokoll und Banner: was nicht passt, in einem Satz.
+fn lage_abweichung_text(a: &LageAbweichung) -> String {
+    match a {
+        LageAbweichung::KeinEchterWert => {
+            "Der Simulator liefert noch keine echte Position (Ladebildschirm/Menü).".to_string()
+        }
+        LageAbweichung::AmBoden => {
+            "Das Flugzeug steht im Sim am Boden, der Flug war in der Luft.".to_string()
+        }
+        LageAbweichung::SpritGestiegen => {
+            "Im Sim ist mehr Sprit an Bord als vor der Unterbrechung — neu geladener Zustand."
+                .to_string()
+        }
+        LageAbweichung::ZuWeitWeg {
+            drift_nm,
+            erlaubt_nm,
+        } => format!(
+            "Das Flugzeug steht {drift_nm:.1} nm von der letzten Position weg (erlaubt {erlaubt_nm:.1} nm)."
+        ),
+    }
+}
+
+/// „Am Boden" fuer `is_mid_session_sim_crash_recovery`: Der erste Wert nach
+/// dem Laden meldet oft noch „in der Luft", steht aber auf Platzhoehe (GAF
+/// 278: 354 ft, on_ground=false). Der 5000-ft-Sprung bleibt dort Bedingung.
+fn am_boden_fuer_absturzerkennung(snap: &SimSnapshot) -> bool {
+    snap.on_ground || snap.altitude_agl_ft < 100.0
 }
 
 /// v0.13.9 Stream F (LE27): Mid-Session Sim-Crash-Recovery Detection.
@@ -1338,25 +1690,27 @@ fn landung_wurde_gemessen(stats: &FlightStats) -> bool {
 /// Snapshot regelmaessig am Boden — ohne diese Bedingung bekaeme jeder
 /// ehrliche Neustart einen Sprung-Vermerk (Cloud-QS 23.09.2026).
 fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap: &SimSnapshot) {
-    let (phase, letzte_pos, ziel, luecke_secs) = {
+    let (referenz, darf_weitergeflogen, ziel, luecke_secs) = {
         let stats = flight.stats.lock().expect("flight stats");
         (
-            stats.phase,
             // Dauerhafter Punkt: `last_lat/lon` ist nach einem Resume leer,
             // `paused_last_known` ueberlebt keinen Neustart — sonst fehlte
             // der Vermerk genau nach Absturz + „Trotzdem fortsetzen".
-            gespeicherter_punkt(&stats)
-                .or(stats.paused_last_known.as_ref().map(|p| (p.lat, p.lon))),
+            lage_referenz(&stats),
+            darf_weitergeflogen_sein(&stats),
             stats.planned_arr_ref_pos,
             stats.resume_luecke_secs,
         )
     };
-    if !is_resume_position_suspect(phase, letzte_pos, snap.on_ground, snap.lat, snap.lon) {
-        return;
-    }
-    let Some((plat, plon)) = letzte_pos else {
+    // Dieselbe Regel wie das Banner: Was dort ohne Klick weiterlaufen
+    // duerfte, ist kein Sprung.
+    let Some(referenz) = referenz else {
         return;
     };
+    if lage_abweichung(&referenz, snap, Utc::now(), darf_weitergeflogen).is_none() {
+        return;
+    }
+    let (plat, plon) = (referenz.lat, referenz.lon);
     // Menue-Scheinposition (LAT 0 / LON 90) auf einer der beiden Seiten
     // ist kein Sprung, sondern ein Messfehler (Log-Durchsicht 26.09.2026).
     // Die Hoehe der Referenz kennen wir hier nicht — sie ist die aktuelle.
@@ -9509,6 +9863,8 @@ pub struct ActiveFlightInfo {
     resume_wartet_grund: Option<String>,
     /// Seit wie vielen Sekunden das Gate wartet.
     resume_wartet_s: Option<i64>,
+    /// Laeuft ein Resume-Gate? Dann fragt der Banner nicht erneut.
+    resume_gate_laeuft: bool,
     /// Number of touch-and-go events recorded so far. Always 0 on a
     /// routine A→B; non-zero on training flights or unstable approaches
     /// where the pilot bounced and went around. Surfaced as a small
@@ -18981,6 +19337,7 @@ fn flight_info(
         abgabe_sperre: abgabe_sperre(&stats).map(|g| g.code().to_string()),
         resume_wartet_grund: stats.resume_wartet.as_ref().map(|(g, _)| g.clone()),
         resume_wartet_s: stats.resume_wartet.as_ref().map(|(_, s)| *s),
+        resume_gate_laeuft: stats.resume_gate_laeuft,
         touch_and_go_count: stats
             .touchdown_events
             .iter()
@@ -19597,14 +19954,10 @@ fn flight_status(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<Ac
     // away), the banner must NOT auto-confirm — the pilot has to click.
     let resume_position_suspect = if flight.was_just_resumed.load(Ordering::Relaxed) {
         match current_snapshot(&app) {
-            Some(snap) => {
-                let (phase, pos) = {
-                    let stats = flight.stats.lock().expect("flight stats");
-                    let pos = gespeicherter_punkt(&stats);
-                    (stats.phase, pos)
-                };
-                is_resume_position_suspect(phase, pos, snap.on_ground, snap.lat, snap.lon)
-            }
+            Some(snap) => lage_abweichung_fuer(flight, &snap).is_some(),
+            // Ohne Sim zeigt das Banner „Warte auf den Simulator" (kein
+            // Countdown ohne Sim). Bleibt eine Sim-Trennung offen, prueft der
+            // Streamer die Lage ohnehin selbst, bevor er weiterlaeuft.
             None => false,
         }
     } else {
@@ -19714,6 +20067,67 @@ pub struct ResumableFlight {
     dpt_airport: String,
     arr_airport: String,
     status: Option<String>,
+    /// Sekunden seit der letzten Meldung an phpVMS. Unter
+    /// `LAEUFT_WOANDERS_SECS` laeuft der Flug gerade auf einem anderen Geraet.
+    zuletzt_gemeldet_vor_s: Option<i64>,
+    /// Siehe `laeuft_woanders`.
+    laeuft_woanders: bool,
+}
+
+/// Meldet ein Client einen Flug juenger als das, laeuft er gerade — auf einem
+/// anderen Geraet, denn dieses hat ihn nicht. Die Lebenszeichen kommen alle
+/// paar Minuten, auch in der Pause (`HEARTBEAT_INTERVAL`).
+///
+/// ⚠ 24.10.2026 (Thomas): Flug auf Windows, AeroACARS auf dem Mac geoeffnet —
+/// der Mac fand den PIREP, zeigte den 30-s-Countdown und haette den Flug von
+/// selbst uebernommen.
+const LAEUFT_WOANDERS_SECS: i64 = 600;
+
+/// Sekunden seit `updated_at`; `None`, wenn phpVMS es nicht liefert.
+fn zuletzt_gemeldet_vor_s(p: &api_client::PirepSummary, jetzt: DateTime<Utc>) -> Option<i64> {
+    let t = DateTime::parse_from_rfc3339(p.updated_at.as_deref()?.trim()).ok()?;
+    Some((jetzt - t.with_timezone(&Utc)).num_seconds().max(0))
+}
+
+fn laeuft_woanders(p: &api_client::PirepSummary, jetzt: DateTime<Utc>) -> bool {
+    zuletzt_gemeldet_vor_s(p, jetzt).is_some_and(|s| s < LAEUFT_WOANDERS_SECS)
+}
+
+#[cfg(test)]
+mod laeuft_woanders_tests {
+    use super::*;
+
+    fn pirep(updated_at: Option<&str>) -> api_client::PirepSummary {
+        api_client::PirepSummary {
+            id: "DqO0MADWPx7qr01d".into(),
+            updated_at: updated_at.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    fn jetzt() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-10-24T19:02:00Z").unwrap().with_timezone(&Utc)
+    }
+
+    /// QFA 442 meldete 40 s vorher von Windows — der Mac darf nicht übernehmen.
+    #[test]
+    fn frisch_meldender_flug_laeuft_woanders() {
+        let p = pirep(Some("2026-10-24T19:01:20.000000Z"));
+        assert_eq!(zuletzt_gemeldet_vor_s(&p, jetzt()), Some(40));
+        assert!(laeuft_woanders(&p, jetzt()));
+    }
+
+    #[test]
+    fn lange_stiller_flug_ist_verwaist() {
+        assert!(!laeuft_woanders(&pirep(Some("2026-10-24T17:00:00Z")), jetzt()));
+    }
+
+    /// Ohne Zeitstempel keine Aussage — dann bleibt es beim Klick ohne Countdown.
+    #[test]
+    fn ohne_zeitstempel_keine_aussage() {
+        assert!(!laeuft_woanders(&pirep(None), jetzt()));
+        assert!(!laeuft_woanders(&pirep(Some("kaputt")), jetzt()));
+    }
 }
 
 /// Look on phpVMS for in-progress PIREPs the user could resume. Used to drive
@@ -19801,11 +20215,16 @@ async fn flight_discover_resumable(
         .into_iter()
         .filter(|p| p.state == Some(0)) // defensiv — Server hat bereits gefiltert
         .filter_map(|p| {
+            let jetzt = Utc::now();
+            let zuletzt_vor_s = zuletzt_gemeldet_vor_s(&p, jetzt);
+            let woanders = laeuft_woanders(&p, jetzt);
             Some(ResumableFlight {
                 pirep_id: p.id,
                 flight_number: p.flight_number?,
                 dpt_airport: p.dpt_airport_id.unwrap_or_default(),
                 arr_airport: p.arr_airport_id.unwrap_or_default(),
+                zuletzt_gemeldet_vor_s: zuletzt_vor_s,
+                laeuft_woanders: woanders,
                 status: p.status,
             })
         })
@@ -19880,6 +20299,9 @@ async fn flight_adopt(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     pirep_id: String,
+    // true nur nach ausdruecklicher Rueckfrage im Banner: Der Pilot weiss,
+    // dass der Flug eben noch woanders gemeldet hat.
+    trotz_anderem_geraet: Option<bool>,
 ) -> Result<ActiveFlightInfo, UiError> {
     // Reserve the setup slot atomically — released automatically (via the
     // guard's Drop) on any error path, or disarmed once we've committed the
@@ -19914,6 +20336,14 @@ async fn flight_adopt(
                 "PIREP not found or no longer in progress",
             )
         })?;
+    // Laeuft der Flug gerade auf einem anderen Geraet, nie stillschweigend
+    // uebernehmen — zwei Clients meldeten sonst denselben PIREP.
+    if laeuft_woanders(&pirep, Utc::now()) && trotz_anderem_geraet != Some(true) {
+        return Err(UiError::new(
+            "laeuft_woanders",
+            "Dieser Flug meldet gerade von einem anderen Gerät. Erst dort beenden oder ausdrücklich übernehmen.",
+        ));
+    }
 
     // Best-effort: look for a matching bid so we can carry fares forward to
     // the eventual file. If no bid matches, file with no fares — phpVMS keeps
@@ -34726,9 +35156,14 @@ async fn flight_resume_check_position(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<ResumeCheckPositionOutcome, UiError> {
-    let guard = state.active_flight.lock().expect("active_flight lock");
-    let flight = guard
+    // Arc statt Sperre halten: Beim Erfolg schliesst `apply_pause_resume`
+    // die Pause (Protokoll, Ablage).
+    let flight = state
+        .active_flight
+        .lock()
+        .expect("active_flight lock")
         .as_ref()
+        .map(Arc::clone)
         .ok_or_else(|| UiError::new("no_active_flight", "no flight is active"))?;
 
     if !flight.was_just_resumed.load(Ordering::Relaxed) {
@@ -34772,38 +35207,32 @@ async fn flight_resume_check_position(
         0.0
     };
 
-    let persisted_airborne = matches!(
-        persisted_phase,
-        FlightPhase::Climb
-            | FlightPhase::Cruise
-            | FlightPhase::Holding
-            | FlightPhase::Descent
-            | FlightPhase::Approach
-            | FlightPhase::Final
-    );
-    let sim_on_ground_inconsistent = persisted_airborne && snap.on_ground;
+    // Dieselbe Regel, die das Banner ausgeloest hat (`lage_abweichung`) —
+    // sonst saehe der Pilot ein Banner, das kein Zurueckstellen je loest.
+    let abweichung = lage_abweichung_fuer(&flight, &snap);
+    let sim_on_ground_inconsistent = abweichung == Some(LageAbweichung::AmBoden);
+    let ok = abweichung.is_none();
 
-    let ok = drift_nm < RESUME_DRIFT_CLEAN_NM && !sim_on_ground_inconsistent;
-
-    let detail = if ok {
-        format!(
-            "Position OK — Drift {:.2} nm (Limit {:.1} nm). Flug läuft jetzt als sauber weiter.",
-            drift_nm, RESUME_DRIFT_CLEAN_NM
-        )
-    } else if sim_on_ground_inconsistent {
-        format!(
+    let detail = match abweichung {
+        None => format!(
+            "Position OK — Drift {:.2} nm. Flug läuft jetzt als sauber weiter.",
+            drift_nm
+        ),
+        Some(LageAbweichung::AmBoden) => format!(
             "Flugzeug ist im Sim am Boden, gespeicherter Flug war in der Luft (Phase {:?}). Bitte zurück in die Luft positionieren ODER Flug verwerfen.",
             persisted_phase
-        )
-    } else {
-        format!(
-            "Drift {:.2} nm — zu weit weg von gespeicherter Position (Limit {:.1} nm). Bitte näher positionieren und nochmal prüfen.",
-            drift_nm, RESUME_DRIFT_CLEAN_NM
-        )
+        ),
+        Some(a) => format!(
+            "{} Bitte zur letzten Position zurückstellen und nochmal prüfen.",
+            lage_abweichung_text(&a)
+        ),
     };
 
     if ok {
         // Pilot hat sich erfolgreich repositioniert — Resume gilt als sauber.
+        // Eine offene Sim-Trennung erst JETZT schliessen: Der Streamer hat
+        // sie bei der unpassenden Lage bewusst offen gelassen (GAF 278).
+        let _ = apply_pause_resume(&app, &flight, Some(&snap), PauseReason::ManualResume);
         // was_just_resumed=false → resume_position_suspect wird ebenfalls
         // false bei nächstem flight_status-Poll → Banner schließt sich.
         flight.was_just_resumed.store(false, Ordering::Relaxed);
@@ -34816,7 +35245,7 @@ async fn flight_resume_check_position(
         tracing::info!(
             pirep_id = %flight.pirep_id,
             drift_nm,
-            sim_on_ground_inconsistent,
+            ?abweichung,
             "flight_resume_check_position: still suspect"
         );
     }
@@ -35364,6 +35793,27 @@ fn spawn_resume_sim_gate(
                     }
                 }
                 Ok(snap) => {
+                    // Zwischen Banner-Pruefung und ruhigem Sim kann der Sim
+                    // woanders neu geladen haben. Ohne „Trotzdem fortsetzen"
+                    // wird dann nicht scharfgeschaltet: Das Gate endet, und
+                    // der Banner fragt erneut (Codex-Abnahme 24.10.2026).
+                    if !trotzdem_fortsetzen {
+                        if let Some(abweichung) = lage_abweichung_fuer(&flight, &snap) {
+                            log_activity_handle(
+                                &app,
+                                ActivityLevel::Warn,
+                                "Lage passt nicht zum Flug — nicht fortgesetzt, bitte im Banner bestätigen"
+                                    .to_string(),
+                                Some(lage_abweichung_text(&abweichung)),
+                            );
+                            tracing::warn!(
+                                pirep_id = %flight.pirep_id,
+                                ?abweichung,
+                                "resume sim-gate: position does not fit — not arming"
+                            );
+                            return;
+                        }
+                    }
                     // ⚠ Bevor der Flug scharf wird: Passt die Lage im Sim
                     // ueberhaupt zum gespeicherten Flug? Der Pilot kann hier
                     // ueber „Trotzdem fortsetzen" hergekommen sein (GAF 9655,
@@ -35371,6 +35821,16 @@ fn spawn_resume_sim_gate(
                     // entscheidet am Ende selbst ueber die Abgabe.
                     if trotzdem_fortsetzen {
                         sprung_beim_fortsetzen_vermerken(&app, &flight, &snap);
+                        // Der Pilot hat entschieden: Eine offene Sim-Trennung
+                        // hier schliessen. Sonst hielte der neue Streamer die
+                        // unpassende Lage erneut an, und das Banner kaeme
+                        // sofort wieder (GAF 278).
+                        let _ = apply_pause_resume(
+                            &app,
+                            &flight,
+                            Some(&snap),
+                            PauseReason::ManualResume,
+                        );
                     }
                     // Die Wartezeit war eine Luecke wie jede andere: In ihr lief
                     // weder Streamer noch Aufsetz-Sampler. Ohne diesen Aufschlag
@@ -36310,6 +36770,28 @@ async fn flight_resume_after_disconnect(
 
     // Read the current sim snapshot (best-effort) for the delta calculation.
     let current_snap = current_snapshot(&app);
+
+    // Derselbe Riegel wie beim Fortsetzen von selbst: Passt die Lage nicht,
+    // entscheidet der Pilot im Banner — der Knopf hier ist kein Umweg. Ohne
+    // Sim gibt es nichts zu pruefen; die Pause bleibt (Heartbeat laeuft),
+    // sonst schloesse der Knopf sie ungeprueft (Codex-Abnahme 24.10.2026).
+    let Some(snap) = current_snap.as_ref() else {
+        return Err(UiError::new(
+            "sim_disconnected",
+            "Sim ist nicht verbunden — der Flug setzt fort, sobald der Sim wieder da ist und die Lage passt",
+        ));
+    };
+    if let Some(abweichung) = lage_abweichung_fuer(&flight, snap) {
+        flight.was_just_resumed.store(true, Ordering::SeqCst);
+        save_active_flight(&app, &flight);
+        log_activity_handle(
+            &app,
+            ActivityLevel::Warn,
+            "Lage passt nicht zum Flug — bitte im Banner bestätigen".to_string(),
+            Some(lage_abweichung_text(&abweichung)),
+        );
+        return Ok(());
+    }
 
     // Spec sim-disconnect-auto-resume: Manual-Resume nutzt denselben
     // Code-Pfad wie Auto-Resume. Pause-Segment wird akkumuliert,
@@ -41830,11 +42312,31 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     current_phase,
                     prev.on_ground,
                     prev.altitude_msl_ft,
-                    curr.on_ground,
+                    am_boden_fuer_absturzerkennung(curr),
                     curr.altitude_msl_ft,
                 ) {
                     let alt_drop_ft = (prev.altitude_msl_ft - curr.altitude_msl_ft).abs();
                     flight.was_just_resumed.store(true, Ordering::SeqCst);
+                    // Die Wartezeit bis zur Entscheidung ist eine Pause wie
+                    // bei der Sim-Trennung — sonst zaehlte sie als Flugzeit,
+                    // und die Lage-Pruefung haette keinen Pausenstand
+                    // (Codex-Abnahme 24.10.2026).
+                    {
+                        let mut st = flight.stats.lock().expect("flight stats");
+                        if st.paused_since.is_none() {
+                            st.paused_since = Some(Utc::now());
+                            st.paused_last_known = Some(PausedSnapshot {
+                                lat: prev.lat,
+                                lon: prev.lon,
+                                heading_deg: prev.heading_deg_true,
+                                altitude_ft: prev.altitude_msl_ft,
+                                fuel_total_kg: prev.fuel_total_kg,
+                                zfw_kg: prev.zfw_kg,
+                                on_ground: prev.on_ground,
+                            });
+                            st.current_pause_reason = Some(PauseReason::SimDisconnect);
+                        }
+                    }
                     // v0.13.11 (QS-Round-2 Fix): last_good_snap auf den Pre-
                     // Recovery-Snapshot zuruecksetzen damit der Pause-
                     // Heartbeat (Guard oben im naechsten Tick) phpVMS mit den
@@ -41977,6 +42479,50 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // als erster Punkt „danach" (aKRgO8gxYzPnLR8B, 11:01:10).
                 let can_resume =
                     snapshot.as_ref().is_some_and(snapshot_plausibel) && !snap_says_paused;
+                // Von selbst weiter nur, wenn die Lage zum Flug passt. Sonst
+                // bleibt die Pause offen, und der Pilot bestaetigt im Banner
+                // (GAF 278: Sim-Absturz im Sinkflug, danach am Boden in
+                // Zagreb, Tank voll — der Client setzte fort und meldete
+                // ARRIVED).
+                let abweichung = if can_resume {
+                    snapshot.as_ref().and_then(|s| lage_abweichung_fuer(&flight, s))
+                } else {
+                    None
+                };
+                if let (Some(abweichung), Some(jetzt)) = (abweichung, snapshot.as_ref()) {
+                    flight.was_just_resumed.store(true, Ordering::SeqCst);
+                    // Heartbeat und Banner zeigen den Stand VOR der Pause.
+                    last_good_snap = previous_snap_for_recovery.clone();
+                    save_active_flight(&app, &flight);
+                    let (vorher_lat, vorher_lon) = {
+                        let stats = flight.stats.lock().expect("flight stats");
+                        gespeicherter_punkt(&stats).unwrap_or((jetzt.lat, jetzt.lon))
+                    };
+                    log_activity_and_record(
+                        &app,
+                        &flight.pirep_id,
+                        ActivityLevel::Error,
+                        "Simulator wieder da — Lage passt nicht zum Flug, Aufzeichnung pausiert"
+                            .to_string(),
+                        Some(format!(
+                            "{}\nLetzte Position: LAT {:.4}° · LON {:.4}°\nJetzt im Sim: LAT {:.4}° · LON {:.4}° · ALT {:.0} ft\n\
+                             Bitte im Banner bestätigen: zur letzten Position zurückstellen und „Position prüfen“, \
+                             trotzdem fortsetzen (wird vermerkt) oder den Flug verwerfen.",
+                            lage_abweichung_text(&abweichung),
+                            vorher_lat,
+                            vorher_lon,
+                            jetzt.lat,
+                            jetzt.lon,
+                            jetzt.altitude_msl_ft,
+                        )),
+                    );
+                    tracing::warn!(
+                        pirep_id = %flight.pirep_id,
+                        ?abweichung,
+                        "sim back after pause — position does not fit, waiting for pilot"
+                    );
+                    continue;
+                }
                 if can_resume {
                     // Auto-Resume: Reason aus dem State (gesetzt vom
                     // Disconnect- bzw. Sim-Pause-Detect-Pfad). Helper
@@ -69375,27 +69921,57 @@ mod sim_pause_tests {
 
     // ---- v0.12.1 Stream E — resume position check (LE14) ----
 
+    /// Referenz ohne Zeit/Tempo (Altstand) — Weite faellt auf die alte
+    /// 50-nm-Grenze zurueck.
+    fn alte_referenz(phase: FlightPhase) -> LageReferenz {
+        LageReferenz {
+            phase,
+            lat: 52.0,
+            lon: 10.0,
+            alt_ft: None,
+            fuel_kg: None,
+            on_ground: false,
+            gs_kt: None,
+            at: None,
+        }
+    }
+
+    fn sim_bei(lat: f64, lon: f64, alt_ft: f64, on_ground: bool) -> SimSnapshot {
+        SimSnapshot {
+            lat,
+            lon,
+            altitude_msl_ft: alt_ft,
+            altitude_agl_ft: if on_ground { 0.0 } else { alt_ft },
+            on_ground,
+            ..SimSnapshot::default()
+        }
+    }
+
     #[test]
     fn resume_suspect_when_airborne_phase_but_on_ground() {
         // Sim crash in the cruise → reload spawns the aircraft on a runway.
-        assert!(is_resume_position_suspect(
-            FlightPhase::Cruise,
-            Some((52.0, 10.0)),
-            true, // on_ground
-            52.0,
-            10.0,
-        ));
+        assert_eq!(
+            lage_abweichung(
+                &alte_referenz(FlightPhase::Cruise),
+                &sim_bei(52.0, 10.0, 300.0, true),
+                Utc::now(),
+                true
+            ),
+            Some(LageAbweichung::AmBoden)
+        );
     }
 
     #[test]
     fn resume_suspect_on_large_drift() {
         // Persisted near (52,10), sim now ~60 NM away (1° latitude).
-        assert!(is_resume_position_suspect(
-            FlightPhase::Cruise,
-            Some((52.0, 10.0)),
-            false,
-            53.0,
-            10.0,
+        assert!(matches!(
+            lage_abweichung(
+                &alte_referenz(FlightPhase::Cruise),
+                &sim_bei(53.0, 10.0, 35_000.0, false),
+                Utc::now(),
+                true
+            ),
+            Some(LageAbweichung::ZuWeitWeg { .. })
         ));
     }
 
@@ -69403,25 +69979,29 @@ mod sim_pause_tests {
     fn resume_not_suspect_on_altitude_delta_while_airborne() {
         // Airborne → still airborne, position matches. A pure altitude
         // delta is NOT flagged (the altitude condition was dropped, QS-R5).
-        assert!(!is_resume_position_suspect(
-            FlightPhase::Descent,
-            Some((52.0, 10.0)),
-            false, // still airborne
-            52.0,
-            10.0,
-        ));
+        assert_eq!(
+            lage_abweichung(
+                &alte_referenz(FlightPhase::Descent),
+                &sim_bei(52.0, 10.0, 12_000.0, false),
+                Utc::now(),
+                true
+            ),
+            None
+        );
     }
 
     #[test]
     fn resume_not_suspect_when_position_matches() {
         // App restart, sim kept running — ground phase, on ground, no drift.
-        assert!(!is_resume_position_suspect(
-            FlightPhase::Boarding,
-            Some((52.0, 10.0)),
-            true,
-            52.0,
-            10.0,
-        ));
+        assert_eq!(
+            lage_abweichung(
+                &alte_referenz(FlightPhase::Boarding),
+                &sim_bei(52.0, 10.0, 300.0, true),
+                Utc::now(),
+                true
+            ),
+            None
+        );
     }
 
     // ---- v0.13.9 Stream F (LE27) — Mid-Session Sim-Crash-Recovery ----

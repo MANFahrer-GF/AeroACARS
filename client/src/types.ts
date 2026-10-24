@@ -355,6 +355,10 @@ export interface ResumableFlight {
   dpt_airport: string;
   arr_airport: string;
   status: string | null;
+  /** Sekunden seit der letzten Meldung an phpVMS; frisch = läuft woanders. */
+  zuletzt_gemeldet_vor_s: number | null;
+  /** Meldet gerade von einem anderen Gerät — nie von selbst übernehmen. */
+  laeuft_woanders: boolean;
 }
 
 export interface ActiveFlightInfo {
@@ -502,6 +506,8 @@ export interface ActiveFlightInfo {
    *  aufzeichnet (z. B. „Der Simulator lädt noch"), und seit wann. */
   resume_wartet_grund?: string | null;
   resume_wartet_s?: number | null;
+  /** Läuft ein Resume-Gate? Dann fragt der Banner nicht erneut. */
+  resume_gate_laeuft?: boolean;
   /** Touch-and-go count detected during the flight. Sustained climb-back
    *  above 100 ft AGL within 30 s of an on-ground edge counts as a T&G;
    *  the FSM also reverts to Climb so subsequent landing detection works

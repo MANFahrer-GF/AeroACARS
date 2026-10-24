@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, ResumableFlight, SimStatus } from "../types";
 import { useConfirm } from "./ConfirmDialog";
 import { resolveFlightIdent } from "../lib/callsign";
+import { Notice } from "./ui";
 
 const COUNTDOWN_SECONDS = 30;
 
@@ -47,6 +48,9 @@ export function ResumeFlightBanner({
   const [mode, setMode] = useState<Mode>({ kind: "idle" });
   const consumedRef = useRef(false);
   const confirmingRef = useRef(false);
+  const zurueckgestelltRef = useRef(false);
+  // Der Stand, zu dem zuletzt bestätigt wurde — siehe „erneutFragen".
+  const bestaetigtBeiRef = useRef<ActiveFlightInfo | null>(null);
   // v0.13.12 (Michel-Befund): positionSuspect als reactive Value statt Ref.
   // Vorher: positionSuspectRef wurde via useEffect aktualisiert — React-Refs
   // triggern KEINEN Re-Render und keine erneute Auswertung von dependent
@@ -105,11 +109,19 @@ export function ResumeFlightBanner({
 
   // Disk-resume Banner
   useEffect(() => {
+    // Wieder fragen, wenn die Lage nicht passt und kein Fortsetzen mehr läuft
+    // — etwa wenn das Sim-Gate nach dem Bestätigen eine neue, unpassende Lage
+    // sah (Codex-Abnahme 24.10.2026). Erst ab einem frischen Stand nach dem
+    // Bestätigen: Der alte kennt das gerade gestartete Gate noch nicht.
+    const erneutFragen =
+      activeFlight?.resume_position_suspect === true &&
+      activeFlight.resume_gate_laeuft !== true &&
+      activeFlight !== bestaetigtBeiRef.current;
     if (
       activeFlight &&
       activeFlight.was_just_resumed &&
       mode.kind === "idle" &&
-      !consumedRef.current
+      (!consumedRef.current || erneutFragen)
     ) {
       consumedRef.current = true;
       setMode({
@@ -125,6 +137,9 @@ export function ResumeFlightBanner({
   useEffect(() => {
     if (activeFlight) return;
     if (mode.kind !== "idle") return;
+    // „Nicht jetzt" gilt für diese Sitzung — sonst stünde das Banner sofort
+    // wieder da.
+    if (zurueckgestelltRef.current) return;
     let cancelled = false;
     let timer: number | undefined;
     // ⚠ Bis v1.7.9 war das EIN Versuch, dessen Fehler stumm verschluckt wurde
@@ -180,7 +195,11 @@ export function ResumeFlightBanner({
   // normalen Countdown). Vorher blieb der Countdown eingefroren weil
   // positionSuspectRef.current als Ref kein Re-Render ausloest.
   useEffect(() => {
-    if (mode.kind !== "auto_resumed" && mode.kind !== "discovered") return;
+    // Nur der eigene, auf diesem Gerät gespeicherte Flug zählt herunter. Ein
+    // nur auf dem Server gefundener Flug kann gerade auf einem anderen Gerät
+    // laufen — übernommen wird er ausschließlich per Klick (24.10.2026: Mac
+    // geöffnet, während der Flug auf Windows lief).
+    if (mode.kind !== "auto_resumed") return;
     if (mode.busy) return;
     if (mode.kind === "auto_resumed" && positionSuspect) return;
     // Ohne Simulator nicht herunterzaehlen — und nach dem Verbinden wieder
@@ -239,6 +258,7 @@ export function ResumeFlightBanner({
    *  dann im Bericht (Cloud-QS 23.09.2026). */
   async function doConfirm(force = false) {
     if (mode.kind === "auto_resumed") {
+      bestaetigtBeiRef.current = activeFlight;
       setMode((prev) =>
         prev.kind === "auto_resumed" ? { ...prev, busy: true } : prev,
       );
@@ -254,12 +274,24 @@ export function ResumeFlightBanner({
     }
     if (mode.kind === "discovered") {
       const pirepId = mode.flight.pirep_id;
+      const trotzAnderemGeraet = mode.flight.laeuft_woanders;
+      if (
+        trotzAnderemGeraet &&
+        !(await confirm({
+          message: t("resume.woanders_bestaetigen"),
+          destructive: true,
+        }))
+      ) {
+        confirmingRef.current = false;
+        return;
+      }
       setMode((prev) =>
         prev.kind === "discovered" ? { ...prev, busy: true } : prev,
       );
       try {
         const info = await invoke<ActiveFlightInfo>("flight_adopt", {
           pirepId,
+          trotzAnderemGeraet,
         });
         await invoke("flight_resume_confirm");
         onAdopted(info);
@@ -288,8 +320,21 @@ export function ResumeFlightBanner({
     );
     try {
       if (mode.kind === "discovered") {
+        // Verwerfen beendet den Flug auch auf dem anderen Gerät — dort
+        // dieselbe ausdrückliche Rückfrage wie beim Übernehmen.
+        if (
+          mode.flight.laeuft_woanders &&
+          !(await confirm({
+            message: t("resume.woanders_bestaetigen"),
+            destructive: true,
+          }))
+        ) {
+          setMode((prev) => (prev.kind === "discovered" ? { ...prev, busy: false } : prev));
+          return;
+        }
         await invoke<ActiveFlightInfo>("flight_adopt", {
           pirepId: mode.flight.pirep_id,
+          trotzAnderemGeraet: mode.flight.laeuft_woanders,
         });
       }
       await invoke("flight_cancel");
@@ -426,17 +471,31 @@ export function ResumeFlightBanner({
 
       {mode.kind === "auto_resumed" && <LetzterPunkt flight={mode.flight} />}
 
-      <div className="resume-modal__countdown">
-        <div
-          className="resume-modal__countdown-bar"
-          style={{
-            width: `${(mode.secondsLeft / COUNTDOWN_SECONDS) * 100}%`,
-          }}
-        />
-        <span className="resume-modal__countdown-text">
-          {t("resume.countdown", { seconds: mode.secondsLeft })}
-        </span>
-      </div>
+      {mode.kind === "auto_resumed" ? (
+        <div className="resume-modal__countdown">
+          <div
+            className="resume-modal__countdown-bar"
+            style={{
+              width: `${(mode.secondsLeft / COUNTDOWN_SECONDS) * 100}%`,
+            }}
+          />
+          <span className="resume-modal__countdown-text">
+            {t("resume.countdown", { seconds: mode.secondsLeft })}
+          </span>
+        </div>
+      ) : (
+        mode.flight.laeuft_woanders ? (
+          <Notice
+            tone="warn"
+            role="alert"
+            detail={t("resume.woanders_hinweis", {
+              minuten: Math.max(1, Math.round((mode.flight.zuletzt_gemeldet_vor_s ?? 0) / 60)),
+            })}
+          />
+        ) : (
+          <p className="resume-modal__countdown-text">{t("resume.gefunden_nur_klick")}</p>
+        )
+      )}
 
       <div className="resume-modal__actions">
         <button
@@ -459,6 +518,19 @@ export function ResumeFlightBanner({
         >
           {t("resume.cancel_flight")}
         </button>
+        {mode.kind === "discovered" && (
+          <button
+            type="button"
+            className="button"
+            onClick={() => {
+              zurueckgestelltRef.current = true;
+              setMode({ kind: "idle" });
+            }}
+            disabled={mode.busy}
+          >
+            {t("resume.nicht_jetzt")}
+          </button>
+        )}
       </div>
     </section>
   );
