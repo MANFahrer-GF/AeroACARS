@@ -2548,6 +2548,8 @@
     "hard_stop_body": "The current sim position doesn't match the saved flight. Please first reposition in the sim back to the last known position (slew mode or reload), then press \"Check position now + resume\". If the position is within 5 nm of the saved point, the flight resumes normally without an untrusted stamp.",
     "hard_stop_discard": "Discard flight + start over",
     "hard_stop_force_resume": "Continue anyway (jump logged in activity log)",
+    "vom_boden_weiterfliegen": "Continue from the ground",
+    "vom_boden_hinweis": "After the restart the aircraft is on the ground at another airport. You can take off from here and fly on to the destination. Departure time and takeoff weight stay the original ones; fuel is not rated because the tank was reloaded, and the jump is noted for review.",
     "recheck_check_now": "Check position now + resume",
     "recheck_checking": "Checking position…",
     "recheck_show_force": "Advanced: continue despite drift",

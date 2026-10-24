@@ -508,6 +508,8 @@ export interface ActiveFlightInfo {
   resume_wartet_s?: number | null;
   /** Läuft ein Resume-Gate? Dann fragt der Banner nicht erneut. */
   resume_gate_laeuft?: boolean;
+  /** Nach dem Absturz auf einem anderen Platz am Boden — Weiterflug vom Boden möglich. */
+  resume_vom_boden_moeglich?: boolean;
   /** Touch-and-go count detected during the flight. Sustained climb-back
    *  above 100 ft AGL within 30 s of an on-ground edge counts as a T&G;
    *  the FSM also reverts to Climb so subsequent landing detection works

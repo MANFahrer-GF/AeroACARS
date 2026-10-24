@@ -256,14 +256,17 @@ export function ResumeFlightBanner({
   /** `force` NUR vom Knopf „Trotzdem fortsetzen": Der Pilot hat die
    *  Warnung gelesen und führt bewusst weiter. Das Backend vermerkt es
    *  dann im Bericht (Cloud-QS 23.09.2026). */
-  async function doConfirm(force = false) {
+  async function doConfirm(force = false, vomBoden = false) {
     if (mode.kind === "auto_resumed") {
       bestaetigtBeiRef.current = activeFlight;
       setMode((prev) =>
         prev.kind === "auto_resumed" ? { ...prev, busy: true } : prev,
       );
       try {
-        await invoke("flight_resume_confirm", force ? { force: true } : {});
+        await invoke(
+          "flight_resume_confirm",
+          vomBoden ? { force: true, vomBoden: true } : force ? { force: true } : {},
+        );
         setMode({ kind: "idle" });
       } catch (err) {
         const msg = errMsg(err);
@@ -406,11 +409,18 @@ export function ResumeFlightBanner({
         <ComparisonGrid activeFlight={activeFlight} />
         <RecheckActions
           busy={mode.busy}
+          vomBoden={activeFlight?.resume_vom_boden_moeglich === true}
           onConfirm={() => {
             if (confirmingRef.current) return;
             confirmingRef.current = true;
             // Aus dem Hard-Stop-Dialog: ausdrückliches „Trotzdem fortsetzen".
             void doConfirm(true);
+          }}
+          onVomBoden={() => {
+            if (confirmingRef.current) return;
+            confirmingRef.current = true;
+            // Ausdrücklich „Vom Boden weiterfliegen" (GAF 278).
+            void doConfirm(true, true);
           }}
           onCancel={() => void doCancel()}
         />
@@ -902,11 +912,17 @@ function haversineNm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 
 function RecheckActions({
   busy,
+  vomBoden,
   onConfirm,
+  onVomBoden,
   onCancel,
 }: {
   busy: boolean;
+  /** Auf einem anderen Platz am Boden neu geladen (GAF 278): MSFS kann viele
+   *  Flüge nicht in der Luft laden — dann von dort weiterfliegen. */
+  vomBoden: boolean;
   onConfirm: () => void;
+  onVomBoden: () => void;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
@@ -940,8 +956,25 @@ function RecheckActions({
           ⚠ {lastError}
         </p>
       )}
+      {vomBoden && (
+        <p className="active-flight__paused-instructions">{t("resume.vom_boden_hinweis")}</p>
+      )}
       <div className="active-flight__paused-actions">
-        {!showForce ? (
+        {vomBoden ? (
+          <button
+            type="button"
+            className="button"
+            style={{
+              background: "rgba(251,191,36,0.15)",
+              borderColor: "rgba(251,191,36,0.5)",
+              color: "#fbbf24",
+            }}
+            onClick={onVomBoden}
+            disabled={busy || checking}
+          >
+            {t("resume.vom_boden_weiterfliegen")}
+          </button>
+        ) : !showForce ? (
           <button
             type="button"
             className="button"

@@ -789,6 +789,60 @@ fn lage_abweichung(
     None
 }
 
+/// „Vom Boden weiterfliegen" (GAF 278): MSFS kann viele Fluege nicht in der
+/// Luft neu laden, der Pilot laedt deshalb auf einem nahen Platz am Boden und
+/// fliegt von dort zum Ziel weiter. Gilt nur fuer „Trotzdem fortsetzen", nur
+/// aus einer Luftphase ohne angefangene Landung, und nicht am geplanten Ziel
+/// (dort bleibt es bei Arrived samt Ziel-Sperre).
+fn bodenneustart_moeglich(stats: &FlightStats, abweichung: Option<LageAbweichung>, am_ziel: bool) -> bool {
+    let in_der_luft = matches!(
+        stats.phase,
+        FlightPhase::Climb
+            | FlightPhase::Cruise
+            | FlightPhase::Holding
+            | FlightPhase::Descent
+            | FlightPhase::Approach
+            | FlightPhase::Final
+    );
+    in_der_luft
+        && stats.landing_at.is_none()
+        && abweichung == Some(LageAbweichung::AmBoden)
+        && !am_ziel
+}
+
+/// Setzt den Flug fuer den Weiterflug vom Boden auf „Rollen zum Start".
+/// Abflugwerte, Block-off, `was_airborne`, Strecke und der Sprung-Vermerk
+/// bleiben; geraeumt wird, was zur abgebrochenen Luftphase gehoert.
+fn bodenneustart_vorbereiten(stats: &mut FlightStats, jetzt: DateTime<Utc>) {
+    stats.phase = FlightPhase::TaxiOut;
+    stats.transitions.push((jetzt, FlightPhase::TaxiOut));
+    stats.weiterflug_ab_boden_seit = Some(jetzt);
+    // Der Tank wurde neu geladen: Abhebe- minus Landesprit ergaebe einen
+    // erfundenen Verbrauch (Claude-Pruefer 24.10.2026). Ohne Abhebe-Sprit
+    // gilt der Sprit ueberall als „nicht bewertbar".
+    stats.takeoff_fuel_kg = None;
+    // Die Schatten-Engine kennt nur den Sinkflug — frisch, sonst zieht der
+    // Versoehner die Phase zurueck (Codex-Pruefung 24.10.2026).
+    stats.shadow_engine = phase_v2::ShadowPhaseEngine::default();
+    stats.shadow_phase = None;
+    stats.enroute_divergence_since = None;
+    stats.arrived_fallback_pending_since = None;
+    stats.takeoff_roll_slow_since = None;
+    stats.takeoff_roll_stall_since = None;
+    stats.takeoff_roll_peak_kt = 0.0;
+    stats.was_on_ground = Some(true);
+    stats.last_step_at = None;
+    stats.divert_hint = None;
+    // Was zum abgebrochenen Anflug gehoert.
+    stats.pending_td_at = None;
+    stats.snapshot_buffer.clear();
+    clear_approach_stability_and_rollout(stats);
+    stats.lowest_agl_during_approach_ft = None;
+    stats.tiefster_anflugpunkt = None;
+    stats.go_around_climb_pending_since = None;
+    stats.climb_peak_msl = None;
+}
+
 /// `lage_abweichung` fuer den laufenden Flug. Ohne gespeicherten Punkt gibt
 /// es nichts zu vergleichen — dann passt die Lage (wie bisher).
 fn lage_abweichung_fuer(flight: &ActiveFlight, jetzt: &SimSnapshot) -> Option<LageAbweichung> {
@@ -6053,6 +6107,9 @@ struct PersistedFlightStats {
     /// dritte Runde).
     #[serde(default)]
     resume_luecke_max_secs: Option<i64>,
+    /// Siehe FlightStats-Feld gleichen Namens.
+    #[serde(default)]
+    weiterflug_ab_boden_seit: Option<DateTime<Utc>>,
     /// v0.16.12 (#phase-v2): geplante Cruise-Altitude (ft) — persistiert,
     /// damit die Schatten-Engine nach einem Resume ihren `cruise_ref`
     /// behält. `#[serde(default)]` → None bei pre-v0.16.12-Files.
@@ -6318,6 +6375,7 @@ impl PersistedFlightStats {
             app_restart_was_unclean: stats.app_restart_was_unclean,
             resume_gap_minutes: stats.resume_gap_minutes,
             resume_luecke_max_secs: stats.resume_luecke_max_secs,
+            weiterflug_ab_boden_seit: stats.weiterflug_ab_boden_seit,
             // v0.16.12 (#phase-v2)
             planned_cruise_alt_ft: stats.planned_cruise_alt_ft,
             v2_reiseflughoehe_ft: stats.shadow_engine.beobachtete_reiseflughoehe_ft(),
@@ -6625,6 +6683,7 @@ impl PersistedFlightStats {
         stats.app_restart_was_unclean = self.app_restart_was_unclean;
         stats.resume_gap_minutes = self.resume_gap_minutes;
         stats.resume_luecke_max_secs = self.resume_luecke_max_secs;
+        stats.weiterflug_ab_boden_seit = self.weiterflug_ab_boden_seit;
         // v0.16.12 (#phase-v2): cruise_ref + Divergenz-Aggregat restoren.
         // Die Engine selbst wird NICHT persistiert (wärmt sich nach dem
         // Resume in ≤ 2 Fenstern wieder auf — dokumentiert).
@@ -7326,6 +7385,11 @@ struct FlightStats {
     resume_gap_minutes: Option<i64>,
     /// Siehe PersistedFlightStats — die laengste Neustart-Luecke.
     resume_luecke_max_secs: Option<i64>,
+    /// Nach einem Sim-Absturz auf einem anderen Platz am Boden neu geladen,
+    /// und der Pilot fliegt von dort weiter („Vom Boden weiterfliegen").
+    /// Bis zum neuen Abheben beendet kein Arrived-Rueckfall den Flug, und
+    /// der neue Start ueberschreibt die Abflugwerte nicht (GAF 278).
+    weiterflug_ab_boden_seit: Option<DateTime<Utc>>,
     /// Wann der Flug nach einem App-Neustart wiederhergestellt wurde. Das
     /// Resume-Gate schlaegt die Zeit bis zum Scharfschalten auf die Luecke
     /// auf — in ihr lief weder Streamer noch Aufsetz-Sampler.
@@ -9884,6 +9948,9 @@ pub struct ActiveFlightInfo {
     resume_wartet_s: Option<i64>,
     /// Laeuft ein Resume-Gate? Dann fragt der Banner nicht erneut.
     resume_gate_laeuft: bool,
+    /// Der Flieger steht nach dem Absturz auf einem anderen Platz am Boden —
+    /// der Banner bietet „Vom Boden weiterfliegen" an (GAF 278).
+    resume_vom_boden_moeglich: bool,
     /// Number of touch-and-go events recorded so far. Always 0 on a
     /// routine A→B; non-zero on training flights or unstable approaches
     /// where the pilot bounced and went around. Surfaced as a small
@@ -19357,6 +19424,7 @@ fn flight_info(
         resume_wartet_grund: stats.resume_wartet.as_ref().map(|(g, _)| g.clone()),
         resume_wartet_s: stats.resume_wartet.as_ref().map(|(_, s)| *s),
         resume_gate_laeuft: stats.resume_gate_laeuft,
+        resume_vom_boden_moeglich: false,
         touch_and_go_count: stats
             .touchdown_events
             .iter()
@@ -19971,9 +20039,24 @@ fn flight_status(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<Ac
     // poll whether the current sim position matches the persisted flight.
     // If the sim crashed and reloaded the aircraft on the ground (or far
     // away), the banner must NOT auto-confirm — the pilot has to click.
+    let mut vom_boden_moeglich = false;
     let resume_position_suspect = if flight.was_just_resumed.load(Ordering::Relaxed) {
         match current_snapshot(&app) {
-            Some(snap) => lage_abweichung_fuer(flight, &snap).is_some(),
+            Some(snap) => {
+                let abweichung = lage_abweichung_fuer(flight, &snap);
+                if abweichung == Some(LageAbweichung::AmBoden) {
+                    let st = flight.stats.lock().expect("flight stats");
+                    let am_ziel = arrival::locate(
+                        &flight.arr_airport,
+                        snap.lat,
+                        snap.lon,
+                        st.planned_arr_ref_pos,
+                    )
+                    .is_at_planned();
+                    vom_boden_moeglich = bodenneustart_moeglich(&st, abweichung, am_ziel);
+                }
+                abweichung.is_some()
+            }
             // Ohne Sim zeigt das Banner „Warte auf den Simulator" (kein
             // Countdown ohne Sim). Bleibt eine Sim-Trennung offen, prueft der
             // Streamer die Lage ohnehin selbst, bevor er weiterlaeuft.
@@ -19994,7 +20077,9 @@ fn flight_status(app: AppHandle, state: tauri::State<'_, AppState>) -> Option<Ac
         l.ete_min = panel_ete_min(&snap, &flight.arr_airport, flight.planned_flight_time_min);
         l
     });
-    Some(flight_info(flight.as_ref(), resume_position_suspect, live))
+    let mut info = flight_info(flight.as_ref(), resume_position_suspect, live);
+    info.resume_vom_boden_moeglich = vom_boden_moeglich;
+    Some(info)
 }
 
 #[derive(Serialize)]
@@ -35589,6 +35674,8 @@ async fn flight_resume_confirm(
     // gelesen und fuehrt den Flug bewusst weiter. Der Countdown und der
     // normale Weg schicken das NICHT (Cloud-QS 23.09.2026).
     force: Option<bool>,
+    // true nur vom Knopf „Vom Boden weiterfliegen" (GAF 278).
+    #[allow(non_snake_case)] vomBoden: Option<bool>,
 ) -> Result<(), UiError> {
     let flight = {
         let guard = state.active_flight.lock().expect("active_flight lock");
@@ -35623,7 +35710,13 @@ async fn flight_resume_confirm(
         }
         st.resume_gate_laeuft = true;
     }
-    spawn_resume_sim_gate(app, Arc::clone(&flight), client, force.unwrap_or(false));
+    spawn_resume_sim_gate(
+        app,
+        Arc::clone(&flight),
+        client,
+        force.unwrap_or(false),
+        vomBoden.unwrap_or(false),
+    );
     Ok(())
 }
 
@@ -35646,6 +35739,7 @@ fn spawn_resume_sim_gate(
     flight: Arc<ActiveFlight>,
     client: Client,
     trotzdem_fortsetzen: bool,
+    vom_boden: bool,
 ) {
     tauri::async_runtime::spawn(async move {
         log_activity_handle(
@@ -35839,6 +35933,9 @@ fn spawn_resume_sim_gate(
                     // 23.09.2026) — dann steht das im Bericht, und er
                     // entscheidet am Ende selbst ueber die Abgabe.
                     if trotzdem_fortsetzen {
+                        // VOR dem Schliessen der Pause: Danach fehlt der
+                        // Pausenstand, an dem „am Boden" gemessen wird.
+                        let abweichung = lage_abweichung_fuer(&flight, &snap);
                         sprung_beim_fortsetzen_vermerken(&app, &flight, &snap);
                         // Der Pilot hat entschieden: Eine offene Sim-Trennung
                         // hier schliessen. Sonst hielte der neue Streamer die
@@ -35850,6 +35947,67 @@ fn spawn_resume_sim_gate(
                             Some(&snap),
                             PauseReason::ManualResume,
                         );
+                        // Auf einem anderen Platz am Boden neu geladen: von dort
+                        // weiterfliegen statt sofort „Arrived" (GAF 278).
+                        let am_ziel = {
+                            let ref_pos =
+                                flight.stats.lock().expect("flight stats").planned_arr_ref_pos;
+                            arrival::locate(&flight.arr_airport, snap.lat, snap.lon, ref_pos)
+                                .is_at_planned()
+                        };
+                        let vorher = {
+                            let mut st = flight.stats.lock().expect("flight stats");
+                            let vorher = st.phase;
+                            if vom_boden && bodenneustart_moeglich(&st, abweichung, am_ziel) {
+                                bodenneustart_vorbereiten(&mut st, Utc::now());
+                                Some(vorher)
+                            } else {
+                                None
+                            }
+                        };
+                        if vom_boden && vorher.is_none() {
+                            log_activity_and_record(
+                                &app,
+                                &flight.pirep_id,
+                                ActivityLevel::Warn,
+                                "Weiterflug vom Boden nicht möglich — Flug läuft in der bisherigen Phase weiter"
+                                    .to_string(),
+                                Some(format!(
+                                    "Beim Scharfschalten passte die Lage nicht mehr (nicht am Boden, am Ziel oder \
+                                     Landung schon begonnen): {}",
+                                    abweichung.as_ref().map_or_else(
+                                        || "Lage passt".to_string(),
+                                        lage_abweichung_text
+                                    ),
+                                )),
+                            );
+                        }
+                        if let Some(vorher) = vorher {
+                            record_event(
+                                &app,
+                                &flight.pirep_id,
+                                &FlightLogEvent::PhaseChanged {
+                                    timestamp: Utc::now(),
+                                    from: vorher,
+                                    to: FlightPhase::TaxiOut,
+                                    altitude_msl_ft: snap.altitude_msl_ft,
+                                    groundspeed_kt: snap.groundspeed_kt,
+                                    altitude_agl_ft: snap.altitude_agl_ft,
+                                },
+                            );
+                            log_activity_and_record(
+                                &app,
+                                &flight.pirep_id,
+                                ActivityLevel::Warn,
+                                format!("Weiterflug vom Boden — neuer Start, Ziel bleibt {}", flight.arr_airport),
+                                Some(format!(
+                                    "Nach dem Sim-Neustart am Boden bei LAT {:.4}° · LON {:.4}°. Der Flug steht auf \
+                                     Rollen; Abflugzeit und Startwerte bleiben die ursprünglichen. Der Sprung ist \
+                                     für die Prüfung vermerkt.",
+                                    snap.lat, snap.lon,
+                                )),
+                            );
+                        }
                     }
                     // Die Wartezeit war eine Luecke wie jede andere: In ihr lief
                     // weder Streamer noch Aufsetz-Sampler. Ohne diesen Aufschlag
@@ -42189,6 +42347,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
                 continue;
             }
+            // Frisch lesen: Waehrend der Pause kann das Resume-Gate die Phase
+            // umgestellt haben (Weiterflug vom Boden, GAF 278). Mit dem Wert von
+            // vor dem Schlaf hielte die Absturz-Erkennung den Flug sofort
+            // wieder an (Claude-Pruefer 24.10.2026).
+            let current_phase = flight.stats.lock().expect("flight stats").phase;
 
             // v0.13.9 Stream F: Snapshot VOR Overwrite cachen damit die
             // Recovery-Detection (airborne -> on_ground mit massivem
@@ -45042,6 +45205,38 @@ fn latch_takeoff_stats(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTim
     sprit_neuer_abschnitt_beim_abheben(stats);
     stats.takeoff_at = Some(now);
     stats.takeoff_fuel_kg = Some(snap.fuel_total_kg);
+    sprit_beim_abheben_scharf(stats);
+    // v0.5.16: capture pitch + bank for tail-strike / wing-strike
+    // maintenance detection (DisposableSpecial dmaintenance reads these
+    // as numeric custom fields).
+    // v0.5.24: prefer the 50Hz-sampler value (Wheels-Up-frame-genau)
+    // ueber den Streamer-Tick-Snapshot. Bei tail-strike-empfindlichen
+    // Aircraft wie A321 spart das 2-3° Pitch-Drift gegen den
+    // 3-30s-spaeter-Tick.
+    stats.takeoff_pitch_deg = stats.sampler_takeoff_pitch_deg.or(Some(snap.pitch_deg));
+    stats.takeoff_bank_deg = stats.sampler_takeoff_bank_deg.or(Some(snap.bank_deg));
+    if let Some(weight) = takeoff_weight_from_snapshot(snap) {
+        stats.takeoff_weight_kg = Some(weight);
+    }
+}
+
+/// Start oder Weiterflug-Start: Beim Weiterflug vom Boden (siehe
+/// `FlightStats::weiterflug_ab_boden_seit`) gelten Abflugzeit, Startgewicht
+/// und Lage weiter; der Abhebe-Sprit bleibt leer (neu geladener Tank).
+fn takeoff_latch_oder_weiterflug(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
+    if stats.weiterflug_ab_boden_seit.take().is_some() {
+        sprit_neuer_abschnitt_beim_abheben(stats);
+        sprit_beim_abheben_scharf(stats);
+        stats
+            .pending_acars_logs
+            .push("Weiterflug nach Sim-Neustart — abgehoben".to_string());
+    } else {
+        latch_takeoff_stats(stats, snap, now);
+    }
+}
+
+/// Der Teil des Start-Latch, der nur die Sprit-Auswertung neu beginnt.
+fn sprit_beim_abheben_scharf(stats: &mut FlightStats) {
     // v1.7.35: ein neuer Start heisst ein neuer Vergleichspunkt.
     stats.sprit_vergleichspunkt_kg = None;
     stats.sprit_vergleichspunkt_odo_nm = None;
@@ -45064,18 +45259,6 @@ fn latch_takeoff_stats(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTim
     stats.sprit_einstieg_in_der_luft = false;
     stats.sprit_einstieg_ort = None;
     stats.sprit_plan_bis_einstieg_kg = None;
-    // v0.5.16: capture pitch + bank for tail-strike / wing-strike
-    // maintenance detection (DisposableSpecial dmaintenance reads these
-    // as numeric custom fields).
-    // v0.5.24: prefer the 50Hz-sampler value (Wheels-Up-frame-genau)
-    // ueber den Streamer-Tick-Snapshot. Bei tail-strike-empfindlichen
-    // Aircraft wie A321 spart das 2-3° Pitch-Drift gegen den
-    // 3-30s-spaeter-Tick.
-    stats.takeoff_pitch_deg = stats.sampler_takeoff_pitch_deg.or(Some(snap.pitch_deg));
-    stats.takeoff_bank_deg = stats.sampler_takeoff_bank_deg.or(Some(snap.bank_deg));
-    if let Some(weight) = takeoff_weight_from_snapshot(snap) {
-        stats.takeoff_weight_kg = Some(weight);
-    }
 }
 
 /// v0.16.9: Takeoff-Latch-Sicherheitsnetz für Pfade, die airborne werden,
@@ -45096,6 +45279,11 @@ fn latch_takeoff_stats(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTim
 ///   < 1 % des Trip-Burns — für die OFP-Treue-Bewertung präzise genug, und
 ///   unendlich besser als „nicht bewertbar".
 fn latch_takeoff_stats_if_missing(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
+    // Weiterflug vom Boden: Abflugwerte bleiben, der Sprit bleibt ungemessen.
+    if stats.weiterflug_ab_boden_seit.is_some() {
+        sprit_beim_abheben_scharf(stats);
+        return;
+    }
     if stats.takeoff_at.is_none() {
         stats.takeoff_at = Some(stats.sampler_takeoff_at.unwrap_or(now));
     }
@@ -50608,7 +50796,7 @@ fn step_flight_at(
                     && !snap.paused)
             {
                 next_phase = FlightPhase::Takeoff;
-                latch_takeoff_stats(&mut stats, snap, now);
+                takeoff_latch_oder_weiterflug(&mut stats, snap, now);
                 tracing::info!(
                     pirep_id = %flight.pirep_id,
                     "non-conventional takeoff detected (heli / glider / seaplane) — TaxiOut → Takeoff"
@@ -50642,7 +50830,7 @@ fn step_flight_at(
 
             if was_on_ground && !snap.on_ground {
                 next_phase = FlightPhase::Takeoff;
-                latch_takeoff_stats(&mut stats, snap, now);
+                takeoff_latch_oder_weiterflug(&mut stats, snap, now);
             } else {
                 // Rückkante (fehlte bisher — der Arm ging nur vorwärts):
                 // nachhaltig langsam + am Boden → zurück zu TaxiOut. Behebt
@@ -51884,11 +52072,28 @@ fn step_flight_at(
     // aircraft is NOT at its destination — which is every tick of the cruise.
     // Asking the question only when the answer can matter keeps that search off
     // the en-route hot path entirely.
+    // Nach dem Weiterflug-Neustart am Boden (GAF 278) beendet erst eine
+    // Landung NACH dem neuen Start den Flug, nicht der kalte Ausweichplatz.
+    if stats.weiterflug_ab_boden_seit.is_some()
+        && matches!(
+            next_phase,
+            FlightPhase::Takeoff
+                | FlightPhase::Climb
+                | FlightPhase::Cruise
+                | FlightPhase::Holding
+                | FlightPhase::Descent
+                | FlightPhase::Approach
+                | FlightPhase::Final
+        )
+    {
+        stats.weiterflug_ab_boden_seit = None;
+    }
     if !already_done
         && !pre_block_off
         && stats.block_off_at.is_some()
         && stats.was_airborne
         && snap.on_ground
+        && stats.weiterflug_ab_boden_seit.is_none()
     {
         // Where are we, relative to where we were going? One question, one
         // answer, one geometry — see `crate::arrival`. `near_planned` used to
@@ -52214,6 +52419,139 @@ fn step_flight_at(
         Some(next_phase)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod weiterflug_vom_boden_tests {
+    //! GAF 278 (24.10.2026): Nach dem Sim-Absturz auf einem anderen Platz am
+    //! Boden neu geladen — der Pilot will von dort starten und zum Ziel
+    //! weiterfliegen („Vom Boden weiterfliegen"). Geprueft an `step_flight`.
+    use super::*;
+
+    fn abflug() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-10-24T12:03:44Z").unwrap().with_timezone(&Utc)
+    }
+
+    /// Ein Flug im Sinkflug, wie GAF 278 vor dem Absturz.
+    fn sinkflug() -> ActiveFlight {
+        let flight = crate::enroute_reconcile_replay_tests::replay_fixture();
+        {
+            let mut st = flight.stats.lock().unwrap();
+            st.phase = FlightPhase::Descent;
+            st.block_off_at = Some(abflug() - chrono::Duration::minutes(24));
+            st.takeoff_at = Some(abflug());
+            st.takeoff_fuel_kg = Some(22_900.0);
+            st.takeoff_weight_kg = Some(85_343.0);
+            st.was_airborne = true;
+        }
+        flight
+    }
+
+    /// Kalt und dunkel am Ausweichplatz: `SimSnapshot::default()` ist „am
+    /// Boden, Triebwerke aus, steht".
+    fn kalt_am_boden() -> SimSnapshot {
+        SimSnapshot::default()
+    }
+
+    #[test]
+    fn kalt_am_ausweichplatz_bleibt_der_flug_beim_rollen() {
+        let flight = sinkflug();
+        {
+            let mut st = flight.stats.lock().unwrap();
+            bodenneustart_vorbereiten(&mut st, Utc::now());
+            // Schon eine Minute kalt gestanden.
+            st.arrived_fallback_pending_since = Some(Utc::now() - chrono::Duration::seconds(60));
+        }
+        let ergebnis = step_flight(&flight, &kalt_am_boden());
+        assert_ne!(ergebnis, Some(FlightPhase::Arrived));
+        assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::TaxiOut);
+    }
+
+    /// Gegenprobe: Ohne den Weiterflug-Merker beendet derselbe Stand den Flug.
+    #[test]
+    fn ohne_merker_beendet_der_rueckfall_den_flug() {
+        let flight = sinkflug();
+        {
+            let mut st = flight.stats.lock().unwrap();
+            bodenneustart_vorbereiten(&mut st, Utc::now());
+            st.weiterflug_ab_boden_seit = None;
+            st.arrived_fallback_pending_since = Some(Utc::now() - chrono::Duration::seconds(60));
+        }
+        assert_eq!(step_flight(&flight, &kalt_am_boden()), Some(FlightPhase::Arrived));
+    }
+
+    fn abheben() -> SimSnapshot {
+        SimSnapshot {
+            on_ground: false,
+            altitude_agl_ft: 60.0,
+            altitude_msl_ft: 420.0,
+            vertical_speed_fpm: 1_800.0,
+            groundspeed_kt: 160.0,
+            fuel_total_kg: 11_700.0,
+            total_weight_kg: Some(74_000.0),
+            ..SimSnapshot::default()
+        }
+    }
+
+    /// Der neue Start ueberschreibt Abflugzeit und Startgewicht von Dubai
+    /// nicht; der Sprit bleibt ungemessen, und der Merker ist danach weg.
+    #[test]
+    fn neuer_start_behaelt_die_abflugwerte() {
+        let flight = sinkflug();
+        {
+            let mut st = flight.stats.lock().unwrap();
+            bodenneustart_vorbereiten(&mut st, Utc::now());
+        }
+        assert_eq!(step_flight(&flight, &abheben()), Some(FlightPhase::Takeoff));
+        let st = flight.stats.lock().unwrap();
+        assert_eq!(st.takeoff_at, Some(abflug()));
+        assert_eq!(st.takeoff_weight_kg, Some(85_343.0));
+        // Neu geladener Tank: kein Abhebe-Sprit, also kein erfundener Verbrauch.
+        assert_eq!(st.takeoff_fuel_kg, None);
+        assert!(st.weiterflug_ab_boden_seit.is_none(), "nach dem Abheben wieder scharf");
+    }
+
+    /// Gegenprobe: Ein gewoehnlicher Start setzt die Abflugwerte neu.
+    #[test]
+    fn gewoehnlicher_start_setzt_die_abflugwerte() {
+        let flight = sinkflug();
+        {
+            let mut st = flight.stats.lock().unwrap();
+            bodenneustart_vorbereiten(&mut st, Utc::now());
+            st.weiterflug_ab_boden_seit = None;
+        }
+        assert_eq!(step_flight(&flight, &abheben()), Some(FlightPhase::Takeoff));
+        assert_ne!(flight.stats.lock().unwrap().takeoff_at, Some(abflug()));
+    }
+
+    #[test]
+    fn nur_aus_der_luft_am_boden_und_nicht_am_ziel() {
+        let mut st = FlightStats::new();
+        st.phase = FlightPhase::Descent;
+        let am_boden = Some(LageAbweichung::AmBoden);
+        assert!(bodenneustart_moeglich(&st, am_boden, false));
+        assert!(!bodenneustart_moeglich(&st, am_boden, true), "am Ziel: Arrived + Ziel-Sperre");
+        assert!(!bodenneustart_moeglich(&st, Some(LageAbweichung::SpritGestiegen), false));
+        assert!(!bodenneustart_moeglich(&st, None, false));
+        st.landing_at = Some(Utc::now());
+        assert!(!bodenneustart_moeglich(&st, am_boden, false), "Landung angefangen");
+        st.landing_at = None;
+        st.phase = FlightPhase::TaxiIn;
+        assert!(!bodenneustart_moeglich(&st, am_boden, false));
+    }
+
+    /// Der Merker ueberlebt einen App-Neustart.
+    #[test]
+    fn merker_wird_gespeichert() {
+        let mut st = FlightStats::new();
+        st.weiterflug_ab_boden_seit = Some(abflug());
+        let p = PersistedFlightStats::snapshot_from(&st);
+        let json = serde_json::to_string(&p).unwrap();
+        let zurueck: PersistedFlightStats = serde_json::from_str(&json).unwrap();
+        let mut neu = FlightStats::new();
+        zurueck.apply_to(&mut neu);
+        assert_eq!(neu.weiterflug_ab_boden_seit, Some(abflug()));
     }
 }
 

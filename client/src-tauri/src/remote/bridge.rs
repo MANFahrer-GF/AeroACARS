@@ -654,9 +654,13 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             struct A {
                 #[serde(default)]
                 force: Option<bool>,
+                #[serde(default)]
+                vom_boden: Option<bool>,
             }
-            let force = parse_args::<A>(body).map(|a| a.force).unwrap_or(None);
-            from_uierr(crate::flight_resume_confirm(app.clone(), st!(), force).await)
+            let (force, vom_boden) = parse_args::<A>(body)
+                .map(|a| (a.force, a.vom_boden))
+                .unwrap_or((None, None));
+            from_uierr(crate::flight_resume_confirm(app.clone(), st!(), force, vom_boden).await)
         }
         "flight_refresh_simbrief" => {
             from_uierr(crate::flight_refresh_simbrief(app.clone(), st!()).await)
