@@ -111,7 +111,9 @@ function band(st, s, c0, c1, r, t) {
   // Linie beginnt hinter dem Startcode und endet vor dem Zielcode.
   const lx0 = kx(c0 + 1) + 6, lx1 = kx(c1) - 6;
   const ly = y + 62;
-  const px = inKachel(lx0 + (lx1 - lx0) * p, c0, c1);
+  // Nur in den Kacheln zwischen START und ZIEL: sonst lag das Flugzeug nach
+  // der Landung über dem Zielcode und die Phase über „ZIEL“ (24.10.).
+  const px = inKachel(lx0 + (lx1 - lx0) * p, c0 + 1, c1 - 1);
   const g = phasenGruppe(st?.phase);
   const phasenFarbe = g === "anflug" ? FARBE.amber : g === "flug" ? FARBE.gruen : FARBE.cyan;
   const ab = iso(st?.takeoff_at) ?? iso(st?.block_off_at);
@@ -134,7 +136,7 @@ function band(st, s, c0, c1, r, t) {
     flugzeug(px, ly, 40, FARBE.text),
   ];
   // Phase und Flugfläche am Flugzeug — aber nur innerhalb einer Kachel.
-  const kachelDesFlugzeugs = Math.min(c1, Math.max(c0, Math.floor(px / (KACHEL + FUGE))));
+  const kachelDesFlugzeugs = Math.min(c1 - 1, Math.max(c0 + 1, Math.floor(px / (KACHEL + FUGE))));
   const kx0 = kx(kachelDesFlugzeugs);
   teile.push(text(kx0 + KACHEL / 2, y + 30, PHASE_TEXT[st?.phase] ?? "", { groesse: 15, farbe: phasenFarbe, fett: true, anker: "middle", abstand: 1.5 }));
 
@@ -532,7 +534,7 @@ function audioLeiste(art, c, r, s) {
     text(mx, y + 28, name, { groesse: 13, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1.5, max: INNEN }),
     ansage ? lautsprecher(mx, y + 62, 42, farbe, stumm) : note(mx, y + 62, 38, farbe),
     stumm && !ansage ? `<line x1="${mx - 22}" y1="${y + 40}" x2="${mx + 22}" y2="${y + 84}" stroke="${farbe}" stroke-width="5" stroke-linecap="round"/>` : "",
-    text(mx, y + 106, !k ? "zu alt" : stumm ? "STUMM" : aus ? "AUS" : `${Math.round(pegel * 100)} %`, { groesse: 20, fett: true, farbe, anker: "middle", max: INNEN }),
+    text(mx, y + 106, !k ? (s.erreichbar ? "zu alt" : "aus") : stumm ? "STUMM" : aus ? "AUS" : `${Math.round(pegel * 100)} %`, { groesse: 20, fett: true, farbe, anker: "middle", max: INNEN }),
     balken(kx(c + 1) + 18, y + 120, KACHEL - 36, stumm || aus ? 0 : pegel, farbe, 7),
     plusMinus(2, "+"),
   ].join("");
@@ -647,7 +649,7 @@ export function streifen(s, t = 0, dreh = null) {
   // immer links — beim Musik-Rad erschien „MUSIK“ über dem Ansagen-Rad).
   const feld = dreh ? radFeld(s, st, dreh) : "";
   const p = fortschritt(st, s.jetzt);
-  const x0 = 120, x1 = 680, ly = 44;
+  const x0 = 140, x1 = 660, ly = 44; // Abstand zu Start- und Zielcode (Flugzeug klebte am „NZCH“)
   const px = x0 + (x1 - x0) * p;
   // Fallblatt wie im Band des Decks (Thomas 23.10.: keine Laufschrift):
   // zwei Angaben nebeneinander, alle vier Sekunden rücken sie weiter.
