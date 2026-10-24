@@ -1338,6 +1338,10 @@ pub struct PirepSummary {
     /// vom Frontend zu „vor X h Y min" konvertiert.
     #[serde(default)]
     pub created_at: Option<String>,
+    /// `updated_at` aus phpVMS PirepResource — die letzte Meldung eines
+    /// Clients. Frisch heisst: Der Flug laeuft gerade auf einem Geraet.
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 /// v0.5.33: Subfleet mit nested Aircraft-Liste, wie phpVMS-V7

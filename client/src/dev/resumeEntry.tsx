@@ -1,5 +1,8 @@
 // Vorschau des Wiederaufnahme-Dialogs nach einem Sim-Absturz (SIA 375,
 // 27.09.2026). `?sim=1` = Simulator verbunden, `&weg=1` = Position passt nicht.
+// `?gefunden=1` = nur auf dem Server gefunden, `&woanders=1` = meldet gerade
+// von einem anderen Gerät (24.10.2026).
+import "./resumeGefunden";
 import { createRoot } from "react-dom/client";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -25,8 +28,9 @@ const flug = {
   last_known_fuel_kg: 90723, last_known_zfw_kg: 224886, last_known_total_weight_kg: 315608,
   last_known_aircraft_icao: "B77W",
 } as unknown as ActiveFlightInfo;
+const gefunden = q.has("gefunden");
 createRoot(document.getElementById("root")!).render(
   <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-    <ResumeFlightBanner activeFlight={flug} onAdopted={() => {}} onCancelled={() => {}} />
+    <ResumeFlightBanner activeFlight={gefunden ? null : flug} onAdopted={() => {}} onCancelled={() => {}} />
   </div>,
 );
