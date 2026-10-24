@@ -2261,6 +2261,25 @@ mod resume_discontinuity_tests {
         assert!(snapshot_position_is_usable(&snap));
     }
 
+    /// GAF 278 (24.10.2026): Die Menue-Scheinposition (LAT 0 / LON 90, 228 ft)
+    /// stand minutenlang ruhig — das Gate schaltete darauf scharf, und der
+    /// erste echte Wert (Zagreb am Boden) lief ungeprueft in die Phasen.
+    #[test]
+    fn resume_gate_schaltet_nie_auf_der_menue_position_scharf() {
+        let t0 = Utc::now();
+        let mut ruhe = SimRuhe::default();
+        let menue = sim_snapshot(-0.0, 90.0003, 228.0, 0.0, true);
+        for s in (0..=120).step_by(2) {
+            let mut snap = menue.clone();
+            snap.timestamp = t0 + chrono::Duration::seconds(s);
+            assert!(
+                resume_gate_takt(&mut ruhe, Some(snap), t0 + chrono::Duration::seconds(s))
+                    .is_err(),
+                "nach {s} s auf der Menue-Position scharf"
+            );
+        }
+    }
+
     /// Die Folge von OCN 712 (24.09.2026) durch die echte Gate-Entscheidung:
     /// Menue (anderes Flugzeug, 0 kg, anderer Ort, pausiert), dann ein Wert
     /// mit 20.926.040 ft, dann erst der geladene Flug. Scharf wird es erst,
@@ -42196,7 +42215,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // existing stale-snapshot machinery then treats the gap exactly like
             // any other sim dropout, which is what a restarting sim is.
             let snapshot = match snapshot {
-                Some(s) if !snapshot_position_is_usable(&s) => {
+                // Ebenso die Menue-Scheinposition (LAT 0 / LON 90): Sie besteht
+                // den Filter oben, ist aber kein Flugzustand. Als „keine Daten"
+                // greift nach 30 s die Pause samt Lage-Pruefung (GAF 278).
+                Some(s) if !snapshot_position_is_usable(&s) || !snapshot_plausibel(&s) => {
                     if !null_island_logged {
                         null_island_logged = true;
                         tracing::warn!(
@@ -61509,7 +61531,14 @@ fn resume_gate_takt(
     snap: Option<SimSnapshot>,
     jetzt: DateTime<Utc>,
 ) -> Result<SimSnapshot, String> {
-    let Some(snap) = snap.filter(snapshot_position_is_usable) else {
+    // Eine ruhig stehende Menue-Scheinposition (LAT 0 / LON 90) ist kein
+    // geladener Sim. Das Gate schaltete sonst darauf scharf — auch bei
+    // „Trotzdem fortsetzen" —, und der erste echte Wert (GAF 278: Zagreb am
+    // Boden) lief ungeprueft in die Phasen.
+    let Some(snap) = snap
+        .filter(snapshot_position_is_usable)
+        .filter(snapshot_plausibel)
+    else {
         *ruhe = SimRuhe::default();
         return Err("Der Simulator lädt noch — es gibt keine brauchbare Position.".to_string());
     };

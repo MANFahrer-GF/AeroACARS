@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
-import { invoke } from "../lib/ipc";
+import { formatIpcError, invoke } from "../lib/ipc";
 import type { ActiveFlightInfo, FlightEndOutcome } from "../types";
 import { resolveFlightIdent } from "../lib/callsign";
 
@@ -84,7 +84,16 @@ export function DivertBanner({ activeFlight, onFiledSuccess }: Props) {
       await invoke("flight_end", {});
       onFiledSuccess(filedOutcome(hint.planned_arr_icao));
     } catch (e) {
-      setError(String(e));
+      // Abgelehnte Abgabe: die Gründe zeigen, nicht „[object Object]"
+      // (Adrian, GAF 278, 24.10.2026 — 142 nm vor LOWW).
+      const missing = (e as { details?: { missing?: string[] } })?.details?.missing;
+      setError(
+        missing?.length
+          ? missing
+              .map((key) => t(`active_flight.validation.fields.${key}`, { defaultValue: key }))
+              .join(" · ")
+          : formatIpcError(e),
+      );
     } finally {
       setBusy(false);
     }
@@ -210,7 +219,7 @@ function DivertConfirmModal({
       onFiled();
       onClose();
     } catch (e) {
-      setError(String(e));
+      setError(formatIpcError(e));
     } finally {
       setBusy(false);
     }
@@ -328,7 +337,7 @@ export function ManualDivertModal({ activeFlight, onClose, onPicked, texte = "la
         );
         setNearby(r);
       } catch (e) {
-        setError(String(e));
+        setError(formatIpcError(e));
         setNearby([]);
       }
     })();
