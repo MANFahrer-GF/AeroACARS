@@ -68,7 +68,16 @@ export class Zustand {
       return;
     }
     // Ältere Clients kennen die Kabinen-Route nicht: dann bleibt sie null.
-    s.kabine = await lesen("/panel/kabine").catch(() => null);
+    s.kabine = await lesen("/panel/kabine").then(
+      (k) => ((this.kabinenFehler = null), k),
+      (e) => {
+        // Ins Plugin-Log, einmal je neuem Fehler (Feldbefund 24.10.: ohne Log war
+        // „Client zu alt“ am Gerät nicht von „keine Antwort“ zu unterscheiden).
+        if (e.message !== this.kabinenFehler) this.protokoll?.(`/panel/kabine: ${e.message}`);
+        this.kabinenFehler = e.message;
+        return null;
+      },
+    );
     if (!s.status?.landing_at) s.debrief = null;
     else if (runde % 5 === 0 || !s.debrief) s.debrief = await lesen("/panel/debrief").catch(() => s.debrief);
     this.s = s;

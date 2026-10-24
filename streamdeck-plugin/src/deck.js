@@ -271,7 +271,12 @@ class Rad extends SingletonAction {
       return this.zeigen(a);
     }
     const k = zustand.s.kabine;
-    if (!k) return a.showAlert();
+    if (!k) {
+      // Ohne Kabinen-Antwort trotzdem das Feld zeigen, mit dem Grund
+      // (Feldbefund 24.10.: beim Drehen blieb das Display einfach stehen).
+      this.zeigen(a);
+      return a.showAlert();
+    }
     const l = this.lageVon(a);
     const ansage = this.art === "ans";
     const befehlName = ansage ? "kabinen_lautstaerke" : "kabinen_musik_lautstaerke";
