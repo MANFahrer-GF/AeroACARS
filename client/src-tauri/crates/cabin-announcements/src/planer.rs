@@ -59,8 +59,9 @@ pub struct Tick {
     /// Abweichung vom Plan-Off-Block in Minuten, + = später (aus dem
     /// Zeiten-Band). `None` ohne Plan.
     pub abweichung_off_block_min: Option<i32>,
-    /// AeroACARS hat ein Durchstarten erkannt (eigene Erkennung des Hosts).
-    /// Der Planer leitet es zusätzlich aus Final → Luftphase ab.
+    /// AeroACARS hat ein Durchstarten erkannt (eigene Erkennung des Hosts,
+    /// mit Bahn voraus am tiefsten Punkt). Seit 24.10.2026 die einzige
+    /// Quelle: Final → Luftphase allein ist kein Durchstarten (AUA 561 LOWI).
     pub durchgestartet: bool,
     /// Beacon an (Türen zu, Triebwerksstart); `None` = meldet das Flugzeug nicht.
     pub beacon: Option<bool>,
@@ -1144,17 +1145,26 @@ impl Planer {
             }
         }
 
-        // ---- Durchstarten: aus Final/Landung wieder in eine Luftphase ----
+        // ---- Durchstarten: nur, wenn AeroACARS es erkannt hat ----
+        // 24.10.2026 (AUA 561 EDDN–LOWI, Pilot 15): Über den Bergen 45 km vor
+        // Innsbruck lag das Gelände unter 700 ft, aus dem Wiedersteigen im
+        // Anflugverfahren wurde „Final → Climb“ und die Kabine sagte ein
+        // Durchstarten an, das es nie gab. Der Phasenwechsel allein reicht
+        // deshalb nicht mehr; die Erkennung des Hosts prüft, ob am tiefsten
+        // Punkt eine Bahn voraus lag. Für einen neuen Anflug darf das Kommando
+        // „Plätze für die Landung“ aber in beiden Fällen noch einmal kommen.
         if let Some(v) = vorher {
             let aus_endanflug = matches!(v, Final | Landing);
             let wieder_hoch = matches!(t.phase, Takeoff | Climb | Cruise | Holding | Descent | Approach);
-            let erkannt = t.durchgestartet && self.durchstart_faellig_um.is_none() && !self.durchstart_laeuft;
-            if in_luft && ((aus_endanflug && wieder_hoch) || erkannt) {
-                self.durchstart_laeuft = true;
-                self.durchstart_faellig_um = Some(t.jetzt + DURCHSTART_VERZOEGERUNG_S);
-                // Für den neuen Anflug darf das Kommando noch einmal kommen.
+            if in_luft && aus_endanflug && wieder_hoch {
                 self.gemeldet.remove(&Slot::KommandoPlaetzeLandung);
             }
+        }
+        let erkannt = t.durchgestartet && self.durchstart_faellig_um.is_none() && !self.durchstart_laeuft;
+        if in_luft && erkannt {
+            self.durchstart_laeuft = true;
+            self.durchstart_faellig_um = Some(t.jetzt + DURCHSTART_VERZOEGERUNG_S);
+            self.gemeldet.remove(&Slot::KommandoPlaetzeLandung);
         }
         if let Some(um) = self.durchstart_faellig_um {
             if t.jetzt >= um {
@@ -2309,16 +2319,35 @@ mod tests {
         p.steigflug_vorbei = true;
         let f = p.tick(&tick(0, Final, 800.0, -700.0));
         assert!(f.iter().any(|f| f.slot == Slot::KommandoPlaetzeLandung));
-        assert!(p.tick(&tick(10, Climb, 1500.0, 2000.0)).iter().all(|f| f.slot != Slot::Durchstarten));
+        let hoch = |t, h, vs| Tick { durchgestartet: true, ..tick(t, Climb, h, vs) };
+        assert!(p.tick(&hoch(10, 1500.0, 2000.0)).iter().all(|f| f.slot != Slot::Durchstarten));
         let mut gesehen = false;
         for t in (20..400).step_by(10) {
-            gesehen |= p.tick(&tick(t, Climb, 3000.0, 1000.0)).iter().any(|f| f.slot == Slot::Durchstarten);
+            gesehen |= p.tick(&hoch(t, 3000.0, 1000.0)).iter().any(|f| f.slot == Slot::Durchstarten);
             if t < 160 {
                 assert!(!gesehen, "zu früh bei {t}");
             }
         }
         assert!(gesehen);
         assert!(p.tick(&tick(500, Final, 800.0, -700.0)).iter().any(|f| f.slot == Slot::KommandoPlaetzeLandung));
+    }
+
+    /// 24.10.2026, AUA 561 EDDN–LOWI (Pilot 15): „Final“ über den Bergen, dann
+    /// Wiedersteigen im Anflugverfahren, ohne dass AeroACARS ein Durchstarten
+    /// erkannt hat. Vorher kam die Ansage trotzdem; jetzt nicht. Das Kommando
+    /// „Plätze für die Landung“ darf vor dem echten Final noch einmal kommen.
+    #[test]
+    fn final_dann_steigen_ohne_erkennung_ist_kein_durchstarten() {
+        let mut p = Planer::neu(flug(120));
+        p.steigflug_vorbei = true;
+        assert!(p.tick(&tick(0, Final, 600.0, -500.0)).iter().any(|f| f.slot == Slot::KommandoPlaetzeLandung));
+        let mut n = 0;
+        for t in (10..900).step_by(10) {
+            n += p.tick(&tick(t, Climb, 9_000.0, 1_500.0)).iter().filter(|f| f.slot == Slot::Durchstarten).count();
+        }
+        assert_eq!(n, 0, "ohne Erkennung des Hosts kein Durchstarten");
+        let f = p.tick(&tick(1_000, Final, 600.0, -700.0));
+        assert!(f.iter().any(|f| f.slot == Slot::KommandoPlaetzeLandung), "{f:?}");
     }
 
     /// Nach dem Durchstarten (wie in echt): Die Kabine bleibt vorbereitet,
@@ -2342,7 +2371,8 @@ mod tests {
         }
         let mut zweit = Vec::new();
         for s in (910..1_300).step_by(10) {
-            zweit.extend(p.tick(&tick(s, Climb, 3_000.0, 1_000.0)).into_iter().map(|f| f.slot));
+            let tk = Tick { durchgestartet: true, ..tick(s, Climb, 3_000.0, 1_000.0) };
+            zweit.extend(p.tick(&tk).into_iter().map(|f| f.slot));
         }
         for (s, ph, h) in [(1_400, Approach, 3_000.0), (1_600, Final, 800.0)] {
             zweit.extend(p.tick(&tick(s, ph, h, -700.0)).into_iter().map(|f| f.slot));

@@ -10568,6 +10568,23 @@ fn hoehe_fuer_durchstart(stats: &FlightStats, snap: &SimSnapshot) -> (f32, f32) 
     }
 }
 
+/// Ein Flugplatz in diesem Umkreis macht „unter 700 ft AGL“ zum Endanflug,
+/// auch wenn HAT nicht passt (Ausweichplatz, Gelaende vor der Bahn).
+const FINAL_PLATZ_NM: f64 = 5.0;
+
+/// Final nur in Platznaehe (24.10.2026, AUA 561 EDDN–LOWI, Pilot 15): Ueber
+/// den Bergen 45 km vor Innsbruck lag das Gelaende unter 700 ft — die Phase
+/// sprang auf Final, und beim Wiedersteigen im Anflugverfahren sagte die
+/// Kabine ein Durchstarten an. Die Hoehe ueber Grund allein sagt nicht, dass
+/// eine Bahn nahe ist: Passt sie zur Hoehe ueber der Zielbahn (HAT) oder liegt
+/// ein Flugplatz in `FINAL_PLATZ_NM`, ist es der Endanflug.
+fn final_in_platznaehe(stats: &FlightStats, snap: &SimSnapshot) -> bool {
+    let hat_passt = stats.arr_airport_elevation_ft.is_none_or(|elev| {
+        ((snap.altitude_msl_ft as f32 - elev) - snap.altitude_agl_ft as f32).abs() <= HAT_AGL_PLAUSIBEL_FT
+    });
+    hat_passt || !runway::find_nearest_airports(snap.lat, snap.lon, FINAL_PLATZ_NM * 1852.0, 1).is_empty()
+}
+
 /// Groesster Unterschied HAT↔AGL, den der Durchstart-Detektor noch als
 /// „gleicher Platz" liest. Gelaende vor Bergplaetzen schwankt um einige
 /// hundert Fuss (DLH2248: 455 ft).
@@ -51010,7 +51027,7 @@ fn step_flight_at(
             };
             if let Some(ga_phase) = ga_phase {
                 next_phase = ga_phase;
-            } else if snap.altitude_agl_ft < 700.0 {
+            } else if snap.altitude_agl_ft < 700.0 && final_in_platznaehe(&stats, snap) {
                 // 1500 ft AGL was too eager — pilots reported a 3 min
                 // "Final" segment because most aircraft intercept the
                 // ILS at that altitude and still have several miles to
@@ -54395,6 +54412,49 @@ mod enroute_reconcile_tests {
     /// Warteschleifen-Erkennung des Cruise-Arms weiterlaufen. Im ersten
     /// Korpus-Lauf fiel sie still weg (9 → 1 Holding-Eintritte), weil die
     /// Übernahme auch die eigene Phase „übernahm".
+    /// 24.10.2026, AUA 561 EDDN–LOWI (Pilot 15): 6.773 ft MSL über den
+    /// Lechtaler Alpen, 45 km vor Innsbruck, Gelände knapp darunter. Vorher
+    /// wurde daraus „Final“ (nur AGL < 700) und beim Wiedersteigen sagte die
+    /// Kabine ein Durchstarten an. Jetzt bleibt es Approach; an der Bahn und
+    /// ohne bekannte Platzhöhe ist es weiter Final.
+    #[test]
+    fn final_nur_in_platznaehe_nicht_ueber_den_bergen() {
+        let lauf = |lat: f64, lon: f64, msl: f64, elev: Option<f32>| {
+            let flight = fixture();
+            let t0 = Utc::now() - chrono::Duration::seconds(100);
+            {
+                let mut stats = flight.stats.lock().unwrap();
+                stats.phase = FlightPhase::Approach;
+                stats.shadow_phase = Some(FlightPhase::Approach);
+                stats.was_airborne = true;
+                stats.was_on_ground = Some(false);
+                stats.arr_airport_elevation_ft = elev;
+            }
+            let snap = SimSnapshot {
+                lat,
+                lon,
+                altitude_msl_ft: msl,
+                altitude_agl_ft: 600.0,
+                vertical_speed_fpm: -500.0,
+                groundspeed_kt: 250.0,
+                indicated_airspeed_kt: 220.0,
+                heading_deg_true: 254.0,
+                engines_running: 2,
+                ..SimSnapshot::default()
+            };
+            let mut phase = FlightPhase::Approach;
+            for i in 0..4 {
+                if let Some(p) = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(5 * i)) {
+                    phase = p;
+                }
+            }
+            phase
+        };
+        assert_eq!(lauf(47.3119, 10.7761, 6_773.0, Some(1_907.0)), FlightPhase::Approach, "über den Bergen kein Final");
+        assert_eq!(lauf(47.2602, 11.3800, 2_507.0, Some(1_907.0)), FlightPhase::Final, "vor der Bahn in Innsbruck Final");
+        assert_eq!(lauf(47.3119, 10.7761, 6_773.0, None), FlightPhase::Final, "ohne Platzhöhe wie bisher");
+    }
+
     #[test]
     fn holding_entry_from_cruise_still_works() {
         let flight = fixture();
