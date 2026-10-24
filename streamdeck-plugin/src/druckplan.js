@@ -18,8 +18,9 @@ export function druckPlan(eintrag, kabine) {
     case "ans_plus": return { kurz: "ans_lauter" };
     case "mus_minus": return { kurz: "mus_leiser" };
     case "mus_plus": return { kurz: "mus_lauter" };
-    // Stumm verwirft laufende und wartende Ansagen: nur durch Halten.
-    case "ans_stumm": return kabine?.stumm ? { kurz: "ans_an" } : { halten: "ans_aus" };
+    // Kurzer Druck schaltet um (Thomas 24.10.: nicht nur per langem Druck).
+    // Stumm verwirft laufende und wartende Ansagen.
+    case "ans_stumm": return { kurz: "ans_umschalten" };
     case "mus_stumm": return { kurz: "mus_stumm", halten: "boarding" };
     default: return { kurz: eintrag.kurz, halten: eintrag.halten === "boarding" ? "boarding" : undefined, lang: eintrag.lang };
   }

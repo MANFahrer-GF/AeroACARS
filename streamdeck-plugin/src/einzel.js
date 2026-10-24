@@ -4,7 +4,7 @@
 // die man sich selber zusammenbauen kann“.
 //
 // Eingabe ist dasselbe Tastenbild wie bisher (tasten.js):
-//   { label, wert, unter, ton, icon, balken?, stufen?, gross?, zurueck?, ansichten?, ansicht? }
+//   { label, wert, unter, ton, icon, balken?, stufen?, gross?, ansichten?, ansicht? }
 
 import { FARBE, text, marke, flaeche, balken, LEUCHTEN } from "./glas.js";
 
@@ -45,8 +45,6 @@ export function einzelSvg(b) {
   } else if (b.unter) {
     teile.push(text(14, 124, b.unter, { groesse: 16, farbe: FARBE.leise, max: INNEN }));
   }
-
-  if (b.zurueck) teile.push(`<path d="M${K - 20} ${K - 34} l-12 10 12 10" stroke="${FARBE.cyan}" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`);
 
   // Mehrere Ansichten: Punkte oben rechts, der aktuelle hell.
   if (b.ansichten > 1) {

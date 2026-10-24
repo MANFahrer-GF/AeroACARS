@@ -8,9 +8,9 @@ export const uuid = (id) => `${PRAEFIX}.${id.replace(/_/g, "-")}`;
 export const REGLER = {
   regler_ansage: {
     name: "Regler Ansagen",
-    tip: "Drehen: Lautstärke der Ansagen. Halten: Kabine stumm. Kurz drücken: Ton wieder an.",
+    tip: "Drehen: Lautstärke der Ansagen. Drücken: Ansagen stumm und wieder an.",
     icon: "spk",
-    ausloeser: { Rotate: "Lautstärke", Push: "Halten = stumm, kurz = Ton an" },
+    ausloeser: { Rotate: "Lautstärke", Push: "Stumm / Ton an" },
   },
   regler_musik: {
     name: "Regler Musik",
@@ -20,15 +20,15 @@ export const REGLER = {
   },
   regler_info: {
     name: "Regler Flugdaten",
-    tip: "Drehen blättert durch Blockzeit, Flugzeit, Sprit, Gewicht, Geschwindigkeit und Strecke.",
+    tip: "Drehen blättert durch Höhe, Geschwindigkeit, Wind, ETA, Sprit und Flugzeit. Drücken: AeroACARS nach vorn.",
     icon: "clock",
-    ausloeser: { Rotate: "Seite wechseln" },
+    ausloeser: { Rotate: "Seite wechseln", Push: "AeroACARS öffnen" },
   },
   regler_wetter: {
     name: "Regler Wetter",
-    tip: "Drehen wechselt zwischen Wetter am Start, Wetter am Ziel und Landebahn.",
+    tip: "Drehen wechselt zwischen Wetter am Start und am Ziel. Drücken: METAR neu laden.",
     icon: "wind",
-    ausloeser: { Rotate: "Seite wechseln" },
+    ausloeser: { Rotate: "Start / Ziel", Push: "METAR laden" },
   },
 };
 
@@ -43,11 +43,6 @@ export const PROFILE = [
     modell: "20GBA9901",
     spalten: 5,
     reihen: 3,
-    tasten: [
-      ["phase", "flug", "block", "sprit", "wetter_ziel"],
-      ["kabine_stumm", "ansage_leiser", "ansage_pegel", "ansage_lauter", "boarding_musik"],
-      ["musik_leiser", "musik_pegel", "musik_lauter", "landung", "hinweis"],
-    ],
   },
   {
     datei: "AeroACARS XL",
@@ -56,12 +51,6 @@ export const PROFILE = [
     modell: "20GAT9901",
     spalten: 8,
     reihen: 4,
-    tasten: [
-      ["phase", "flug", "gates", "block", "luft", "sprit", "gewicht", "hinweis"],
-      ["wetter_start", "wetter_ziel", "bahn", "ausweich", "landung", "durchstarten", "verbindung", "hoppie"],
-      ["kabine_stumm", "ansage_leiser", "ansage_pegel", "ansage_lauter", "boarding_musik", "musik_leiser", "musik_pegel", "musik_lauter"],
-      ["utc", "tempo", "strecke", "ldw", "ansage", "bewertung", "cdm", null],
-    ],
   },
   {
     datei: "AeroACARS Plus",
@@ -70,10 +59,6 @@ export const PROFILE = [
     modell: "20GBD9901",
     spalten: 4,
     reihen: 2,
-    tasten: [
-      ["phase", "flug", "sprit", "hinweis"],
-      ["wetter_ziel", "landung", "hoppie", "verbindung"],
-    ],
     regler: ["regler_ansage", "regler_musik", "regler_info", "regler_wetter"],
   },
 ];

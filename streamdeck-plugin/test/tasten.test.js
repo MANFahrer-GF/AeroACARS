@@ -85,7 +85,6 @@ test("Beispielflug im Reiseflug", () => {
   assert.equal(b("phase").wert, "Reiseflug");
   assert.equal(b("phase").unter, "FL350");
   assert.equal(b("phase").stufen, 2);
-  assert.equal(b("phase").zurueck, true);
   assert.equal(b("flug").unter, "EDDF›LEPA");
   // Zielgate erst nach der Landung (Thomas 23.10.: vorher geraten).
   assert.equal(b("gates").wert, "B44");
@@ -102,8 +101,6 @@ test("Beispielflug im Reiseflug", () => {
   assert.equal(b("tempo").wert, "468 kt");
   assert.equal(b("tempo").unter, "IAS 271 kt");
   assert.equal(b("strecke").wert, "512 nm");
-  assert.equal(b("hoppie").unter, "1 offen");
-  assert.equal(b("hoppie").ton, "warn");
   assert.equal(b("ansage").wert, "Sinkflug");
   assert.equal(b("ansage").unter, "ca. 15:05Z");
   assert.equal(b("utc").wert, "13:42Z");
@@ -198,13 +195,20 @@ test("Tastenbilder sind sauberes SVG, auch mit Sonderzeichen", () => {
   assert.ok(!svg.includes("A<B") && svg.includes("A&lt;B") && svg.includes("x&amp;y"));
 });
 
+test("Ansagen-Tasten zeigen Stumm und sagen „drücken“ statt „halten“", () => {
+  const stumm = { ...voll, kabine: { ...voll.kabine, stumm: true } };
+  assert.equal(TASTEN.ansage_pegel.bild(stumm).wert, "stumm");
+  assert.equal(TASTEN.ansage_pegel.bild(stumm).unter, "drücken = an");
+  assert.equal(TASTEN.kabine_stumm.bild(voll).unter, "drücken = stumm");
+  for (const t of Object.values(TASTEN)) assert.ok(!/halten/i.test(t.tip) || t === TASTEN.musik_pegel, t.name);
+});
+
 test("Profile, Regler und Manifest passen zueinander", () => {
   const bekannt = new Set([...Object.keys(TASTEN), ...Object.keys(REGLER)]);
   const mitKachel = new Set([...bekannt, "kachel"]); // Entwurf 2: Kachel-Aktion
-  for (const p of PROFILE) {
-    for (const id of [...p.tasten.flat(), ...(p.regler ?? [])]) if (id) assert.ok(bekannt.has(id), `${p.datei}: ${id}`);
-  }
-  assert.deepEqual(PROFILE.map((p) => p.tasten.map((z) => z.length)), [[5, 5, 5], [8, 8, 8, 8], [4, 4]]);
+  for (const p of PROFILE) for (const id of p.regler ?? []) assert.ok(bekannt.has(id), `${p.datei}: ${id}`);
+  assert.deepEqual(PROFILE.map((p) => [p.spalten, p.reihen]), [[5, 3], [8, 4], [4, 2]]);
+  assert.ok(!bekannt.has("hoppie"), "Hoppie ist entfernt");
   for (const id of [...INFO_SEITEN, ...WETTER_SEITEN]) assert.ok(TASTEN[id], id);
 
   const manifest = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../eu.german-sky-group.aeroacars.sdPlugin/manifest.json"), "utf8"));

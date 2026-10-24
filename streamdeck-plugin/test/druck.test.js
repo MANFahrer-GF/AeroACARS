@@ -4,9 +4,10 @@ import assert from "node:assert/strict";
 // deck.js zieht das Elgato-SDK; für die reine Druck-Logik genügt eine Attrappe.
 const { druckPlan, layoutFuer } = await import("../src/druckplan.js");
 
-test("Ansagen stumm nur durch Halten, aufheben durch kurzen Druck", () => {
-  assert.deepEqual(druckPlan({ bedienung: "ans_stumm" }, { stumm: false }), { halten: "ans_aus" });
-  assert.deepEqual(druckPlan({ bedienung: "ans_stumm" }, { stumm: true }), { kurz: "ans_an" });
+// Umgedreht am 24.10. auf Thomas' Wunsch: vorher nur durch 1 s Halten.
+test("Ansagen stumm und wieder an durch kurzen Druck", () => {
+  assert.deepEqual(druckPlan({ bedienung: "ans_stumm" }, { stumm: false }), { kurz: "ans_umschalten" });
+  assert.deepEqual(druckPlan({ bedienung: "ans_stumm" }, { stumm: true }), { kurz: "ans_umschalten" });
 });
 
 test("Musik: kurz stumm/laut, halten Boarding-Musik an/aus", () => {

@@ -25,7 +25,7 @@ const schreiben = (datei, inhalt) => {
 
 await vorbereiten(ORDNER);
 
-const ruhe = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: new Date(0) };
+const ruhe = { erreichbar: false, status: null, kabine: null, debrief: null, jetzt: new Date(0) };
 for (const [id, t] of Object.entries(TASTEN)) {
   schreiben(`${ORDNER}/imgs/actions/${id}.svg`, listenIconSvg(t.icon));
   // Standardbild (bevor das Plugin zeichnet) im neuen Stil, als PNG mit B612.
@@ -135,7 +135,7 @@ function aktion(id, name) {
 // Thomas 23.10.: das Plugin kennt kein fremdes Profil (switchToProfile ohne
 // Namen griff nicht); so wählt der Pilot das Ziel einmal in der StreamDeck-
 // Software, und das Bild der Szene bleibt erhalten.
-const LEER_ZUSTAND = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: 0 };
+const LEER_ZUSTAND = { erreichbar: false, status: null, kabine: null, debrief: null, jetzt: 0 };
 const LAYOUT = { 0: "15", 2: "xl", 7: "plus" };
 function zurueckTaste(p) {
   const sz = szene(LAYOUT[p.geraetetyp], LEER_ZUSTAND, 0);
