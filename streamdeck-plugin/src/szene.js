@@ -155,8 +155,16 @@ function band(st, s, c0, c1, r, t) {
   return teile.join("");
 }
 
+/**
+ * Text, wenn die Kabinen-Antwort fehlt: AeroACARS läuft nicht (oder der
+ * lokale Zugang ist aus) oder der Client ist älter als die Deck-Routen.
+ * Feldbefund 24.10.: „Client zu alt“ stand auch, wenn AeroACARS gar nicht lief.
+ */
+export const ohneKabine = (s) => (s.erreichbar ? "Client zu alt" : "AeroACARS aus");
+
 /** Angaben für das Fallblatt im Band: [Marke, Wert], je Phase das Wichtige. */
 export function bandInfos(st, s) {
+  if (!s.erreichbar) return [["AEROACARS", "NICHT ERREICHBAR"]];
   if (!st) return [["AEROACARS", "BEREIT"], ["FLUG", "KEINER"]];
   const g = phasenGruppe(st.phase);
   const m = g === "vor" ? st.dep_metar_decoded : st.arr_metar_decoded;
@@ -175,20 +183,6 @@ export function bandInfos(st, s) {
   if (n) liste.push(["ANSAGE", n.wann ? `${uhrZ(n.wann * 1000)}Z` : (ANSAGEN[n.slot] ?? n.slot).toUpperCase()]);
   if (zahl(st.distance_nm)) liste.push(["GEFLOGEN", `${Math.round(st.distance_nm)} NM`]);
   return liste;
-}
-
-/** Was in der Laufschrift steht — je Phase das, was gerade zählt. */
-export function laufschrift(st, s) {
-  if (!st) return "KEIN AKTIVER FLUG  ·  AEROACARS BEREIT";
-  const m = phasenGruppe(st.phase) === "vor" ? st.dep_metar_decoded : st.arr_metar_decoded;
-  const teile = [`${st.callsign ?? ""}  ${st.dpt_airport ?? ""}–${st.arr_airport ?? ""}`];
-  if (m?.raw) teile.push(m.raw);
-  else if (m) teile.push(`${m.icao} WIND ${m.wind_direction_deg ?? "VRB"}/${m.wind_speed_kt ?? "–"} Q${Math.round(m.qnh_hpa ?? 0)}`);
-  const n = s.kabine?.naechste;
-  if (n) teile.push(`NÄCHSTE ANSAGE ${(ANSAGEN[n.slot] ?? n.slot).toUpperCase()}${n.wann ? ` ${uhrZ(n.wann * 1000)}Z` : ""}`);
-  if (st.predicted_runway || st.approach_runway) teile.push(`BAHN ${st.approach_runway ?? st.predicted_runway}`);
-  if (st.planned_alternate) teile.push(`ALTN ${st.planned_alternate}`);
-  return teile.join("   ·   ").toUpperCase();
 }
 
 // ---- Instrumente ----------------------------------------------------------
@@ -325,7 +319,7 @@ function musikFlaeche(c, r, n, s, t) {
   const farbe = !k ? FARBE.leise : !an ? FARBE.leise : stumm ? FARBE.amber : FARBE.cyan;
   const teile = [flaeche(x, y, b, KACHEL, FARBE.flaeche, 18), marke(x + 14, y + 30, "Musik", farbe)];
   teile.push(text(x + 14, y + 86, !k ? "–" : !an ? "AUS" : stumm ? "STUMM" : `${Math.round(k.musik_gespeichert * 100)} %`, { groesse: 36, fett: true, farbe, max: INNEN }));
-  teile.push(text(x + 14, y + 124, !k ? "Client zu alt" : !an ? "halten: an" : stumm ? "kurz: laut" : "kurz: stumm", { groesse: 15, farbe: FARBE.leise, max: INNEN }));
+  teile.push(text(x + 14, y + 124, !k ? ohneKabine(s) : !an ? "halten: an" : stumm ? "kurz: laut" : "kurz: stumm", { groesse: 15, farbe: FARBE.leise, max: INNEN }));
   // Equalizer in den übrigen Kacheln, je Kachel für sich.
   for (let j = 1; j < n; j++) {
     const ex = kx(c + j);
@@ -349,7 +343,7 @@ function kabinenStrahl(c, r, n, s, t) {
   const plaetze = n - 1;
   const folge = (k?.folgende?.length ? k.folgende : k?.naechste ? [k.naechste] : []).slice(0, Math.min(4, plaetze));
   const teile = [flaeche(x, y, b, KACHEL, FARBE.flaeche, 18), marke(x + 14, y + 30, "Kabine", FARBE.cyan)];
-  if (!k) return teile.join("") + text(x + 14, y + 90, "Client zu alt", { groesse: 20, farbe: FARBE.leise, max: INNEN });
+  if (!k) return teile.join("") + text(x + 14, y + 90, ohneKabine(s), { groesse: 20, farbe: FARBE.leise, max: INNEN });
   const wartet = k.hinweis === "anschnallzeichen";
   const n0 = folge[0];
   const minuten = n0?.wann ? Math.max(0, Math.round((n0.wann * 1000 - s.jetzt) / 60000)) : null;
@@ -475,11 +469,11 @@ function bedienKachel(art, c, r, s) {
     case "zurueck":
       return grund + `<path d="M${mx + 6} ${y + 46} l-26 24 26 24" stroke="${FARBE.cyan}" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>` + text(mx, y + 128, "ZURÜCK", { groesse: 15, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1.5 });
     case "ans_stumm":
-      return !k ? knopf("ANSAGEN", "", FARBE.leise, "Client zu alt") : grund + lautsprecher(mx, y + 58, 46, k.stumm ? FARBE.rot : FARBE.cyan, k.stumm) +
+      return !k ? knopf("ANSAGEN", "", FARBE.leise, ohneKabine(s)) : grund + lautsprecher(mx, y + 58, 46, k.stumm ? FARBE.rot : FARBE.cyan, k.stumm) +
         text(mx, y + 108, k.stumm ? "STUMM" : `${Math.round(k.lautstaerke_gespeichert * 100)} %`, { groesse: 20, fett: true, farbe: k.stumm ? FARBE.rot : FARBE.cyan, anker: "middle" }) +
         text(mx, y + 132, k.stumm ? "drücken: an" : "drücken: stumm", { groesse: 14, farbe: FARBE.leise, anker: "middle" });
     case "mus_stumm": {
-      if (!k) return knopf("MUSIK", "", FARBE.leise, "Client zu alt");
+      if (!k) return knopf("MUSIK", "", FARBE.leise, ohneKabine(s));
       const stumm = k.musik_live <= 0.001 && k.musik_gespeichert > 0.001;
       const f = !k.boarding_musik ? FARBE.leise : stumm ? FARBE.amber : FARBE.cyan;
       return grund + note(mx, y + 56, 42, f) + (stumm ? `<line x1="${mx - 22}" y1="${y + 34}" x2="${mx + 22}" y2="${y + 78}" stroke="${f}" stroke-width="5" stroke-linecap="round"/>` : "") +
@@ -487,7 +481,7 @@ function bedienKachel(art, c, r, s) {
         text(mx, y + 132, !k.boarding_musik ? "halten: an" : stumm ? "kurz: laut" : "kurz: stumm", { groesse: 14, farbe: FARBE.leise, anker: "middle" });
     }
     case "pa":
-      return !k ? knopf("PA", "", FARBE.leise, "Client zu alt") : k.stumm ? knopf("PA", "STUMM", FARBE.rot, "drücken: an") : knopf("PA", "AN", FARBE.gruen, "drücken: stumm");
+      return !k ? knopf("PA", "", FARBE.leise, ohneKabine(s)) : k.stumm ? knopf("PA", "STUMM", FARBE.rot, "drücken: an") : knopf("PA", "AN", FARBE.gruen, "drücken: stumm");
     case "ans_minus":
     case "ans_plus":
     case "mus_minus":
@@ -500,13 +494,13 @@ function bedienKachel(art, c, r, s) {
         balken(x + 18, y + 116, 108, wert ?? 0, FARBE.cyan, 8);
     }
     case "boarding":
-      if (!k) return knopf("MUSIK", "", FARBE.leise, "Client zu alt");
+      if (!k) return knopf("MUSIK", "", FARBE.leise, ohneKabine(s));
       // B612 hat keine Musiknote: als Pfad gezeichnet.
       return grund + note(mx, y + 52, 40, k.boarding_musik ? FARBE.gruen : FARBE.leise) +
         text(mx, y + 104, k.boarding_musik ? "AN" : "AUS", { groesse: 22, fett: true, farbe: k.boarding_musik ? FARBE.gruen : FARBE.leise, anker: "middle" }) +
         text(mx, y + 130, k.boarding_musik ? "halten: aus" : "halten: an", { groesse: 14, farbe: FARBE.leise, anker: "middle" });
     case "cdm":
-      return knopf("CDM", "", k ? FARBE.cyan : FARBE.leise, k ? "VATSIM" : "Client zu alt");
+      return knopf("CDM", "", k ? FARBE.cyan : FARBE.leise, k ? "VATSIM" : ohneKabine(s));
     default:
       return kachelGrund(c, r);
   }
@@ -647,7 +641,7 @@ export const INFO_RAD = ["hoehe", "gs", "wind", "eta", "sprit", "luft"];
  */
 export function streifen(s, t = 0, dreh = null) {
   const st = s.erreichbar ? s.status : null;
-  const kopf = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="100" viewBox="0 0 800 100"><defs>${LEUCHTEN}<clipPath id="ls"><rect x="110" y="66" width="580" height="34"/></clipPath></defs><rect width="800" height="100" fill="${FARBE.grund}"/>`;
+  const kopf = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="100" viewBox="0 0 800 100"><defs>${LEUCHTEN}</defs><rect width="800" height="100" fill="${FARBE.grund}"/>`;
   // Beim Drehen gehört nur das Feld über dem gedrehten Rad dem Regler; die
   // anderen drei zeigen weiter das Band (Feldbefund 23.10.: die Anzeige lag
   // immer links — beim Musik-Rad erschien „MUSIK“ über dem Ansagen-Rad).
@@ -655,9 +649,16 @@ export function streifen(s, t = 0, dreh = null) {
   const p = fortschritt(st, s.jetzt);
   const x0 = 120, x1 = 680, ly = 44;
   const px = x0 + (x1 - x0) * p;
-  const lauf = laufschrift(st, s);
-  const textBreite = lauf.length * 11 + 160;
-  const v = (t * 14) % textBreite;
+  // Fallblatt wie im Band des Decks (Thomas 23.10.: keine Laufschrift):
+  // zwei Angaben nebeneinander, alle vier Sekunden rücken sie weiter.
+  const infos = bandInfos(st, s);
+  const schritt = infos.length > 2 ? Math.floor(t / 4) : 0;
+  const blatt = infos.slice(0, 2).map((_, i) => {
+    const [m, w] = infos[(i + schritt) % infos.length];
+    const cx = infos.length === 1 ? 400 : 290 + i * 220;
+    return text(cx, 72, m, { groesse: 12, fett: true, farbe: FARBE.leise, anker: "middle", abstand: 1, max: 200 }) +
+      text(cx, 94, w, { groesse: 19, fett: true, farbe: FARBE.amber, anker: "middle", max: 200 });
+  }).join("");
   const g = phasenGruppe(st?.phase);
   const eta = zahl(st?.live?.ete_min) != null ? s.jetzt + st.live.ete_min * 60000 : null;
   return `${kopf}
@@ -666,7 +667,7 @@ ${text(784, 44, st?.arr_airport ?? "----", { groesse: 34, fett: true, farbe: FAR
 <line x1="${x0}" y1="${ly}" x2="${x1}" y2="${ly}" stroke="${FARBE.magenta}" stroke-width="3" stroke-dasharray="12 9"/>
 <line x1="${x0}" y1="${ly}" x2="${px}" y2="${ly}" stroke="${FARBE.gruen}" stroke-width="4" stroke-linecap="round"/>
 ${flugzeug(px, ly, 30, FARBE.text)}
-<g clip-path="url(#ls)">${text(690 - v, 90, lauf, { groesse: 18, fett: true, farbe: FARBE.amber, abstand: 1 })}${text(690 - v + textBreite, 90, lauf, { groesse: 18, fett: true, farbe: FARBE.amber, abstand: 1 })}</g>${feld}</svg>`;
+${blatt}${feld}</svg>`;
 }
 
 /** Das Feld (200 × 100) über dem gedrehten Rad, über das Band gelegt. */
@@ -682,7 +683,7 @@ export function radFeld(s, st, dreh) {
     const farbe = !k ? FARBE.leise : stumm ? (ansage ? FARBE.rot : FARBE.amber) : FARBE.cyan;
     return kopf + (ansage ? lautsprecher(x + 30, 34, 30, farbe, stumm) : note(x + 30, 34, 28, farbe)) +
       text(x + 54, 30, ansage ? "ANSAGEN" : "MUSIK", { groesse: 14, fett: true, farbe: FARBE.leise, abstand: 1.5, max: 130 }) +
-      text(x + 54, 58, !k ? "–" : stumm ? "STUMM" : `${Math.round(pegel * 100)} %`, { groesse: 24, fett: true, farbe, max: 130 }) +
+      text(x + 54, 58, !k ? ohneKabine(s) : stumm ? "STUMM" : `${Math.round(pegel * 100)} %`, { groesse: 24, fett: true, farbe, max: 130 }) +
       `<rect x="${x + 16}" y="72" width="${B}" height="10" rx="5" fill="#ffffff" opacity="0.12"/><rect x="${x + 16}" y="72" width="${Math.round(B * (stumm ? 0 : pegel))}" height="10" rx="5" fill="${farbe}"/>`;
   }
   if (dreh.rad === "info") {

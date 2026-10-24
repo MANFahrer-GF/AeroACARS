@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
-import { szene, streifen, kachelOrt, KACHEL, phasenGruppe, fortschritt, laufschrift } from "../src/szene.js";
+import { szene, streifen, kachelOrt, KACHEL, phasenGruppe, fortschritt, bandInfos } from "../src/szene.js";
 import { vorbereiten, rastern, pngAusschnitt } from "../src/render.js";
 import { PHASEN } from "../skripte/vorschau-daten.mjs";
 
@@ -61,7 +61,14 @@ test("Ansagen und Musik sind auf jedem Gerät leiser, stumm und lauter bedienbar
 test("ohne AeroACARS und ohne Flug zeichnet die Szene trotzdem", () => {
   const leer = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: Date.now() };
   for (const g of Object.keys(GERAETE)) assert.ok(szene(g, leer, 1).svg.includes("<svg"));
-  assert.match(laufschrift(null, leer), /KEIN AKTIVER FLUG/);
+  // Feldbefund 24.10.: ohne AeroACARS stand „Client zu alt“ – das stimmt nicht.
+  for (const g of Object.keys(GERAETE)) assert.ok(!szene(g, leer, 1).svg.includes("Client zu alt"), g);
+  assert.ok(szene("plus", leer, 1).svg.includes("AeroACARS aus"));
+  assert.deepEqual(bandInfos(null, leer), [["AEROACARS", "NICHT ERREICHBAR"]]);
+  assert.ok(streifen(leer, 1).includes("NICHT ERREICHBAR"));
+  assert.ok(streifen(leer, 1, { rad: "ans", spalte: 0 }).includes("AeroACARS aus"));
+  const alt = { ...leer, erreichbar: true };
+  assert.ok(szene("plus", alt, 1).svg.includes("Client zu alt"));
   assert.ok(streifen(leer, 1).includes("<svg"));
   for (const rad of ["ans", "mus", "info", "wetter"]) assert.ok(streifen(leer, 1, { rad }).includes("<svg"), rad);
 });

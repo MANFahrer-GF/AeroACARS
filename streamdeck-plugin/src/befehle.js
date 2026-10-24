@@ -5,6 +5,7 @@ import { befehl, lesen } from "./aeroacars.js";
 import { Zustand } from "./zustand.js";
 
 export const zustand = new Zustand();
+zustand.protokoll = (text) => streamDeck.logger.warn(text);
 
 // Befehle strikt nacheinander: so kommen sie in der Reihenfolge beim Server
 // an, in der sie ausgelöst wurden. Sonst könnte ein langsamer Live-Pegel vom
