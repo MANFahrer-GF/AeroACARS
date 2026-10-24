@@ -71,6 +71,11 @@ pub struct Tick {
     pub fahrwerk_unten: Option<bool>,
     /// Höhe über Grund (ft); `None` = unbekannt.
     pub hoehe_agl_ft: Option<f64>,
+    /// Die Höhe über Grund gilt für den Zielplatz: Höhe über der Zielbahn
+    /// passt zu ihr oder ein Flugplatz ist nahe. `Some(false)` über den Bergen
+    /// weit vor dem Platz (AUA 561 LOWI, 24.10.2026: „Plätze für die Landung“
+    /// bei 8.417 ft, 26 min vor dem Aufsetzen); `None` = unbekannt.
+    pub platznah: Option<bool>,
     /// Mindestens ein Triebwerk läuft; `None` = meldet das Flugzeug nicht.
     pub triebwerke_an: Option<bool>,
     /// Erwarteter Beginn des Sinkflugs (UTC-Epoch) aus der Planzeit am
@@ -1134,7 +1139,8 @@ impl Planer {
         // „Plätze für die Landung“: Fahrwerk fährt aus oder unter 2.000 ft im
         // Anflug, sonst im Endanflug (Michael BER181: Final erst bei 645 ft).
         let fahrwerk_raus = t.fahrwerk_unten == Some(true) && self.letztes_fahrwerk == Some(false);
-        let tief_im_anflug = t.phase == Approach && t.hoehe_agl_ft.is_some_and(|h| h < PLAETZE_LANDUNG_AGL_FT);
+        let tief_im_anflug =
+            t.phase == Approach && t.hoehe_agl_ft.is_some_and(|h| h < PLAETZE_LANDUNG_AGL_FT) && t.platznah != Some(false);
         if in_luft && r >= rang(Descent) && r < rang(Landing) && (fahrwerk_raus || tief_im_anflug) {
             self.melde(&mut aus, Slot::KommandoPlaetzeLandung, Verfall::AbPhase(Landing));
         }
@@ -2330,6 +2336,29 @@ mod tests {
         }
         assert!(gesehen);
         assert!(p.tick(&tick(500, Final, 800.0, -700.0)).iter().any(|f| f.slot == Slot::KommandoPlaetzeLandung));
+    }
+
+    /// 24.10.2026, AUA 561 EDDN–LOWI (Pilot 15): Im Anflug über den Bergen lag
+    /// das Gelände 1.480 ft unter dem Flugzeug (8.417 ft MSL) — „Plätze für die
+    /// Landung“ kam 26 min vor dem Aufsetzen. Weit vor dem Platz zählt das
+    /// Gelände nicht; das Fahrwerk und der echte Endanflug lösen es weiter aus.
+    #[test]
+    fn plaetze_fuer_die_landung_nicht_ueber_den_bergen() {
+        let anflug = |platznah, fahrwerk| Tick {
+            hoehe_agl_ft: Some(1_480.0),
+            platznah,
+            fahrwerk_unten: Some(fahrwerk),
+            ..tick(0, Approach, 8_417.0, -500.0)
+        };
+        let mut p = Planer::neu(flug(120));
+        p.steigflug_vorbei = true;
+        assert!(!p.tick(&anflug(Some(false), false)).iter().any(|f| f.slot == Slot::KommandoPlaetzeLandung), "über den Bergen nicht");
+        assert!(p.tick(&anflug(Some(false), true)).iter().any(|f| f.slot == Slot::KommandoPlaetzeLandung), "Fahrwerk raus: ja");
+        for platznah in [Some(true), None] {
+            let mut q = Planer::neu(flug(120));
+            q.steigflug_vorbei = true;
+            assert!(q.tick(&anflug(platznah, false)).iter().any(|f| f.slot == Slot::KommandoPlaetzeLandung), "{platznah:?}: tief im Anflug wie bisher");
+        }
     }
 
     /// 24.10.2026, AUA 561 EDDN–LOWI (Pilot 15): „Final“ über den Bergen, dann

@@ -10568,7 +10568,7 @@ fn hoehe_fuer_durchstart(stats: &FlightStats, snap: &SimSnapshot) -> (f32, f32) 
     }
 }
 
-/// Ein Flugplatz in diesem Umkreis macht „unter 700 ft AGL“ zum Endanflug,
+/// Ein Flugplatz (Bezugspunkt) in diesem Umkreis macht „unter 700 ft AGL“ zum Endanflug,
 /// auch wenn HAT nicht passt (Ausweichplatz, Gelaende vor der Bahn).
 const FINAL_PLATZ_NM: f64 = 5.0;
 
@@ -10582,7 +10582,11 @@ fn final_in_platznaehe(stats: &FlightStats, snap: &SimSnapshot) -> bool {
     let hat_passt = stats.arr_airport_elevation_ft.is_none_or(|elev| {
         ((snap.altitude_msl_ft as f32 - elev) - snap.altitude_agl_ft as f32).abs() <= HAT_AGL_PLAUSIBEL_FT
     });
-    hat_passt || !runway::find_nearest_airports(snap.lat, snap.lon, FINAL_PLATZ_NM * 1852.0, 1).is_empty()
+    // Erst wenn HAT nicht passt: Bezugspunkte aller Plaetze, auf denen ein
+    // Flugzeug landen kann, auch ohne Bahngeometrie und Wasserlandeplaetze
+    // (Codex 24.10.2026: sonst bliebe eine Landung dort ohne Final und ohne
+    // „Nach der Landung“).
+    hat_passt || runway::nearest_airport_reference(snap.lat, snap.lon, FINAL_PLATZ_NM, "").is_some()
 }
 
 /// Groesster Unterschied HAT↔AGL, den der Durchstart-Detektor noch als
@@ -48792,6 +48796,7 @@ fn kabinen_schritt(
         landelicht: snap.light_landing,
         fahrwerk_unten: Some(snap.gear_position >= 0.9),
         hoehe_agl_ft: Some(snap.altitude_agl_ft),
+        platznah: Some(final_in_platznaehe(&stats, snap)),
         triebwerke_an: Some(snap.engines_running > 0),
         tod_erwartet: stats.tod_erwartet,
         zfw_kg: stats.last_zfw_kg.map(f64::from),
