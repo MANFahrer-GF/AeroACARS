@@ -105,12 +105,15 @@ function zeichneStreifen(g, s, t) {
   if (svg === g.letzterStreifen) return;
   g.letzterStreifen = svg;
   const bild = rastern(svg);
+  const gesendet = [];
   for (const r of g.raeder.values()) {
     const png = pngAusschnitt(bild, Math.min(3, r.spalte) * 200, 0, 200, 100);
     if (r.letztes && r.letztes.equals(png)) continue;
     r.letztes = png;
-    r.aktion.setFeedback({ bild: alsPngUrl(png) });
+    gesendet.push(r.spalte);
+    Promise.resolve(r.aktion.setFeedback({ bild: alsPngUrl(png) })).catch((e) => streamDeck.logger.error(`setFeedback Spalte ${r.spalte}: ${e}`));
   }
+  if (g.dreh) streamDeck.logger.info(`Rad-Feld ${g.dreh.rad} über Spalte ${g.dreh.spalte}, neu gesendet an Spalten ${gesendet.join(",") || "keine"}`);
 }
 
 /** Dunkle Kachel für Positionen außerhalb der Szene. */
@@ -259,6 +262,9 @@ class Rad extends SingletonAction {
 
   async onDialRotate(ev) {
     const a = ev.action;
+    // Feldbefund 24.10.: am Gerät blieb der Streifen beim Drehen stehen, im
+    // Nachbau nicht. Diese Zeile zeigt im Plugin-Log, was wirklich ankommt.
+    streamDeck.logger.info(`Rad ${this.art} gedreht: ticks=${ev.payload.ticks} spalte=${a.coordinates?.column} gerät=${a.device.id} kabine=${!!zustand.s.kabine}`);
     const g = geraetVon(a);
     const schritte = ev.payload.ticks;
     if (this.art === "info") {
