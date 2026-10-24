@@ -363,6 +363,7 @@ export const TASTEN = {
     tip: "Zulu-Zeit, darunter Ortszeit.",
     icon: "globe",
     ansichten: 2,
+    seite: "cockpit",
     bild: (s, ansicht = 0) =>
       ansicht === 1
         ? { label: "Lokal", icon: "globe", wert: uhr(s.jetzt, false), unter: `UTC ${uhr(s.jetzt, true)}Z`, ton: "neutral" }

@@ -200,7 +200,7 @@ test("Ansagen-Tasten zeigen Stumm und sagen „drücken“ statt „halten“", 
   assert.equal(TASTEN.ansage_pegel.bild(stumm).wert, "stumm");
   assert.equal(TASTEN.ansage_pegel.bild(stumm).unter, "drücken = an");
   assert.equal(TASTEN.kabine_stumm.bild(voll).unter, "drücken = stumm");
-  for (const t of Object.values(TASTEN)) assert.ok(!/halten/i.test(t.tip) || t === TASTEN.musik_pegel, t.name);
+  for (const t of Object.values(TASTEN)) assert.ok(!/halten/i.test(t.tip), t.name);
 });
 
 test("Profile, Regler und Manifest passen zueinander", () => {
