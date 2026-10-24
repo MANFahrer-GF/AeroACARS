@@ -1,5 +1,5 @@
 // Fragt AeroACARS regelmäßig ab, solange mindestens eine Taste sichtbar ist.
-// Status und Kabine jede Sekunde, Hoppie alle drei Sekunden, die Landung
+// Status und Kabine jede Sekunde, die Landung
 // nur nach dem Aufsetzen und dann alle fünf Sekunden (der Panel-Server
 // protokolliert gehäufte Landungsabfragen).
 
@@ -11,7 +11,7 @@ const METAR_ABSTAND_MS = 5 * 60 * 1000;
 
 export class Zustand {
   constructor() {
-    this.s = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: new Date() };
+    this.s = { erreichbar: false, status: null, kabine: null, debrief: null, jetzt: new Date() };
     this.hoerer = new Set();
     this.takt = null;
     this.runde = 0;
@@ -63,13 +63,12 @@ export class Zustand {
       s.status = await lesen("/panel/status");
       s.erreichbar = true;
     } catch {
-      this.s = { erreichbar: false, status: null, kabine: null, hoppie: null, debrief: null, jetzt: s.jetzt };
+      this.s = { erreichbar: false, status: null, kabine: null, debrief: null, jetzt: s.jetzt };
       this.melden();
       return;
     }
     // Ältere Clients kennen die Kabinen-Route nicht: dann bleibt sie null.
     s.kabine = await lesen("/panel/kabine").catch(() => null);
-    if (runde % 3 === 0) s.hoppie = await lesen("/panel/hoppie").catch(() => null);
     if (!s.status?.landing_at) s.debrief = null;
     else if (runde % 5 === 0 || !s.debrief) s.debrief = await lesen("/panel/debrief").catch(() => s.debrief);
     this.s = s;

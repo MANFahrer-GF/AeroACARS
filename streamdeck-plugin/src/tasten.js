@@ -1,11 +1,10 @@
 // Was jede Taste zeigt — reine Funktionen vom Zustand auf ein Tastenbild,
 // ohne StreamDeck und ohne Netz, damit die Tests sie direkt prüfen können.
 //
-// Zustand `s`: { erreichbar, status, kabine, hoppie, debrief, jetzt }
+// Zustand `s`: { erreichbar, status, kabine, debrief, jetzt }
 //   erreichbar  AeroACARS antwortet überhaupt
 //   status      /panel/status (null = kein Flug)
 //   kabine      /panel/kabine
-//   hoppie      /panel/hoppie (null = nicht verfügbar)
 //   debrief     /panel/debrief (null = noch keine Landung)
 //   jetzt       Date
 //
@@ -165,15 +164,15 @@ export function hinweis(st) {
 export const TASTEN = {
   phase: {
     seite: "cockpit",
-    name: "Phase und Zurück",
-    tip: "Flugphase und Höhe. Drücken führt zurück ins vorherige Profil.",
+    name: "Phase",
+    tip: "Flugphase und Höhe. Lang drücken: AeroACARS nach vorn.",
     icon: "plane",
     bild: (s) => {
       const b = flugTaste("Phase", "plane", (st) => {
         const [text, stufe, ton] = PHASEN[st.phase] ?? [st.phase ?? "–", 0, "neutral"];
         return { wert: text, gross: false, unter: hoehe(flughoehe(st)), ton, stufen: stufe };
       })(s);
-      return { ...b, zurueck: true };
+      return b;
     },
   },
   flug: {
@@ -353,29 +352,9 @@ export const TASTEN = {
       return { wert: sim && srv ? "OK" : !sim ? "SIM WEG" : "SERVER", unter: `Sim ${sim ? "ok" : "weg"} · Server ${srv ? "ok" : "weg"}`, ton: sim && srv ? "ok" : "crit", klein: true };
     }),
   },
-  hoppie: {
-    name: "Hoppie",
-    tip: "Angemeldete Station und offene Freigaben.",
-    icon: "msg",
-    seite: "cpdlc",
-    bild: (s) => {
-      if (!s.erreichbar) return aus("Hoppie", "msg");
-      const h = s.hoppie;
-      if (!h || !h.connected) return { label: "Hoppie", icon: "msg", wert: "–", unter: "nicht verbunden", ton: "aus" };
-      const offen = h.pending_uplink_count ?? 0;
-      return {
-        label: "Hoppie",
-        icon: "msg",
-        wert: h.logged_on ? h.station_id || "an" : "kein Logon",
-        unter: offen ? `${offen} offen` : "nichts offen",
-        ton: offen ? "warn" : "neutral",
-        klein: true,
-      };
-    },
-  },
   oeffnen: {
     name: "AeroACARS öffnen",
-    tip: "In dein eigenes Profil legen: wechselt ins AeroACARS-Profil dieses Decks. Die Phasen-Taste führt von dort zurück.",
+    tip: "In dein eigenes Profil legen: wechselt ins AeroACARS-Profil dieses Decks. Die Zurück-Taste dort führt zurück.",
     icon: "plane",
     bild: () => ({ label: "AeroACARS", icon: "plane", wert: "Deck", unter: "Profil öffnen", ton: "ctl" }),
   },
@@ -384,6 +363,7 @@ export const TASTEN = {
     tip: "Zulu-Zeit, darunter Ortszeit.",
     icon: "globe",
     ansichten: 2,
+    seite: "cockpit",
     bild: (s, ansicht = 0) =>
       ansicht === 1
         ? { label: "Lokal", icon: "globe", wert: uhr(s.jetzt, false), unter: `UTC ${uhr(s.jetzt, true)}Z`, ton: "neutral" }
@@ -436,10 +416,10 @@ export const TASTEN = {
   },
   kabine_stumm: {
     name: "Kabine stumm",
-    tip: "Eine Sekunde halten: Kabine stumm (laufende und wartende Ansagen entfallen). Kurz drücken: Ton wieder an.",
+    tip: "Drücken: Ansagen stumm (laufende und wartende Ansagen entfallen). Nochmal drücken: Ton wieder an.",
     icon: "spk",
     bild: kabinenTaste("Kabine", "spk", (k) =>
-      k.stumm ? { wert: "Stumm", unter: "drücken = an", ton: "crit", icon: "mute", klein: true } : { wert: "Ton an", unter: "halten = stumm", klein: true },
+      k.stumm ? { wert: "Stumm", unter: "drücken = an", ton: "crit", icon: "mute", klein: true } : { wert: "Ton an", unter: "drücken = stumm", klein: true },
     ),
   },
   ansage_leiser: {
@@ -449,10 +429,14 @@ export const TASTEN = {
     bild: kabinenTaste("Ansagen", "down", () => ({ gross: "down", unter: "leiser" })),
   },
   ansage_pegel: {
-    name: "Ansagen-Lautstärke",
-    tip: "Lautstärke der Ansagen.",
+    name: "Ansagen-Lautstärke und stumm",
+    tip: "Lautstärke der Ansagen. Drücken schaltet die Ansagen stumm und wieder an (wartende Ansagen entfallen).",
     icon: "spk",
-    bild: kabinenTaste("Ansagen", "spk", (k) => ({ wert: prozent(k.lautstaerke_gespeichert), balken: k.lautstaerke_live ?? 0 })),
+    bild: kabinenTaste("Ansagen", "spk", (k) =>
+      k.stumm
+        ? { wert: "stumm", unter: "drücken = an", ton: "crit", icon: "mute", klein: true }
+        : { wert: prozent(k.lautstaerke_gespeichert), balken: k.lautstaerke_live ?? 0 },
+    ),
   },
   ansage_lauter: {
     name: "Ansagen lauter",

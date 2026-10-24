@@ -325,7 +325,7 @@ function musikFlaeche(c, r, n, s, t) {
   const farbe = !k ? FARBE.leise : !an ? FARBE.leise : stumm ? FARBE.amber : FARBE.cyan;
   const teile = [flaeche(x, y, b, KACHEL, FARBE.flaeche, 18), marke(x + 14, y + 30, "Musik", farbe)];
   teile.push(text(x + 14, y + 86, !k ? "–" : !an ? "AUS" : stumm ? "STUMM" : `${Math.round(k.musik_gespeichert * 100)} %`, { groesse: 36, fett: true, farbe, max: INNEN }));
-  teile.push(text(x + 14, y + 124, !k ? "Client zu alt" : an ? "kurz: stumm" : "halten: an", { groesse: 15, farbe: FARBE.leise, max: INNEN }));
+  teile.push(text(x + 14, y + 124, !k ? "Client zu alt" : !an ? "halten: an" : stumm ? "kurz: laut" : "kurz: stumm", { groesse: 15, farbe: FARBE.leise, max: INNEN }));
   // Equalizer in den übrigen Kacheln, je Kachel für sich.
   for (let j = 1; j < n; j++) {
     const ex = kx(c + j);
@@ -477,17 +477,17 @@ function bedienKachel(art, c, r, s) {
     case "ans_stumm":
       return !k ? knopf("ANSAGEN", "", FARBE.leise, "Client zu alt") : grund + lautsprecher(mx, y + 58, 46, k.stumm ? FARBE.rot : FARBE.cyan, k.stumm) +
         text(mx, y + 108, k.stumm ? "STUMM" : `${Math.round(k.lautstaerke_gespeichert * 100)} %`, { groesse: 20, fett: true, farbe: k.stumm ? FARBE.rot : FARBE.cyan, anker: "middle" }) +
-        text(mx, y + 132, k.stumm ? "drücken: an" : "halten: stumm", { groesse: 14, farbe: FARBE.leise, anker: "middle" });
+        text(mx, y + 132, k.stumm ? "drücken: an" : "drücken: stumm", { groesse: 14, farbe: FARBE.leise, anker: "middle" });
     case "mus_stumm": {
       if (!k) return knopf("MUSIK", "", FARBE.leise, "Client zu alt");
       const stumm = k.musik_live <= 0.001 && k.musik_gespeichert > 0.001;
       const f = !k.boarding_musik ? FARBE.leise : stumm ? FARBE.amber : FARBE.cyan;
       return grund + note(mx, y + 56, 42, f) + (stumm ? `<line x1="${mx - 22}" y1="${y + 34}" x2="${mx + 22}" y2="${y + 78}" stroke="${f}" stroke-width="5" stroke-linecap="round"/>` : "") +
         text(mx, y + 108, !k.boarding_musik ? "AUS" : stumm ? "STUMM" : `${Math.round(k.musik_gespeichert * 100)} %`, { groesse: 20, fett: true, farbe: f, anker: "middle" }) +
-        text(mx, y + 132, !k.boarding_musik ? "halten: an" : "kurz: stumm", { groesse: 14, farbe: FARBE.leise, anker: "middle" });
+        text(mx, y + 132, !k.boarding_musik ? "halten: an" : stumm ? "kurz: laut" : "kurz: stumm", { groesse: 14, farbe: FARBE.leise, anker: "middle" });
     }
     case "pa":
-      return !k ? knopf("PA", "", FARBE.leise, "Client zu alt") : k.stumm ? knopf("PA", "STUMM", FARBE.rot, "drücken: an") : knopf("PA", "AN", FARBE.gruen, "1 s halten: stumm");
+      return !k ? knopf("PA", "", FARBE.leise, "Client zu alt") : k.stumm ? knopf("PA", "STUMM", FARBE.rot, "drücken: an") : knopf("PA", "AN", FARBE.gruen, "drücken: stumm");
     case "ans_minus":
     case "ans_plus":
     case "mus_minus":
@@ -548,7 +548,7 @@ function audioLeiste(art, c, r, s) {
 function audioAktionen(art, c, r, setze) {
   if (art === "ans") {
     setze(c, r, { bedienung: "ans_minus" });
-    setze(c + 1, r, { bedienung: "ans_stumm" }); // 1 s halten: stumm, kurz: Ton an
+    setze(c + 1, r, { bedienung: "ans_stumm" }); // kurz: stumm / Ton an
     setze(c + 2, r, { bedienung: "ans_plus" });
   } else {
     setze(c, r, { bedienung: "mus_minus" });

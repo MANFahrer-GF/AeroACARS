@@ -1,6 +1,6 @@
 {
 	"Name": "AeroACARS",
-	"Version": "2.1.3.0",
+	"Version": "2.1.4.0",
 	"Author": "German Sky Group",
 	"Description": "Flugstatus, Kabinenansagen und Boarding-Musik von AeroACARS auf dem StreamDeck.",
 	"Category": "AeroACARS",
@@ -44,10 +44,10 @@
 			"UserTitleEnabled": false
 		},
 		{
-			"Name": "Phase und Zurück",
+			"Name": "Phase",
 			"UUID": "eu.german-sky-group.aeroacars.phase",
 			"Icon": "imgs/actions/phase",
-			"Tooltip": "Flugphase und Höhe. Drücken führt zurück ins vorherige Profil.",
+			"Tooltip": "Flugphase und Höhe. Lang drücken: AeroACARS nach vorn.",
 			"Controllers": [
 				"Keypad"
 			],
@@ -316,26 +316,10 @@
 			"UserTitleEnabled": false
 		},
 		{
-			"Name": "Hoppie",
-			"UUID": "eu.german-sky-group.aeroacars.hoppie",
-			"Icon": "imgs/actions/hoppie",
-			"Tooltip": "Angemeldete Station und offene Freigaben.",
-			"Controllers": [
-				"Keypad"
-			],
-			"States": [
-				{
-					"Image": "imgs/actions/hoppie_taste",
-					"ShowTitle": false
-				}
-			],
-			"UserTitleEnabled": false
-		},
-		{
 			"Name": "AeroACARS öffnen",
 			"UUID": "eu.german-sky-group.aeroacars.oeffnen",
 			"Icon": "imgs/actions/oeffnen",
-			"Tooltip": "In dein eigenes Profil legen: wechselt ins AeroACARS-Profil dieses Decks. Die Phasen-Taste führt von dort zurück.",
+			"Tooltip": "In dein eigenes Profil legen: wechselt ins AeroACARS-Profil dieses Decks. Die Zurück-Taste dort führt zurück.",
 			"Controllers": [
 				"Keypad"
 			],
@@ -415,7 +399,7 @@
 			"Name": "Kabine stumm",
 			"UUID": "eu.german-sky-group.aeroacars.kabine-stumm",
 			"Icon": "imgs/actions/kabine_stumm",
-			"Tooltip": "Eine Sekunde halten: Kabine stumm (laufende und wartende Ansagen entfallen). Kurz drücken: Ton wieder an.",
+			"Tooltip": "Drücken: Ansagen stumm (laufende und wartende Ansagen entfallen). Nochmal drücken: Ton wieder an.",
 			"Controllers": [
 				"Keypad"
 			],
@@ -444,10 +428,10 @@
 			"UserTitleEnabled": false
 		},
 		{
-			"Name": "Ansagen-Lautstärke",
+			"Name": "Ansagen-Lautstärke und stumm",
 			"UUID": "eu.german-sky-group.aeroacars.ansage-pegel",
 			"Icon": "imgs/actions/ansage_pegel",
-			"Tooltip": "Lautstärke der Ansagen.",
+			"Tooltip": "Lautstärke der Ansagen. Drücken schaltet die Ansagen stumm und wieder an (wartende Ansagen entfallen).",
 			"Controllers": [
 				"Keypad"
 			],
@@ -559,7 +543,7 @@
 			"Name": "Regler Ansagen",
 			"UUID": "eu.german-sky-group.aeroacars.regler-ansage",
 			"Icon": "imgs/actions/regler_ansage",
-			"Tooltip": "Drehen: Lautstärke der Ansagen. Halten: Kabine stumm. Kurz drücken: Ton wieder an.",
+			"Tooltip": "Drehen: Lautstärke der Ansagen. Drücken: Ansagen stumm und wieder an.",
 			"Controllers": [
 				"Encoder"
 			],
@@ -567,7 +551,7 @@
 				"layout": "layouts/regler.json",
 				"TriggerDescription": {
 					"Rotate": "Lautstärke",
-					"Push": "Halten = stumm, kurz = Ton an"
+					"Push": "Stumm / Ton an"
 				}
 			},
 			"States": [
@@ -605,14 +589,15 @@
 			"Name": "Regler Flugdaten",
 			"UUID": "eu.german-sky-group.aeroacars.regler-info",
 			"Icon": "imgs/actions/regler_info",
-			"Tooltip": "Drehen blättert durch Blockzeit, Flugzeit, Sprit, Gewicht, Geschwindigkeit und Strecke.",
+			"Tooltip": "Drehen blättert durch Höhe, Geschwindigkeit, Wind, ETA, Sprit und Flugzeit. Drücken: AeroACARS nach vorn.",
 			"Controllers": [
 				"Encoder"
 			],
 			"Encoder": {
 				"layout": "layouts/regler.json",
 				"TriggerDescription": {
-					"Rotate": "Seite wechseln"
+					"Rotate": "Seite wechseln",
+					"Push": "AeroACARS öffnen"
 				}
 			},
 			"States": [
@@ -627,14 +612,15 @@
 			"Name": "Regler Wetter",
 			"UUID": "eu.german-sky-group.aeroacars.regler-wetter",
 			"Icon": "imgs/actions/regler_wetter",
-			"Tooltip": "Drehen wechselt zwischen Wetter am Start, Wetter am Ziel und Landebahn.",
+			"Tooltip": "Drehen wechselt zwischen Wetter am Start und am Ziel. Drücken: METAR neu laden.",
 			"Controllers": [
 				"Encoder"
 			],
 			"Encoder": {
 				"layout": "layouts/regler.json",
 				"TriggerDescription": {
-					"Rotate": "Seite wechseln"
+					"Rotate": "Start / Ziel",
+					"Push": "METAR laden"
 				}
 			},
 			"States": [

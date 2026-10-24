@@ -1,5 +1,5 @@
 // Verbindung zum lokalen Panel-Server von AeroACARS (nur 127.0.0.1, ohne PIN).
-// Lesen: /panel/status, /panel/kabine, /panel/hoppie, /panel/debrief.
+// Lesen: /panel/status, /panel/kabine, /panel/debrief.
 // Bedienen: POST /panel/cmd/{name} mit Pflichtkopf X-AeroACARS-Deck: 1.
 
 export const BASIS = "http://127.0.0.1:47847";

@@ -134,8 +134,8 @@ async function tun(was, aktion) {
     case "ans_lauter": return ausfuehren(aktion, "kabinen_lautstaerke", (j) => j && { lautstaerke: schritt(j.lautstaerke_gespeichert, +1), speichern: true });
     case "mus_leiser": return ausfuehren(aktion, "kabinen_musik_lautstaerke", (j) => j && { lautstaerke: schritt(j.musik_gespeichert, -1), speichern: true });
     case "mus_lauter": return ausfuehren(aktion, "kabinen_musik_lautstaerke", (j) => j && { lautstaerke: schritt(j.musik_gespeichert, +1), speichern: true });
-    case "ans_aus": return ausfuehren(aktion, "kabinen_stumm", { stumm: true }).then(() => aktion.showOk?.()); // Rad hat kein showOk
-    case "ans_an": return ausfuehren(aktion, "kabinen_stumm", { stumm: false });
+    // Ziel erst in der Befehlskette bestimmen: zwei schnelle Drücke schalten hin und zurück (Codex 24.10.).
+    case "ans_umschalten": return ausfuehren(aktion, "kabinen_stumm", (j) => j && { stumm: !j.stumm });
     case "mus_stumm":
     case "musik_stumm":
       // Verlustfrei: live auf 0 ohne Speichern; laut = zurück auf die Einstellung.
@@ -220,7 +220,7 @@ class Rad extends SingletonAction {
   }
 
   lageVon(a) {
-    if (!this.lage.has(a.id)) this.lage.set(a.id, { entwurf: null, speicherUhr: null, halteUhr: null, gehalten: false, warStumm: false });
+    if (!this.lage.has(a.id)) this.lage.set(a.id, { entwurf: null, speicherUhr: null, halteUhr: null, gehalten: false });
     return this.lage.get(a.id);
   }
 
@@ -301,7 +301,6 @@ class Rad extends SingletonAction {
     const a = ev.action;
     const l = this.lageVon(a);
     l.gehalten = false;
-    l.warStumm = !!zustand.s.kabine?.stumm;
     clearTimeout(l.halteUhr);
     // Musik: halten = Boarding-Musik an/aus. Ansagen: kein Halten — am Rad
     // schaltet ein kurzer Druck stumm/an (Thomas 23.10.: Halten am Plus ging
@@ -321,7 +320,7 @@ class Rad extends SingletonAction {
     clearTimeout(l.halteUhr);
     if (l.gehalten) return;
     const g = geraetVon(a);
-    if (this.art === "ans") await tun(l.warStumm ? "ans_an" : "ans_aus", a);
+    if (this.art === "ans") await tun("ans_umschalten", a);
     else if (this.art === "mus") await tun("mus_stumm", a);
     else if (this.art === "wetter") await tun(g.wetterSeite === 1 ? "metar_ziel" : "metar_start", a);
     else if (this.art === "info") await tun(INFO_LANG[INFO_RAD[g.infoSeite]] ?? "cockpit", a);

@@ -12,7 +12,6 @@ import { zustand, ausfuehren } from "./befehle.js";
 import { registrieren as deckRegistrieren } from "./deck.js";
 import { uuid, profilFuer } from "./belegung.js";
 
-const HALTEN_MS = 1000;
 /** Plugin-Ordner (.sdPlugin) — bin/plugin.js liegt eine Ebene darunter. */
 const ORDNER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -132,15 +131,6 @@ class AnzeigeTaste extends Taste {
   }
 }
 
-class PhaseTaste extends AnzeigeTaste {
-  async kurz(a) {
-    // Ohne Profilnamen springt das StreamDeck in das vorherige Profil zurück.
-    // Feldbefund 23.10.: Das klappt nur, wenn das Plugin selbst hergewechselt
-    // hat (Taste „AeroACARS öffnen“), nicht nach Auswahl von Hand.
-    await streamDeck.profiles.switchToProfile(a.device.id);
-  }
-}
-
 /** Wechselt ins mitgelieferte Profil dieses Gerätetyps. */
 class OeffnenTaste extends Taste {
   async onKeyDown(ev) {
@@ -151,37 +141,11 @@ class OeffnenTaste extends Taste {
   }
 }
 
-/** Stumm nur durch Halten: Stumm verwirft laufende und wartende Ansagen. */
+/** Ansagen stumm/an per kurzem Druck (Thomas 24.10.: nicht nur per Halten). */
 class StummTaste extends Taste {
-  constructor(id) {
-    super(id);
-    // Je Taste der laufende Druck: ob die Kabine bei Druckbeginn schon stumm
-    // war, und die Halte-Uhr (null, sobald sie ausgelöst hat).
-    this.druecke = new Map();
-  }
-
-  onKeyDown(ev) {
-    const a = ev.action;
-    const warStumm = !!zustand.s.kabine?.stumm;
-    const druck = { warStumm, uhr: null };
-    if (!warStumm) {
-      druck.uhr = setTimeout(() => {
-        druck.uhr = null;
-        ausfuehren(a, "kabinen_stumm", { stumm: true }).then(() => a.showOk());
-      }, HALTEN_MS);
-    }
-    this.druecke.set(a.id, druck);
-  }
-
-  async onKeyUp(ev) {
-    const a = ev.action;
-    const druck = this.druecke.get(a.id);
-    this.druecke.delete(a.id);
-    if (!druck) return;
-    clearTimeout(druck.uhr);
-    // Nur ein Druck, der auf einer schon stummen Kabine BEGANN, hebt auf.
-    // Das Loslassen nach dem Halten, das gerade stumm geschaltet hat, nicht.
-    if (druck.warStumm) await ausfuehren(a, "kabinen_stumm", { stumm: false });
+  async druecken(a, s) {
+    if (!s.kabine) return a.showAlert();
+    await ausfuehren(a, "kabinen_stumm", (k) => (k ? { stumm: !k.stumm } : null));
   }
 }
 
@@ -224,9 +188,9 @@ class CdmTaste extends Taste {
 // ---- Anmelden -------------------------------------------------------------
 
 const besondere = {
-  phase: () => new PhaseTaste("phase"),
   oeffnen: () => new OeffnenTaste("oeffnen"),
   kabine_stumm: () => new StummTaste("kabine_stumm"),
+  ansage_pegel: () => new StummTaste("ansage_pegel"),
   ansage_leiser: () => new SchrittTaste("ansage_leiser", "kabinen_lautstaerke", "lautstaerke_gespeichert", -1),
   ansage_lauter: () => new SchrittTaste("ansage_lauter", "kabinen_lautstaerke", "lautstaerke_gespeichert", +1),
   musik_leiser: () => new SchrittTaste("musik_leiser", "kabinen_musik_lautstaerke", "musik_gespeichert", -1),
