@@ -346,6 +346,28 @@ const FF757_767_OVERRIDES: &[DatarefOverride] = &[
     },
 ];
 
+/// Profilwechsel: Add-on-Felder, die das bisherige Profil aus einem eigenen
+/// Namen las (FF757/767-Fluegellicht), vergessen — sonst bliebe der letzte
+/// Wert des alten Flugzeugs stehen, weil der Grundname ihn nie ueberschreibt
+/// (Codex-QS 25.10.2026).
+pub fn profil_ersetzungen_leeren(
+    parsed: &mut crate::dataref::XPlaneState,
+    alt: Option<usize>,
+    neu: Option<usize>,
+) {
+    if alt == neu {
+        return;
+    }
+    let Some(p) = alt.and_then(|pi| PROFILES.get(pi)) else {
+        return;
+    };
+    for o in p.overrides {
+        if crate::dataref::addon_quelle(o.field) {
+            parsed.addon_leeren(o.field);
+        }
+    }
+}
+
 /// LE1 stage 1: first profile whose title-match accepts `title`. Profile,
 /// die zusaetzlich die Probe brauchen (`titel_und_probe`), zaehlen hier
 /// nicht.
@@ -689,6 +711,19 @@ mod tests {
             let wing = aktiv.iter().find(|e| e.field == FieldId::FfFluegellicht).unwrap();
             assert_eq!(wing.name, "anim/46/button");
         }
+        // Profilwechsel (RREF und Plugin) leert die Ersetzungen des alten
+        // Profils, nicht die Felder anderer Quellen.
+        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let mut s = crate::dataref::XPlaneState::default();
+        s.apply_field(FieldId::FfFluegellicht, 1.0);
+        s.apply_field(FieldId::FfAutobrake, 3.0);
+        s.apply_field(FieldId::TolissFluegellicht, 1.0);
+        profil_ersetzungen_leeren(&mut s, Some(pi), Some(pi));
+        assert_eq!(s.ff_fluegellicht, Some(true), "gleiches Profil: nichts");
+        profil_ersetzungen_leeren(&mut s, Some(pi), None);
+        assert_eq!(s.ff_fluegellicht, None);
+        assert_eq!(s.ff_autobrake, None);
+        assert_eq!(s.toliss_fluegellicht, Some(true));
         // Ohne Profil liest der Eintrag den FF777-Dataref.
         let grund = build_active_catalog(None);
         let ab = grund.iter().find(|e| e.field == FieldId::FfAutobrake).unwrap();

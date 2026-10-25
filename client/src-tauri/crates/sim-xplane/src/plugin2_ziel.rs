@@ -41,7 +41,9 @@ use crate::dataref::{addon_quelle, FieldId, CATALOG};
 use crate::plugin2::{
     anfrage_liste, zahl_fuer, AboWunsch, Ereignis, NameStatus, Wert, Ziel, MAX_ABO_ID,
 };
-use crate::profile::{build_active_catalog, DatarefOverride, ValueMapping, PROFILES};
+use crate::profile::{
+    build_active_catalog, profil_ersetzungen_leeren, DatarefOverride, ValueMapping, PROFILES,
+};
 use crate::vermessung::P2Messung;
 use crate::web_api::AircraftInfo;
 use crate::zusatz::ZUSATZ_HZ;
@@ -201,6 +203,7 @@ fn profil_neu(shared: &AdapterShared, st: &mut P2Stand, web: Option<&HashSet<Str
             ),
             None => tracing::info!("X-Plane-Plugin: kein Flugzeugprofil — Standardkatalog"),
         }
+        profil_ersetzungen_leeren(&mut shared.parsed.lock(), st.profil, neu);
         st.profil = neu;
         *shared.active_catalog.lock() = build_active_catalog(neu.map(|pi| &PROFILES[pi]));
     }

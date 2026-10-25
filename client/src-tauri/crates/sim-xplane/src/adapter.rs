@@ -41,7 +41,10 @@ use crate::plugin2_ziel::{
     PluginZugang,
 };
 use crate::premium::{PremiumListener, PremiumStatus, PremiumTouchdown, PREMIUM_UDP_PORT};
-use crate::profile::{build_active_catalog, profile_index_for_title, ActiveEntry, PROFILES};
+use crate::profile::{
+    build_active_catalog, profil_ersetzungen_leeren, profile_index_for_title, ActiveEntry,
+    PROFILES,
+};
 use crate::rref::{decode_response, encode_request};
 use crate::web_api::{AircraftInfo, DrefIdCache, WebApiClient};
 use crate::zusatz::{ZusatzAbos, ZUSATZ_HZ};
@@ -1058,6 +1061,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             // zum ersten RREF-Wert den letzten Plugin-Wert — nichts faellt
             // auf 0. Der Stale-Waechter zaehlt ab dem letzten Plugin-Wert.
             let (profil, gilt) = shared.p2_uebergabe();
+            profil_ersetzungen_leeren(&mut shared.parsed.lock(), active_profile, profil);
             active_profile = profil;
             active = build_active_catalog(profil.map(|pi| &PROFILES[pi]));
             *shared.active_catalog.lock() = active.clone();
@@ -1186,6 +1190,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
                     tracing::info!("X-Plane: aircraft changed — resetting to base DataRef catalog")
                 }
             }
+            profil_ersetzungen_leeren(&mut shared.parsed.lock(), active_profile, desired);
             active_profile = desired;
             // Rebuild the active catalog (LE6) and re-subscribe with
             // fresh indices. The probes keep running regardless, so a
@@ -1727,6 +1732,45 @@ mod plugin_profil_ersetzung_tests {
             st: vec![(li, NameStatus::Fehlt)],
         });
         assert_eq!(ad.shared.parsed.lock().ff_fluegellicht, None);
+    }
+
+    /// Faellt das Profil weg (nur die Probe fehlt), vergisst der Zustand die
+    /// Werte seiner Ersetzungen — der Grundname ueberschriebe sie nie
+    /// (Codex-QS Runde 2).
+    #[test]
+    fn profil_weg_leert_seine_ersetzungen() {
+        let ad = XPlaneAdapter::default();
+        let li = ff757_mit_plugin(&ad);
+        ad.shared.ereignis(Ereignis::Flugzeug {
+            icao: Some("B752".into()),
+            titel: Some("Boeing 757-RF".into()),
+            ui_name: Some("Boeing 757-RF".into()),
+            pfad: Some("Aircraft/Boeing757-Full/757-RF_xp12.acf".into()),
+        });
+        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let probe = ad.shared.p2_plan.probe_index[pi];
+        let namen = Arc::clone(&ad.shared.p2_plan.namen);
+        let da = NameStatus::Da { typ: Typ::Float, laenge: 1 };
+        ad.shared.ereignis(Ereignis::Status {
+            abo: ABO_KATALOG,
+            namen: Arc::clone(&namen),
+            st: vec![(probe, da), (li, da)],
+        });
+        assert_eq!(ad.shared.p2.lock().profil, Some(pi));
+        {
+            let mut p = ad.shared.parsed.lock();
+            p.apply_field(FieldId::FfFluegellicht, 1.0);
+            p.apply_field(FieldId::FfAutobrake, 3.0);
+        }
+        ad.shared.ereignis(Ereignis::Status {
+            abo: ABO_KATALOG,
+            namen,
+            st: vec![(probe, NameStatus::Fehlt)],
+        });
+        assert_eq!(ad.shared.p2.lock().profil, None);
+        let p = ad.shared.parsed.lock();
+        assert_eq!(p.ff_fluegellicht, None);
+        assert_eq!(p.ff_autobrake, None);
     }
 
     /// Flugzeugwechsel ueber das Plugin: Standard-Schilder zaehlen wieder
