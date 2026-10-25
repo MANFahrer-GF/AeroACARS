@@ -42,6 +42,10 @@ pub enum ValueMapping {
     /// auf X-Planes -0.5. Ein Wert genau dort wird zu -0.5 (ARMED nach
     /// DataRefs.txt), alles andere bleibt wie geliefert.
     ArmedAt(f32),
+    /// 25.10.2026: Rohwert plus festen Versatz — fuer Waehler, deren Skala
+    /// gegenueber dem Grundeintrag verschoben ist (FF757/767-Autobrake
+    /// beginnt bei RTO = -1, die FF777 bei 0).
+    Versatz(f32),
 }
 
 impl ValueMapping {
@@ -97,6 +101,7 @@ impl ValueMapping {
                     raw
                 })
             }
+            ValueMapping::Versatz(v) => raw.is_finite().then_some(raw + v),
         }
     }
 }
@@ -303,6 +308,41 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
             dataref: "sim/cockpit2/controls/speedbrake_ratio",
             mapping: ValueMapping::ArmedAt(0.5),
         }],
+    },
+    // 25.10.2026 — FlightFactor 757 und 767 (X-Plane 12), Quelle: P_-Profile
+    // von Michel (GSG), alle neun Varianten mit denselben Datarefs.
+    // Fluegellicht und Autobrake liegen dort auf allgemeinen Namen
+    // (`anim/46/button`, `anim/rhotery/25`), die andere Add-ons anders
+    // belegen — deshalb nur hier, mit Titel UND Probe. Probe: Landelicht-
+    // Schalter links, in allen neun Varianten vorhanden.
+    XplaneAircraftProfile {
+        name: "FlightFactor 757",
+        title_match: &["757"],
+        probe_dataref: "1-sim/lights/landingL/switch",
+        titel_und_probe: true,
+        overrides: FF757_767_OVERRIDES,
+    },
+    XplaneAircraftProfile {
+        name: "FlightFactor 767",
+        title_match: &["767"],
+        probe_dataref: "1-sim/lights/landingL/switch",
+        titel_und_probe: true,
+        overrides: FF757_767_OVERRIDES,
+    },
+];
+
+/// Gemeinsame Umbiegungen der FF757/767 (Werte „live bestaetigt" laut
+/// P_-Profilen: Autobrake RTO = -1 … MAX AUTO = 6).
+const FF757_767_OVERRIDES: &[DatarefOverride] = &[
+    DatarefOverride {
+        field: FieldId::FfFluegellicht,
+        dataref: "anim/46/button",
+        mapping: ValueMapping::Passthrough,
+    },
+    DatarefOverride {
+        field: FieldId::FfAutobrake,
+        dataref: "anim/rhotery/25",
+        mapping: ValueMapping::Versatz(1.0),
     },
 ];
 
@@ -612,5 +652,46 @@ mod tests {
             .find(|e| e.field == FieldId::Latitude)
             .expect("Latitude in catalog");
         assert_eq!(lat.name, "sim/flightmodel/position/latitude");
+    }
+
+    fn profil(name: &str) -> &'static XplaneAircraftProfile {
+        PROFILES.iter().find(|p| p.name == name).expect(name)
+    }
+
+    /// Titel wie in den GSG-Flugprotokollen (25.10.2026).
+    #[test]
+    fn ff757_767_titel_und_probe() {
+        for (name, titel) in [
+            ("FlightFactor 757", "Boeing 757-RF"),
+            ("FlightFactor 767", "Boeing 767 300ER"),
+            ("FlightFactor 767", "Boeing 767-Freighter"),
+        ] {
+            let p = profil(name);
+            assert!(p.matches_title(titel), "{titel}");
+            assert!(p.titel_und_probe);
+            // Ohne Probe nie aktiv — der Titel allein reicht nicht.
+            assert_eq!(profile_index_for_title(titel), None, "{titel}");
+        }
+        assert!(!profil("FlightFactor 757").matches_title("Boeing 777-300ER"));
+        assert!(!profil("FlightFactor 767").matches_title("Boeing 757-200"));
+    }
+
+    #[test]
+    fn ff757_767_biegen_fluegellicht_und_autobrake_um() {
+        for name in ["FlightFactor 757", "FlightFactor 767"] {
+            let aktiv = build_active_catalog(Some(profil(name)));
+            let ab = aktiv.iter().find(|e| e.field == FieldId::FfAutobrake).unwrap();
+            assert_eq!(ab.name, "anim/rhotery/25");
+            // RTO = -1 („live bestaetigt") → FF777-Skala 0; MAX AUTO 6 → 7.
+            assert_eq!(ab.mapping.map(-1.0), Some(0.0));
+            assert_eq!(ab.mapping.map(6.0), Some(7.0));
+            assert_eq!(ab.mapping.map(f32::NAN), None);
+            let wing = aktiv.iter().find(|e| e.field == FieldId::FfFluegellicht).unwrap();
+            assert_eq!(wing.name, "anim/46/button");
+        }
+        // Ohne Profil liest der Eintrag den FF777-Dataref.
+        let grund = build_active_catalog(None);
+        let ab = grund.iter().find(|e| e.field == FieldId::FfAutobrake).unwrap();
+        assert_eq!(ab.name, "1-sim/ckpt/autobrakeSwitch/anim");
     }
 }

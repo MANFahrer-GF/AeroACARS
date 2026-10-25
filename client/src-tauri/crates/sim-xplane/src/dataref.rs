@@ -258,6 +258,54 @@ pub enum FieldId {
     /// `laminar/A333/transponder/alt_rpt_knob_pos` — 1 = Höhenübermittlung
     /// an (Grundstellung), 0 = aus.
     A333AltRptKnob,
+    // ---- 25.10.2026: P_-Profile (Michael Damhorst, GSG) ----
+    // Quelle: seine X-KeyPad-Konfigurationen „P_-Profile v1.0" fuer 18
+    // X-Plane-Muster; Dataref, Schwelle und Stellungsbild je Taste dort
+    // abgelesen. Live-Abgleich 25.10.: FF777 (24 Fluege) AP, Fluegellicht,
+    // Anschnall-/Rauchverbotszeichen nie belegt; ToLiss Fluegellicht und
+    // Rauchverbot nie; FF757/767 Fluegellicht, Schilder, Autobrake nie.
+    /// `AirbusFBW/OHPLightSwitches[1]` — ToLiss-Fluegellicht 0/1 (alle
+    /// fuenf ToLiss-Muster).
+    TolissFluegellicht,
+    /// `AirbusFBW/OHPLightSwitches[12]` — ToLiss-NO-SMOKING 0=OFF 1=AUTO
+    /// 2=ON (alle fuenf ToLiss-Muster).
+    TolissRauchverbot,
+    /// `1-sim/ckpt/lampsGlow/mcpCaptAP` / `mcpFoAP` — FF777, Leuchtkraft der
+    /// A/P-Tasten am MCP; > 0.01 = an (Schwelle aus den P_-Profilen). Die
+    /// FF777 setzt die Standard-AP-Datarefs nie (24 von 24 Fluegen aus).
+    Ff777ApL,
+    Ff777ApR,
+    /// Weitere MCP-Lampen der FF777, gleiche Schwelle. HDG SEL hat keine
+    /// Lampe — „Heading" ist nur HDG HOLD.
+    Ff777HdgHold,
+    Ff777AltHold,
+    Ff777Lnav,
+    Ff777Loc,
+    Ff777App,
+    Ff777At,
+    /// `1-sim/ckpt/indLightTestSwitch/anim` — FF777, 0=DIM 1=BRT 2=TEST.
+    /// In TEST leuchten alle Lampen; die MCP-Lampen zaehlen dann nicht.
+    Ff777LampenTest,
+    /// FlightFactor-Fluegellicht 0/1. Grundeintrag FF777
+    /// (`1-sim/ckpt/wingLightSwitch/anim`); die Profile FF757/767 biegen
+    /// ihn auf `anim/46/button` um.
+    FfFluegellicht,
+    /// FlightFactor-Anschnallzeichen 0=OFF 1=AUTO 2=ON, FF777
+    /// (`1-sim/ckpt/passSignsSeatbeltsSwitch/anim`).
+    FfAnschnallzeichen,
+    /// FlightFactor NO SMOKING / NO ELECTRONICS 0=OFF 1=AUTO 2=ON, FF777
+    /// (`1-sim/ckpt/passSignsNosmockingSwitch/anim`, fehlt im 777F).
+    FfRauchverbot,
+    /// FlightFactor-Autobrake-Waehler 0=RTO 1=OFF 2=DISARM 3..6=1..4 7=MAX.
+    /// Grundeintrag FF777 (`1-sim/ckpt/autobrakeSwitch/anim`); FF757/767
+    /// (`anim/rhotery/25`, RTO = -1) per Profil mit Versatz +1.
+    FfAutobrake,
+    /// `sim/cockpit/switches/fasten_seat_belts` / `no_smoking` — X-Plane-
+    /// Standard 0=OFF 1=AUTO 2=ON (die FF757/767 treiben ihn, P_-Profile).
+    /// Viele Muster lassen ihn unbelegt (0); er zaehlt deshalb erst, wenn
+    /// er im Flugzeug einmal ungleich 0 war.
+    StdAnschnallzeichen,
+    StdRauchverbot,
     /// `sim/time/zulu_time_sec` — Sim-Uhrzeit UTC in Sekunden seit
     /// Mitternacht (DataRefs.txt). Bordbuch: Tag/Nacht aus dem Sonnenstand.
     ZuluTimeSec,
@@ -883,6 +931,74 @@ pub const CATALOG: &[DatarefEntry] = &[
         field: FieldId::A333AltRptKnob,
     },
     DatarefEntry {
+        name: "AirbusFBW/OHPLightSwitches[1]",
+        field: FieldId::TolissFluegellicht,
+    },
+    DatarefEntry {
+        name: "AirbusFBW/OHPLightSwitches[12]",
+        field: FieldId::TolissRauchverbot,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/lampsGlow/mcpCaptAP",
+        field: FieldId::Ff777ApL,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/lampsGlow/mcpFoAP",
+        field: FieldId::Ff777ApR,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/lampsGlow/mcpHdgHOLD",
+        field: FieldId::Ff777HdgHold,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/lampsGlow/mcpAltHOLD",
+        field: FieldId::Ff777AltHold,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/lampsGlow/mcpLNAV",
+        field: FieldId::Ff777Lnav,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/lampsGlow/mcpLOC",
+        field: FieldId::Ff777Loc,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/lampsGlow/mcpAPP",
+        field: FieldId::Ff777App,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/lampsGlow/mcpAT",
+        field: FieldId::Ff777At,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/indLightTestSwitch/anim",
+        field: FieldId::Ff777LampenTest,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/wingLightSwitch/anim",
+        field: FieldId::FfFluegellicht,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/passSignsSeatbeltsSwitch/anim",
+        field: FieldId::FfAnschnallzeichen,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/passSignsNosmockingSwitch/anim",
+        field: FieldId::FfRauchverbot,
+    },
+    DatarefEntry {
+        name: "1-sim/ckpt/autobrakeSwitch/anim",
+        field: FieldId::FfAutobrake,
+    },
+    DatarefEntry {
+        name: "sim/cockpit/switches/fasten_seat_belts",
+        field: FieldId::StdAnschnallzeichen,
+    },
+    DatarefEntry {
+        name: "sim/cockpit/switches/no_smoking",
+        field: FieldId::StdRauchverbot,
+    },
+    DatarefEntry {
         name: "sim/time/zulu_time_sec",
         field: FieldId::ZuluTimeSec,
     },
@@ -1186,6 +1302,25 @@ pub struct XPlaneState {
     pub a333_xpdr_auto_on: Option<f32>,
     pub a333_ta_ra_knob: Option<f32>,
     pub a333_alt_rpt_knob: Option<f32>,
+    pub toliss_fluegellicht: Option<bool>,
+    pub toliss_rauchverbot: Option<f32>,
+    /// FF777-MCP-Lampen, roh (Leuchtkraft).
+    pub ff777_ap_l: Option<f32>,
+    pub ff777_ap_r: Option<f32>,
+    pub ff777_hdg_hold: Option<f32>,
+    pub ff777_alt_hold: Option<f32>,
+    pub ff777_lnav: Option<f32>,
+    pub ff777_loc: Option<f32>,
+    pub ff777_app: Option<f32>,
+    pub ff777_at: Option<f32>,
+    pub ff777_lampen_test: Option<f32>,
+    pub ff_fluegellicht: Option<bool>,
+    pub ff_anschnallzeichen: Option<f32>,
+    pub ff_rauchverbot: Option<f32>,
+    pub ff_autobrake: Option<f32>,
+    /// Standard-Schilder; `None`, bis das Flugzeug einmal ≠ 0 geliefert hat.
+    pub std_anschnallzeichen: Option<f32>,
+    pub std_rauchverbot: Option<f32>,
     pub zulu_time_sec: Option<f32>,
     pub local_date_days: Option<f32>,
     // ---- X-Plane-Luecken (29.09.2026). `None` = noch nicht geliefert.
@@ -1460,7 +1595,50 @@ pub fn addon_quelle(field: FieldId) -> bool {
             | FieldId::A333XpdrAutoOn
             | FieldId::A333TaRaKnob
             | FieldId::A333AltRptKnob
+            | FieldId::TolissFluegellicht
+            | FieldId::TolissRauchverbot
+            | FieldId::Ff777ApL
+            | FieldId::Ff777ApR
+            | FieldId::Ff777HdgHold
+            | FieldId::Ff777AltHold
+            | FieldId::Ff777Lnav
+            | FieldId::Ff777Loc
+            | FieldId::Ff777App
+            | FieldId::Ff777At
+            | FieldId::Ff777LampenTest
+            | FieldId::FfFluegellicht
+            | FieldId::FfAnschnallzeichen
+            | FieldId::FfRauchverbot
+            | FieldId::FfAutobrake
     )
+}
+
+/// 3-Stufen-Schalter aus einem Animations-Dataref: Schwellen wie in den
+/// P_-Profilen (`x<0.5` / `x<1.5`), damit Zwischenwerte beim Umlegen nicht
+/// als „unbekannt" durchfallen.
+fn stufe_0_1_2(roh: f32) -> Option<u8> {
+    if !roh.is_finite() {
+        return None;
+    }
+    Some(if roh < 0.5 {
+        0
+    } else if roh < 1.5 {
+        1
+    } else {
+        2
+    })
+}
+
+/// FlightFactor-Autobrake-Waehler (Skala der FF777, siehe
+/// `FieldId::FfAutobrake`) → Beschriftung. Stellungen aus den
+/// Tastenbildern der P_-Profile; „MAX AUTO" der 757/767 als „MAX".
+fn ff_autobrake_label(roh: f32) -> Option<&'static str> {
+    if !roh.is_finite() {
+        return None;
+    }
+    const STUFEN: [&str; 8] = ["RTO", "OFF", "DISARM", "1", "2", "3", "4", "MAX"];
+    let i = (roh + 0.5).floor().clamp(0.0, 7.0) as usize;
+    Some(STUFEN[i])
 }
 
 /// Laminar-A330-Transponder aus den eigenen Knoepfen (Werte am 27.09.2026
@@ -1485,6 +1663,13 @@ fn a333_xpdr_label(
 }
 
 impl XPlaneState {
+    /// Leuchtet eine FF777-MCP-Lampe? > 0.01 wie in den P_-Profilen; im
+    /// Lampentest (Schalter auf TEST) zaehlt keine.
+    fn ff777_lampe(&self, glow: Option<f32>) -> bool {
+        let test = self.ff777_lampen_test.is_some_and(|t| t >= 1.5);
+        !test && glow.is_some_and(|g| g > 0.01)
+    }
+
     /// Eine Add-on-Quelle vergessen (Flugzeugwechsel oder nicht bestaetigt):
     /// das Feld faellt auf „nicht vorhanden" zurueck, der Standardwert gilt.
     pub fn addon_leeren(&mut self, field: FieldId) {
@@ -1527,6 +1712,21 @@ impl XPlaneState {
             FieldId::A333XpdrAutoOn => self.a333_xpdr_auto_on = None,
             FieldId::A333TaRaKnob => self.a333_ta_ra_knob = None,
             FieldId::A333AltRptKnob => self.a333_alt_rpt_knob = None,
+            FieldId::TolissFluegellicht => self.toliss_fluegellicht = None,
+            FieldId::TolissRauchverbot => self.toliss_rauchverbot = None,
+            FieldId::Ff777ApL => self.ff777_ap_l = None,
+            FieldId::Ff777ApR => self.ff777_ap_r = None,
+            FieldId::Ff777HdgHold => self.ff777_hdg_hold = None,
+            FieldId::Ff777AltHold => self.ff777_alt_hold = None,
+            FieldId::Ff777Lnav => self.ff777_lnav = None,
+            FieldId::Ff777Loc => self.ff777_loc = None,
+            FieldId::Ff777App => self.ff777_app = None,
+            FieldId::Ff777At => self.ff777_at = None,
+            FieldId::Ff777LampenTest => self.ff777_lampen_test = None,
+            FieldId::FfFluegellicht => self.ff_fluegellicht = None,
+            FieldId::FfAnschnallzeichen => self.ff_anschnallzeichen = None,
+            FieldId::FfRauchverbot => self.ff_rauchverbot = None,
+            FieldId::FfAutobrake => self.ff_autobrake = None,
             _ => {}
         }
     }
@@ -1679,6 +1879,31 @@ impl XPlaneState {
             FieldId::A333XpdrAutoOn => self.a333_xpdr_auto_on = Some(value),
             FieldId::A333TaRaKnob => self.a333_ta_ra_knob = Some(value),
             FieldId::A333AltRptKnob => self.a333_alt_rpt_knob = Some(value),
+            FieldId::TolissFluegellicht => self.toliss_fluegellicht = Some(value > 0.5),
+            FieldId::TolissRauchverbot => self.toliss_rauchverbot = Some(value),
+            FieldId::Ff777ApL => self.ff777_ap_l = Some(value),
+            FieldId::Ff777ApR => self.ff777_ap_r = Some(value),
+            FieldId::Ff777HdgHold => self.ff777_hdg_hold = Some(value),
+            FieldId::Ff777AltHold => self.ff777_alt_hold = Some(value),
+            FieldId::Ff777Lnav => self.ff777_lnav = Some(value),
+            FieldId::Ff777Loc => self.ff777_loc = Some(value),
+            FieldId::Ff777App => self.ff777_app = Some(value),
+            FieldId::Ff777At => self.ff777_at = Some(value),
+            FieldId::Ff777LampenTest => self.ff777_lampen_test = Some(value),
+            FieldId::FfFluegellicht => self.ff_fluegellicht = Some(value >= 0.5),
+            FieldId::FfAnschnallzeichen => self.ff_anschnallzeichen = Some(value),
+            FieldId::FfRauchverbot => self.ff_rauchverbot = Some(value),
+            FieldId::FfAutobrake => self.ff_autobrake = Some(value),
+            FieldId::StdAnschnallzeichen => {
+                if value != 0.0 || self.std_anschnallzeichen.is_some() {
+                    self.std_anschnallzeichen = Some(value);
+                }
+            }
+            FieldId::StdRauchverbot => {
+                if value != 0.0 || self.std_rauchverbot.is_some() {
+                    self.std_rauchverbot = Some(value);
+                }
+            }
             FieldId::ZuluTimeSec => self.zulu_time_sec = Some(value),
             FieldId::LocalDateDays => self.local_date_days = Some(value),
             FieldId::SimSpeed => self.sim_speed = Some(value),
@@ -1998,14 +2223,35 @@ impl XPlaneState {
             // tiebreaker pattern as the A346/Fenix LVar mapping on the
             // MSFS side.
             autopilot_master: Some(
-                self.ap_master || self.toliss_ap1 || self.toliss_ap2 || self.b738_cmd_b,
+                self.ap_master
+                    || self.toliss_ap1
+                    || self.toliss_ap2
+                    || self.b738_cmd_b
+                    || self.ff777_lampe(self.ff777_ap_l)
+                    || self.ff777_lampe(self.ff777_ap_r),
             ),
             // Standard ODER ToLiss-FMA (der ToLiss setzt die Standard-
-            // Statuswerte nie), siehe `toliss_ap_modi`.
-            autopilot_heading: Some(self.ap_heading || self.toliss_ap_modi().0),
-            autopilot_altitude: Some(self.ap_altitude || self.toliss_ap_modi().2),
-            autopilot_nav: Some(self.ap_nav || self.toliss_ap_modi().1),
-            autopilot_approach: Some(self.ap_approach || self.toliss_ap_modi().3),
+            // Statuswerte nie), siehe `toliss_ap_modi`; FF777 aus den
+            // MCP-Lampen.
+            autopilot_heading: Some(
+                self.ap_heading
+                    || self.toliss_ap_modi().0
+                    || self.ff777_lampe(self.ff777_hdg_hold),
+            ),
+            autopilot_altitude: Some(
+                self.ap_altitude
+                    || self.toliss_ap_modi().2
+                    || self.ff777_lampe(self.ff777_alt_hold),
+            ),
+            autopilot_nav: Some(
+                self.ap_nav
+                    || self.toliss_ap_modi().1
+                    || self.ff777_lampe(self.ff777_lnav)
+                    || self.ff777_lampe(self.ff777_loc),
+            ),
+            autopilot_approach: Some(
+                self.ap_approach || self.toliss_ap_modi().3 || self.ff777_lampe(self.ff777_app),
+            ),
             // v0.16.7: ToLiss `AirbusFBW/ATHRmode` (0 = off, >0 =
             // armed/active) is the first verified X-Plane A/THR state
             // source. Presence-gated via `toliss_athr_seen`: X-Plane
@@ -2017,6 +2263,8 @@ impl XPlaneState {
             // every other aircraft.
             autothrottle_on: if self.toliss_athr_seen {
                 Some(self.toliss_athr_mode > 0.5)
+            } else if self.ff777_at.is_some() {
+                Some(self.ff777_lampe(self.ff777_at))
             } else {
                 None
             },
@@ -2060,7 +2308,11 @@ impl XPlaneState {
             // a non-zero value, but for now we always wrap so the
             // generic activity-log path can compare. This matches
             // the existing light-handling in this file.
-            light_wing: Some(self.light_wing),
+            light_wing: Some(
+                self.light_wing
+                    || self.toliss_fluegellicht == Some(true)
+                    || self.ff_fluegellicht == Some(true),
+            ),
             light_wheel_well: Some(self.light_wheel_well),
             // v0.3.0 — Universal XPDR mode label.
             xpdr_mode_label: {
@@ -2098,9 +2350,17 @@ impl XPlaneState {
             ) {
                 (Some(pos), _) => schalter_0_1_2(pos),
                 (None, Some(on)) => Some(if on { 2 } else { 0 }),
-                (None, None) => None,
+                (None, None) => self
+                    .ff_anschnallzeichen
+                    .or(self.std_anschnallzeichen)
+                    .and_then(stufe_0_1_2),
             },
-            no_smoking_sign: None,
+            // Gleiche Skala; Standard erst, wenn er einmal ≠ 0 war.
+            no_smoking_sign: self
+                .toliss_rauchverbot
+                .or(self.ff_rauchverbot)
+                .or(self.std_rauchverbot)
+                .and_then(stufe_0_1_2),
             fcu_selected_altitude_ft: None,
             fcu_selected_heading_deg: None,
             fcu_selected_speed_kt: None,
@@ -2117,7 +2377,10 @@ impl XPlaneState {
                 ) {
                     (Some(pos), _) => xplane_autobrake_label(pos.round().max(0.0) as u8),
                     (None, Some(toliss)) => toliss,
-                    (None, None) => xplane_autobrake_label(self.autobrake_level as u8),
+                    (None, None) => match self.ff_autobrake.and_then(ff_autobrake_label) {
+                        Some(ff) => ff,
+                        None => xplane_autobrake_label(self.autobrake_level as u8),
+                    },
                 };
                 if label.is_empty() {
                     None
@@ -3061,7 +3324,142 @@ mod a333_und_quellen_tests {
             assert_eq!(snap.autothrottle_on, leer.autothrottle_on, "{}", e.name);
             assert_eq!(snap.autopilot_master, leer.autopilot_master, "{}", e.name);
             assert_eq!(snap.spoilers_armed, leer.spoilers_armed, "{}", e.name);
+            assert_eq!(snap.autopilot_heading, leer.autopilot_heading, "{}", e.name);
+            assert_eq!(snap.autopilot_altitude, leer.autopilot_altitude, "{}", e.name);
+            assert_eq!(snap.autopilot_nav, leer.autopilot_nav, "{}", e.name);
+            assert_eq!(snap.autopilot_approach, leer.autopilot_approach, "{}", e.name);
+            assert_eq!(snap.light_wing, leer.light_wing, "{}", e.name);
+            assert_eq!(snap.no_smoking_sign, leer.no_smoking_sign, "{}", e.name);
         }
+    }
+
+    // ---- P_-Profile (25.10.2026): Rohwerte wie in Michels Konfigurationen ----
+
+    #[test]
+    fn ff777_ap_aus_den_mcp_lampen() {
+        let mut s = XPlaneState::default();
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autopilot_master, Some(false));
+        // Gedimmte Lampe (Schalter DIM) zaehlt — Schwelle 0.01.
+        s.apply_field(FieldId::Ff777ApR, 0.3);
+        s.apply_field(FieldId::Ff777Lnav, 0.3);
+        s.apply_field(FieldId::Ff777AltHold, 1.0);
+        s.apply_field(FieldId::Ff777At, 1.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autopilot_master, Some(true));
+        assert_eq!(snap.autopilot_nav, Some(true));
+        assert_eq!(snap.autopilot_altitude, Some(true));
+        assert_eq!(snap.autopilot_heading, Some(false));
+        assert_eq!(snap.autopilot_approach, Some(false));
+        assert_eq!(snap.autothrottle_on, Some(true));
+        // Lampe aus → aus; Quelle vorhanden heisst A/T `Some(false)`.
+        s.apply_field(FieldId::Ff777At, 0.0);
+        s.apply_field(FieldId::Ff777ApR, 0.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autothrottle_on, Some(false));
+        assert_eq!(snap.autopilot_master, Some(false));
+    }
+
+    #[test]
+    fn ff777_lampentest_schaltet_keinen_ap_ein() {
+        let mut s = XPlaneState::default();
+        for f in [
+            FieldId::Ff777ApL,
+            FieldId::Ff777ApR,
+            FieldId::Ff777HdgHold,
+            FieldId::Ff777App,
+            FieldId::Ff777At,
+        ] {
+            s.apply_field(f, 1.0);
+        }
+        s.apply_field(FieldId::Ff777LampenTest, 2.0); // TEST
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.autopilot_master, Some(false));
+        assert_eq!(snap.autopilot_heading, Some(false));
+        assert_eq!(snap.autopilot_approach, Some(false));
+        assert_eq!(snap.autothrottle_on, Some(false));
+        s.apply_field(FieldId::Ff777LampenTest, 1.0); // BRT
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).autopilot_master, Some(true));
+    }
+
+    #[test]
+    fn ff_schilder_dreistufig_auch_beim_umlegen() {
+        let mut s = XPlaneState::default();
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, None);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).no_smoking_sign, None);
+        for (roh, erwartet) in [(0.0, 0), (0.37, 0), (1.0, 1), (1.62, 2), (2.0, 2)] {
+            s.apply_field(FieldId::FfAnschnallzeichen, roh);
+            s.apply_field(FieldId::FfRauchverbot, roh);
+            let snap = s.to_snapshot(Simulator::XPlane12);
+            assert_eq!(snap.seatbelts_sign, Some(erwartet), "{roh}");
+            assert_eq!(snap.no_smoking_sign, Some(erwartet), "{roh}");
+        }
+    }
+
+    #[test]
+    fn ff_autobrake_stellungen() {
+        let mut s = XPlaneState::default();
+        // Skala der FF777 (0 = RTO … 7 = MAX); Zwischenwert rundet.
+        for (roh, erwartet) in [
+            (0.0, "RTO"),
+            (1.0, "OFF"),
+            (2.0, "DISARM"),
+            (3.0, "1"),
+            (6.0, "4"),
+            (6.6, "MAX"),
+            (7.0, "MAX"),
+        ] {
+            s.apply_field(FieldId::FfAutobrake, roh);
+            assert_eq!(
+                s.to_snapshot(Simulator::XPlane12).autobrake.as_deref(),
+                Some(erwartet),
+                "{roh}"
+            );
+        }
+    }
+
+    #[test]
+    fn toliss_fluegellicht_und_rauchverbot() {
+        let mut s = XPlaneState::default();
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).light_wing, Some(false));
+        s.apply_field(FieldId::TolissFluegellicht, 1.0);
+        s.apply_field(FieldId::TolissRauchverbot, 1.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.light_wing, Some(true));
+        assert_eq!(snap.no_smoking_sign, Some(1)); // AUTO
+    }
+
+    /// Standard-Schilder: ein Flugzeug, das sie nicht treibt, liefert 0 —
+    /// das darf kein „OFF" werden. Erst ab dem ersten Wert ≠ 0 gilt er,
+    /// danach auch 0 (der Pilot hat ausgeschaltet).
+    #[test]
+    fn standard_schilder_zaehlen_erst_ab_erstem_wert() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::StdAnschnallzeichen, 0.0);
+        s.apply_field(FieldId::StdRauchverbot, 0.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.seatbelts_sign, None);
+        assert_eq!(snap.no_smoking_sign, None);
+        s.apply_field(FieldId::StdAnschnallzeichen, 2.0);
+        s.apply_field(FieldId::StdRauchverbot, 1.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.seatbelts_sign, Some(2));
+        assert_eq!(snap.no_smoking_sign, Some(1));
+        s.apply_field(FieldId::StdAnschnallzeichen, 0.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).seatbelts_sign, Some(0));
+    }
+
+    /// Add-on-Schalter haben Vorrang vor dem Standard.
+    #[test]
+    fn addon_schilder_vor_standard() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::StdAnschnallzeichen, 1.0);
+        s.apply_field(FieldId::FfAnschnallzeichen, 2.0);
+        s.apply_field(FieldId::StdRauchverbot, 1.0);
+        s.apply_field(FieldId::TolissRauchverbot, 0.0);
+        let snap = s.to_snapshot(Simulator::XPlane12);
+        assert_eq!(snap.seatbelts_sign, Some(2));
+        assert_eq!(snap.no_smoking_sign, Some(0));
     }
 }
 

@@ -935,6 +935,10 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
                                             parsed.addon_leeren(e.field);
                                         }
                                     }
+                                    // Standard-Schilder zaehlen erst ab ≠ 0 —
+                                    // je Flugzeug neu.
+                                    parsed.std_anschnallzeichen = None;
+                                    parsed.std_rauchverbot = None;
                                     tracing::info!(
                                         alt,
                                         neu = p.value,
