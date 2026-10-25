@@ -6,6 +6,7 @@
       "an_hint": "Annunci IA del comandante e dell'equipaggio nello stile della compagnia. I testi li scrive il server GSG.",
       "beta_ja": "Abilitato per il tuo account.",
       "beta_nein": "Bloccato per il tuo account.",
+      "beta_flug_aus": "Disattivati per questo volo nel loadsheet.",
       "beta_unbekannt": "L'abilitazione viene verificata all'inizio del volo.",
       "zweite_sprache": "Lingue",
       "sprache_airline": "Lingua della compagnia + inglese",
@@ -145,6 +146,10 @@
         "titel": "Bloccato",
         "text": "Gli annunci di cabina sono bloccati per il tuo account. Contatta il team GSG."
       },
+      "flug_aus": {
+        "titel": "Disattivati per questo volo",
+        "text": "Disattivati per questo volo nel loadsheet."
+      },
       "wiedergabe": {
         "titel": "Audio non riproducibile",
         "text": "L'annuncio era pronto ma non è stato possibile riprodurlo. Il dispositivo di uscita scelto è occupato o scollegato? Nelle impostazioni puoi scegliere un altro dispositivo o il predefinito di sistema. Messaggio:"
@@ -226,6 +231,7 @@
         "nein": "non abilitato",
         "pruefung": "in verifica",
         "kontingent": "abilitato, quota mensile esaurita",
+        "flug_aus": "disattivati per questo volo nel loadsheet",
         "nicht_erreichbar": "server non raggiungibile, nuovo tentativo {{zeit}}"
       },
       "teil": {

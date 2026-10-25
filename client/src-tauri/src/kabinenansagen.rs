@@ -332,6 +332,9 @@ pub(crate) struct Zustand {
     /// Freigeschaltet, aber Monatsdeckel erreicht: vorhandene Texte gehen,
     /// neue nicht (getrennt angezeigt, Punkt 10).
     kontingent_erschoepft: Option<bool>,
+    /// Für den laufenden Flug im Loadsheet abgeschaltet: geht vor `beta`
+    /// (der Server sendet dann `beta: false`, das Konto ist aber frei).
+    flug_aus: Option<bool>,
 }
 
 #[tauri::command]
@@ -339,13 +342,15 @@ pub(crate) async fn kabinen_zustand(
     state: tauri::State<'_, AppState>,
 ) -> Result<Zustand, UiError> {
     let client = state.client.lock().expect("client lock").clone();
+    let pirep_id = state.active_flight.lock().expect("active_flight lock").as_ref().map(|f| f.pirep_id.clone());
     let status = match client {
-        Some(c) => c.kabinen_status().await.ok(),
+        Some(c) => c.kabinen_status(pirep_id.as_deref()).await.ok(),
         None => None,
     };
     Ok(Zustand {
         beta: status.as_ref().map(|s| s.beta),
         kontingent_erschoepft: status.as_ref().map(|s| s.beta && !s.bereit),
+        flug_aus: status.as_ref().map(|s| s.flug_aus),
     })
 }
 
@@ -360,6 +365,8 @@ enum Beta {
     Angefragt,
     Ja,
     Nein,
+    /// Der Pilot hat die Ansagen für diesen Flug im Loadsheet abgeschaltet.
+    FlugAus,
 }
 
 #[derive(Debug, Clone)]
@@ -437,6 +444,9 @@ pub(crate) struct Lauf {
     beta_naechste_pruefung: i64,
     /// Status nicht erreichbar: dann steht hier, wann wieder gefragt wird.
     beta_netzfehler: bool,
+    /// Auffrischung des Status läuft (Haken im Loadsheet, alle
+    /// [`STATUS_AUFFRISCHEN_S`]); keine zweite Anfrage daneben.
+    status_laeuft: bool,
     /// Freigeschaltet, aber Monatsdeckel erreicht (`bereit` falsch).
     kontingent_erschoepft: bool,
     /// Sprachen der jüngsten Drehbuch-Antwort: gelten für künftige Anfragen
@@ -1306,9 +1316,160 @@ fn sperre_name(an: bool, stats: &FlightStats) -> Option<&'static str> {
         Grund::BetaPruefung => "beta_pruefung",
         Grund::BetaNichtErreichbar(_) => "beta_nicht_erreichbar",
         Grund::NichtFreigeschaltet => "nicht_freigeschaltet",
+        Grund::FlugAus => "flug_aus",
         Grund::SimAngehalten => "sim_angehalten",
         Grund::Kontingent => return None,
     })
+}
+
+/// Antwort der Statusabfrage in den Lauf. `flug_aus` zuerst: Dann sendet
+/// der Server auch `beta: false`, das hiesse sonst „Für dein Konto gesperrt“.
+fn status_uebernehmen<E: std::fmt::Display>(lauf: &mut Lauf, ergebnis: Result<api_client::KabinenStatus, E>, jetzt: i64) {
+    match ergebnis {
+        Ok(s) if s.flug_aus => {
+            lauf.beta = Beta::FlugAus;
+            lauf.beta_netzfehler = false;
+            lauf.beta_naechste_pruefung = jetzt + STATUS_AUFFRISCHEN_S;
+        }
+        // Nur `beta` zählt: Ist der Monatsdeckel erreicht
+        // (`bereit` falsch), liefert der Server bezahlte Texte
+        // weiter aus dem Zwischenspeicher; neue lehnt er ab.
+        Ok(s) if s.beta => {
+            lauf.beta = Beta::Ja;
+            lauf.beta_netzfehler = false;
+            lauf.kontingent_erschoepft = !s.bereit;
+            lauf.beta_naechste_pruefung = jetzt + STATUS_AUFFRISCHEN_S;
+        }
+        Ok(_) => {
+            lauf.beta = Beta::Nein;
+            lauf.beta_netzfehler = false;
+        }
+        Err(e) => {
+            // Netz weg: später noch einmal fragen, bis dahin aus.
+            tracing::info!(error = %e, "kabinenansagen: status nicht erreichbar");
+            lauf.beta = Beta::Unbekannt;
+            lauf.beta_netzfehler = true;
+            lauf.beta_naechste_pruefung = jetzt + 300;
+        }
+    }
+}
+
+/// Wie oft ein laufender Flug den Status mit seiner PIREP-Nummer neu holt:
+/// Den Haken „keine Kabinenansagen für diesen Flug“ kann der Pilot im
+/// Loadsheet auch nach dem Flugstart setzen oder wieder wegnehmen.
+const STATUS_AUFFRISCHEN_S: i64 = 300;
+
+/// Freischaltung im Takt: `(status holen, weiter)`. Erste Abfrage wie bisher
+/// (`Unbekannt` → `Angefragt`); danach frischen `Ja` und `FlugAus` alle
+/// [`STATUS_AUFFRISCHEN_S`] auf, höchstens eine Anfrage zugleich. `Nein`
+/// bleibt für den Flug, wie bisher.
+fn freigabe_schritt(lauf: &mut Lauf, jetzt: i64) -> (bool, bool) {
+    match lauf.beta {
+        Beta::Unbekannt if jetzt >= lauf.beta_naechste_pruefung => {
+            lauf.beta = Beta::Angefragt;
+            (true, false)
+        }
+        Beta::Unbekannt | Beta::Angefragt | Beta::Nein => (false, false),
+        Beta::Ja | Beta::FlugAus => {
+            let holen = !lauf.status_laeuft && jetzt >= lauf.beta_naechste_pruefung;
+            lauf.status_laeuft |= holen;
+            (holen, lauf.beta == Beta::Ja)
+        }
+    }
+}
+
+/// Auffrischung im Flug. `Ja` → Haken gesetzt: still wie beim Stumm-Knopf
+/// (Wartendes und Laufendes als „stumm“ verbucht); `Some(Verlauf geändert)`
+/// heißt, der Aufrufer stoppt die Wiedergabe. `FlugAus` → Haken weg: wieder
+/// frei (bzw. gesperrt, wenn das Konto gesperrt ist). Meldet der Server
+/// während `Ja` nur „gesperrt“, bleibt es wie bisher bei `Ja` (ein laufender
+/// Flug bemerkte das nie). Netzfehler: Zustand bleibt, nächster Versuch nach
+/// der üblichen Frist, ohne weitere Anfragen dazwischen.
+fn status_auffrischen<E: std::fmt::Display>(stats: &mut FlightStats, ergebnis: Result<api_client::KabinenStatus, E>, jetzt: i64) -> Option<bool> {
+    let lauf = &mut stats.kabinen_lauf;
+    lauf.status_laeuft = false;
+    lauf.beta_naechste_pruefung = jetzt + STATUS_AUFFRISCHEN_S;
+    let s = match ergebnis {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::info!(error = %e, "kabinenansagen: status-auffrischung nicht erreichbar");
+            return None;
+        }
+    };
+    match lauf.beta {
+        Beta::Ja if s.flug_aus => {
+            lauf.beta = Beta::FlugAus;
+            Some(stumm_anwenden(stats, jetzt))
+        }
+        Beta::FlugAus if !s.flug_aus && s.beta => {
+            lauf.beta = Beta::Ja;
+            lauf.kontingent_erschoepft = !s.bereit;
+            None
+        }
+        Beta::FlugAus if !s.flug_aus => {
+            lauf.beta = Beta::Nein;
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Antwort einer Statusabfrage in den Flug: die erste über
+/// [`status_uebernehmen`], jede spätere über [`status_auffrischen`].
+/// `Some(Verlauf geändert)` = der Haken im Loadsheet kam eben: abschalten.
+fn status_antwort<E: std::fmt::Display>(stats: &mut FlightStats, erstmals: bool, ergebnis: Result<api_client::KabinenStatus, E>, jetzt: i64) -> Option<bool> {
+    if erstmals {
+        status_uebernehmen(&mut stats.kabinen_lauf, ergebnis, jetzt);
+        return None;
+    }
+    status_auffrischen(stats, ergebnis, jetzt)
+}
+
+/// Die globale Abschaltung beim Haken im Loadsheet (wie der Stumm-Knopf).
+trait Abschalter {
+    fn ansage_stoppen(&mut self);
+    fn reaktionen_aus(&mut self);
+    fn musik_aus(&mut self);
+}
+
+struct GlobalAbschalter;
+
+impl Abschalter for GlobalAbschalter {
+    fn ansage_stoppen(&mut self) {
+        ausgabe::stoppen();
+    }
+    fn reaktionen_aus(&mut self) {
+        crate::kabinen_reaktion::aus();
+    }
+    fn musik_aus(&mut self) {
+        if crate::kabinen_musik::flug_aktiv() {
+            crate::kabinen_musik::aus();
+        }
+    }
+}
+
+/// Haken im Loadsheet mitten im Flug: laufende Ansage, Reaktionen und Musik
+/// enden sofort — nur, wenn der fragende Flug noch der laufende ist.
+fn flug_aus_abschalten(noch_aktiv: bool, ab: &mut impl Abschalter) {
+    if !noch_aktiv {
+        return;
+    }
+    ab.ansage_stoppen();
+    ab.reaktionen_aus();
+    ab.musik_aus();
+}
+
+/// Vergleich „ist `flight` noch der laufende Flug?“ und Abschaltung unter
+/// DERSELBEN Sperre von `active_flight`: Ein neuer Flug kann erst danach
+/// eingetragen werden, die späte Antwort eines beendeten Flugs trifft ihn
+/// also nie (Codex 25.10.2026). Die Abschalter selbst sperren den Flug
+/// nicht (Ausgabe, Reaktionen, Musik haben eigene Zustände). Gibt zurück,
+/// ob abgeschaltet wurde.
+fn abschalten_wenn_aktiv(aktiv: &std::sync::Mutex<Option<Arc<ActiveFlight>>>, flight: &Arc<ActiveFlight>, ab: &mut impl Abschalter) -> bool {
+    let laufend = aktiv.lock().expect("active_flight lock");
+    let noch_aktiv = laufend.as_ref().is_some_and(|a| Arc::ptr_eq(a, flight));
+    flug_aus_abschalten(noch_aktiv, ab);
+    noch_aktiv
 }
 
 /// 1d: Jeder Wechsel der Eingangssperre genau ein Eintrag `gesperrt{grund}`
@@ -1327,7 +1488,8 @@ fn sperre_pruefen(stats: &mut FlightStats, an: bool, jetzt: i64) {
         Some(g) => notiz(lauf, "gesperrt", None, None, serde_json::json!({ "grund": g })),
         None => notiz(lauf, "frei", None, None, serde_json::json!({ "vorher": alt })),
     }
-    if alt == Some("aus") && neu != Some("aus") {
+    // Auch nach dem Haken im Loadsheet, wenn er wieder weg ist.
+    if matches!(alt, Some("aus" | "flug_aus")) {
         vorab_anstossen(lauf, jetzt);
     }
 }
@@ -2013,79 +2175,106 @@ fn musik_neu_laden(lauf: &mut Lauf) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn takt_schritt(
-    app: &AppHandle,
-    flight: &Arc<ActiveFlight>,
-    client: &Client,
+/// Was der Takt nach außen anstößt (Netz). Im Betrieb [`NetzAusgang`]; in
+/// Tests zählt ein Stub mit, ohne AppHandle und Client.
+trait TaktAusgang {
+    /// Statusabfrage mit der PIREP-Nummer (`erstmals`: erste des Flugs).
+    fn status_holen(&mut self, erstmals: bool);
+    /// Passagierzahl und OFP nachholen.
+    fn pax_holen(&mut self);
+    /// Auffrischung der Sinkflug-Ansage des Kapitäns.
+    fn auffrischen_holen(&mut self, anfrage: serde_json::Value, generation: u32);
+    /// Drehbuch (Texte, mit `boarding_lied` bzw. Teil „lied“ auch das Lied).
+    fn drehbuch_holen(&mut self, schluessel: String, anfrage: serde_json::Value, slots: Vec<Slot>, bizjet: bool, bezug: i64);
+}
+
+struct NetzAusgang<'a> {
+    app: &'a AppHandle,
+    flight: &'a Arc<ActiveFlight>,
+    client: &'a Client,
+}
+
+impl TaktAusgang for NetzAusgang<'_> {
+    fn status_holen(&mut self, erstmals: bool) {
+        let (app, flight, client) = (self.app.clone(), Arc::clone(self.flight), self.client.clone());
+        tauri::async_runtime::spawn(async move {
+            // Die PIREP-Nummer steht mit dem Flug fest (alle Wege, die
+            // einen `ActiveFlight` anlegen, nehmen sie vom Server).
+            let ergebnis = client.kabinen_status(Some(&flight.pirep_id)).await;
+            let jetzt = Utc::now().timestamp();
+            let mut stats = flight.stats.lock().expect("flight stats");
+            let Some(geaendert) = status_antwort(&mut stats, erstmals, ergebnis, jetzt) else { return };
+            let text = if geaendert { verlauf_text(&stats.kabinen_lauf) } else { None };
+            drop(stats);
+            // Die Abschaltung ist global (Ausgabe, Reaktionen, Musik): nur,
+            // wenn dieser Flug noch der laufende ist — sonst träfe die späte
+            // Antwort eines beendeten Flugs den nächsten.
+            if let Some(state) = app.try_state::<AppState>() {
+                abschalten_wenn_aktiv(&state.active_flight, &flight, &mut GlobalAbschalter);
+            }
+            if let Some(text) = text {
+                verlauf_schreiben(&app, &flight, &text);
+            }
+        });
+    }
+
+    fn pax_holen(&mut self) {
+        let (flight, client) = (Arc::clone(self.flight), self.client.clone());
+        tauri::async_runtime::spawn(async move {
+            if let Some((bids, ofp)) = crate::kabinen_eckdaten_holen(&client, flight.bid_id).await {
+                let mut stats = flight.stats.lock().expect("flight stats");
+                crate::kabinen_eckdaten_nachholen_aus(&mut stats, &bids, flight.bid_id, ofp.as_ref());
+            }
+        });
+    }
+
+    fn auffrischen_holen(&mut self, anfrage: serde_json::Value, generation: u32) {
+        auffrischen_holen(self.app.clone(), Arc::clone(self.flight), self.client.clone(), anfrage, generation);
+    }
+
+    fn drehbuch_holen(&mut self, schluessel: String, anfrage: serde_json::Value, slots: Vec<Slot>, bizjet: bool, bezug: i64) {
+        holen(self.app.clone(), Arc::clone(self.flight), self.client.clone(), schluessel, anfrage, slots, false, bizjet, bezug);
+    }
+}
+
+/// Stand nach dem Kern des Takts, für Ton und Abspielen.
+struct KernStand {
+    flugart: Flugart,
+    phase: FlightPhase,
+    ruhephase: bool,
+    verlauf_neu: bool,
+}
+
+/// Kern des Takts ohne AppHandle: Sperren, Freischaltung, Planer, Texte
+/// bestellen. `None` = der Takt endet hier (gesperrt, angehalten, Pax fehlt,
+/// keine Kabine). Alles, was ins Netz geht, läuft über `aus`.
+fn takt_kern(
+    stats: &mut FlightStats,
+    flight: &ActiveFlight,
+    einst: &Einstellungen,
     snap: &SimSnapshot,
     now: DateTime<Utc>,
-) {
-    let einst = einstellungen(app);
+    eigene: Option<(String, Vec<PathBuf>)>,
+    aus: &mut impl TaktAusgang,
+) -> Option<KernStand> {
     let jetzt = now.timestamp();
-    if !einst.an {
-        // Auch „aus“ ist eine Eingangssperre fürs Protokoll (1d).
-        sperre_pruefen(&mut flight.stats.lock().expect("flight stats"), false, jetzt);
-        return;
-    }
-    // Eigene Musik vor der Abflug-Anfrage prüfen (Design §5), ohne Sperre.
-    let eigene = if einst.boarding_musik { eigene_lesen(flight) } else { None };
-    // Verlaufsdatei ohne Flugdaten-Sperre lesen (v2.0.28: das Lesen hielt die
-    // Sperre beim ersten Takt bis 39 ms, Diagnose Pilot 1 und 4).
-    let geladen = flight.stats.lock().expect("flight stats").kabinen_lauf.verlauf_geladen;
-    let alt = if geladen { None } else { Some(verlauf_datei_lesen(app, flight)) };
-    let mut stats = flight.stats.lock().expect("flight stats");
-    if let Some(alt) = alt {
-        verlauf_uebernehmen(&mut stats.kabinen_lauf, alt);
-    }
     // Sim angehalten oder im Slew: Der Takt steht, die Seite sagt es.
     stats.kabinen_lauf.sim_angehalten = snap.paused || snap.slew_mode;
     // 1d: Wechsel der Sperre (Pause, Replay, Freischaltung, Passagierzahl,
     // Flugart) ins Protokoll — vor den Rücksprüngen unten.
-    sperre_pruefen(&mut stats, true, jetzt);
-    if stats.kabinen_lauf.sim_angehalten || stats.replay_verdacht {
-        return;
-    }
+    sperre_pruefen(stats, true, jetzt);
 
     // ---- Freischaltung durch den Server (vor der Passagierzahl: die Seite
-    // soll früh wissen, ob das Konto freigeschaltet ist) ----
-    match stats.kabinen_lauf.beta {
-        Beta::Ja => {}
-        Beta::Angefragt | Beta::Nein => return,
-        Beta::Unbekannt => {
-            if jetzt < stats.kabinen_lauf.beta_naechste_pruefung {
-                return;
-            }
-            stats.kabinen_lauf.beta = Beta::Angefragt;
-            drop(stats);
-            let (flight, client) = (Arc::clone(flight), client.clone());
-            tauri::async_runtime::spawn(async move {
-                let ergebnis = client.kabinen_status().await;
-                let mut stats = flight.stats.lock().expect("flight stats");
-                let lauf = &mut stats.kabinen_lauf;
-                match ergebnis {
-                    // Nur `beta` zählt: Ist der Monatsdeckel erreicht
-                    // (`bereit` falsch), liefert der Server bezahlte Texte
-                    // weiter aus dem Zwischenspeicher; neue lehnt er ab.
-                    Ok(s) if s.beta => {
-                        lauf.beta = Beta::Ja;
-                        lauf.beta_netzfehler = false;
-                        lauf.kontingent_erschoepft = !s.bereit;
-                    }
-                    Ok(_) => {
-                        lauf.beta = Beta::Nein;
-                        lauf.beta_netzfehler = false;
-                    }
-                    Err(e) => {
-                        // Netz weg: später noch einmal fragen, bis dahin aus.
-                        tracing::info!(error = %e, "kabinenansagen: status nicht erreichbar");
-                        lauf.beta = Beta::Unbekannt;
-                        lauf.beta_netzfehler = true;
-                        lauf.beta_naechste_pruefung = Utc::now().timestamp() + 300;
-                    }
-                }
-            });
-            return;
-        }
+    // soll früh wissen, ob das Konto freigeschaltet ist). Auch in Pause,
+    // Slew und Replay: Der Haken im Loadsheet soll dann ebenso greifen;
+    // angehalten wird nur der Kabinenablauf darunter. ----
+    let erstmals = stats.kabinen_lauf.beta == Beta::Unbekannt;
+    let (holen_status, weiter) = freigabe_schritt(&mut stats.kabinen_lauf, jetzt);
+    if holen_status {
+        aus.status_holen(erstmals);
+    }
+    if stats.kabinen_lauf.sim_angehalten || stats.replay_verdacht || !weiter {
+        return None;
     }
 
     // ---- Passagierzahl: beim Wiedereinstieg ohne Netz später nachholen ----
@@ -2094,22 +2283,16 @@ fn takt_schritt(
         if lauf.pax_versuche < 10 && jetzt >= lauf.pax_naechster {
             lauf.pax_versuche += 1;
             lauf.pax_naechster = jetzt + 120;
-            let (flight, client) = (Arc::clone(flight), client.clone());
-            tauri::async_runtime::spawn(async move {
-                if let Some((bids, ofp)) = crate::kabinen_eckdaten_holen(&client, flight.bid_id).await {
-                    let mut stats = flight.stats.lock().expect("flight stats");
-                    crate::kabinen_eckdaten_nachholen_aus(&mut stats, &bids, flight.bid_id, ofp.as_ref());
-                }
-            });
+            aus.pax_holen();
         }
-        return;
+        return None;
     }
 
     // ---- Planer ----
     let flugdaten = crate::kabinen_flugdaten(&stats, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao);
     let flugart = flugdaten.flugart.unwrap_or(Flugart::Aus);
     if flugart == Flugart::Aus {
-        return;
+        return None;
     }
     // Ist der Schalter aus, bleibt die Quelle offen: Wer ihn im Boarding
     // einschaltet, bekommt noch eigene Musik.
@@ -2133,7 +2316,7 @@ fn takt_schritt(
         stats.kabinen_lauf.abgewaehlt_zuletzt = Some(liste);
     }
     let mut verlauf_neu_vorab = false;
-    let schritt = crate::kabinen_schritt(&mut stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao, &abgewaehlt);
+    let schritt = crate::kabinen_schritt(stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao, &abgewaehlt);
     stats.kabinen_lauf.ruhephase = schritt.ruhephase;
     // Kam die Art „zweiter Service“ erst, als Reiseflug 80 schon nach der
     // 12-min-Regel wartete, und reicht die Zeit nicht mehr (unter 60 min
@@ -2144,7 +2327,7 @@ fn takt_schritt(
         verbuchen(&mut stats.kabinen_lauf, Slot::Reiseflug80, "entfallen", Some("zu_wenig_zeit"), jetzt);
         verlauf_neu_vorab = true;
     }
-    hinweis_pruefen(&mut stats, snap, schritt.phase, jetzt);
+    hinweis_pruefen(stats, snap, schritt.phase, jetzt);
     // Altes Modul: Ist Reiseflug 80 das Ende des Bordverkaufs, entfällt eine
     // schon wartende eigene „Ende des Service“-Ansage (keine Doppelung,
     // auch wenn die Art erst später ankommt — Codex 2.1.0).
@@ -2195,7 +2378,7 @@ fn takt_schritt(
     // Stumm: Fälliges wird gleich als übersprungen verbucht, nicht eingereiht
     // (kommt auch nach dem Aufheben nicht nach — Thomas 18.10.2026).
     if STUMM.load(Ordering::SeqCst) {
-        verlauf_neu |= stumm_anwenden(&mut stats, jetzt);
+        verlauf_neu |= stumm_anwenden(stats, jetzt);
         let (mut kapitaen, mut service) = (false, false);
         for f in faellig.drain(..) {
             notiz(&mut stats.kabinen_lauf, "stumm", Some(f.slot), None, serde_json::Value::Null);
@@ -2217,64 +2400,7 @@ fn takt_schritt(
     }
 
     // ---- Texte holen: nur, was auf diesem Flug noch kommt ----
-    let mut auftraege: Vec<(String, Vec<Slot>, u32)> = Vec::new();
-    {
-        stats.kabinen_lauf.warteschlange.aufnehmen(faellig.clone());
-        let wartend = stats.kabinen_lauf.warteschlange.wartend();
-        let kommt = |s: &Slot| flugart.erlaubt(*s) && kommt_noch(&stats, &wartend, *s);
-        let abflug: Vec<Slot> = ABFLUG.into_iter().filter(kommt).collect();
-        let ankunft: Vec<Slot> = ANKUNFT.into_iter().filter(kommt).collect();
-        let halbzeit_kommt = kommt(&Slot::Reiseflug50);
-        let halbzeit_um = stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(Slot::Reiseflug50, stats.landung_erwartet));
-        let r = cabin_announcements::planer::rang(schritt.phase);
-        let kurz = stats.kabinen_planer.as_ref().is_some_and(|p| p.ist_kurzstrecke());
-        // Ankunft: in der Luft und kurz vor der Landung (bzw. im Sinkflug).
-        // Kurzstrecke: gleich nach dem Abheben, sonst bliebe zu wenig Zeit.
-        let ankunft_jetzt = r >= cabin_announcements::planer::rang(FlightPhase::Takeoff)
-            && (kurz
-                || schritt.rest_min.is_some_and(|m| m <= ANKUNFT_TEXT_VOR_LANDUNG_MIN as f64)
-                || r >= cabin_announcements::planer::rang(FlightPhase::Descent));
-        let lauf = &mut stats.kabinen_lauf;
-        if !abflug.is_empty() && darf_anfragen(lauf, "abflug", jetzt) {
-            lauf.angefragt.insert("abflug".into());
-            auftraege.push(("abflug".into(), abflug, 0));
-        }
-        // Halbzeit (Zusatz H): im Reiseflug, Vorlauf vor ihrem Zeitpunkt. Ein
-        // Flug ohne Halbzeit-Ansage (Kurzstrecke) fragt nie an.
-        let halbzeit_jetzt = halbzeit_anfragen(halbzeit_kommt, schritt.phase, halbzeit_um, jetzt);
-        if halbzeit_jetzt && darf_anfragen(lauf, "halbzeit", jetzt) {
-            lauf.angefragt.insert("halbzeit".into());
-            auftraege.push(("halbzeit".into(), HALBZEIT.to_vec(), 0));
-        }
-        if ankunft_jetzt && !ankunft.is_empty() && darf_anfragen(lauf, "ankunft", jetzt) {
-            lauf.angefragt.insert("ankunft".into());
-            auftraege.push(("ankunft".into(), ankunft, 0));
-        }
-        // Lied nachfragen, wenn das Modul keine Zeit mehr hatte (einmal). Ohne
-        // Abflug-Slots (Lied kam ueber den Teil „lied“) wieder ueber „lied“.
-        if lauf.lied.nochmal_ab.is_some_and(|ab| jetzt >= ab) && lauf.lied.vorlage.is_none() {
-            lauf.lied.nochmal_ab = None;
-            if lauf.lied.slots.is_empty() {
-                auftraege.push(("lied".into(), Vec::new(), 0));
-            } else {
-                auftraege.push(("abflug:lied".into(), lauf.lied.slots.clone(), 0));
-            }
-        }
-        // Update oder Neustart mitten im Flug: Kein Abflug-Drehbuch traegt das
-        // Lied mehr, also eine eigene Anfrage „lied“ (Modul ab 2.1.3), solange
-        // die Musik noch kommt (Thomas 19.10.2026).
-        let abflug_dabei = auftraege.iter().any(|(s, _, _)| s.starts_with("abflug"));
-        if lied_einzeln_anfragen(lauf, einst.boarding_musik, schritt.phase, abflug_dabei, jetzt) {
-            lauf.angefragt.insert("lied".into());
-            auftraege.push(("lied".into(), Vec::new(), 0));
-        }
-        for f in faellig.iter().filter(|f| ist_ereignis(f.slot)) {
-            lauf.anlass += 1;
-            let schluessel = format!("ereignis:{}", lauf.anlass);
-            lauf.angefragt.insert(schluessel.clone());
-            auftraege.push((schluessel, vec![f.slot], lauf.anlass));
-        }
-    }
+    let auftraege = auftraege_sammeln(stats, &faellig, flugart, schritt.phase, schritt.rest_min, einst.boarding_musik, jetzt);
     // ---- Auffrischung der Sinkflug-Ansage des Kapitäns (vor dem Abspielen,
     // sonst spielte der alte Ton im Takt seiner Fälligkeit) ----
     if !STUMM.load(Ordering::SeqCst) {
@@ -2287,7 +2413,7 @@ fn takt_schritt(
         let FlightStats { kabinen_lauf, kabinen_planer, .. } = &mut *stats;
         if let (Some(start), Some(basis)) = (auffrischen_schritt(kabinen_lauf, kabinen_planer.as_ref(), landung, ankunft_min, jetzt), basis) {
             let anfrage = auffrischen_anfrage(basis, landung, start.bezug);
-            auffrischen_holen(app.clone(), Arc::clone(flight), client.clone(), anfrage, start.generation);
+            aus.auffrischen_holen(anfrage, start.generation);
         }
     }
     for (schluessel, slots, anlass) in auftraege {
@@ -2319,8 +2445,38 @@ fn takt_schritt(
             stats.kabinen_lauf.lied.angefragt = true;
             stats.kabinen_lauf.lied.slots = slots.clone();
         }
-        holen(app.clone(), Arc::clone(flight), client.clone(), schluessel, anfrage, slots, false, flugart == Flugart::Bizjet, bezug);
+        aus.drehbuch_holen(schluessel, anfrage, slots, flugart == Flugart::Bizjet, bezug);
     }
+
+    Some(KernStand { flugart, phase: schritt.phase, ruhephase: schritt.ruhephase, verlauf_neu })
+}
+
+fn takt_schritt(
+    app: &AppHandle,
+    flight: &Arc<ActiveFlight>,
+    client: &Client,
+    snap: &SimSnapshot,
+    now: DateTime<Utc>,
+) {
+    let einst = einstellungen(app);
+    let jetzt = now.timestamp();
+    if !einst.an {
+        // Auch „aus“ ist eine Eingangssperre fürs Protokoll (1d).
+        sperre_pruefen(&mut flight.stats.lock().expect("flight stats"), false, jetzt);
+        return;
+    }
+    // Eigene Musik vor der Abflug-Anfrage prüfen (Design §5), ohne Sperre.
+    let eigene = if einst.boarding_musik { eigene_lesen(flight) } else { None };
+    // Verlaufsdatei ohne Flugdaten-Sperre lesen (v2.0.28: das Lesen hielt die
+    // Sperre beim ersten Takt bis 39 ms, Diagnose Pilot 1 und 4).
+    let geladen = flight.stats.lock().expect("flight stats").kabinen_lauf.verlauf_geladen;
+    let alt = if geladen { None } else { Some(verlauf_datei_lesen(app, flight)) };
+    let mut stats = flight.stats.lock().expect("flight stats");
+    if let Some(alt) = alt {
+        verlauf_uebernehmen(&mut stats.kabinen_lauf, alt);
+    }
+    let Some(kern) = takt_kern(&mut stats, flight, &einst, snap, now, eigene, &mut NetzAusgang { app, flight, client }) else { return };
+    let KernStand { flugart, phase, ruhephase, mut verlauf_neu } = kern;
 
     // ---- Ton: das Dringendste zuerst, höchstens zwei zugleich ----
     ton_pumpe(app, flight, &mut stats, &einst, flugart, jetzt);
@@ -2330,8 +2486,8 @@ fn takt_schritt(
     // (auch bei Flügen ohne Ruhephase, Advisor beta.7).
     let tief_nach_start = !snap.on_ground
         && snap.altitude_msl_ft < 10_000.0
-        && cabin_announcements::planer::rang(schritt.phase) < cabin_announcements::planer::rang(FlightPhase::Cruise);
-    let (gespielt, neu) = abspielen_schritt(&mut stats, jetzt, schritt.phase, schritt.ruhephase, tief_nach_start);
+        && cabin_announcements::planer::rang(phase) < cabin_announcements::planer::rang(FlightPhase::Cruise);
+    let (gespielt, neu) = abspielen_schritt(&mut stats, jetzt, phase, ruhephase, tief_nach_start);
     verlauf_neu |= neu;
     wartegruende_notieren(&mut stats.kabinen_lauf, jetzt);
     if let Some(g) = &gespielt {
@@ -2340,7 +2496,7 @@ fn takt_schritt(
         let details = serde_json::json!({
             "dauer_s": g.teile.iter().map(|t| t.dauer_s).sum::<f64>(),
             "sprachen": g.teile.iter().map(|t| t.sprache.clone()).collect::<Vec<_>>(),
-            "phase": schritt.phase,
+            "phase": phase,
             "hoehe_ft": snap.altitude_msl_ft.round(),
             "auffrischung": auffrischung,
         });
@@ -2361,6 +2517,80 @@ fn takt_schritt(
         tracing::warn!(error = %e, "kabinenansage: Anzeige-Ereignis nicht zustellbar");
     }
     ablauf_starten(app, flight, gespielt.id);
+}
+
+/// Welche Drehbücher (Texte, Lied) dieser Takt bestellt: nur, was auf diesem
+/// Flug noch kommt. Ohne Freigabe (`Beta::Ja`) nichts, auch kein Lied — der
+/// Takt kommt dann gar nicht hierher, die Prüfung hier sichert es zusätzlich.
+fn auftraege_sammeln(
+    stats: &mut FlightStats,
+    faellig: &[Faellig],
+    flugart: Flugart,
+    phase: FlightPhase,
+    rest_min: Option<f64>,
+    boarding_musik: bool,
+    jetzt: i64,
+) -> Vec<(String, Vec<Slot>, u32)> {
+    let mut auftraege: Vec<(String, Vec<Slot>, u32)> = Vec::new();
+    if stats.kabinen_lauf.beta != Beta::Ja {
+        return auftraege;
+    }
+    stats.kabinen_lauf.warteschlange.aufnehmen(faellig.to_vec());
+    let wartend = stats.kabinen_lauf.warteschlange.wartend();
+    let kommt = |s: &Slot| flugart.erlaubt(*s) && kommt_noch(&stats, &wartend, *s);
+    let abflug: Vec<Slot> = ABFLUG.into_iter().filter(kommt).collect();
+    let ankunft: Vec<Slot> = ANKUNFT.into_iter().filter(kommt).collect();
+    let halbzeit_kommt = kommt(&Slot::Reiseflug50);
+    let halbzeit_um = stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(Slot::Reiseflug50, stats.landung_erwartet));
+    let r = cabin_announcements::planer::rang(phase);
+    let kurz = stats.kabinen_planer.as_ref().is_some_and(|p| p.ist_kurzstrecke());
+    // Ankunft: in der Luft und kurz vor der Landung (bzw. im Sinkflug).
+    // Kurzstrecke: gleich nach dem Abheben, sonst bliebe zu wenig Zeit.
+    let ankunft_jetzt = r >= cabin_announcements::planer::rang(FlightPhase::Takeoff)
+        && (kurz
+            || rest_min.is_some_and(|m| m <= ANKUNFT_TEXT_VOR_LANDUNG_MIN as f64)
+            || r >= cabin_announcements::planer::rang(FlightPhase::Descent));
+    let lauf = &mut stats.kabinen_lauf;
+    if !abflug.is_empty() && darf_anfragen(lauf, "abflug", jetzt) {
+        lauf.angefragt.insert("abflug".into());
+        auftraege.push(("abflug".into(), abflug, 0));
+    }
+    // Halbzeit (Zusatz H): im Reiseflug, Vorlauf vor ihrem Zeitpunkt. Ein
+    // Flug ohne Halbzeit-Ansage (Kurzstrecke) fragt nie an.
+    let halbzeit_jetzt = halbzeit_anfragen(halbzeit_kommt, phase, halbzeit_um, jetzt);
+    if halbzeit_jetzt && darf_anfragen(lauf, "halbzeit", jetzt) {
+        lauf.angefragt.insert("halbzeit".into());
+        auftraege.push(("halbzeit".into(), HALBZEIT.to_vec(), 0));
+    }
+    if ankunft_jetzt && !ankunft.is_empty() && darf_anfragen(lauf, "ankunft", jetzt) {
+        lauf.angefragt.insert("ankunft".into());
+        auftraege.push(("ankunft".into(), ankunft, 0));
+    }
+    // Lied nachfragen, wenn das Modul keine Zeit mehr hatte (einmal). Ohne
+    // Abflug-Slots (Lied kam ueber den Teil „lied“) wieder ueber „lied“.
+    if lauf.lied.nochmal_ab.is_some_and(|ab| jetzt >= ab) && lauf.lied.vorlage.is_none() {
+        lauf.lied.nochmal_ab = None;
+        if lauf.lied.slots.is_empty() {
+            auftraege.push(("lied".into(), Vec::new(), 0));
+        } else {
+            auftraege.push(("abflug:lied".into(), lauf.lied.slots.clone(), 0));
+        }
+    }
+    // Update oder Neustart mitten im Flug: Kein Abflug-Drehbuch traegt das
+    // Lied mehr, also eine eigene Anfrage „lied“ (Modul ab 2.1.3), solange
+    // die Musik noch kommt (Thomas 19.10.2026).
+    let abflug_dabei = auftraege.iter().any(|(s, _, _)| s.starts_with("abflug"));
+    if lied_einzeln_anfragen(lauf, boarding_musik, phase, abflug_dabei, jetzt) {
+        lauf.angefragt.insert("lied".into());
+        auftraege.push(("lied".into(), Vec::new(), 0));
+    }
+    for f in faellig.iter().filter(|f| ist_ereignis(f.slot)) {
+        lauf.anlass += 1;
+        let schluessel = format!("ereignis:{}", lauf.anlass);
+        lauf.angefragt.insert(schluessel.clone());
+        auftraege.push((schluessel, vec![f.slot], lauf.anlass));
+    }
+    auftraege
 }
 
 /// Hinweis an den Piloten (Thomas 18.10.2026): Steht das Anschnallzeichen im
@@ -3951,6 +4181,8 @@ pub(crate) enum Freigabe {
     Pruefung,
     NichtErreichbar { um: i64 },
     Kontingent,
+    /// Für diesen Flug im Loadsheet abgeschaltet.
+    FlugAus,
 }
 
 /// Die Ablaufzeile oben: Freigabe → Texte → Ton → nächste Ansage.
@@ -4175,6 +4407,8 @@ pub(crate) enum Grund {
     /// Status nicht erreichbar; nächster Versuch um (UTC-Epoch).
     BetaNichtErreichbar(i64),
     NichtFreigeschaltet,
+    /// Der Pilot hat die Ansagen für diesen Flug im Loadsheet abgeschaltet.
+    FlugAus,
     /// Freigeschaltet, Monatsdeckel erreicht: Vorhandenes geht, Neues nicht.
     Kontingent,
     SimAngehalten,
@@ -4194,6 +4428,7 @@ pub(crate) fn grund(an: bool, stats: &FlightStats) -> Option<Grund> {
     let lauf = &stats.kabinen_lauf;
     match lauf.beta {
         Beta::Nein => return Some(Grund::NichtFreigeschaltet),
+        Beta::FlugAus => return Some(Grund::FlugAus),
         Beta::Unbekannt if lauf.beta_netzfehler => return Some(Grund::BetaNichtErreichbar(lauf.beta_naechste_pruefung)),
         Beta::Unbekannt | Beta::Angefragt => return Some(Grund::BetaPruefung),
         Beta::Ja => {}
@@ -4233,6 +4468,7 @@ fn ueberblick_bauen(stats: &FlightStats, einst: &Einstellungen, flug: &cabin_ann
         Beta::Ja if lauf.kontingent_erschoepft => Freigabe::Kontingent,
         Beta::Ja => Freigabe::Ja,
         Beta::Nein => Freigabe::Nein,
+        Beta::FlugAus => Freigabe::FlugAus,
         Beta::Unbekannt if lauf.beta_netzfehler => Freigabe::NichtErreichbar { um: lauf.beta_naechste_pruefung },
         _ => Freigabe::Pruefung,
     };
@@ -6310,6 +6546,329 @@ mod tests {
         assert_eq!(gewaehlt, vec![Slot::Turbulenz], "ohne Fälliges höchstens die freien Plätze");
     }
 
+    /// Haken im Loadsheet: `flug_aus` geht vor `beta` (der Server sendet
+    /// dazu `beta: false`) — still für diesen Flug, nicht „gesperrt“.
+    /// Gegenprobe: ohne bzw. mit falschem `flug_aus` wie bisher.
+    #[test]
+    fn flug_aus_aus_dem_loadsheet_geht_vor_beta() {
+        let status = |v: serde_json::Value| -> Result<api_client::KabinenStatus, String> { Ok(serde_json::from_value(v).unwrap()) };
+        let mut st = FlightStats::new();
+        st.flight_type = Some("J".into());
+        st.pax_count = Some(150);
+        for v in [
+            serde_json::json!({ "beta": false, "bereit": true, "flug_aus": true }),
+            serde_json::json!({ "beta": true, "bereit": true, "flug_aus": true }),
+        ] {
+            st.kabinen_lauf = Lauf::default();
+            status_uebernehmen(&mut st.kabinen_lauf, status(v), 0);
+            assert_eq!(st.kabinen_lauf.beta, Beta::FlugAus);
+            assert_eq!(grund(true, &st), Some(Grund::FlugAus));
+            assert_eq!(sperre_name(true, &st), Some("flug_aus"));
+            assert!(!kabine_haelt_abgabe(&mut st, true, 0), "hält die Abgabe nicht auf");
+        }
+        assert_eq!(serde_json::to_value(Grund::FlugAus).unwrap(), serde_json::json!({ "grund": "flug_aus" }));
+        assert_eq!(serde_json::to_value(Freigabe::FlugAus).unwrap(), serde_json::json!({ "art": "flug_aus" }));
+
+        for (v, beta) in [
+            (serde_json::json!({ "beta": true, "bereit": true }), Beta::Ja),
+            (serde_json::json!({ "beta": true, "bereit": true, "flug_aus": false }), Beta::Ja),
+            (serde_json::json!({ "beta": false, "bereit": true }), Beta::Nein),
+            (serde_json::json!({ "beta": false, "bereit": true, "flug_aus": false }), Beta::Nein),
+        ] {
+            st.kabinen_lauf = Lauf::default();
+            status_uebernehmen(&mut st.kabinen_lauf, status(v), 0);
+            assert_eq!(st.kabinen_lauf.beta, beta);
+        }
+        assert_eq!(grund(true, &st), Some(Grund::NichtFreigeschaltet), "altes Modul, Konto gesperrt: wie bisher");
+        st.kabinen_lauf = Lauf::default();
+        status_uebernehmen(&mut st.kabinen_lauf, status(serde_json::json!({ "beta": true, "bereit": true })), 0);
+        assert_eq!(grund(true, &st), None, "altes Modul, freigeschaltet: wie bisher");
+    }
+
+    /// Zählt, was der echte Takt-Kern ins Netz schicken würde.
+    #[derive(Default)]
+    struct Zaehler {
+        status: Vec<bool>,
+        pax: usize,
+        auffrischen: usize,
+        drehbuch: Vec<(String, serde_json::Value)>,
+    }
+
+    impl TaktAusgang for Zaehler {
+        fn status_holen(&mut self, erstmals: bool) {
+            self.status.push(erstmals);
+        }
+        fn pax_holen(&mut self) {
+            self.pax += 1;
+        }
+        fn auffrischen_holen(&mut self, _anfrage: serde_json::Value, _generation: u32) {
+            self.auffrischen += 1;
+        }
+        fn drehbuch_holen(&mut self, schluessel: String, anfrage: serde_json::Value, _slots: Vec<Slot>, _bizjet: bool, _bezug: i64) {
+            self.drehbuch.push((schluessel, anfrage));
+        }
+    }
+
+    impl Zaehler {
+        /// Liedabrufe: Teil „lied“ oder ein Drehbuch mit `boarding_lied`.
+        fn lieder(&self) -> usize {
+            self.drehbuch.iter().filter(|(s, a)| s.contains("lied") || a["boarding_lied"] == serde_json::json!(true)).count()
+        }
+    }
+
+    fn test_flug() -> ActiveFlight {
+        use std::sync::atomic::{AtomicU64, AtomicU8};
+        use std::sync::Mutex;
+        ActiveFlight {
+            pirep_id: "P1".into(),
+            bid_id: 0,
+            flight_id: String::new(),
+            bid_callsign: None,
+            pilot_callsign: None,
+            started_at: Utc::now(),
+            airline_icao: "DLH".into(),
+            planned_registration: String::new(),
+            aircraft_icao: "A320".into(),
+            aircraft_name: String::new(),
+            flight_number: "100".into(),
+            dpt_airport: "EDDF".into(),
+            arr_airport: "EDDM".into(),
+            planned_flight_time_min: Some(45),
+            plan_strecke_nm: None,
+            airline_logo_url: None,
+            fares: Vec::new(),
+            stats: crate::stats_sperre::GemesseneSperre::new(FlightStats::new()),
+            stop: AtomicBool::new(false),
+            was_just_resumed: AtomicBool::new(false),
+            streamer_spawned: AtomicBool::new(false),
+            cancelled_remotely: AtomicBool::new(false),
+            position_outbox: Mutex::new(std::collections::VecDeque::new()),
+            positionen_nachsenden: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+            start_sperre: Mutex::new(()),
+            phpvms_worker_spawned: AtomicBool::new(false),
+            touchdown_sampler_spawned: AtomicBool::new(false),
+            connection_state: AtomicU8::new(crate::CONN_STATE_LIVE),
+            navdata: Mutex::new(crate::NavdataCache::default()),
+        }
+    }
+
+    /// Boarding, Lied fällig, Freigabe `beta`; `abflug_schon`: das
+    /// Abflug-Drehbuch ist schon bestellt (dann kommt das Lied einzeln).
+    fn kern_stats(beta: Beta, abflug_schon: bool) -> FlightStats {
+        let mut st = musik_stats("J", Some(150));
+        st.kabinen_lauf.beta = beta;
+        st.kabinen_lauf.verlauf_geladen = true;
+        st.kabinen_lauf.lied.platte_geprueft = true;
+        st.kabinen_lauf.musik_quelle = Some(MusikQuelle::Lied);
+        if abflug_schon {
+            st.kabinen_lauf.angefragt.insert("abflug".into());
+        }
+        st
+    }
+
+    fn kern(st: &mut FlightStats, snap: &SimSnapshot, jetzt: i64) -> (Option<KernStand>, Zaehler) {
+        let mut z = Zaehler::default();
+        let now = DateTime::<Utc>::from_timestamp(jetzt, 0).unwrap();
+        let k = takt_kern(st, &test_flug(), &Einstellungen::default(), snap, now, None, &mut z);
+        (k, z)
+    }
+
+    /// Echter Takt-Kern bei Haken im Loadsheet: null Drehbuch-, null
+    /// Liedaufrufe, Musik aus. Gegenprobe `Ja`: Abflug-Drehbuch mit Lied
+    /// bzw. eigene Liedanfrage, Musik nicht aus.
+    #[test]
+    fn flug_aus_bestellt_im_takt_nichts_und_die_musik_ist_aus() {
+        let jetzt = 1_000;
+        for abflug_schon in [false, true] {
+            let mut aus = kern_stats(Beta::FlugAus, abflug_schon);
+            aus.kabinen_lauf.beta_naechste_pruefung = jetzt + 100;
+            let (k, z) = kern(&mut aus, &gate_snap(false), jetzt);
+            assert!(k.is_none(), "der Takt endet an der Freigabe");
+            assert!(z.drehbuch.is_empty(), "kein Drehbuch: {:?}", z.drehbuch.iter().map(|d| &d.0).collect::<Vec<_>>());
+            assert_eq!(z.lieder(), 0);
+            assert_eq!((z.pax, z.auffrischen, z.status.len()), (0, 0, 0));
+            assert!(!aus.kabinen_lauf.lied.angefragt);
+            assert_eq!(musik_schritt(&mut aus, &gate_snap(false), "A320", None, jetzt), (MusikTun::Aus, None));
+
+            let mut ja = kern_stats(Beta::Ja, abflug_schon);
+            ja.kabinen_lauf.beta_naechste_pruefung = jetzt + 100;
+            let (k, z) = kern(&mut ja, &gate_snap(false), jetzt);
+            assert!(k.is_some());
+            let teile: Vec<&str> = z.drehbuch.iter().map(|d| d.0.as_str()).collect();
+            if abflug_schon {
+                assert!(teile.contains(&"lied"), "Gegenprobe eigene Liedanfrage: {teile:?}");
+            } else {
+                assert!(teile.contains(&"abflug"), "Gegenprobe Abflug: {teile:?}");
+            }
+            assert_eq!(z.lieder(), 1, "Gegenprobe Lied: {teile:?}");
+            assert_ne!(musik_schritt(&mut ja, &gate_snap(false), "A320", None, jetzt).0, MusikTun::Aus);
+        }
+    }
+
+    /// Pause, Slew, Replay: Die Auffrischung läuft weiter (der Haken soll auch
+    /// dann greifen), der Kabinenablauf steht.
+    #[test]
+    fn auffrischung_laeuft_auch_in_pause_und_replay() {
+        let pause = SimSnapshot { paused: true, ..gate_snap(false) };
+        for beta in [Beta::Ja, Beta::FlugAus] {
+            let mut st = kern_stats(beta, false);
+            let (k, z) = kern(&mut st, &pause, 1_000);
+            assert!(k.is_none());
+            assert_eq!(z.status, vec![false], "Auffrischung trotz Pause");
+            assert!(z.drehbuch.is_empty(), "Ablauf steht");
+            let (_, z) = kern(&mut st, &pause, 1_001);
+            assert!(z.status.is_empty(), "nie zwei zugleich");
+        }
+        // Slew getrennt (Codex 25.10.2026): eigener Rücksprung-Grund.
+        let slew = SimSnapshot { slew_mode: true, ..gate_snap(false) };
+        for beta in [Beta::Ja, Beta::FlugAus] {
+            let mut st = kern_stats(beta, false);
+            let (k, z) = kern(&mut st, &slew, 1_000);
+            assert!(k.is_none());
+            assert_eq!(z.status, vec![false], "Auffrischung trotz Slew");
+            assert!(z.drehbuch.is_empty(), "Ablauf steht im Slew");
+        }
+        let mut st = kern_stats(Beta::Ja, false);
+        st.replay_verdacht = true;
+        let (k, z) = kern(&mut st, &gate_snap(false), 1_000);
+        assert!(k.is_none() && z.drehbuch.is_empty());
+        assert_eq!(z.status, vec![false], "Auffrischung trotz Replay");
+        let mut st = kern_stats(Beta::Unbekannt, false);
+        let (_, z) = kern(&mut st, &pause, 0);
+        assert_eq!(z.status, vec![true], "erste Abfrage auch in der Pause");
+    }
+
+    /// Zählt die globale Abschaltung.
+    #[derive(Default, Debug, PartialEq)]
+    struct AbZaehler {
+        ansage: usize,
+        reaktionen: usize,
+        musik: usize,
+    }
+
+    impl Abschalter for AbZaehler {
+        fn ansage_stoppen(&mut self) {
+            self.ansage += 1;
+        }
+        fn reaktionen_aus(&mut self) {
+            self.reaktionen += 1;
+        }
+        fn musik_aus(&mut self) {
+            self.musik += 1;
+        }
+    }
+
+    /// Abschaltung nur für den laufenden Flug, über die echte Verdrahtung
+    /// mit `active_flight` (Codex 25.10.2026): eigener Flug → abgeschaltet;
+    /// anderer Flug eingetragen (Flugwechsel) oder keiner → nichts.
+    #[test]
+    fn abschaltung_nur_fuer_den_laufenden_flug() {
+        let a = Arc::new(test_flug());
+        let b = Arc::new(test_flug());
+        let aktiv = std::sync::Mutex::new(Some(Arc::clone(&a)));
+        let alles = AbZaehler { ansage: 1, reaktionen: 1, musik: 1 };
+
+        let mut ab = AbZaehler::default();
+        assert!(abschalten_wenn_aktiv(&aktiv, &a, &mut ab));
+        assert_eq!(ab, alles, "eigener Flug: alles aus");
+
+        // Flug A beendet, B gestartet: die späte Antwort von A trifft B nicht.
+        *aktiv.lock().unwrap() = Some(Arc::clone(&b));
+        let mut ab = AbZaehler::default();
+        assert!(!abschalten_wenn_aktiv(&aktiv, &a, &mut ab));
+        assert_eq!(ab, AbZaehler::default(), "anderer Flug: nichts");
+
+        *aktiv.lock().unwrap() = None;
+        let mut ab = AbZaehler::default();
+        assert!(!abschalten_wenn_aktiv(&aktiv, &a, &mut ab));
+        assert_eq!(ab, AbZaehler::default(), "kein Flug: nichts");
+        // Die Sperre ist danach wieder frei (kein Hänger).
+        assert!(aktiv.try_lock().is_ok());
+    }
+
+    /// Haken mitten im Flug gesetzt und wieder weggenommen: Ja → FlugAus
+    /// (laufende Ansage, Reaktionen und Musik gestoppt, Wartendes still,
+    /// nichts kommt nach) → Ja (wieder frei). Alle 5 min eine Auffrischung,
+    /// nie zwei zugleich, Netzfehler warten die Frist ab; „gesperrt“ mitten
+    /// im Flug ändert wie bisher nichts. Die späte Antwort eines beendeten
+    /// Flugs schaltet nichts ab.
+    #[test]
+    fn haken_im_flug_ja_flug_aus_ja() {
+        // Wie die Antwort im Betrieb ankommt: Stand übernehmen, dann ggf.
+        // global abschalten.
+        let antwort = |st: &mut FlightStats, erstmals: bool, v: Result<serde_json::Value, &str>, jetzt: i64, noch_aktiv: bool| -> (Option<bool>, AbZaehler) {
+            let ergebnis = v.map(|v| serde_json::from_value::<api_client::KabinenStatus>(v).unwrap());
+            let r = status_antwort(st, erstmals, ergebnis, jetzt);
+            let mut ab = AbZaehler::default();
+            if r.is_some() {
+                flug_aus_abschalten(noch_aktiv, &mut ab);
+            }
+            (r, ab)
+        };
+        let nichts = AbZaehler::default();
+        let alles = AbZaehler { ansage: 1, reaktionen: 1, musik: 1 };
+        let snap = gate_snap(false);
+
+        let mut st = kern_stats(Beta::Unbekannt, true);
+        let (_, z) = kern(&mut st, &snap, 0);
+        assert_eq!(z.status, vec![true], "erste Abfrage");
+        assert_eq!(antwort(&mut st, true, Ok(serde_json::json!({ "beta": true, "bereit": true })), 0, true), (None, nichts));
+        assert_eq!(st.kabinen_lauf.beta, Beta::Ja);
+        assert!(kern(&mut st, &snap, STATUS_AUFFRISCHEN_S - 1).1.status.is_empty());
+        assert_eq!(kern(&mut st, &snap, STATUS_AUFFRISCHEN_S).1.status, vec![false]);
+        assert!(kern(&mut st, &snap, STATUS_AUFFRISCHEN_S + 1).1.status.is_empty(), "eine Anfrage zugleich");
+        assert_eq!(antwort(&mut st, false, Err("netz weg"), 310, true), (None, AbZaehler::default()));
+        assert_eq!(st.kabinen_lauf.beta, Beta::Ja, "Netzfehler: bleibt");
+        assert!(kern(&mut st, &snap, 309 + STATUS_AUFFRISCHEN_S).1.status.is_empty(), "kein Spam");
+        assert_eq!(kern(&mut st, &snap, 310 + STATUS_AUFFRISCHEN_S).1.status, vec![false]);
+        assert_eq!(antwort(&mut st, false, Ok(serde_json::json!({ "beta": false, "bereit": true })), 620, true), (None, AbZaehler::default()));
+        assert_eq!(st.kabinen_lauf.beta, Beta::Ja, "gesperrt mitten im Flug: wie bisher");
+
+        // Haken gesetzt, während eine Ansage läuft und eine wartet.
+        st.kabinen_lauf.verlauf.push(Gespielt { id: 1, slot: Slot::Reiseflug50, rolle: Rolle::Kapitaen, zeit: 0, teile: vec![], vorschau: false, ergebnis: None, gestartet: true, grund: None });
+        st.kabinen_lauf.naechste_id = 1;
+        st.kabinen_lauf.warteschlange.aufnehmen([Faellig { slot: Slot::Turbulenz, verfall: cabin_announcements::Verfall::Um(9_999), trotz_ruhephase: false }]);
+        assert_eq!(kern(&mut st, &snap, 920).1.status, vec![false]);
+        let an = || Ok(serde_json::json!({ "beta": false, "bereit": true, "flug_aus": true }));
+        assert_eq!(antwort(&mut st, false, an(), 925, true), (Some(true), alles), "Ansage, Reaktionen und Musik gestoppt");
+        assert_eq!(st.kabinen_lauf.beta, Beta::FlugAus);
+        assert!(st.kabinen_lauf.warteschlange.ist_leer(), "nichts kommt nach");
+        assert!(st.kabinen_lauf.verlauf.iter().all(|g| g.ergebnis.as_deref() == Some("stumm")));
+        assert_eq!(grund(true, &st), Some(Grund::FlugAus));
+        let (k, z) = kern(&mut st, &snap, 930);
+        assert!(k.is_none() && z.drehbuch.is_empty() && z.lieder() == 0, "keine Abrufe mehr");
+        assert_eq!(musik_schritt(&mut st, &snap, "A320", None, 930).0, MusikTun::Aus);
+        assert!(!kabine_haelt_abgabe(&mut st, true, 930));
+        // Noch einmal „flug_aus“: schon still, nichts mehr abzuschalten.
+        assert_eq!(antwort(&mut st, false, an(), 940, true), (None, AbZaehler::default()));
+
+        // Späte Antwort eines beendeten Flugs: sein Stand wechselt, der
+        // laufende (andere) Flug wird nicht abgeschaltet.
+        let mut alt = kern_stats(Beta::Ja, true);
+        assert_eq!(antwort(&mut alt, false, an(), 950, false), (Some(false), AbZaehler::default()));
+
+        // Ein Abflug-Drehbuch, das vor dem Haken scheiterte und erst spät
+        // wieder dran wäre.
+        st.kabinen_lauf.angefragt.remove("abflug");
+        st.kabinen_lauf.fehlversuche.insert("abflug".into(), (1, 99_999));
+
+        // Haken wieder weg: frei, bestellt sofort wieder (Entscheidung 6).
+        assert_eq!(kern(&mut st, &snap, 940 + STATUS_AUFFRISCHEN_S).1.status, vec![false]);
+        let weg = Ok(serde_json::json!({ "beta": true, "bereit": true, "flug_aus": false }));
+        assert_eq!(antwort(&mut st, false, weg, 1250, true), (None, AbZaehler::default()));
+        assert_eq!(st.kabinen_lauf.beta, Beta::Ja);
+        assert_eq!(grund(true, &st), None);
+        let (k, z) = kern(&mut st, &snap, 1251);
+        assert!(k.is_some() && z.drehbuch.iter().any(|d| d.0 == "abflug"), "bestellt wieder: {:?}", z.drehbuch.iter().map(|d| &d.0).collect::<Vec<_>>());
+
+        // Haken weg, Konto inzwischen gesperrt: „gesperrt“, nicht frei.
+        st.kabinen_lauf.beta = Beta::FlugAus;
+        antwort(&mut st, false, Ok(serde_json::json!({ "beta": false, "bereit": true })), 2000, true);
+        assert_eq!(st.kabinen_lauf.beta, Beta::Nein);
+        assert!(kern(&mut st, &snap, 9_999).1.status.is_empty(), "Nein bleibt, wie bisher");
+    }
+
     #[test]
     fn grund_nennt_die_erste_sperre() {
         let mut st = FlightStats::new();
@@ -6324,6 +6883,8 @@ mod tests {
         assert_eq!(grund(true, &st), Some(Grund::BetaNichtErreichbar(1234)));
         st.kabinen_lauf.beta = Beta::Nein;
         assert_eq!(grund(true, &st), Some(Grund::NichtFreigeschaltet));
+        st.kabinen_lauf.beta = Beta::FlugAus;
+        assert_eq!(grund(true, &st), Some(Grund::FlugAus));
         st.kabinen_lauf.beta = Beta::Ja;
         assert_eq!(grund(true, &st), Some(Grund::KeinePax), "Fall Thomas: Wechsel mitten im Flug");
         st.pax_count = Some(0);

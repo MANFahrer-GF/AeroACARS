@@ -81,6 +81,7 @@ export type Grund =
         | "keine_passagiere"
         | "beta_pruefung"
         | "nicht_freigeschaltet"
+        | "flug_aus"
         | "kontingent"
         | "sim_angehalten";
     }
@@ -89,6 +90,8 @@ export type Grund =
 export interface Zustand {
   beta: boolean | null;
   kontingent_erschoepft: boolean | null;
+  /** Für den laufenden Flug im Loadsheet abgeschaltet; geht vor `beta`. */
+  flug_aus: boolean | null;
 }
 
 export interface Speicher {
@@ -139,7 +142,7 @@ export type TeilStand =
   | { art: "aufgegeben"; meldung: string };
 
 export type Freigabe =
-  | { art: "ja" | "nein" | "pruefung" | "kontingent" }
+  | { art: "ja" | "nein" | "pruefung" | "kontingent" | "flug_aus" }
   | { art: "nicht_erreichbar"; um: number };
 
 export interface Ablauf {

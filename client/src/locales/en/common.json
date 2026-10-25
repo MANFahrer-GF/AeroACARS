@@ -6,6 +6,7 @@
       "an_hint": "AI announcements by captain and cabin crew in the airline's style. The GSG server writes the texts.",
       "beta_ja": "Enabled for your account.",
       "beta_nein": "Blocked for your account.",
+      "beta_flug_aus": "Switched off for this flight on the loadsheet.",
       "beta_unbekannt": "Access is checked when the flight starts.",
       "zweite_sprache": "Languages",
       "sprache_airline": "Airline's language + English",
@@ -145,6 +146,10 @@
         "titel": "Blocked",
         "text": "Cabin announcements are blocked for your account. Please contact the GSG team."
       },
+      "flug_aus": {
+        "titel": "Off for this flight",
+        "text": "Switched off for this flight on the loadsheet."
+      },
       "wiedergabe": {
         "titel": "Audio could not be played",
         "text": "The announcement was ready but could not be played. Is the selected output device busy or unplugged? You can pick another device or the system default in the settings. Message:"
@@ -226,6 +231,7 @@
         "nein": "not enabled",
         "pruefung": "being checked",
         "kontingent": "enabled, monthly quota used up",
+        "flug_aus": "switched off for this flight on the loadsheet",
         "nicht_erreichbar": "server unreachable, next try {{zeit}}"
       },
       "teil": {

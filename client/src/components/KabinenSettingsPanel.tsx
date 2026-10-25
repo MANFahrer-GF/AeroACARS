@@ -89,8 +89,11 @@ export function KabinenSettingsPanel({ onAnChange }: { onAnChange?: (an: boolean
       abspielen(await probe(rolle, sprache));
     });
 
+  // `flug_aus` zuerst: Der Server sendet dazu `beta: false`.
   const betaText =
-    z?.beta === true && z.kontingent_erschoepft
+    z?.flug_aus === true
+      ? t("kabine.einstellungen.beta_flug_aus")
+      : z?.beta === true && z.kontingent_erschoepft
       ? t("kabine.einstellungen.beta_kontingent")
       : z?.beta === true
       ? t("kabine.einstellungen.beta_ja")
