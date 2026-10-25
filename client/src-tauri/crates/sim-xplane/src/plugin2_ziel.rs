@@ -297,7 +297,11 @@ impl AdapterShared {
             let zaehlt = plan.rollen[li].iter().any(|r| match r {
                 Rolle::Katalog(ci) => addon_quelle(CATALOG[*ci].field),
                 Rolle::Probe(_) => true,
-                Rolle::Profil { .. } => false,
+                // Ersetzung einer Add-on-Quelle (FF757/767-Fluegellicht):
+                // RREF misst sie unter diesem Namen.
+                Rolle::Profil { profil, ci, .. } => {
+                    st.profil == Some(*profil) && addon_quelle(CATALOG[*ci].field)
+                }
             });
             if zaehlt && gilt(plan, &st, web.as_ref(), li) {
                 menge.insert(grundname(&plan.namen[li]).to_string());
@@ -348,10 +352,17 @@ impl AdapterShared {
                     st.kern_nicht_null.remove(&li);
                     if alt != Some(false) {
                         for r in &plan.rollen[li] {
-                            if let Rolle::Katalog(ci) = r {
-                                if addon_quelle(CATALOG[*ci].field) {
-                                    leeren.push(CATALOG[*ci].field);
+                            match *r {
+                                Rolle::Katalog(ci) if addon_quelle(CATALOG[ci].field) => {
+                                    leeren.push(CATALOG[ci].field);
                                 }
+                                Rolle::Profil { profil, ci, .. }
+                                    if st.profil == Some(profil)
+                                        && addon_quelle(CATALOG[ci].field) =>
+                                {
+                                    leeren.push(CATALOG[ci].field);
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -515,6 +526,7 @@ impl AdapterShared {
             for e in CATALOG.iter().filter(|e| addon_quelle(e.field)) {
                 p.addon_leeren(e.field);
             }
+            p.standard_schilder_vergessen();
         }
     }
 

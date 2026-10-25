@@ -944,10 +944,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
                                             parsed.addon_leeren(e.field);
                                         }
                                     }
-                                    // Standard-Schilder zaehlen erst ab ≠ 0 —
-                                    // je Flugzeug neu.
-                                    parsed.std_anschnallzeichen = None;
-                                    parsed.std_rauchverbot = None;
+                                    parsed.standard_schilder_vergessen();
                                     tracing::info!(
                                         alt,
                                         neu = p.value,
@@ -1662,6 +1659,98 @@ mod klappen_profil_tests {
         assert!(geprueft_eigen >= 2, "CL650 und MD-11");
         *ad.shared.active_catalog.lock() = build_active_catalog(None);
         assert_eq!(raste(&ad), (Some(2), Some(4)), "Profil wieder weg");
+    }
+}
+
+/// Plugin-Pfad (Protokoll 2) mit Profil-Ersetzungen von Add-on-Quellen
+/// (FF757/767, P_-Profile 25.10.2026) — Codex-QS 25.10.2026.
+#[cfg(test)]
+mod plugin_profil_ersetzung_tests {
+    use super::*;
+    use crate::dataref::FieldId;
+    use crate::plugin2::{Ereignis, NameStatus, Typ, Ziel};
+    use crate::plugin2_ziel::ABO_KATALOG;
+
+    fn ff757_mit_plugin(ad: &XPlaneAdapter) -> usize {
+        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let plan = &ad.shared.p2_plan;
+        let li = plan.namen.iter().position(|n| n == "anim/46/button").unwrap();
+        let mut st = ad.shared.p2.lock();
+        st.offen = true;
+        st.status = vec![None; plan.namen.len()];
+        st.status[li] = Some(true);
+        st.profil = Some(pi);
+        li
+    }
+
+    /// Rueckfall auf RREF: der ersetzte Name gilt weiter als bestaetigt.
+    #[test]
+    fn uebergabe_enthaelt_ersetzten_namen_des_aktiven_profils() {
+        let ad = XPlaneAdapter::default();
+        ff757_mit_plugin(&ad);
+        let (_, gilt) = ad.shared.p2_uebergabe();
+        assert!(gilt.contains("anim/46/button"));
+        // Ohne aktives Profil nicht — dann speist der Name nichts.
+        ad.shared.p2.lock().profil = None;
+        let (_, gilt) = ad.shared.p2_uebergabe();
+        assert!(!gilt.contains("anim/46/button"));
+    }
+
+    /// Meldet das Plugin den ersetzten Namen als fehlend, faellt der Wert weg.
+    #[test]
+    fn fehlender_ersetzter_name_leert_das_feld() {
+        let ad = XPlaneAdapter::default();
+        let li = ff757_mit_plugin(&ad);
+        ad.shared.parsed.lock().apply_field(FieldId::FfFluegellicht, 1.0);
+        assert_eq!(ad.shared.parsed.lock().ff_fluegellicht, Some(true));
+        // Titel wie im GSG-Flugprotokoll; das Profil braucht Titel UND Probe.
+        ad.shared.ereignis(Ereignis::Flugzeug {
+            icao: Some("B752".into()),
+            titel: Some("Boeing 757-RF".into()),
+            ui_name: Some("Boeing 757-RF".into()),
+            pfad: Some("Aircraft/Boeing757-Full/757-RF_xp12.acf".into()),
+        });
+        let namen = Arc::clone(&ad.shared.p2_plan.namen);
+        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let probe = ad.shared.p2_plan.probe_index[pi];
+        let da = NameStatus::Da { typ: Typ::Float, laenge: 1 };
+        // Erst Probe und Name „da" (das Profil bleibt aktiv), dann „fehlt".
+        ad.shared.ereignis(Ereignis::Status {
+            abo: ABO_KATALOG,
+            namen: Arc::clone(&namen),
+            st: vec![(probe, da), (li, da)],
+        });
+        assert_eq!(ad.shared.p2.lock().profil, Some(pi));
+        ad.shared.ereignis(Ereignis::Status {
+            abo: ABO_KATALOG,
+            namen,
+            st: vec![(li, NameStatus::Fehlt)],
+        });
+        assert_eq!(ad.shared.parsed.lock().ff_fluegellicht, None);
+    }
+
+    /// Flugzeugwechsel ueber das Plugin: Standard-Schilder zaehlen wieder
+    /// erst ab dem ersten Wert ≠ 0.
+    #[test]
+    fn plugin_flugzeugwechsel_sperrt_standard_schilder() {
+        let ad = XPlaneAdapter::default();
+        ad.shared.p2.lock().offen = true;
+        let melde = |pfad: &str| {
+            ad.shared.ereignis(Ereignis::Flugzeug {
+                icao: None,
+                titel: None,
+                ui_name: None,
+                pfad: Some(pfad.to_string()),
+            })
+        };
+        melde("Aircraft/A/a.acf");
+        ad.shared.parsed.lock().apply_field(FieldId::StdAnschnallzeichen, 2.0);
+        assert_eq!(ad.shared.parsed.lock().std_anschnallzeichen, Some(2.0));
+        melde("Aircraft/B/b.acf");
+        let mut p = ad.shared.parsed.lock();
+        assert_eq!(p.std_anschnallzeichen, None);
+        p.apply_field(FieldId::StdAnschnallzeichen, 0.0);
+        assert_eq!(p.std_anschnallzeichen, None, "0 vom neuen Flugzeug zaehlt nicht");
     }
 }
 

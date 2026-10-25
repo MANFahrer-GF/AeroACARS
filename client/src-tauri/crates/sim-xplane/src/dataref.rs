@@ -1670,6 +1670,13 @@ impl XPlaneState {
         !test && glow.is_some_and(|g| g > 0.01)
     }
 
+    /// Flugzeugwechsel: die Standard-Schilder zaehlen erst wieder ab dem
+    /// ersten Wert ≠ 0 des neuen Flugzeugs.
+    pub fn standard_schilder_vergessen(&mut self) {
+        self.std_anschnallzeichen = None;
+        self.std_rauchverbot = None;
+    }
+
     /// Eine Add-on-Quelle vergessen (Flugzeugwechsel oder nicht bestaetigt):
     /// das Feld faellt auf „nicht vorhanden" zurueck, der Standardwert gilt.
     pub fn addon_leeren(&mut self, field: FieldId) {
@@ -3379,6 +3386,10 @@ mod a333_und_quellen_tests {
         assert_eq!(snap.autopilot_approach, Some(false));
         assert_eq!(snap.autothrottle_on, Some(false));
         s.apply_field(FieldId::Ff777LampenTest, 1.0); // BRT
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).autopilot_master, Some(true));
+        // Lampentest-Quelle vergessen (Flugzeugwechsel): sperrt nicht weiter.
+        s.apply_field(FieldId::Ff777LampenTest, 2.0);
+        s.addon_leeren(FieldId::Ff777LampenTest);
         assert_eq!(s.to_snapshot(Simulator::XPlane12).autopilot_master, Some(true));
     }
 
