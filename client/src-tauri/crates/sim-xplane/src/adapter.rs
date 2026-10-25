@@ -633,12 +633,21 @@ pub(crate) fn grundname(name: &str) -> &str {
 }
 
 /// Alle Datarefs, deren Vorhandensein die Web-API bestaetigen muss:
-/// Add-on-Quellen des Katalogs und die Profil-Proben.
+/// Add-on-Quellen des Katalogs, Profil-Ersetzungen von Add-on-Quellen
+/// (FF757/767 lesen ihr Fluegellicht aus einem anderen Namen als der
+/// Grundeintrag) und die Profil-Proben.
 fn zu_pruefende_datarefs() -> Vec<&'static str> {
     let mut v: Vec<&'static str> = CATALOG
         .iter()
         .filter(|e| addon_quelle(e.field))
         .map(|e| grundname(e.name))
+        .chain(
+            PROFILES
+                .iter()
+                .flat_map(|p| p.overrides.iter())
+                .filter(|o| addon_quelle(o.field))
+                .map(|o| grundname(o.dataref)),
+        )
         .chain(PROFILES.iter().map(|p| grundname(p.probe_dataref)))
         .collect();
     v.sort_unstable();
@@ -1021,7 +1030,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             // Plugin uebernimmt: RREF-Abos abbestellen (freq 0) und die
             // Quellen, die hier galten, als Beleg weiterreichen (Kern-Namen
             // `laminar/…`, siehe `plugin2_ziel::ist_kern`).
-            let vorab: HashSet<String> = CATALOG
+            let vorab: HashSet<String> = active
                 .iter()
                 .filter(|e| {
                     addon_quelle(e.field)
@@ -1116,7 +1125,8 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             vorhanden = shared.addon_vorhanden.lock().clone();
             vorhanden_aus_plugin = false;
             let mut parsed = shared.parsed.lock();
-            for e in CATALOG.iter() {
+            // Aktiver Katalog: mit Profil zaehlt der ersetzte Name.
+            for e in active.iter() {
                 if addon_quelle(e.field)
                     && !eintrag_gilt(e.field, e.name, vorhanden.as_ref(), &ungleich_null)
                 {
@@ -1457,7 +1467,8 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64, basis: String) {
 #[cfg(test)]
 mod quellen_tests {
     use super::{eintrag_gilt, probe_gilt, vorhanden_neu, zu_pruefende_datarefs};
-    use crate::dataref::FieldId;
+    use crate::dataref::{FieldId, CATALOG};
+    use crate::profile::{build_active_catalog, PROFILES};
     use std::collections::HashSet;
 
     fn menge(n: &[&str]) -> HashSet<String> {
@@ -1577,6 +1588,38 @@ mod quellen_tests {
         assert!(liste.contains(&"laminar/A333/transponder/ta_ra_knob_pos"));
         assert!(!liste.iter().any(|n| n.contains('[')));
         assert!(!liste.contains(&"sim/cockpit2/switches/strobe_lights_on"));
+        // Profil-Ersetzungen von Add-on-Quellen (FF757/767) — sonst gaelten
+        // Fluegellicht und Autobrake dort nie.
+        assert!(liste.contains(&"anim/46/button"));
+        assert!(liste.contains(&"anim/rhotery/25"));
+        // Standard-Ersetzungen (FF777-Speedbrake) brauchen keine Pruefung.
+        assert!(!liste.contains(&"sim/cockpit2/controls/speedbrake_ratio"));
+    }
+
+    /// FF757 aktiv, die Web-API kennt nur den ersetzten Namen: im aktiven
+    /// Katalog gilt die Quelle, der FF777-Grundname gilt nicht. Die Lösch-
+    /// Schleife des Listeners prueft den aktiven Katalog — sonst loeschte
+    /// sie das Fluegellicht bei jedem neuen Pruefstand.
+    #[test]
+    fn profil_ersetzung_einer_addon_quelle_gilt_unter_ihrem_namen() {
+        let ff757 = PROFILES.iter().find(|p| p.name == "FlightFactor 757").unwrap();
+        let aktiv = build_active_catalog(Some(ff757));
+        let vorhanden: HashSet<String> = ["anim/46/button", "anim/rhotery/25"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let leer = HashSet::new();
+        for feld in [FieldId::FfFluegellicht, FieldId::FfAutobrake] {
+            let e = aktiv.iter().find(|e| e.field == feld).unwrap();
+            assert!(eintrag_gilt(e.field, e.name, Some(&vorhanden), &leer), "{}", e.name);
+            let grund = CATALOG.iter().find(|e| e.field == feld).unwrap();
+            assert!(!eintrag_gilt(grund.field, grund.name, Some(&vorhanden), &leer));
+        }
+        // Ohne Web-API: der ersetzte Name einmal ≠ 0 genuegt.
+        let mut gesehen = HashSet::new();
+        gesehen.insert("anim/46/button");
+        let e = aktiv.iter().find(|e| e.field == FieldId::FfFluegellicht).unwrap();
+        assert!(eintrag_gilt(e.field, e.name, None, &gesehen));
     }
 }
 
