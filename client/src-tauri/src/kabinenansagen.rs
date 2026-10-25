@@ -1459,6 +1459,19 @@ fn flug_aus_abschalten(noch_aktiv: bool, ab: &mut impl Abschalter) {
     ab.musik_aus();
 }
 
+/// Vergleich „ist `flight` noch der laufende Flug?“ und Abschaltung unter
+/// DERSELBEN Sperre von `active_flight`: Ein neuer Flug kann erst danach
+/// eingetragen werden, die späte Antwort eines beendeten Flugs trifft ihn
+/// also nie (Codex 25.10.2026). Die Abschalter selbst sperren den Flug
+/// nicht (Ausgabe, Reaktionen, Musik haben eigene Zustände). Gibt zurück,
+/// ob abgeschaltet wurde.
+fn abschalten_wenn_aktiv(aktiv: &std::sync::Mutex<Option<Arc<ActiveFlight>>>, flight: &Arc<ActiveFlight>, ab: &mut impl Abschalter) -> bool {
+    let laufend = aktiv.lock().expect("active_flight lock");
+    let noch_aktiv = laufend.as_ref().is_some_and(|a| Arc::ptr_eq(a, flight));
+    flug_aus_abschalten(noch_aktiv, ab);
+    noch_aktiv
+}
+
 /// 1d: Jeder Wechsel der Eingangssperre genau ein Eintrag `gesperrt{grund}`
 /// bzw. `frei`, ohne Wechsel keiner (CDC 8939/ANZ 438: der Takt stand
 /// minutenlang am Eingang, und nichts im Protokoll sagte, warum). Wird die
@@ -2196,8 +2209,9 @@ impl TaktAusgang for NetzAusgang<'_> {
             // Die Abschaltung ist global (Ausgabe, Reaktionen, Musik): nur,
             // wenn dieser Flug noch der laufende ist — sonst träfe die späte
             // Antwort eines beendeten Flugs den nächsten.
-            let noch_aktiv = app.try_state::<AppState>().and_then(|s| aktiver_flug(&s)).is_some_and(|a| Arc::ptr_eq(&a, &flight));
-            flug_aus_abschalten(noch_aktiv, &mut GlobalAbschalter);
+            if let Some(state) = app.try_state::<AppState>() {
+                abschalten_wenn_aktiv(&state.active_flight, &flight, &mut GlobalAbschalter);
+            }
             if let Some(text) = text {
                 verlauf_schreiben(&app, &flight, &text);
             }
@@ -6706,6 +6720,15 @@ mod tests {
             let (_, z) = kern(&mut st, &pause, 1_001);
             assert!(z.status.is_empty(), "nie zwei zugleich");
         }
+        // Slew getrennt (Codex 25.10.2026): eigener Rücksprung-Grund.
+        let slew = SimSnapshot { slew_mode: true, ..gate_snap(false) };
+        for beta in [Beta::Ja, Beta::FlugAus] {
+            let mut st = kern_stats(beta, false);
+            let (k, z) = kern(&mut st, &slew, 1_000);
+            assert!(k.is_none());
+            assert_eq!(z.status, vec![false], "Auffrischung trotz Slew");
+            assert!(z.drehbuch.is_empty(), "Ablauf steht im Slew");
+        }
         let mut st = kern_stats(Beta::Ja, false);
         st.replay_verdacht = true;
         let (k, z) = kern(&mut st, &gate_snap(false), 1_000);
@@ -6734,6 +6757,34 @@ mod tests {
         fn musik_aus(&mut self) {
             self.musik += 1;
         }
+    }
+
+    /// Abschaltung nur für den laufenden Flug, über die echte Verdrahtung
+    /// mit `active_flight` (Codex 25.10.2026): eigener Flug → abgeschaltet;
+    /// anderer Flug eingetragen (Flugwechsel) oder keiner → nichts.
+    #[test]
+    fn abschaltung_nur_fuer_den_laufenden_flug() {
+        let a = Arc::new(test_flug());
+        let b = Arc::new(test_flug());
+        let aktiv = std::sync::Mutex::new(Some(Arc::clone(&a)));
+        let alles = AbZaehler { ansage: 1, reaktionen: 1, musik: 1 };
+
+        let mut ab = AbZaehler::default();
+        assert!(abschalten_wenn_aktiv(&aktiv, &a, &mut ab));
+        assert_eq!(ab, alles, "eigener Flug: alles aus");
+
+        // Flug A beendet, B gestartet: die späte Antwort von A trifft B nicht.
+        *aktiv.lock().unwrap() = Some(Arc::clone(&b));
+        let mut ab = AbZaehler::default();
+        assert!(!abschalten_wenn_aktiv(&aktiv, &a, &mut ab));
+        assert_eq!(ab, AbZaehler::default(), "anderer Flug: nichts");
+
+        *aktiv.lock().unwrap() = None;
+        let mut ab = AbZaehler::default();
+        assert!(!abschalten_wenn_aktiv(&aktiv, &a, &mut ab));
+        assert_eq!(ab, AbZaehler::default(), "kein Flug: nichts");
+        // Die Sperre ist danach wieder frei (kein Hänger).
+        assert!(aktiv.try_lock().is_ok());
     }
 
     /// Haken mitten im Flug gesetzt und wieder weggenommen: Ja → FlugAus
