@@ -152,7 +152,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
         kapitaen_geschlecht: "auto", klang: "lautsprecher", aus: ["boarding"], reaktionen: true,
       }) as T;
     case "kabinen_zustand":
-      return { beta: true, kontingent_erschoepft: false } as T;
+      return { beta: true, kontingent_erschoepft: false, flug_aus: false } as T;
     case "kabinen_speicher":
       return { bytes: 7_400_000, ordner: "~/Library/Caches/aeroacars/kabinenansagen/ton" } as T;
     case "kabinen_anhoeren": {

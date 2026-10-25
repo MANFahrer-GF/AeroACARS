@@ -49,13 +49,15 @@ const ueberblick = {
 };
 
 const aufrufe: { cmd: string; args?: Record<string, unknown> }[] = [];
+// Abweichungen vom Überblick für einen einzelnen Test.
+let anders: Record<string, unknown> = {};
 vi.mock("../../lib/ipc", () => ({
   isTauri: true,
   formatIpcError: (e: unknown) => String(e),
   listen: vi.fn(async () => () => undefined),
   invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     aufrufe.push({ cmd, args });
-    if (cmd === "kabinen_ueberblick") return { ...ueberblick };
+    if (cmd === "kabinen_ueberblick") return { ...ueberblick, ...anders };
     if (cmd === "kabinen_stumm") ueberblick.stumm = Boolean(args?.stumm);
     if (cmd === "kabinen_anhoeren")
       return { id: 99, slot: args?.slot, rolle: "kapitaen", zeit: jetzt, vorschau: true, ergebnis: null,
@@ -80,11 +82,41 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   aufrufe.length = 0;
+  anders = {};
 });
 
 const uhr = (e: number) => new Date(e * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 describe("Seite Kabine", () => {
+  // Haken „keine Kabinenansagen für diesen Flug“ im Loadsheet: eigener
+  // Hinweis, nicht „Für dein Konto gesperrt“ (der Server sendet beta: false).
+  it("nennt den im Loadsheet abgeschalteten Flug, nicht ein gesperrtes Konto", async () => {
+    anders = {
+      beta: null,
+      sprachen: [],
+      grund: { grund: "flug_aus" },
+      ablauf: { ...ueberblick.ablauf, freigabe: { art: "flug_aus" } },
+    };
+    render(<KabinenSeite onOpenSettings={() => undefined} />);
+    const grund = await screen.findByTestId("kabine-grund");
+    expect(grund.textContent).toContain("Für diesen Flug im Loadsheet abgeschaltet.");
+    expect(screen.getByTestId("kabine-ablauf").textContent).toContain("für diesen Flug im Loadsheet abgeschaltet");
+    expect(document.body.textContent).not.toMatch(/Für dein Konto gesperrt|nicht freigeschaltet|kabine\./);
+  });
+
+  it("Gegenprobe: ein gesperrtes Konto heißt weiter „gesperrt“", async () => {
+    anders = {
+      beta: false,
+      sprachen: [],
+      grund: { grund: "nicht_freigeschaltet" },
+      ablauf: { ...ueberblick.ablauf, freigabe: { art: "nein" } },
+    };
+    render(<KabinenSeite onOpenSettings={() => undefined} />);
+    const grund = await screen.findByTestId("kabine-grund");
+    expect(grund.textContent).toContain("für dein Konto gesperrt");
+    expect(document.body.textContent).not.toMatch(/Loadsheet/);
+  });
+
   it("nennt je Ansage Zeitpunkt und echten Stand statt „wird vorbereitet“", async () => {
     render(<KabinenSeite onOpenSettings={() => undefined} />);
     const liste = await screen.findByTestId("kabine-naechste");

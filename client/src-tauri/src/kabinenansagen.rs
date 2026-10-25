@@ -332,6 +332,9 @@ pub(crate) struct Zustand {
     /// Freigeschaltet, aber Monatsdeckel erreicht: vorhandene Texte gehen,
     /// neue nicht (getrennt angezeigt, Punkt 10).
     kontingent_erschoepft: Option<bool>,
+    /// Für den laufenden Flug im Loadsheet abgeschaltet: geht vor `beta`
+    /// (der Server sendet dann `beta: false`, das Konto ist aber frei).
+    flug_aus: Option<bool>,
 }
 
 #[tauri::command]
@@ -339,13 +342,15 @@ pub(crate) async fn kabinen_zustand(
     state: tauri::State<'_, AppState>,
 ) -> Result<Zustand, UiError> {
     let client = state.client.lock().expect("client lock").clone();
+    let pirep_id = state.active_flight.lock().expect("active_flight lock").as_ref().map(|f| f.pirep_id.clone());
     let status = match client {
-        Some(c) => c.kabinen_status().await.ok(),
+        Some(c) => c.kabinen_status(pirep_id.as_deref()).await.ok(),
         None => None,
     };
     Ok(Zustand {
         beta: status.as_ref().map(|s| s.beta),
         kontingent_erschoepft: status.as_ref().map(|s| s.beta && !s.bereit),
+        flug_aus: status.as_ref().map(|s| s.flug_aus),
     })
 }
 
@@ -360,6 +365,8 @@ enum Beta {
     Angefragt,
     Ja,
     Nein,
+    /// Der Pilot hat die Ansagen für diesen Flug im Loadsheet abgeschaltet.
+    FlugAus,
 }
 
 #[derive(Debug, Clone)]
@@ -1306,9 +1313,40 @@ fn sperre_name(an: bool, stats: &FlightStats) -> Option<&'static str> {
         Grund::BetaPruefung => "beta_pruefung",
         Grund::BetaNichtErreichbar(_) => "beta_nicht_erreichbar",
         Grund::NichtFreigeschaltet => "nicht_freigeschaltet",
+        Grund::FlugAus => "flug_aus",
         Grund::SimAngehalten => "sim_angehalten",
         Grund::Kontingent => return None,
     })
+}
+
+/// Antwort der Statusabfrage in den Lauf. `flug_aus` zuerst: Dann sendet
+/// der Server auch `beta: false`, das hiesse sonst „Für dein Konto gesperrt“.
+fn status_uebernehmen<E: std::fmt::Display>(lauf: &mut Lauf, ergebnis: Result<api_client::KabinenStatus, E>, jetzt: i64) {
+    match ergebnis {
+        Ok(s) if s.flug_aus => {
+            lauf.beta = Beta::FlugAus;
+            lauf.beta_netzfehler = false;
+        }
+        // Nur `beta` zählt: Ist der Monatsdeckel erreicht
+        // (`bereit` falsch), liefert der Server bezahlte Texte
+        // weiter aus dem Zwischenspeicher; neue lehnt er ab.
+        Ok(s) if s.beta => {
+            lauf.beta = Beta::Ja;
+            lauf.beta_netzfehler = false;
+            lauf.kontingent_erschoepft = !s.bereit;
+        }
+        Ok(_) => {
+            lauf.beta = Beta::Nein;
+            lauf.beta_netzfehler = false;
+        }
+        Err(e) => {
+            // Netz weg: später noch einmal fragen, bis dahin aus.
+            tracing::info!(error = %e, "kabinenansagen: status nicht erreichbar");
+            lauf.beta = Beta::Unbekannt;
+            lauf.beta_netzfehler = true;
+            lauf.beta_naechste_pruefung = jetzt + 300;
+        }
+    }
 }
 
 /// 1d: Jeder Wechsel der Eingangssperre genau ein Eintrag `gesperrt{grund}`
@@ -2050,7 +2088,7 @@ fn takt_schritt(
     // soll früh wissen, ob das Konto freigeschaltet ist) ----
     match stats.kabinen_lauf.beta {
         Beta::Ja => {}
-        Beta::Angefragt | Beta::Nein => return,
+        Beta::Angefragt | Beta::Nein | Beta::FlugAus => return,
         Beta::Unbekannt => {
             if jetzt < stats.kabinen_lauf.beta_naechste_pruefung {
                 return;
@@ -2059,30 +2097,11 @@ fn takt_schritt(
             drop(stats);
             let (flight, client) = (Arc::clone(flight), client.clone());
             tauri::async_runtime::spawn(async move {
-                let ergebnis = client.kabinen_status().await;
+                // Die PIREP-Nummer steht mit dem Flug fest (alle Wege, die
+                // einen `ActiveFlight` anlegen, nehmen sie vom Server).
+                let ergebnis = client.kabinen_status(Some(&flight.pirep_id)).await;
                 let mut stats = flight.stats.lock().expect("flight stats");
-                let lauf = &mut stats.kabinen_lauf;
-                match ergebnis {
-                    // Nur `beta` zählt: Ist der Monatsdeckel erreicht
-                    // (`bereit` falsch), liefert der Server bezahlte Texte
-                    // weiter aus dem Zwischenspeicher; neue lehnt er ab.
-                    Ok(s) if s.beta => {
-                        lauf.beta = Beta::Ja;
-                        lauf.beta_netzfehler = false;
-                        lauf.kontingent_erschoepft = !s.bereit;
-                    }
-                    Ok(_) => {
-                        lauf.beta = Beta::Nein;
-                        lauf.beta_netzfehler = false;
-                    }
-                    Err(e) => {
-                        // Netz weg: später noch einmal fragen, bis dahin aus.
-                        tracing::info!(error = %e, "kabinenansagen: status nicht erreichbar");
-                        lauf.beta = Beta::Unbekannt;
-                        lauf.beta_netzfehler = true;
-                        lauf.beta_naechste_pruefung = Utc::now().timestamp() + 300;
-                    }
-                }
+                status_uebernehmen(&mut stats.kabinen_lauf, ergebnis, Utc::now().timestamp());
             });
             return;
         }
@@ -3951,6 +3970,8 @@ pub(crate) enum Freigabe {
     Pruefung,
     NichtErreichbar { um: i64 },
     Kontingent,
+    /// Für diesen Flug im Loadsheet abgeschaltet.
+    FlugAus,
 }
 
 /// Die Ablaufzeile oben: Freigabe → Texte → Ton → nächste Ansage.
@@ -4175,6 +4196,8 @@ pub(crate) enum Grund {
     /// Status nicht erreichbar; nächster Versuch um (UTC-Epoch).
     BetaNichtErreichbar(i64),
     NichtFreigeschaltet,
+    /// Der Pilot hat die Ansagen für diesen Flug im Loadsheet abgeschaltet.
+    FlugAus,
     /// Freigeschaltet, Monatsdeckel erreicht: Vorhandenes geht, Neues nicht.
     Kontingent,
     SimAngehalten,
@@ -4194,6 +4217,7 @@ pub(crate) fn grund(an: bool, stats: &FlightStats) -> Option<Grund> {
     let lauf = &stats.kabinen_lauf;
     match lauf.beta {
         Beta::Nein => return Some(Grund::NichtFreigeschaltet),
+        Beta::FlugAus => return Some(Grund::FlugAus),
         Beta::Unbekannt if lauf.beta_netzfehler => return Some(Grund::BetaNichtErreichbar(lauf.beta_naechste_pruefung)),
         Beta::Unbekannt | Beta::Angefragt => return Some(Grund::BetaPruefung),
         Beta::Ja => {}
@@ -4233,6 +4257,7 @@ fn ueberblick_bauen(stats: &FlightStats, einst: &Einstellungen, flug: &cabin_ann
         Beta::Ja if lauf.kontingent_erschoepft => Freigabe::Kontingent,
         Beta::Ja => Freigabe::Ja,
         Beta::Nein => Freigabe::Nein,
+        Beta::FlugAus => Freigabe::FlugAus,
         Beta::Unbekannt if lauf.beta_netzfehler => Freigabe::NichtErreichbar { um: lauf.beta_naechste_pruefung },
         _ => Freigabe::Pruefung,
     };
@@ -6310,6 +6335,45 @@ mod tests {
         assert_eq!(gewaehlt, vec![Slot::Turbulenz], "ohne Fälliges höchstens die freien Plätze");
     }
 
+    /// Haken im Loadsheet: `flug_aus` geht vor `beta` (der Server sendet
+    /// dazu `beta: false`) — still für diesen Flug, nicht „gesperrt“.
+    /// Gegenprobe: ohne bzw. mit falschem `flug_aus` wie bisher.
+    #[test]
+    fn flug_aus_aus_dem_loadsheet_geht_vor_beta() {
+        let status = |v: serde_json::Value| -> Result<api_client::KabinenStatus, String> { Ok(serde_json::from_value(v).unwrap()) };
+        let mut st = FlightStats::new();
+        st.flight_type = Some("J".into());
+        st.pax_count = Some(150);
+        for v in [
+            serde_json::json!({ "beta": false, "bereit": true, "flug_aus": true }),
+            serde_json::json!({ "beta": true, "bereit": true, "flug_aus": true }),
+        ] {
+            st.kabinen_lauf = Lauf::default();
+            status_uebernehmen(&mut st.kabinen_lauf, status(v), 0);
+            assert_eq!(st.kabinen_lauf.beta, Beta::FlugAus);
+            assert_eq!(grund(true, &st), Some(Grund::FlugAus));
+            assert_eq!(sperre_name(true, &st), Some("flug_aus"));
+            assert!(!kabine_haelt_abgabe(&mut st, true, 0), "hält die Abgabe nicht auf");
+        }
+        assert_eq!(serde_json::to_value(Grund::FlugAus).unwrap(), serde_json::json!({ "grund": "flug_aus" }));
+        assert_eq!(serde_json::to_value(Freigabe::FlugAus).unwrap(), serde_json::json!({ "art": "flug_aus" }));
+
+        for (v, beta) in [
+            (serde_json::json!({ "beta": true, "bereit": true }), Beta::Ja),
+            (serde_json::json!({ "beta": true, "bereit": true, "flug_aus": false }), Beta::Ja),
+            (serde_json::json!({ "beta": false, "bereit": true }), Beta::Nein),
+            (serde_json::json!({ "beta": false, "bereit": true, "flug_aus": false }), Beta::Nein),
+        ] {
+            st.kabinen_lauf = Lauf::default();
+            status_uebernehmen(&mut st.kabinen_lauf, status(v), 0);
+            assert_eq!(st.kabinen_lauf.beta, beta);
+        }
+        assert_eq!(grund(true, &st), Some(Grund::NichtFreigeschaltet), "altes Modul, Konto gesperrt: wie bisher");
+        st.kabinen_lauf = Lauf::default();
+        status_uebernehmen(&mut st.kabinen_lauf, status(serde_json::json!({ "beta": true, "bereit": true })), 0);
+        assert_eq!(grund(true, &st), None, "altes Modul, freigeschaltet: wie bisher");
+    }
+
     #[test]
     fn grund_nennt_die_erste_sperre() {
         let mut st = FlightStats::new();
@@ -6324,6 +6388,8 @@ mod tests {
         assert_eq!(grund(true, &st), Some(Grund::BetaNichtErreichbar(1234)));
         st.kabinen_lauf.beta = Beta::Nein;
         assert_eq!(grund(true, &st), Some(Grund::NichtFreigeschaltet));
+        st.kabinen_lauf.beta = Beta::FlugAus;
+        assert_eq!(grund(true, &st), Some(Grund::FlugAus));
         st.kabinen_lauf.beta = Beta::Ja;
         assert_eq!(grund(true, &st), Some(Grund::KeinePax), "Fall Thomas: Wechsel mitten im Flug");
         st.pax_count = Some(0);

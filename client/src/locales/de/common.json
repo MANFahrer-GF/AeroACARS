@@ -6,6 +6,7 @@
       "an_hint": "KI-Ansagen von Kapitän und Kabine im Stil der Airline. Die Texte schreibt der GSG-Server.",
       "beta_ja": "Freigeschaltet.",
       "beta_nein": "Für dein Konto gesperrt.",
+      "beta_flug_aus": "Für diesen Flug im Loadsheet abgeschaltet.",
       "beta_unbekannt": "Freischaltung wird beim Flugstart geprüft.",
       "zweite_sprache": "Sprachen",
       "sprache_airline": "Airline-Sprache + Englisch",
@@ -145,6 +146,10 @@
         "titel": "Gesperrt",
         "text": "Die Kabinenansagen sind für dein Konto gesperrt. Wende dich an das GSG-Team."
       },
+      "flug_aus": {
+        "titel": "Für diesen Flug aus",
+        "text": "Für diesen Flug im Loadsheet abgeschaltet."
+      },
       "wiedergabe": {
         "titel": "Ton nicht abspielbar",
         "text": "Die Ansage war fertig, ließ sich aber nicht abspielen. Ist das gewählte Ausgabegerät belegt oder abgezogen? In den Einstellungen lässt sich ein anderes Gerät oder der Systemstandard wählen. Meldung:"
@@ -226,6 +231,7 @@
         "nein": "nicht freigeschaltet",
         "pruefung": "wird geprüft",
         "kontingent": "freigeschaltet, Monatskontingent erschöpft",
+        "flug_aus": "für diesen Flug im Loadsheet abgeschaltet",
         "nicht_erreichbar": "Server nicht erreichbar, nächster Versuch {{zeit}}"
       },
       "teil": {

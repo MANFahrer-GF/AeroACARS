@@ -778,6 +778,20 @@ pub struct KabinenStatus {
     pub beta: bool,
     #[serde(default)]
     pub bereit: bool,
+    /// Der Pilot hat die Ansagen für diesen Flug im Loadsheet abgeschaltet
+    /// (nur mit `pirep_id`). Der Server sendet dann `beta: false` dazu; der
+    /// Client wertet `flug_aus` zuerst aus. Fehlt bei älteren Modulen.
+    #[serde(default)]
+    pub flug_aus: bool,
+}
+
+/// Pfad der Statusabfrage; mit PIREP-Nummer meldet der Server auch, ob der
+/// Pilot die Ansagen für diesen Flug abgeschaltet hat (`flug_aus`).
+fn kabinen_status_pfad(pirep_id: Option<&str>) -> String {
+    match pirep_id.filter(|id| !id.is_empty()) {
+        Some(id) => format!("/api/kabinenansagen/status?pirep_id={}", urlencoding_escape(id)),
+        None => "/api/kabinenansagen/status".to_string(),
+    }
 }
 
 /// Kabinenansagen (Beta): ein Text des Drehbuchs. `slot` ist der serde-Name
@@ -1736,8 +1750,9 @@ impl Client {
     /// Kabinenansagen (Beta): Darf dieser Pilot die Ansagen nutzen?
     /// `GET /api/kabinenansagen/status` am GSG-Modul. Nur `beta && bereit`
     /// schaltet frei; jeder Fehler heisst „aus“ (Aufrufer entscheidet).
-    pub async fn kabinen_status(&self) -> Result<KabinenStatus, ApiError> {
-        self.get_data("/api/kabinenansagen/status").await
+    /// Mit `pirep_id` (laufender Flug) kommt zusätzlich `flug_aus`.
+    pub async fn kabinen_status(&self, pirep_id: Option<&str>) -> Result<KabinenStatus, ApiError> {
+        self.get_data(&kabinen_status_pfad(pirep_id)).await
     }
 
     /// Kabinenansagen (Beta): die Texte eines Flugteils.
@@ -3075,6 +3090,31 @@ mod positions_wire_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Statusabfrage mit PIREP-Nummer (Haken im Loadsheet): die Nummer steht
+    /// codiert in der Abfrage; ohne Nummer bleibt die alte Form.
+    #[test]
+    fn kabinen_status_fragt_mit_pirep_nummer() {
+        let c = Client::new(Connection::new("https://example.com", "k").unwrap()).unwrap();
+        let url = c.endpoint(&kabinen_status_pfad(Some("a b&c=1"))).unwrap();
+        assert_eq!(url.path(), "/api/kabinenansagen/status");
+        assert_eq!(url.query(), Some("pirep_id=a%20b%26c%3D1"));
+        let url = c.endpoint(&kabinen_status_pfad(Some("Xy-9_z"))).unwrap();
+        assert_eq!(url.query(), Some("pirep_id=Xy-9_z"));
+        for ohne in [None, Some("")] {
+            let url = c.endpoint(&kabinen_status_pfad(ohne)).unwrap();
+            assert_eq!(url.path(), "/api/kabinenansagen/status");
+            assert_eq!(url.query(), None);
+        }
+    }
+
+    #[test]
+    fn kabinen_status_flug_aus_fehlt_bei_altem_modul() {
+        let alt: KabinenStatus = serde_json::from_value(serde_json::json!({ "beta": true, "bereit": true, "version": "1.0" })).unwrap();
+        assert!(alt.beta && alt.bereit && !alt.flug_aus);
+        let neu: KabinenStatus = serde_json::from_value(serde_json::json!({ "beta": false, "bereit": true, "flug_aus": true })).unwrap();
+        assert!(neu.flug_aus && !neu.beta);
+    }
 
     /// Das Profil kommt ohne `rank.subfleets` (1,44 MB, ~8 s bei der GSG).
     /// Geprueft wird die URL, die wirklich rausgeht — Pfad und Abfrage.
