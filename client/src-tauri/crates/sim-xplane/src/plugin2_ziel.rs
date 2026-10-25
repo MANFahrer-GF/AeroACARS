@@ -41,7 +41,9 @@ use crate::dataref::{addon_quelle, FieldId, CATALOG};
 use crate::plugin2::{
     anfrage_liste, zahl_fuer, AboWunsch, Ereignis, NameStatus, Wert, Ziel, MAX_ABO_ID,
 };
-use crate::profile::{build_active_catalog, DatarefOverride, ValueMapping, PROFILES};
+use crate::profile::{
+    build_active_catalog, profil_ersetzungen_leeren, DatarefOverride, ValueMapping, PROFILES,
+};
 use crate::vermessung::P2Messung;
 use crate::web_api::AircraftInfo;
 use crate::zusatz::ZUSATZ_HZ;
@@ -201,6 +203,7 @@ fn profil_neu(shared: &AdapterShared, st: &mut P2Stand, web: Option<&HashSet<Str
             ),
             None => tracing::info!("X-Plane-Plugin: kein Flugzeugprofil — Standardkatalog"),
         }
+        profil_ersetzungen_leeren(&mut shared.parsed.lock(), st.profil, neu);
         st.profil = neu;
         *shared.active_catalog.lock() = build_active_catalog(neu.map(|pi| &PROFILES[pi]));
     }
@@ -297,7 +300,11 @@ impl AdapterShared {
             let zaehlt = plan.rollen[li].iter().any(|r| match r {
                 Rolle::Katalog(ci) => addon_quelle(CATALOG[*ci].field),
                 Rolle::Probe(_) => true,
-                Rolle::Profil { .. } => false,
+                // Ersetzung einer Add-on-Quelle (FF757/767-Fluegellicht):
+                // RREF misst sie unter diesem Namen.
+                Rolle::Profil { profil, ci, .. } => {
+                    st.profil == Some(*profil) && addon_quelle(CATALOG[*ci].field)
+                }
             });
             if zaehlt && gilt(plan, &st, web.as_ref(), li) {
                 menge.insert(grundname(&plan.namen[li]).to_string());
@@ -348,10 +355,17 @@ impl AdapterShared {
                     st.kern_nicht_null.remove(&li);
                     if alt != Some(false) {
                         for r in &plan.rollen[li] {
-                            if let Rolle::Katalog(ci) = r {
-                                if addon_quelle(CATALOG[*ci].field) {
-                                    leeren.push(CATALOG[*ci].field);
+                            match *r {
+                                Rolle::Katalog(ci) if addon_quelle(CATALOG[ci].field) => {
+                                    leeren.push(CATALOG[ci].field);
                                 }
+                                Rolle::Profil { profil, ci, .. }
+                                    if st.profil == Some(profil)
+                                        && addon_quelle(CATALOG[ci].field) =>
+                                {
+                                    leeren.push(CATALOG[ci].field);
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -515,6 +529,7 @@ impl AdapterShared {
             for e in CATALOG.iter().filter(|e| addon_quelle(e.field)) {
                 p.addon_leeren(e.field);
             }
+            p.standard_schilder_vergessen();
         }
     }
 

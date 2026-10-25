@@ -41,7 +41,10 @@ use crate::plugin2_ziel::{
     PluginZugang,
 };
 use crate::premium::{PremiumListener, PremiumStatus, PremiumTouchdown, PREMIUM_UDP_PORT};
-use crate::profile::{build_active_catalog, profile_index_for_title, ActiveEntry, PROFILES};
+use crate::profile::{
+    build_active_catalog, profil_ersetzungen_leeren, profile_index_for_title, ActiveEntry,
+    PROFILES,
+};
 use crate::rref::{decode_response, encode_request};
 use crate::web_api::{AircraftInfo, DrefIdCache, WebApiClient};
 use crate::zusatz::{ZusatzAbos, ZUSATZ_HZ};
@@ -633,12 +636,21 @@ pub(crate) fn grundname(name: &str) -> &str {
 }
 
 /// Alle Datarefs, deren Vorhandensein die Web-API bestaetigen muss:
-/// Add-on-Quellen des Katalogs und die Profil-Proben.
+/// Add-on-Quellen des Katalogs, Profil-Ersetzungen von Add-on-Quellen
+/// (FF757/767 lesen ihr Fluegellicht aus einem anderen Namen als der
+/// Grundeintrag) und die Profil-Proben.
 fn zu_pruefende_datarefs() -> Vec<&'static str> {
     let mut v: Vec<&'static str> = CATALOG
         .iter()
         .filter(|e| addon_quelle(e.field))
         .map(|e| grundname(e.name))
+        .chain(
+            PROFILES
+                .iter()
+                .flat_map(|p| p.overrides.iter())
+                .filter(|o| addon_quelle(o.field))
+                .map(|o| grundname(o.dataref)),
+        )
         .chain(PROFILES.iter().map(|p| grundname(p.probe_dataref)))
         .collect();
     v.sort_unstable();
@@ -935,6 +947,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
                                             parsed.addon_leeren(e.field);
                                         }
                                     }
+                                    parsed.standard_schilder_vergessen();
                                     tracing::info!(
                                         alt,
                                         neu = p.value,
@@ -1017,7 +1030,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             // Plugin uebernimmt: RREF-Abos abbestellen (freq 0) und die
             // Quellen, die hier galten, als Beleg weiterreichen (Kern-Namen
             // `laminar/…`, siehe `plugin2_ziel::ist_kern`).
-            let vorab: HashSet<String> = CATALOG
+            let vorab: HashSet<String> = active
                 .iter()
                 .filter(|e| {
                     addon_quelle(e.field)
@@ -1048,6 +1061,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             // zum ersten RREF-Wert den letzten Plugin-Wert — nichts faellt
             // auf 0. Der Stale-Waechter zaehlt ab dem letzten Plugin-Wert.
             let (profil, gilt) = shared.p2_uebergabe();
+            profil_ersetzungen_leeren(&mut shared.parsed.lock(), active_profile, profil);
             active_profile = profil;
             active = build_active_catalog(profil.map(|pi| &PROFILES[pi]));
             *shared.active_catalog.lock() = active.clone();
@@ -1112,7 +1126,8 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             vorhanden = shared.addon_vorhanden.lock().clone();
             vorhanden_aus_plugin = false;
             let mut parsed = shared.parsed.lock();
-            for e in CATALOG.iter() {
+            // Aktiver Katalog: mit Profil zaehlt der ersetzte Name.
+            for e in active.iter() {
                 if addon_quelle(e.field)
                     && !eintrag_gilt(e.field, e.name, vorhanden.as_ref(), &ungleich_null)
                 {
@@ -1175,6 +1190,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
                     tracing::info!("X-Plane: aircraft changed — resetting to base DataRef catalog")
                 }
             }
+            profil_ersetzungen_leeren(&mut shared.parsed.lock(), active_profile, desired);
             active_profile = desired;
             // Rebuild the active catalog (LE6) and re-subscribe with
             // fresh indices. The probes keep running regardless, so a
@@ -1453,7 +1469,8 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64, basis: String) {
 #[cfg(test)]
 mod quellen_tests {
     use super::{eintrag_gilt, probe_gilt, vorhanden_neu, zu_pruefende_datarefs};
-    use crate::dataref::FieldId;
+    use crate::dataref::{FieldId, CATALOG};
+    use crate::profile::{build_active_catalog, PROFILES};
     use std::collections::HashSet;
 
     fn menge(n: &[&str]) -> HashSet<String> {
@@ -1573,6 +1590,38 @@ mod quellen_tests {
         assert!(liste.contains(&"laminar/A333/transponder/ta_ra_knob_pos"));
         assert!(!liste.iter().any(|n| n.contains('[')));
         assert!(!liste.contains(&"sim/cockpit2/switches/strobe_lights_on"));
+        // Profil-Ersetzungen von Add-on-Quellen (FF757/767) — sonst gaelten
+        // Fluegellicht und Autobrake dort nie.
+        assert!(liste.contains(&"anim/46/button"));
+        assert!(liste.contains(&"anim/rhotery/25"));
+        // Standard-Ersetzungen (FF777-Speedbrake) brauchen keine Pruefung.
+        assert!(!liste.contains(&"sim/cockpit2/controls/speedbrake_ratio"));
+    }
+
+    /// FF757 aktiv, die Web-API kennt nur den ersetzten Namen: im aktiven
+    /// Katalog gilt die Quelle, der FF777-Grundname gilt nicht. Die Lösch-
+    /// Schleife des Listeners prueft den aktiven Katalog — sonst loeschte
+    /// sie das Fluegellicht bei jedem neuen Pruefstand.
+    #[test]
+    fn profil_ersetzung_einer_addon_quelle_gilt_unter_ihrem_namen() {
+        let ff757 = PROFILES.iter().find(|p| p.name == "FlightFactor 757").unwrap();
+        let aktiv = build_active_catalog(Some(ff757));
+        let vorhanden: HashSet<String> = ["anim/46/button", "anim/rhotery/25"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let leer = HashSet::new();
+        for feld in [FieldId::FfFluegellicht, FieldId::FfAutobrake] {
+            let e = aktiv.iter().find(|e| e.field == feld).unwrap();
+            assert!(eintrag_gilt(e.field, e.name, Some(&vorhanden), &leer), "{}", e.name);
+            let grund = CATALOG.iter().find(|e| e.field == feld).unwrap();
+            assert!(!eintrag_gilt(grund.field, grund.name, Some(&vorhanden), &leer));
+        }
+        // Ohne Web-API: der ersetzte Name einmal ≠ 0 genuegt.
+        let mut gesehen = HashSet::new();
+        gesehen.insert("anim/46/button");
+        let e = aktiv.iter().find(|e| e.field == FieldId::FfFluegellicht).unwrap();
+        assert!(eintrag_gilt(e.field, e.name, None, &gesehen));
     }
 }
 
@@ -1615,6 +1664,137 @@ mod klappen_profil_tests {
         assert!(geprueft_eigen >= 2, "CL650 und MD-11");
         *ad.shared.active_catalog.lock() = build_active_catalog(None);
         assert_eq!(raste(&ad), (Some(2), Some(4)), "Profil wieder weg");
+    }
+}
+
+/// Plugin-Pfad (Protokoll 2) mit Profil-Ersetzungen von Add-on-Quellen
+/// (FF757/767, P_-Profile 25.10.2026) — Codex-QS 25.10.2026.
+#[cfg(test)]
+mod plugin_profil_ersetzung_tests {
+    use super::*;
+    use crate::dataref::FieldId;
+    use crate::plugin2::{Ereignis, NameStatus, Typ, Ziel};
+    use crate::plugin2_ziel::ABO_KATALOG;
+
+    fn ff757_mit_plugin(ad: &XPlaneAdapter) -> usize {
+        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let plan = &ad.shared.p2_plan;
+        let li = plan.namen.iter().position(|n| n == "anim/46/button").unwrap();
+        let mut st = ad.shared.p2.lock();
+        st.offen = true;
+        st.status = vec![None; plan.namen.len()];
+        st.status[li] = Some(true);
+        st.profil = Some(pi);
+        li
+    }
+
+    /// Rueckfall auf RREF: der ersetzte Name gilt weiter als bestaetigt.
+    #[test]
+    fn uebergabe_enthaelt_ersetzten_namen_des_aktiven_profils() {
+        let ad = XPlaneAdapter::default();
+        ff757_mit_plugin(&ad);
+        let (_, gilt) = ad.shared.p2_uebergabe();
+        assert!(gilt.contains("anim/46/button"));
+        // Ohne aktives Profil nicht — dann speist der Name nichts.
+        ad.shared.p2.lock().profil = None;
+        let (_, gilt) = ad.shared.p2_uebergabe();
+        assert!(!gilt.contains("anim/46/button"));
+    }
+
+    /// Meldet das Plugin den ersetzten Namen als fehlend, faellt der Wert weg.
+    #[test]
+    fn fehlender_ersetzter_name_leert_das_feld() {
+        let ad = XPlaneAdapter::default();
+        let li = ff757_mit_plugin(&ad);
+        ad.shared.parsed.lock().apply_field(FieldId::FfFluegellicht, 1.0);
+        assert_eq!(ad.shared.parsed.lock().ff_fluegellicht, Some(true));
+        // Titel wie im GSG-Flugprotokoll; das Profil braucht Titel UND Probe.
+        ad.shared.ereignis(Ereignis::Flugzeug {
+            icao: Some("B752".into()),
+            titel: Some("Boeing 757-RF".into()),
+            ui_name: Some("Boeing 757-RF".into()),
+            pfad: Some("Aircraft/Boeing757-Full/757-RF_xp12.acf".into()),
+        });
+        let namen = Arc::clone(&ad.shared.p2_plan.namen);
+        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let probe = ad.shared.p2_plan.probe_index[pi];
+        let da = NameStatus::Da { typ: Typ::Float, laenge: 1 };
+        // Erst Probe und Name „da" (das Profil bleibt aktiv), dann „fehlt".
+        ad.shared.ereignis(Ereignis::Status {
+            abo: ABO_KATALOG,
+            namen: Arc::clone(&namen),
+            st: vec![(probe, da), (li, da)],
+        });
+        assert_eq!(ad.shared.p2.lock().profil, Some(pi));
+        ad.shared.ereignis(Ereignis::Status {
+            abo: ABO_KATALOG,
+            namen,
+            st: vec![(li, NameStatus::Fehlt)],
+        });
+        assert_eq!(ad.shared.parsed.lock().ff_fluegellicht, None);
+    }
+
+    /// Faellt das Profil weg (nur die Probe fehlt), vergisst der Zustand die
+    /// Werte seiner Ersetzungen — der Grundname ueberschriebe sie nie
+    /// (Codex-QS Runde 2).
+    #[test]
+    fn profil_weg_leert_seine_ersetzungen() {
+        let ad = XPlaneAdapter::default();
+        let li = ff757_mit_plugin(&ad);
+        ad.shared.ereignis(Ereignis::Flugzeug {
+            icao: Some("B752".into()),
+            titel: Some("Boeing 757-RF".into()),
+            ui_name: Some("Boeing 757-RF".into()),
+            pfad: Some("Aircraft/Boeing757-Full/757-RF_xp12.acf".into()),
+        });
+        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let probe = ad.shared.p2_plan.probe_index[pi];
+        let namen = Arc::clone(&ad.shared.p2_plan.namen);
+        let da = NameStatus::Da { typ: Typ::Float, laenge: 1 };
+        ad.shared.ereignis(Ereignis::Status {
+            abo: ABO_KATALOG,
+            namen: Arc::clone(&namen),
+            st: vec![(probe, da), (li, da)],
+        });
+        assert_eq!(ad.shared.p2.lock().profil, Some(pi));
+        {
+            let mut p = ad.shared.parsed.lock();
+            p.apply_field(FieldId::FfFluegellicht, 1.0);
+            p.apply_field(FieldId::FfAutobrake, 3.0);
+        }
+        ad.shared.ereignis(Ereignis::Status {
+            abo: ABO_KATALOG,
+            namen,
+            st: vec![(probe, NameStatus::Fehlt)],
+        });
+        assert_eq!(ad.shared.p2.lock().profil, None);
+        let p = ad.shared.parsed.lock();
+        assert_eq!(p.ff_fluegellicht, None);
+        assert_eq!(p.ff_autobrake, None);
+    }
+
+    /// Flugzeugwechsel ueber das Plugin: Standard-Schilder zaehlen wieder
+    /// erst ab dem ersten Wert ≠ 0.
+    #[test]
+    fn plugin_flugzeugwechsel_sperrt_standard_schilder() {
+        let ad = XPlaneAdapter::default();
+        ad.shared.p2.lock().offen = true;
+        let melde = |pfad: &str| {
+            ad.shared.ereignis(Ereignis::Flugzeug {
+                icao: None,
+                titel: None,
+                ui_name: None,
+                pfad: Some(pfad.to_string()),
+            })
+        };
+        melde("Aircraft/A/a.acf");
+        ad.shared.parsed.lock().apply_field(FieldId::StdAnschnallzeichen, 2.0);
+        assert_eq!(ad.shared.parsed.lock().std_anschnallzeichen, Some(2.0));
+        melde("Aircraft/B/b.acf");
+        let mut p = ad.shared.parsed.lock();
+        assert_eq!(p.std_anschnallzeichen, None);
+        p.apply_field(FieldId::StdAnschnallzeichen, 0.0);
+        assert_eq!(p.std_anschnallzeichen, None, "0 vom neuen Flugzeug zaehlt nicht");
     }
 }
 
