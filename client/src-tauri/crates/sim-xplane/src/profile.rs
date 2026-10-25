@@ -349,7 +349,8 @@ const FF757_767_OVERRIDES: &[DatarefOverride] = &[
 /// Profilwechsel: Add-on-Felder, die das bisherige Profil aus einem eigenen
 /// Namen las (FF757/767-Fluegellicht), vergessen — sonst bliebe der letzte
 /// Wert des alten Flugzeugs stehen, weil der Grundname ihn nie ueberschreibt
-/// (Codex-QS 25.10.2026).
+/// (Codex-QS 25.10.2026). Fuehrt das neue Profil dieselbe Ersetzung weiter
+/// (FF757 ↔ FF767), bleibt der Wert — er stammt aus derselben Quelle.
 pub fn profil_ersetzungen_leeren(
     parsed: &mut crate::dataref::XPlaneState,
     alt: Option<usize>,
@@ -361,8 +362,10 @@ pub fn profil_ersetzungen_leeren(
     let Some(p) = alt.and_then(|pi| PROFILES.get(pi)) else {
         return;
     };
+    let weiter: &[DatarefOverride] = neu.and_then(|pi| PROFILES.get(pi)).map_or(&[], |n| n.overrides);
     for o in p.overrides {
-        if crate::dataref::addon_quelle(o.field) {
+        let bleibt = weiter.iter().any(|n| n.field == o.field && n.dataref == o.dataref);
+        if crate::dataref::addon_quelle(o.field) && !bleibt {
             parsed.addon_leeren(o.field);
         }
     }
@@ -720,6 +723,19 @@ mod tests {
         s.apply_field(FieldId::TolissFluegellicht, 1.0);
         profil_ersetzungen_leeren(&mut s, Some(pi), Some(pi));
         assert_eq!(s.ff_fluegellicht, Some(true), "gleiches Profil: nichts");
+        // FF757 → FF767: dieselben Ersetzungen, der Wert bleibt (Codex-QS
+        // Runde 3, Rueckfall Plugin → RREF).
+        let pi767 = PROFILES.iter().position(|p| p.name == "FlightFactor 767").unwrap();
+        profil_ersetzungen_leeren(&mut s, Some(pi), Some(pi767));
+        assert_eq!(s.ff_fluegellicht, Some(true));
+        assert_eq!(s.ff_autobrake, Some(3.0));
+        // FF757 → FF777: das FF777-Profil ersetzt nur den Speedbrake —
+        // Fluegellicht/Autobrake aus anim/* muessen weg.
+        let pi777 = PROFILES.iter().position(|p| p.name == "FlightFactor 777").unwrap();
+        let mut t = crate::dataref::XPlaneState::default();
+        t.apply_field(FieldId::FfFluegellicht, 1.0);
+        profil_ersetzungen_leeren(&mut t, Some(pi), Some(pi777));
+        assert_eq!(t.ff_fluegellicht, None);
         profil_ersetzungen_leeren(&mut s, Some(pi), None);
         assert_eq!(s.ff_fluegellicht, None);
         assert_eq!(s.ff_autobrake, None);
