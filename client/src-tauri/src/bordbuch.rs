@@ -765,6 +765,7 @@ fn tcas_meldbar(s: &SimSnapshot) -> bool {
             | AircraftProfile::IniA350
             | AircraftProfile::FsLabsA321
             | AircraftProfile::IflyMax8
+            | AircraftProfile::BlueBird757
     )
 }
 
@@ -2197,6 +2198,27 @@ mod tests {
         let p = &z.punkte[Regel::TcasStart.index()];
         assert_eq!(p.status, Status::NichtMessbar);
         assert_eq!(p.grund, Some(Grund::KeinTcasModus));
+        assert_eq!(z.status(Regel::TransponderStart), Status::Erledigt);
+    }
+
+    #[test]
+    fn bluebird_757_ohne_tcas_ist_diesmal_ohne_nicht_unmessbar() {
+        // BlueBird 757: TCAS-Knopf STBY…TA-RA aus der Hersteller-LVar —
+        // bleibt der Pilot auf XPNDR, ist das „diesmal ohne", nicht
+        // „nicht messbar" (Codex-Befund 26.10.2026).
+        let e = Einstellungen::default();
+        let k = ctx(&e);
+        let mut z = Zustand::default();
+        let mut s = snap(0);
+        s.aircraft_profile = AircraftProfile::BlueBird757;
+        s.engines_running = 2;
+        tick(&mut z, &s, FlightPhase::TaxiOut, &k);
+        s.timestamp = t0() + chrono::Duration::seconds(5);
+        s.xpdr_mode_label = Some("XPNDR".into());
+        tick(&mut z, &s, FlightPhase::TakeoffRoll, &k);
+        takte_bis(&mut z, &mut s, FlightPhase::Takeoff, &k, 120);
+        let p = &z.punkte[Regel::TcasStart.index()];
+        assert_eq!(p.status, Status::DiesmalOhne);
         assert_eq!(z.status(Regel::TransponderStart), Status::Erledigt);
     }
 
