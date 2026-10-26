@@ -2689,9 +2689,10 @@ pub fn parse(bytes: &[u8], simulator: Simulator, cfg_pfad: Option<&str>) -> SimS
 /// Square …), liefern dauerhaft 0 — die Kabine nahm das als „Schalter
 /// AUS" und sagte „Anschnallzeichen aus" direkt nach dem Abheben an. Wie
 /// beim X-Plane-Standard-Dataref zaehlt der Wert erst, wenn er in diesem
-/// Flugzeug einmal stabil (2 Bloecke) AN war; bis dahin `None`. Gilt nur
-/// fuer den Standard-Rueckfall — Profile mit eigener Quelle beruehrt sie
-/// nicht. Zuruecksetzen bei SimStart und Flugzeugwechsel (Adapter).
+/// Flugzeug einmal stabil (2 Bloecke) AN war; bis dahin `None`. Gilt fuer
+/// den Standard-Rueckfall und fuer die noch ungemessene BlueBird-757-LVar —
+/// andere Profile mit eigener Quelle beruehrt sie nicht. Zuruecksetzen bei
+/// SimStart und Flugzeugwechsel (Adapter).
 #[derive(Debug, Clone, Default)]
 pub struct StandardAnschnallSperre {
     an_in_folge: u8,
@@ -4140,8 +4141,10 @@ fn telemetry_to_snapshot_gesperrt(
     } else if is_bbs757 {
         // BlueBird 757 `L:B757_OVHD_SEATBELTS_SWITCH` 0=OFF 1=AUTO 2=ON —
         // schon die Snapshot-Skala. Die Standard-SimVar steht hier immer
-        // auf 0 (LTU 152 / ICE 520, 26.10.2026).
-        bbs757_schild(t.bbs_seatbelts_sw)
+        // auf 0 (LTU 152 / ICE 520, 26.10.2026). Auch hier durch die
+        // Sperre: die LVar ist am Flugzeug noch nicht gemessen — liefe sie
+        // ins Leere (0), kaeme sonst genau dieser Fehler zurueck.
+        anschnall_sperre.filtern(bbs757_schild(t.bbs_seatbelts_sw))
     } else if is_a346 {
         // `L:AB_OVH_SEATBELT`: Overhead-Schalterposition. Der reale
         // A340-Schalter ist 3-stufig (OFF/AUTO/ON) — wir clampen auf
@@ -9984,6 +9987,25 @@ mod tests {
                 .copied(),
             Some(2.0)
         );
+    }
+
+    #[test]
+    fn bluebird_757_anschnallzeichen_erst_nach_einmal_an() {
+        // Laeuft die LVar ins Leere (0), kein „AUS" nach dem Abheben.
+        let f = anschnall_folge(BBS_LTU.0, BBS_LTU.1, &[("L:B757_OVHD_SEATBELTS_SWITCH", 0.0); 10]);
+        assert!(f.iter().all(Option::is_none), "{f:?}");
+        // Echter Ablauf: AN vor dem Rollen, AUS im Steigflug → sofort.
+        let f = anschnall_folge(
+            BBS_LTU.0,
+            BBS_LTU.1,
+            &[
+                ("L:B757_OVHD_SEATBELTS_SWITCH", 0.0),
+                ("L:B757_OVHD_SEATBELTS_SWITCH", 2.0),
+                ("L:B757_OVHD_SEATBELTS_SWITCH", 2.0),
+                ("L:B757_OVHD_SEATBELTS_SWITCH", 0.0),
+            ],
+        );
+        assert_eq!(f, vec![None, None, Some(2), Some(0)]);
     }
 
     #[test]
