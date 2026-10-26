@@ -91,7 +91,7 @@ const SIM_START_EVENT_ID: u32 = 300;
 /// Vorteil ggue. `Paused`+`Unpaused`: wenn AeroACARS connectet
 /// waehrend MSFS schon pausiert ist, kommt sofort ein initialer
 /// Pause_EX1-Event mit dem aktuellen State. Bei den zwei separaten
-/// Events haette `sim_paused` bis zum naechsten Toggle weiter `false`
+/// Events haette `sim_pause` bis zum naechsten Toggle weiter `false`
 /// gezeigt.
 ///
 /// SDK-Doku: https://docs.flightsimulator.com/html/Programming_Tools/SimConnect/API_Reference/Events_And_Data/SimConnect_SubscribeToSystemEvent.htm
@@ -178,12 +178,15 @@ struct Shared {
     // und ein Waechter belegte nur die Reihenfolge, nicht die
     // Atomarität (QS-Befund 3, zwoelfte Runde).
     /// Spec v0.7.15 F5: SimConnect-`Paused`/`Unpaused`-System-Events
-    /// setzen dieses Atomic. Wird beim Bauen jedes `SimSnapshot` in
-    /// `telemetry::parse` zurueck nach `snap.paused` kopiert, damit
+    /// melden hierher. `snapshot()` liest daraus `snap.paused`, damit
     /// der Streamer-Loop in `lib.rs` ueber den bestehenden Snapshot-
     /// Pfad lesen kann (= keine zweite IPC-Schiene noetig). Default
-    /// false bis der Sim das erste Mal pausiert.
-    sim_paused: AtomicBool,
+    /// „laeuft" bis der Sim das erste Mal pausiert.
+    ///
+    /// 26.10.2026 (LTU 154): entprellt — eine Pause gilt erst nach
+    /// `sim_core::pause::ENTPRELLZEIT`. Gilt damit fuer JEDEN Leser von
+    /// `snap.paused`: Aufsetz-Abtaster, Phasen-Engine, Auto-Start, Streamer.
+    sim_pause: Mutex<sim_core::pause::PausenEntpreller>,
     /// v1.6.12 — der Simulator spielt eine Aufzeichnung ab oder versetzt das
     /// Flugzeug, statt es fliegen zu lassen.
     ///
@@ -248,7 +251,7 @@ impl Shared {
             last_error: Mutex::new(None),
             szenerie: Mutex::new(sim_core::szenerie::Auftragsbuch::neu()),
             szenerie_offen: AtomicBool::new(false),
-            sim_paused: AtomicBool::new(false),
+            sim_pause: Mutex::new(sim_core::pause::PausenEntpreller::default()),
             sim_unecht_tiefe: AtomicI32::new(0),
             sim_bildrate_bits: AtomicU32::new(0),
             sim_crashed: AtomicBool::new(false),
@@ -817,6 +820,12 @@ impl MsfsAdapter {
 
     pub fn snapshot(&self) -> Option<SimSnapshot> {
         let mut snap = self.shared.snapshot.lock().clone()?;
+        // Pause beim LESEN entprellen, nicht nur beim Bauen: Schickt MSFS in
+        // einer echten Pause keine Daten mehr, traegt der gespeicherte
+        // Schnappschuss noch den Stand von davor (LTU 154, 26.10.2026).
+        // Replay/Teleport bleibt sofort wirksam.
+        snap.paused = self.shared.sim_pause.lock().pausiert(Instant::now())
+            || self.shared.sim_unecht_tiefe.load(Ordering::Relaxed) > 0;
         // Merge PMDG SDK data when available (Phase 5.4 + 5.4b).
         // The standard SimVar telemetry fills the SimSnapshot's
         // main body; PMDG fills the optional `pmdg` field with
@@ -1367,7 +1376,7 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // Riss sie z. B. zwischen TELEPORT_START und _DONE ab, blieb die
                 // Tiefe > 0 und jeder spätere Snapshot hieß `paused` — für
                 // Phasen-Engine und Auto-Start bis zum App-Neustart. Dasselbe
-                // gilt für `sim_paused`, wenn nach dem Neuaufbau kein
+                // gilt für `sim_pause`, wenn nach dem Neuaufbau kein
                 // Pause_EX1 kommt (Abo gescheitert) (QS Codex, 21.09.2026).
                 //
                 // Abwägung: Zurücksetzen ist der einzige Zustand, der nie für
@@ -1378,7 +1387,7 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // Start ist dagegen abgesichert (20 s SimRuhe + Sprungerkennung
                 // + Pause-Prüfung in flight_start_mit). Kein zweiter Schreiber:
                 // run_dispatch ist hier zurückgekehrt.
-                shared.sim_paused.store(false, Ordering::Relaxed);
+                *shared.sim_pause.lock() = sim_core::pause::PausenEntpreller::default();
                 shared.sim_unecht_tiefe.store(0, Ordering::Relaxed);
                 // Die Bildrate gehoert zur alten Verbindung.
                 shared.sim_bildrate_bits.store(0, Ordering::Relaxed);
@@ -2182,7 +2191,7 @@ fn run_dispatch(
                             // Phasen-Engine ein, statt eine abgespielte
                             // Aufzeichnung als Flug zu werten — dieselbe
                             // Behandlung wie im X-Plane-Adapter.
-                            snap.paused = shared.sim_paused.load(Ordering::Relaxed)
+                            snap.paused = shared.sim_pause.lock().pausiert(Instant::now())
                                 || shared.sim_unecht_tiefe.load(Ordering::Relaxed) > 0;
                             // v0.7.19 GAF-707: Crash-Latch aus dem Shared-
                             // State in den Snapshot mergen. Caller in
@@ -2510,7 +2519,7 @@ fn run_dispatch(
                         // Unterscheidung kommt erst mit einer
                         // spaeteren Iteration falls relevant.
                         let paused = data != 0;
-                        shared.sim_paused.store(paused, Ordering::Relaxed);
+                        shared.sim_pause.lock().melden(paused, Instant::now());
                         tracing::info!(
                             data = format!("0x{:x}", data),
                             paused,
