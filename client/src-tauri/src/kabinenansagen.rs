@@ -539,6 +539,10 @@ pub(crate) struct Lauf {
     /// Auffrischung der Sinkflug-Ansage des Kapitäns (Restzeit und Landezeit
     /// zum Abspielzeitpunkt, 23.10.2026).
     auffrischung: Auffrischung,
+    /// Umleitungsziel, mit dem der Ankunftsteil bestellt wurde (`None` =
+    /// geplantes Ziel); ändert es sich, wird neu bestellt
+    /// ([`ankunft_nach_umleitung`]).
+    ankunft_ziel: Option<String>,
 }
 
 /// Restzeit und Landezeit, wie der Server sie in die Sinkflug-Ansage des
@@ -2519,6 +2523,52 @@ fn takt_schritt(
     ablauf_starten(app, flight, gespielt.id);
 }
 
+/// Ankunftsteil jetzt bestellen? In der Luft und kurz vor der Landung bzw.
+/// im Sinkflug; Kurzstrecke gleich nach dem Abheben. Die Phase „Sinkflug“
+/// allein zählt nur mit plausibler Restzeit (GAF278 24.10.2026: Stufen-
+/// Sinkflug im Reiseflug, siehe Planer), nach einer Umleitung immer.
+fn ankunft_bestellen(phase: FlightPhase, kurz: bool, rest_min: Option<f64>, umgeleitet: bool) -> bool {
+    use cabin_announcements::planer::{rang, PHASE_SINKFLUG_HOECHSTENS_REST_MIN};
+    let r = rang(phase);
+    let sinkflug = r >= rang(FlightPhase::Descent) && (umgeleitet || rest_min.is_none_or(|m| m <= PHASE_SINKFLUG_HOECHSTENS_REST_MIN));
+    r >= rang(FlightPhase::Takeoff) && (kurz || rest_min.is_some_and(|m| m <= ANKUNFT_TEXT_VOR_LANDUNG_MIN as f64) || sinkflug)
+}
+
+/// Umleitung, nachdem der Ankunftsteil bestellt war (FBU 25.10.2026: nach der
+/// Umleitung nach Port Vila kam „Bienvenue à Nouméa“): Texte und Ton der noch
+/// nicht gespielten Ankunftsansagen verwerfen; der Teil wird mit dem neuen
+/// Ziel neu bestellt, der Server schreibt ihn für dieses Ziel. Gespieltes bleibt.
+fn ankunft_nach_umleitung(stats: &mut FlightStats) {
+    let ziel = stats.umleitung_ziel.clone();
+    let lauf = &mut stats.kabinen_lauf;
+    if !lauf.angefragt.contains("ankunft") || lauf.ankunft_ziel == ziel {
+        return;
+    }
+    let offen: Vec<Slot> = ANKUNFT.into_iter().filter(|s| !lauf.verlauf.iter().any(|g| g.slot == *s && !g.vorschau)).collect();
+    lauf.texte.retain(|(s, _), _| !offen.contains(s));
+    lauf.ton.retain(|(s, _), _| !offen.contains(s));
+    lauf.fremd.retain(|(s, _), _| !offen.contains(s));
+    lauf.ton_fehler.retain(|(s, _), _| !offen.contains(s));
+    lauf.texte_fehlen.retain(|(s, _), _| !offen.contains(s));
+    for s in &offen {
+        lauf.texte_fehler.remove(s);
+        lauf.slot_sprachen.remove(s);
+    }
+    lauf.angefragt.remove("ankunft");
+    lauf.fehlversuche.remove("ankunft");
+    // Generation weiterzählen, nie auf null: Sonst gälte eine späte Antwort
+    // der alten Auffrischung für die neue (Codex 26.10.2026).
+    let generation = lauf.auffrischung.generation + 1;
+    lauf.auffrischung = Auffrischung { generation, ..Auffrischung::default() };
+    let details = serde_json::json!({
+        "von": lauf.ankunft_ziel,
+        "nach": ziel,
+        "verworfen": offen.iter().map(|s| slot_name(*s)).collect::<Vec<_>>(),
+    });
+    lauf.ankunft_ziel = ziel;
+    notiz(lauf, "ankunft_neu_umleitung", None, None, details);
+}
+
 /// Welche Drehbücher (Texte, Lied) dieser Takt bestellt: nur, was auf diesem
 /// Flug noch kommt. Ohne Freigabe (`Beta::Ja`) nichts, auch kein Lied — der
 /// Takt kommt dann gar nicht hierher, die Prüfung hier sichert es zusätzlich.
@@ -2542,14 +2592,12 @@ fn auftraege_sammeln(
     let ankunft: Vec<Slot> = ANKUNFT.into_iter().filter(kommt).collect();
     let halbzeit_kommt = kommt(&Slot::Reiseflug50);
     let halbzeit_um = stats.kabinen_planer.as_ref().and_then(|p| p.zeitpunkt(Slot::Reiseflug50, stats.landung_erwartet));
-    let r = cabin_announcements::planer::rang(phase);
     let kurz = stats.kabinen_planer.as_ref().is_some_and(|p| p.ist_kurzstrecke());
     // Ankunft: in der Luft und kurz vor der Landung (bzw. im Sinkflug).
     // Kurzstrecke: gleich nach dem Abheben, sonst bliebe zu wenig Zeit.
-    let ankunft_jetzt = r >= cabin_announcements::planer::rang(FlightPhase::Takeoff)
-        && (kurz
-            || rest_min.is_some_and(|m| m <= ANKUNFT_TEXT_VOR_LANDUNG_MIN as f64)
-            || r >= cabin_announcements::planer::rang(FlightPhase::Descent));
+    let ankunft_jetzt = ankunft_bestellen(phase, kurz, rest_min, stats.umleitung_ziel.is_some());
+    ankunft_nach_umleitung(stats);
+    let ziel = stats.umleitung_ziel.clone();
     let lauf = &mut stats.kabinen_lauf;
     if !abflug.is_empty() && darf_anfragen(lauf, "abflug", jetzt) {
         lauf.angefragt.insert("abflug".into());
@@ -2564,6 +2612,7 @@ fn auftraege_sammeln(
     }
     if ankunft_jetzt && !ankunft.is_empty() && darf_anfragen(lauf, "ankunft", jetzt) {
         lauf.angefragt.insert("ankunft".into());
+        lauf.ankunft_ziel = ziel;
         auftraege.push(("ankunft".into(), ankunft, 0));
     }
     // Lied nachfragen, wenn das Modul keine Zeit mehr hatte (einmal). Ohne
@@ -2987,8 +3036,9 @@ fn ton_auftrag(
             lauf.ton_laufend = lauf.ton_laufend.saturating_sub(1);
         }
         // Kam inzwischen ein neuer Text (zweite Turbulenz o. ä.), gehört
-        // dieser Ton zum alten: verwerfen, der neue wird angefragt.
-        if lauf.texte.get(&k).is_some_and(|t| *t != text) {
+        // dieser Ton zum alten: verwerfen, der neue wird angefragt. Ebenso,
+        // wenn der Ankunftstext nach einer Umleitung verworfen wurde.
+        if lauf.texte.get(&k).is_some_and(|t| *t != text) || (ANKUNFT.contains(&k.0) && !lauf.texte.contains_key(&k)) {
             drop(stats);
             protokoll_leeren(&app, &flight);
             return;
@@ -3279,6 +3329,17 @@ fn holen(
             let mut stats = flight.stats.lock().expect("flight stats");
             let lauf = &mut stats.kabinen_lauf;
             let fehler = ergebnis.as_ref().err().map(|e| kurz(&e.to_string()));
+            // Antwort auf einen Ankunftsteil fürs alte Ziel (Umleitung, während
+            // die Anfrage lief): verwerfen, auch einen Fehler — sonst träfe er
+            // Bestellung und Fehlerbudget des neuen Ziels (Codex 26.10.2026).
+            let ziel_alt = schluessel.starts_with("ankunft")
+                && anfrage["flug"]["umleitung_icao"].as_str().map(str::to_string) != lauf.ankunft_ziel;
+            if ziel_alt {
+                notiz(lauf, "text_verworfen", None, None, serde_json::json!({ "teil": schluessel, "grund": "umleitung" }));
+                drop(stats);
+                protokoll_leeren(&app, &flight);
+                return;
+            }
             match ergebnis {
                 Ok(d) => {
                     // Lied angefragt, aber keins gekommen: still, „kein Lied“.
@@ -6265,6 +6326,48 @@ mod tests {
         assert!(wav_stuecke(&wav_mit_satz("kein json")).is_empty());
     }
 
+    /// GAF278 24.10.2026: Ein Stufen-Sinkflug mitten im Reiseflug bestellt den
+    /// Ankunftsteil nicht; kurz vor der Landung, Kurzstrecke und Umleitung schon.
+    #[test]
+    fn ankunft_bei_stufen_sinkflug_nicht_bestellen() {
+        use crate::FlightPhase::*;
+        assert!(!ankunft_bestellen(Descent, false, Some(265.0), false), "GAF278: Stufen-Sinkflug mit 265 min Rest");
+        assert!(ankunft_bestellen(Descent, false, Some(60.0), false), "echter Sinkflug");
+        assert!(ankunft_bestellen(Descent, false, Some(265.0), true), "Umleitung");
+        assert!(ankunft_bestellen(Cruise, false, Some(40.0), false), "45 min vor der Landung");
+        assert!(ankunft_bestellen(Climb, true, Some(80.0), false), "Kurzstrecke nach dem Abheben");
+        assert!(!ankunft_bestellen(Cruise, false, Some(120.0), false));
+    }
+
+    /// FBU 25.10.2026: Nach der Umleitung nach Port Vila blieb „Bienvenue à
+    /// Nouméa“. Noch nicht gespielte Ankunftstexte fallen weg, der Teil wird neu
+    /// bestellt; andere Texte bleiben. Gleiches Ziel: nichts passiert.
+    #[test]
+    fn umleitung_bestellt_ankunft_neu() {
+        let mut st = FlightStats::new();
+        let l = &mut st.kabinen_lauf;
+        l.angefragt.insert("ankunft".into());
+        l.texte.insert((Slot::NachDerLandung, "fr-FR".into()), "Bienvenue à Nouméa.".into());
+        l.ton.insert((Slot::NachDerLandung, "fr-FR".into()), ton());
+        l.texte.insert((Slot::Reiseflug50, "fr-FR".into()), "Mi-parcours.".into());
+        ankunft_nach_umleitung(&mut st);
+        assert!(st.kabinen_lauf.angefragt.contains("ankunft"), "ohne Umleitung bleibt alles");
+
+        st.umleitung_ziel = Some("NVVV".into());
+        ankunft_nach_umleitung(&mut st);
+        let l = &st.kabinen_lauf;
+        assert!(!l.angefragt.contains("ankunft"), "neu bestellen");
+        assert!(!l.texte.contains_key(&(Slot::NachDerLandung, "fr-FR".into())));
+        assert!(!l.ton.contains_key(&(Slot::NachDerLandung, "fr-FR".into())));
+        assert!(l.texte.contains_key(&(Slot::Reiseflug50, "fr-FR".into())), "andere Teile bleiben");
+        assert_eq!(l.ankunft_ziel.as_deref(), Some("NVVV"));
+        assert_eq!(l.auffrischung.generation, 1, "Generation weitergezählt, nie zurück auf null");
+
+        st.kabinen_lauf.angefragt.insert("ankunft".into());
+        ankunft_nach_umleitung(&mut st);
+        assert!(st.kabinen_lauf.angefragt.contains("ankunft"), "schon fürs neue Ziel bestellt");
+    }
+
     /// Michael BER181: dreimal „sechzehn Uhr“ = Planankunft 14:00 UTC, gelandet
     /// 13:24. In der Luft zählt jetzt Abheben + Flugzeit, früher Abflug auch.
     #[test]
@@ -7787,6 +7890,38 @@ mod reaktion_tests {
         assert!(!st.kabinen_lauf.reaktion.entschieden);
         st.landung_payload = stats("J", Some(150), Some("F"), 0).landung_payload;
         assert_eq!(schritt(&mut st, eingang(AUFSETZEN_MS + 9_000, "DLH", [0.0; 3]), &mut z), ReaktionTun::Spielen(PathBuf::from("raunen-hart-1.mp3")));
+    }
+
+    /// Haken „keine Kabinenansagen auf diesem Flug“ (2.1.14): auch kein
+    /// Applaus. Vor der Landung gesetzt → nichts entschieden; nach der Wahl
+    /// gesetzt → wartet und entfällt mit der Frist. Gegenprobe ohne Haken.
+    #[test]
+    fn haken_im_loadsheet_auch_keine_reaktion() {
+        let mut z = Vec::new();
+        let t0 = AUFSETZEN_MS + 9_000;
+        let mut st = stats("J", Some(150), Some("A+"), 0);
+        st.kabinen_lauf.beta = Beta::FlugAus;
+        for s in 0..20 {
+            assert_eq!(schritt(&mut st, eingang(t0 + s * 1000, "CFG", [0.1, 0.5, 0.0]), &mut z), ReaktionTun::Nichts);
+        }
+        assert!(!st.kabinen_lauf.reaktion.entschieden, "mit Haken nichts entschieden");
+        assert!(notizen(&st).is_empty());
+
+        // Gewählt, dann kommt der Haken: kein Start, entfällt mit der Frist.
+        let mut st = stats("J", Some(150), Some("A+"), 0);
+        assert_eq!(schritt(&mut st, eingang(t0, "CFG", [0.1, 0.5, 0.0]), &mut z), ReaktionTun::Nichts);
+        assert!(st.kabinen_lauf.reaktion.einsatz.is_some());
+        st.kabinen_lauf.beta = Beta::FlugAus;
+        assert_eq!(schritt(&mut st, eingang(t0 + 2_500, "CFG", [0.9; 3]), &mut z), ReaktionTun::Nichts);
+        let spaet = AUFSETZEN_MS + (cabin_announcements::reaktion::SPAETESTENS_NACH_AUFSETZEN_S + 1) * 1000;
+        assert_eq!(schritt(&mut st, eingang(spaet, "CFG", [0.9; 3]), &mut z), ReaktionTun::Nichts);
+        assert!(!notizen(&st).iter().any(|(a, _)| *a == "reaktion_start"), "nie gestartet");
+        assert_eq!(notizen(&st).last().unwrap().1["grund"], "zu_spaet");
+
+        // Gegenprobe: ohne Haken spielt sie.
+        let mut st = stats("J", Some(150), Some("A+"), 0);
+        schritt(&mut st, eingang(t0, "CFG", [0.1, 0.5, 0.0]), &mut z);
+        assert!(matches!(schritt(&mut st, eingang(t0 + 2_500, "CFG", [0.9; 3]), &mut z), ReaktionTun::Spielen(_)));
     }
 
     #[test]
