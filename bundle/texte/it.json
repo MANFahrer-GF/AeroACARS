@@ -293,6 +293,7 @@
       "zu_wenig_zeit": "troppo poco tempo prima della discesa",
       "uebersprungen": "crociera rilevata tardi, è arrivato prima un annuncio successivo",
       "ton_nicht_fertig": "audio non pronto in tempo",
+      "text_fehlt": "testo mancante (il server non l\u2019ha inviato)",
       "zu_spaet": "troppo tardi (fase sterile o altro annuncio)",
       "keine_stimme": "nessuna voce per queste lingue",
       "kein_kurztext": "il server GSG non fornisce ancora la versione breve del comandante",
