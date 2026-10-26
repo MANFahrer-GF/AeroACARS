@@ -682,6 +682,234 @@ struct LageReferenz {
     gs_kt: Option<f32>,
     /// Wann der Punkt zuletzt galt — daraus folgt die Luecke.
     at: Option<DateTime<Utc>>,
+    /// Vom Abtaster bestaetigtes Aufsetzen, das zu dieser Luecke gehoert
+    /// (siehe `aufsetzen_der_luecke`). `None`: keins.
+    aufgesetzt: Option<(f64, f64)>,
+}
+
+/// Wie lange vor dem letzten Punkt ein bestaetigtes Aufsetzen noch zur
+/// Luecke zaehlt. Ein Durchstart-Aufsetzer Minuten davor zaehlt nicht.
+const AUFSETZEN_VOR_LUECKE_MAX_S: i64 = 30;
+/// Wie lange NACH dem letzten Punkt das Aufsetzen hoechstens liegen darf:
+/// ein Abtast-Takt im Endanflug, mit Luft. Ein Aufsetzen, das erst nach
+/// einem Neuladen entsteht, liegt weit dahinter (Codex-Pruefung 26.10.2026).
+const AUFSETZEN_NACH_LETZTEM_PUNKT_MAX_S: i64 = 3;
+/// Wie weit der Aufsetzpunkt hoechstens vom letzten Punkt vor der Luecke
+/// liegt. Ein Aufsetzen ist keine Reise: Bei LTU 154 lagen 30 m dazwischen.
+const AUFSETZEN_VOR_LUECKE_MAX_NM: f64 = 1.0;
+
+/// Gehoert das bestaetigte Aufsetzen des Abtasters zu dieser Luecke?
+///
+/// LTU 154 (Michael K, 26.10.2026, EDDF 25R): MSFS flackerte 150–250 ms
+/// nach dem Aufsetzen kurz auf „Pause". Der Abtaster bestaetigte das
+/// Aufsetzen eine Sekunde spaeter, die Lage-Pruefung aber sah nur „vorher
+/// in der Luft, jetzt am Boden" und hielt den Flug als Sim-Absturz an
+/// (am Vortag derselbe Ablauf in EDDK 31R).
+///
+/// Ein neu geladener Flieger (GAF 278) bringt kein solches Aufsetzen mit:
+/// Der Sprung auf den Boden faellt beim Abtaster als FALSE_EDGE durch, und
+/// ein frueherer Aufsetzer liegt zeitlich oder raeumlich zu weit weg.
+fn aufsetzen_der_luecke(stats: &FlightStats, lat: f64, lon: f64) -> Option<(f64, f64)> {
+    let (Some(td_at), Some(la), Some(lo), Some(at)) = (
+        stats.sampler_touchdown_at,
+        stats.landing_lat,
+        stats.landing_lon,
+        stats.last_known_at,
+    ) else {
+        return None;
+    };
+    let zeitlich = td_at >= at - chrono::Duration::seconds(AUFSETZEN_VOR_LUECKE_MAX_S)
+        && td_at <= at + chrono::Duration::seconds(AUFSETZEN_NACH_LETZTEM_PUNKT_MAX_S);
+    let raeumlich = ::geo::distance_m(la, lo, lat, lon) / 1852.0 <= AUFSETZEN_VOR_LUECKE_MAX_NM;
+    (zeitlich && raeumlich).then_some((la, lo))
+}
+
+/// Laenger als die Pruef-Frist des Abtasters (1,1 s). Ein haengender
+/// Kandidat sperrt das Fortsetzen nicht fuer immer.
+const AUFSETZ_PRUEFUNG_ABWARTEN_S: i64 = 5;
+
+/// Prueft der Abtaster gerade ein Aufsetzen? Dann noch nicht ueber die Lage
+/// urteilen: Bei LTU 154 kam die Bestaetigung nur fuenf Sekunden vor dem
+/// Urteil — ein Takt frueher, und „am Boden" haette ohne Aufsetzen dagestanden.
+fn aufsetzen_wird_geprueft(stats: &FlightStats, jetzt: DateTime<Utc>) -> bool {
+    stats
+        .pending_td_at
+        .is_some_and(|t| jetzt - t < chrono::Duration::seconds(AUFSETZ_PRUEFUNG_ABWARTEN_S))
+}
+
+#[cfg(test)]
+mod landung_in_der_luecke_tests {
+    //! LTU 154 (Michael K, 26.10.2026, EDDF 25R): echte Werte aus Flug- und
+    //! Diagnoseprotokoll 7pyj7BezQarnok2V. GAF 278 bleibt die Gegenprobe.
+    use super::*;
+
+    fn utc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    /// Letzter Punkt vor der Pause: 17:19:31.127, Final, 11,5 ft AGL.
+    const VORHER: (f64, f64) = (50.043669717982496, 8.524638167352773);
+    /// Erster Wert danach (17:19:37): am Boden, 0,2 nm weiter.
+    const JETZT: (f64, f64) = (50.0425, 8.5201);
+
+    fn ltu154_stats() -> FlightStats {
+        let mut st = FlightStats::default();
+        st.phase = FlightPhase::Final;
+        st.last_known_lat = Some(VORHER.0);
+        st.last_known_lon = Some(VORHER.1);
+        st.last_known_alt_ft = Some(346.45);
+        st.last_known_gs_kt = Some(121.4);
+        st.last_known_at = Some(utc("2026-10-26T17:19:31.127Z"));
+        st.current_pause_reason = Some(PauseReason::SimPause);
+        st.paused_last_known = Some(PausedSnapshot {
+            lat: VORHER.0,
+            lon: VORHER.1,
+            heading_deg: 247.07,
+            altitude_ft: 346.45,
+            fuel_total_kg: 1_363.8,
+            zfw_kg: Some(76_492.0),
+            on_ground: false,
+        });
+        // Vom Abtaster bestaetigt (17:19:32.27, Aufsetzen 17:19:31.158).
+        st.sampler_touchdown_at = Some(utc("2026-10-26T17:19:31.158Z"));
+        st.landing_lat = Some(50.04366);
+        st.landing_lon = Some(8.52459);
+        st.landing_heading_true_deg = Some(247.07);
+        st
+    }
+
+    fn sim_am_boden(lat: f64, lon: f64, fuel: f32) -> SimSnapshot {
+        SimSnapshot {
+            lat,
+            lon,
+            altitude_msl_ft: 340.0,
+            altitude_agl_ft: 10.5,
+            on_ground: true,
+            fuel_total_kg: fuel,
+            ..SimSnapshot::default()
+        }
+    }
+
+    fn urteil(st: &FlightStats, jetzt: &SimSnapshot) -> Option<LageAbweichung> {
+        lage_abweichung(
+            &lage_referenz(st).unwrap(),
+            jetzt,
+            utc("2026-10-26T17:19:37Z"),
+            darf_weitergeflogen_sein(st),
+        )
+    }
+
+    #[test]
+    fn ltu154_landung_in_der_pause_laeuft_von_selbst() {
+        let st = ltu154_stats();
+        assert_eq!(urteil(&st, &sim_am_boden(JETZT.0, JETZT.1, 1_362.0)), None);
+    }
+
+    /// Gegenprobe: ohne bestaetigtes Aufsetzen bleibt es beim Anhalten.
+    #[test]
+    fn ohne_aufsetzen_bleibt_am_boden_ein_halt() {
+        let mut st = ltu154_stats();
+        st.sampler_touchdown_at = None;
+        assert_eq!(
+            urteil(&st, &sim_am_boden(JETZT.0, JETZT.1, 1_362.0)),
+            Some(LageAbweichung::AmBoden)
+        );
+    }
+
+    /// Ein Aufsetzer Minuten vor der Luecke (Durchstarten) zaehlt nicht.
+    #[test]
+    fn altes_aufsetzen_vor_der_luecke_zaehlt_nicht() {
+        let mut st = ltu154_stats();
+        st.sampler_touchdown_at = Some(utc("2026-10-26T17:12:00Z"));
+        assert_eq!(aufsetzen_der_luecke(&st, VORHER.0, VORHER.1), None);
+        assert_eq!(
+            urteil(&st, &sim_am_boden(JETZT.0, JETZT.1, 1_362.0)),
+            Some(LageAbweichung::AmBoden)
+        );
+    }
+
+    /// Ein Aufsetzpunkt weit vom letzten Punkt gehoert nicht zur Luecke.
+    #[test]
+    fn aufsetzen_weit_vom_letzten_punkt_zaehlt_nicht() {
+        let mut st = ltu154_stats();
+        st.landing_lat = Some(50.5);
+        assert_eq!(aufsetzen_der_luecke(&st, VORHER.0, VORHER.1), None);
+    }
+
+    /// Neu geladen auf einem anderen Platz, 30 nm weiter: haelt an, auch
+    /// mit Aufsetzen in der Luecke.
+    #[test]
+    fn neu_geladen_weit_weg_haelt_trotz_aufsetzen_an() {
+        let st = ltu154_stats();
+        assert_eq!(
+            urteil(&st, &sim_am_boden(50.5, 8.52, 1_362.0)),
+            Some(LageAbweichung::AmBoden)
+        );
+    }
+
+    /// Neu geladen mit vollem Tank an derselben Stelle: Sprit faellt auf.
+    #[test]
+    fn neu_geladen_mit_vollem_tank_haelt_an() {
+        let st = ltu154_stats();
+        assert_eq!(
+            urteil(&st, &sim_am_boden(JETZT.0, JETZT.1, 9_000.0)),
+            Some(LageAbweichung::SpritGestiegen)
+        );
+    }
+
+    /// GAF 278: Absturz auf FL323, danach am Boden in Zagreb. Ein dort
+    /// gestempeltes „Aufsetzen" liegt zeitlich und raeumlich ausserhalb.
+    #[test]
+    fn gaf278_bleibt_ein_halt() {
+        let mut st = FlightStats::default();
+        st.phase = FlightPhase::Descent;
+        st.last_known_lat = Some(46.2368800281314);
+        st.last_known_lon = Some(16.4724032106752);
+        st.last_known_alt_ft = Some(32_313.0);
+        st.last_known_gs_kt = Some(453.0);
+        st.last_known_at = Some(utc("2026-10-24T17:51:12Z"));
+        st.sampler_touchdown_at = Some(utc("2026-10-24T18:07:13Z"));
+        st.landing_lat = Some(45.7490476111413);
+        st.landing_lon = Some(16.080041805556);
+        let jetzt = SimSnapshot {
+            lat: 45.7490476111413,
+            lon: 16.080041805556,
+            altitude_msl_ft: 366.0,
+            on_ground: true,
+            fuel_total_kg: 11_800.0,
+            ..SimSnapshot::default()
+        };
+        assert_eq!(
+            lage_abweichung(&lage_referenz(&st).unwrap(), &jetzt, utc("2026-10-24T18:07:19Z"), true),
+            Some(LageAbweichung::AmBoden)
+        );
+    }
+
+    /// Codex 26.10.: Ein Aufsetzen, das erst nach der Unterbrechung entsteht
+    /// (Neuladen nahe der Bahn), gehoert nicht zur Luecke.
+    #[test]
+    fn aufsetzen_erst_nach_der_luecke_zaehlt_nicht() {
+        let mut st = ltu154_stats();
+        st.sampler_touchdown_at = Some(utc("2026-10-26T17:20:15Z"));
+        assert_eq!(aufsetzen_der_luecke(&st, VORHER.0, VORHER.1), None);
+        assert_eq!(
+            urteil(&st, &sim_am_boden(JETZT.0, JETZT.1, 1_362.0)),
+            Some(LageAbweichung::AmBoden)
+        );
+    }
+
+    #[test]
+    fn laufende_aufsetzpruefung_haelt_das_urteil_zurueck() {
+        let mut st = FlightStats::default();
+        let t = utc("2026-10-26T17:19:31.158Z");
+        assert!(!aufsetzen_wird_geprueft(&st, t));
+        st.pending_td_at = Some(t);
+        assert!(aufsetzen_wird_geprueft(&st, t + chrono::Duration::milliseconds(1_100)));
+        assert!(
+            !aufsetzen_wird_geprueft(&st, t + chrono::Duration::seconds(AUFSETZ_PRUEFUNG_ABWARTEN_S)),
+            "ein haengender Kandidat sperrt nicht fuer immer"
+        );
+    }
 }
 
 /// Referenz aus dem Flugstand: der dauerhafte letzte Punkt, dazu Sprit und
@@ -701,6 +929,7 @@ fn lage_referenz(stats: &FlightStats) -> Option<LageReferenz> {
         on_ground: snap.is_some_and(|s| s.on_ground),
         gs_kt: stats.last_known_gs_kt,
         at: stats.last_known_at,
+        aufgesetzt: aufsetzen_der_luecke(stats, lat, lon),
     })
 }
 
@@ -755,7 +984,14 @@ fn lage_abweichung(
         .map_or(0.0, |alt| alt - jetzt.altitude_msl_ft);
     let jetzt_am_boden =
         jetzt.on_ground || (jetzt.altitude_agl_ft < 100.0 && hoehe_verloren_ft > 1_000.0);
-    if vorher_in_der_luft && jetzt_am_boden {
+    // In der Luecke gelandet (LTU 154): bestaetigtes Aufsetzen, ohne
+    // Hoehensturz, und der Flieger steht in Rollweite davon. Sprit und
+    // Weite pruefen die Schritte unten wie sonst auch.
+    let in_der_luecke_gelandet = vorher.aufgesetzt.is_some_and(|(la, lo)| {
+        hoehe_verloren_ft < 1_000.0
+            && ::geo::distance_m(la, lo, jetzt.lat, jetzt.lon) / 1852.0 <= RESUME_DRIFT_CLEAN_NM
+    });
+    if vorher_in_der_luft && jetzt_am_boden && !in_der_luecke_gelandet {
         return Some(LageAbweichung::AmBoden);
     }
     if let Some(fuel) = vorher.fuel_kg {
@@ -873,6 +1109,7 @@ mod lage_nach_luecke_tests {
             on_ground: false,
             gs_kt: Some(453.0),
             at: Some(utc("2026-10-24T17:51:12Z")),
+            aufgesetzt: None,
         }
     }
 
@@ -42683,8 +42920,12 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // Erst weiter, wenn der Sim wieder eine echte Position hat —
                 // aus dem Ladebildschirm heraus kam sonst die Scheinposition
                 // als erster Punkt „danach" (aKRgO8gxYzPnLR8B, 11:01:10).
-                let can_resume =
-                    snapshot.as_ref().is_some_and(snapshot_plausibel) && !snap_says_paused;
+                let can_resume = snapshot.as_ref().is_some_and(snapshot_plausibel)
+                    && !snap_says_paused
+                    && !aufsetzen_wird_geprueft(
+                        &flight.stats.lock().expect("flight stats"),
+                        Utc::now(),
+                    );
                 // Von selbst weiter nur, wenn die Lage zum Flug passt. Sonst
                 // bleibt die Pause offen, und der Pilot bestaetigt im Banner
                 // (GAF 278: Sim-Absturz im Sinkflug, danach am Boden in
@@ -45504,6 +45745,178 @@ fn sampler_in_air_now(
 /// holds no on-ground sample yet — callers fall back to the live snap.
 fn touchdown_buffer_sample(stats: &FlightStats) -> Option<TelemetrySample> {
     stats.snapshot_buffer.iter().find(|s| s.on_ground).cloned()
+}
+
+/// Wie viel spaeter als das bestaetigte Aufsetzen die Pufferprobe liegen
+/// darf, um noch als Aufsetzmoment zu gelten.
+const AUFSETZPROBE_TOLERANZ_MS: i64 = 2_000;
+
+/// Behaelt der FSM-Landing-Arm den Stempel des Abtasters? Ja, wenn der
+/// Abtaster das Aufsetzen schon bestaetigt und gestempelt hat und der Puffer
+/// nur noch Bodenproben von DANACH haelt oder leer ist — nach einer Pause
+/// oder einem geleerten Puffer (LTU 154, 26.10.2026). Liegt die Probe davor
+/// (erster Kontakt eines Hopsers), stempelt der Arm wie bisher neu
+/// (Codex-Pruefung 26.10.2026).
+fn abtaster_stempel_bleibt(stats: &FlightStats, td_buf_sample: Option<&TelemetrySample>) -> bool {
+    let Some(td_at) = stats.sampler_touchdown_at else {
+        return false;
+    };
+    if gespeicherter_aufsetzpunkt(stats).is_none() {
+        return false;
+    }
+    td_buf_sample.is_none_or(|s| (s.at - td_at).num_milliseconds() > AUFSETZPROBE_TOLERANZ_MS)
+}
+
+#[cfg(test)]
+mod abtaster_stempel_tests {
+    //! LTU 154 (26.10.2026): Der FSM-Landing-Arm lief erst 292 s nach dem
+    //! Aufsetzen und stempelte das stehende Flugzeug — 07L statt 25R. Die
+    //! Kette laeuft hier ueber `step_flight_at`, nicht ueber den Helfer.
+    use super::*;
+
+    fn utc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    const TD: (f64, f64) = (50.04366, 8.52459);
+
+    /// Final, vom Abtaster gestempelt — wie um 17:19:32.
+    fn gestempelter_flug() -> (ActiveFlight, DateTime<Utc>) {
+        let flight = crate::enroute_reconcile_replay_tests::replay_fixture();
+        let td_at = utc("2026-10-26T17:19:31.158Z");
+        {
+            let mut st = flight.stats.lock().unwrap();
+            st.phase = FlightPhase::Final;
+            st.was_airborne = true;
+            st.was_on_ground = Some(false);
+            st.takeoff_at = Some(td_at - chrono::Duration::hours(2));
+            st.sampler_touchdown_at = Some(td_at);
+            st.sampler_touchdown_vs_fpm = Some(-191.1);
+            st.landing_lat = Some(TD.0);
+            st.landing_lon = Some(TD.1);
+            st.landing_heading_true_deg = Some(247.07);
+            st.landing_fuel_kg = Some(1_363.8);
+            st.landing_fuel_puffer = true;
+            st.landing_weight_kg = Some(77_856.0);
+            st.rollout_distance_m = Some(0.0);
+            st.rollout_last_lat = Some(TD.0);
+            st.rollout_last_lon = Some(TD.1);
+        }
+        (flight, td_at)
+    }
+
+    /// Das stehende Flugzeug um 17:24:23 (Flugprotokoll).
+    fn steht(gs_kt: f32) -> SimSnapshot {
+        SimSnapshot {
+            lat: 50.040807569984544,
+            lon: 8.521866427582312,
+            altitude_msl_ft: 343.4,
+            altitude_agl_ft: 10.57,
+            heading_deg_true: 69.64,
+            heading_deg_magnetic: 66.6,
+            groundspeed_kt: gs_kt,
+            on_ground: true,
+            fuel_total_kg: 1_279.0,
+            total_weight_kg: Some(77_771.0),
+            engines_running: 2,
+            simulator: Simulator::Msfs2024,
+            ..SimSnapshot::default()
+        }
+    }
+
+    fn probe(at: DateTime<Utc>, lat: f64, lon: f64, hdg: f32, fuel: f32) -> TelemetrySample {
+        TelemetrySample {
+            at,
+            on_ground: true,
+            lat,
+            lon,
+            heading_true_deg: hdg,
+            fuel_kg: fuel,
+            ..TelemetrySample::default()
+        }
+    }
+
+    #[test]
+    fn nach_der_pause_bleibt_der_stempel_des_abtasters() {
+        let (flight, td_at) = gestempelter_flug();
+        let jetzt = td_at + chrono::Duration::seconds(292);
+        // Der Puffer haelt nur noch Proben von nach der Pause.
+        flight.stats.lock().unwrap().snapshot_buffer.push_back(probe(
+            jetzt,
+            50.0408,
+            8.5219,
+            69.6,
+            1_279.0,
+        ));
+        step_flight_at(&flight, &steht(1.2), jetzt);
+        let st = flight.stats.lock().unwrap();
+        assert_eq!(st.phase, FlightPhase::Landing);
+        assert_eq!((st.landing_lat, st.landing_lon), (Some(TD.0), Some(TD.1)));
+        assert_eq!(st.landing_heading_true_deg, Some(247.07));
+        assert_eq!(st.landing_fuel_kg, Some(1_363.8));
+        assert_eq!(st.landing_weight_kg, Some(77_856.0));
+        assert_eq!((st.rollout_last_lat, st.rollout_last_lon), (Some(TD.0), Some(TD.1)));
+        assert_eq!(st.landing_at, Some(td_at));
+    }
+
+    /// Auch mit leerem Puffer (geleert waehrend der Pause): kein Stempel aus
+    /// dem stehenden Flugzeug.
+    #[test]
+    fn leerer_puffer_stempelt_nicht_aus_dem_schnappschuss() {
+        let (flight, td_at) = gestempelter_flug();
+        step_flight_at(&flight, &steht(1.2), td_at + chrono::Duration::seconds(292));
+        let st = flight.stats.lock().unwrap();
+        assert_eq!((st.landing_lat, st.landing_lon), (Some(TD.0), Some(TD.1)));
+        assert_eq!(st.landing_heading_true_deg, Some(247.07));
+    }
+
+    /// Gegenprobe Normalfall: Der Puffer haelt den Aufsetzmoment — der Arm
+    /// stempelt wie bisher aus dem Puffer neu.
+    #[test]
+    fn puffer_am_aufsetzmoment_stempelt_wie_bisher() {
+        let (flight, td_at) = gestempelter_flug();
+        let probe_td = probe(td_at + chrono::Duration::milliseconds(80), 50.04365, 8.52455, 247.1, 1_363.5);
+        flight.stats.lock().unwrap().snapshot_buffer.push_back(probe_td);
+        let mut snap = steht(110.0);
+        snap.lat = 50.0435;
+        snap.lon = 8.5238;
+        snap.heading_deg_true = 247.1;
+        step_flight_at(&flight, &snap, td_at + chrono::Duration::seconds(1));
+        let st = flight.stats.lock().unwrap();
+        assert_eq!((st.landing_lat, st.landing_lon), (Some(50.04365), Some(8.52455)));
+        assert_eq!(st.landing_fuel_kg, Some(1_363.5));
+        assert_eq!((st.rollout_last_lat, st.rollout_last_lon), (Some(50.0435), Some(8.5238)));
+    }
+
+    /// Gegenprobe Hopser (Codex 26.10.): Die erste Bodenprobe liegt VOR dem
+    /// bestaetigten Aufsetzen — keine Luecke, der Arm stempelt wie bisher.
+    #[test]
+    fn hopser_davor_stempelt_wie_bisher() {
+        let (flight, td_at) = gestempelter_flug();
+        let erster_kontakt =
+            probe(td_at - chrono::Duration::seconds(3), 50.0438, 8.5255, 247.0, 1_365.0);
+        flight.stats.lock().unwrap().snapshot_buffer.push_back(erster_kontakt);
+        let mut snap = steht(110.0);
+        snap.lat = 50.0435;
+        snap.lon = 8.5238;
+        step_flight_at(&flight, &snap, td_at + chrono::Duration::seconds(1));
+        let st = flight.stats.lock().unwrap();
+        assert_eq!((st.landing_lat, st.landing_lon), (Some(50.0438), Some(8.5255)));
+    }
+
+    /// Gegenprobe: Ohne Stempel des Abtasters (FSM zuerst, Resume nach
+    /// App-Neustart) stempelt der Arm wie bisher.
+    #[test]
+    fn ohne_abtaster_stempelt_der_arm() {
+        let (flight, td_at) = gestempelter_flug();
+        {
+            let mut st = flight.stats.lock().unwrap();
+            st.sampler_touchdown_at = None;
+        }
+        step_flight_at(&flight, &steht(1.2), td_at + chrono::Duration::seconds(292));
+        let st = flight.stats.lock().unwrap();
+        assert_eq!(st.landing_lat, Some(50.040807569984544));
+    }
 }
 
 /// v0.15.24: Touchdown-METADATA stamp — extracted verbatim from the FSM
@@ -51402,8 +51815,16 @@ fn step_flight_at(
                 // is behaviour-identical to the pre-extraction inline code;
                 // it deliberately OVERWRITES any earlier sampler-path stamp
                 // with the FSM-tick values, exactly as before.
-                stamp_touchdown_metadata(&mut stats, snap, actual_td_at, td_buf_sample.as_ref());
-                correlate_touchdown_runway(&mut stats, snap, flight, td_buf_sample.as_ref());
+                // LTU 154 (26.10.2026): Lag zwischen Aufsetzen und diesem
+                // Takt eine Pause, haelt der Puffer nur noch Proben von
+                // danach — der Stempel kaeme aus dem stehenden Flugzeug
+                // (07L statt 25R, 1279 statt 1364 kg Landesprit). Dann
+                // bleibt der Stempel des Abtasters samt Ausroll-Anker.
+                let abtaster_stempel_bleibt = abtaster_stempel_bleibt(&stats, td_buf_sample.as_ref());
+                if !abtaster_stempel_bleibt {
+                    stamp_touchdown_metadata(&mut stats, snap, actual_td_at, td_buf_sample.as_ref());
+                    correlate_touchdown_runway(&mut stats, snap, flight, td_buf_sample.as_ref());
+                }
                 stats.zwischenstand("aufsetzen_bahn");
 
                 // Reset bounce state for the new analyzer window.
@@ -51655,15 +52076,20 @@ fn step_flight_at(
                 // landing_lon)` until the rollout finalises (~40 kt exit
                 // speed / >30° heading turn-off / 5 kt full-stop), then
                 // sets `rollout_finalized`.
-                stats.rollout_distance_m = Some(0.0);
-                stats.rollout_finalized = false;
-                stats.rollout_last_lat = Some(snap.lat);
-                stats.rollout_last_lon = Some(snap.lon);
+                if !abtaster_stempel_bleibt {
+                    stats.rollout_distance_m = Some(0.0);
+                    stats.rollout_finalized = false;
+                    stats.rollout_last_lat = Some(snap.lat);
+                    stats.rollout_last_lon = Some(snap.lon);
+                }
                 // Landing weight — extracted helper (v0.15.24), called at
                 // the SAME point in the arm as the pre-extraction inline
                 // code (after the brake-energy proxy above, which must keep
                 // seeing the PREVIOUS landing_weight_kg on touch-and-go).
-                stamp_landing_weight(&mut stats, snap);
+                // Bleibt der Stempel des Abtasters, gilt auch sein Gewicht.
+                if !abtaster_stempel_bleibt {
+                    stamp_landing_weight(&mut stats, snap);
+                }
                 stats.zwischenstand("aufsetzen_anflug_note");
             }
         }
@@ -70365,6 +70791,7 @@ mod sim_pause_tests {
             on_ground: false,
             gs_kt: None,
             at: None,
+            aufgesetzt: None,
         }
     }
 

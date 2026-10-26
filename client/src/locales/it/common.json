@@ -2548,7 +2548,7 @@
     "confirm_failed": "Conferma fallita",
     "cancel_failed": "Impossibile annullare il volo",
     "hard_stop_title": "Sim crash o reload rilevato",
-    "hard_stop_body": "La posizione attuale del sim non corrisponde al volo salvato. Riposiziona prima nel sim alla posizione precedente (slew mode o ricarica), poi premi \"Verifica posizione ora + riprendi\". Se la posizione è entro 5 nm dal punto salvato, il volo riprende normalmente senza marchio untrusted.",
+    "hard_stop_body": "La posizione attuale del sim non corrisponde al volo salvato. Riposiziona prima nel sim alla posizione precedente (slew mode o ricarica), poi premi \"Verifica posizione ora + riprendi\". Se l'aereo è entro 5 nm dal punto salvato, nella stessa condizione (in volo, se il volo era in volo) e senza carburante aggiunto, il volo riprende normalmente senza marchio untrusted.",
     "hard_stop_discard": "Scarta volo + ricomincia",
     "hard_stop_force_resume": "Continua comunque (salto registrato nel log attività)",
     "vom_boden_weiterfliegen": "Continua da terra",
