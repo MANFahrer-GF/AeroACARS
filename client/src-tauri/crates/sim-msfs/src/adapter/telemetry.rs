@@ -1022,6 +1022,34 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     // YourControls-Definition „FlightSim Studio - Embraer E-Jet Series";
     // die Bedeutung (kt) prueft `landing_scoring::vref` an der Formel.
     F::f64("L:FSS_EXX_PFD_GV_AIRSPD_VREF_1", "Number"),
+    // BlueBird 757 (26.10.2026): offizielle Hersteller-Liste
+    // support.bluebirdsim.com/docs/simvars, Stand 21.10.2026 — Werte siehe
+    // `AircraftProfile::BlueBird757`. Schalter-LVars, nicht die `_ON`-
+    // Lampen (haengen an Strom/Lampentest); die Kabinen-Gurtlampe nur roh.
+    // LVars — koennen nicht abgelehnt werden, darum VOR dem Standard-Schwanz.
+    F::f64("L:B757_OVHD_SEATBELTS_SWITCH", "Number"),
+    F::f64("L:B757_OVHD_NO_SMOKING_SWITCH", "Number"),
+    F::f64("L:BBS757_PASS_SEAT_BELT_SIGNS_CABIN", "Number"),
+    F::f64("L:B757_OVHD_BEACON_LIGHT", "Number"),
+    F::f64("L:B757_OVHD_STROBE", "Number"),
+    F::f64("L:B757_OVHD_NAV_LIGHTS", "Number"),
+    F::f64("L:B757_OVHD_LOGO_BUTTON", "Number"),
+    F::f64("L:B757_OVHD_WING_LIGHTS", "Number"),
+    F::f64("L:B757_OVHD_LEFT_LANDING_LIGHT", "Number"),
+    F::f64("L:B757_OVHD_RIGHT_LANDING_LIGHT", "Number"),
+    F::f64("L:B757_OVHD_NOSE_LANDING_LIGHT", "Number"),
+    F::f64("L:B757_OVHD_APU_SWITCH", "Number"),
+    F::f64("L:BBS_AUTOBRAKE_KNOB", "Number"),
+    F::f64("L:B757_PED_TCAS_MODE_KNOB", "Number"),
+    F::f64("L:AT_ARM_SWITCH", "Number"),
+    F::f64("L:B757_MCP_CMD_1_BUTTON", "Number"),
+    F::f64("L:B757_MCP_CMD_2_BUTTON", "Number"),
+    F::f64("L:B757_MCP_CMD_3_BUTTON", "Number"),
+    F::f64("L:B757_MCP_HOLD_1_BUTTON", "Number"),
+    F::f64("L:B757_MCP_HOLD_2_BUTTON", "Number"),
+    F::f64("L:B757_MCP_LNAV_BUTTON", "Number"),
+    F::f64("L:B757_MCP_LOC_BUTTON", "Number"),
+    F::f64("L:B757_MCP_APP_BUTTON", "Number"),
     // Lernpaket vmsACARS (29.09.2026), AP1a: zweiter G-Kanal. vmsACARS 3
     // benotet die Landung unter MSFS aus `SEMIBODY LOADFACTOR Y` statt aus
     // `G FORCE`; unser `G FORCE` laeuft rund 614 ms hinter der Sinkrate
@@ -1762,6 +1790,31 @@ pub struct Telemetry {
     /// 0 = HDG gewaehlt (gemessen 29.09.2026).
     pub fnx_fcu_hdg_dashed: f64,
     pub fss_vref: f64,
+    /// BlueBird 757 `L:B757_*`/`L:BBS*` (Hersteller-Liste, siehe
+    /// `AircraftProfile::BlueBird757`).
+    pub bbs_seatbelts_sw: f64,
+    pub bbs_no_smoking_sw: f64,
+    pub bbs_gurt_lampe_kabine: f64,
+    pub bbs_beacon_sw: f64,
+    pub bbs_strobe_sw: f64,
+    pub bbs_nav_sw: f64,
+    pub bbs_logo_sw: f64,
+    pub bbs_wing_sw: f64,
+    pub bbs_landing_l_sw: f64,
+    pub bbs_landing_r_sw: f64,
+    pub bbs_landing_nose_sw: f64,
+    pub bbs_apu_sw: f64,
+    pub bbs_autobrake_knob: f64,
+    pub bbs_tcas_mode_knob: f64,
+    pub bbs_at_arm_switch: f64,
+    pub bbs_cmd_l_lampe: f64,
+    pub bbs_cmd_c_lampe: f64,
+    pub bbs_cmd_r_lampe: f64,
+    pub bbs_hdg_hold_lampe: f64,
+    pub bbs_alt_hold_lampe: f64,
+    pub bbs_lnav_lampe: f64,
+    pub bbs_loc_lampe: f64,
+    pub bbs_app_lampe: f64,
     /// `SEMIBODY LOADFACTOR Y` (g). Zweiter G-Kanal zum Vergleich mit
     /// `G FORCE`. `None`, wenn der Block vor diesem Feld endet — eine
     /// erfundene 0 waere als G-Wert falsch.
@@ -2566,6 +2619,29 @@ impl Telemetry {
         pull_f64!(t.fnx_fcu_appr_lampe);
         pull_f64!(t.fnx_fcu_hdg_dashed);
         pull_f64!(t.fss_vref);
+        pull_f64!(t.bbs_seatbelts_sw);
+        pull_f64!(t.bbs_no_smoking_sw);
+        pull_f64!(t.bbs_gurt_lampe_kabine);
+        pull_f64!(t.bbs_beacon_sw);
+        pull_f64!(t.bbs_strobe_sw);
+        pull_f64!(t.bbs_nav_sw);
+        pull_f64!(t.bbs_logo_sw);
+        pull_f64!(t.bbs_wing_sw);
+        pull_f64!(t.bbs_landing_l_sw);
+        pull_f64!(t.bbs_landing_r_sw);
+        pull_f64!(t.bbs_landing_nose_sw);
+        pull_f64!(t.bbs_apu_sw);
+        pull_f64!(t.bbs_autobrake_knob);
+        pull_f64!(t.bbs_tcas_mode_knob);
+        pull_f64!(t.bbs_at_arm_switch);
+        pull_f64!(t.bbs_cmd_l_lampe);
+        pull_f64!(t.bbs_cmd_c_lampe);
+        pull_f64!(t.bbs_cmd_r_lampe);
+        pull_f64!(t.bbs_hdg_hold_lampe);
+        pull_f64!(t.bbs_alt_hold_lampe);
+        pull_f64!(t.bbs_lnav_lampe);
+        pull_f64!(t.bbs_loc_lampe);
+        pull_f64!(t.bbs_app_lampe);
         // Option: ein abgeschnittener Block bleibt None, nie 0 g.
         pull_opt_f64!(t.semibody_loadfactor_y);
         pull_f64!(t.roh_std_autobrake_switch_cb);
@@ -2865,6 +2941,19 @@ const FBW_A380X_AUTOBRAKE: &[&str] = &["DISARM", "BTV", "LOW", "L2", "L3", "HIGH
 /// FSS E-Jets `L:FSS_EXX_AUTOBRAKE` (Paket Front/Front.xml:217-241):
 /// 0=RTO 1=OFF 2=LO 3=MED 4=HI.
 const FSS_EJET_AUTOBRAKE: &[&str] = &["RTO", "OFF", "LO", "MED", "HI"];
+
+/// BlueBird 757 `L:BBS_AUTOBRAKE_KNOB` 0=RTO 1=OFF 2=DISARM 3..6=1..4
+/// 7=MAX AUTO (Hersteller-Liste, Stand 21.10.2026).
+const BBS757_AUTOBRAKE: &[&str] = &["RTO", "OFF", "DISARM", "1", "2", "3", "4", "MAX"];
+
+/// BlueBird 757 Schilder-Schalter 0=OFF 1=AUTO 2=ON — nur Werte auf einer
+/// Raste, sonst `None` (kein erfundenes OFF).
+fn bbs757_schild(v: f64) -> Option<u8> {
+    match v.round() as i64 {
+        n @ 0..=2 if (v - n as f64).abs() < 0.25 => Some(n as u8),
+        _ => None,
+    }
+}
 
 /// Transponder-Label fuer Airbus-Pedestale mit getrenntem ATC-Schalter
 /// (0=STBY 1=AUTO 2=ON) und TCAS-Wahlschalter (0=STBY 1=TA 2=TA/RA) —
@@ -3240,6 +3329,8 @@ fn telemetry_to_snapshot_gesperrt(
                 && fbw_modell.as_deref().is_none_or(|m| m == "A388")));
     // Runde 3: FSS E-Jets (`L:FSS_EXX_*`, siehe TELEMETRY_FIELDS).
     let is_fss = matches!(profile, AircraftProfile::FssEjet);
+    // BlueBird 757 (`L:B757_*`, Hersteller-Liste, siehe TELEMETRY_FIELDS).
+    let is_bbs757 = matches!(profile, AircraftProfile::BlueBird757);
     // Headwind A339 (FBW-Fork): Titel-Marker oder ICAO A339 — beides landet
     // auf `FbwA32nx` (siehe `AircraftProfile::detect`).
     let is_headwind_a339 = is_fbw
@@ -3679,6 +3770,22 @@ fn telemetry_to_snapshot_gesperrt(
             t.fss_nav_lampe != 0.0 || t.ap_nav,
             t.fss_app_lampe != 0.0 || t.ap_approach,
         )
+    } else if is_bbs757 {
+        // BlueBird 757: MCP-Lampen (Hersteller-Liste, „button light",
+        // 0/1). CMD L/C/R = AP engaged, HOLD 1 = HDG HOLD, HOLD 2 = ALT
+        // HOLD, LOC wie APP als Anflug (lateraler Capture, wie FSL/A346).
+        // Die Messung vom 25.10. sah keine bewegte Standard-SimVar — die
+        // bleibt per ODER, falls doch verdrahtet.
+        (
+            t.bbs_cmd_l_lampe != 0.0
+                || t.bbs_cmd_c_lampe != 0.0
+                || t.bbs_cmd_r_lampe != 0.0
+                || t.ap_master,
+            t.bbs_hdg_hold_lampe != 0.0 || t.ap_heading,
+            t.bbs_alt_hold_lampe != 0.0 || t.ap_altitude,
+            t.bbs_lnav_lampe != 0.0 || t.ap_nav,
+            t.bbs_app_lampe != 0.0 || t.bbs_loc_lampe != 0.0 || t.ap_approach,
+        )
     } else {
         (
             t.ap_master,
@@ -3712,6 +3819,15 @@ fn telemetry_to_snapshot_gesperrt(
             t.fss_strobe_sw != 0.0,
             t.fss_nav_sw != 0.0,
             t.light_logo,
+        )
+    } else if is_bbs757 {
+        // BlueBird 757: Schalter-LVars 0/1 (`B757_OVHD_BEACON` ist das alte
+        // NAV-Licht, nicht der Beacon). Standard-SimVar per ODER.
+        (
+            t.bbs_beacon_sw != 0.0 || t.light_beacon,
+            t.bbs_strobe_sw != 0.0 || t.light_strobe,
+            t.bbs_nav_sw != 0.0 || t.light_nav,
+            t.bbs_logo_sw != 0.0 || t.light_logo,
         )
     } else if is_synaptic_a220 {
         // Synaptic A220 (MSFS 2024): Input-Event `AIRLINER_OVH_LTS_BEACON`
@@ -3792,6 +3908,15 @@ fn telemetry_to_snapshot_gesperrt(
         // FSS E-Jets: Landing L/R/Nose (Overhead/PanelExtLight.xml:10-50),
         // 0 = Off — irgendeiner an = Landelicht an.
         Some(t.fss_landing_l_sw != 0.0 || t.fss_landing_r_sw != 0.0 || t.fss_landing_nose_sw != 0.0)
+    } else if is_bbs757 {
+        // BlueBird 757: Landing L/R/Nose 0/1; die Standard-SimVar bewegte
+        // sich im LTU-152-Start mit — per ODER.
+        Some(
+            t.bbs_landing_l_sw != 0.0
+                || t.bbs_landing_r_sw != 0.0
+                || t.bbs_landing_nose_sw != 0.0
+                || t.light_landing,
+        )
     } else {
         None
     };
@@ -3814,6 +3939,8 @@ fn telemetry_to_snapshot_gesperrt(
         || t.std_light_landing_on_2.is_some_and(|v| v != 0.0);
     let fenix_beta_light_wing = if fenix_beta {
         Some(t.fnx_ext_lt_wing as i32 != 0)
+    } else if is_bbs757 {
+        Some(t.bbs_wing_sw != 0.0)
     } else {
         None
     };
@@ -3865,6 +3992,11 @@ fn telemetry_to_snapshot_gesperrt(
     // override only takes over when Fenix is actually feeding values.
     let apu_switch = if is_fenix {
         t.fnx_apu_master as i32 != 0
+    } else if is_bbs757 {
+        // BlueBird 757 `L:B757_OVHD_APU_SWITCH` 0=OFF 1=ON 2=START (START
+        // springt nach 1 s auf ON). Die Messung vom 25.10. sah keine
+        // Standard-SimVar mitgehen — ersetzen.
+        t.bbs_apu_sw >= 0.5
     } else if is_synaptic_a220 {
         // Synaptic A220 `L:A22X APU Switch` 0=Off 1=Run 2=Start (offiziell:
         // docs.synapticsim.com/pilots/simvars). ERSETZT die Standard-SimVar:
@@ -4005,6 +4137,11 @@ fn telemetry_to_snapshot_gesperrt(
         // 0/1-Schalter auf den Feld-Kontrakt 0=OFF 2=ON abbilden — eine
         // rohe 1 hiesse sonst AUTO (Log/Monitor zeigten Fenix-ON als AUTO).
         Some(if t.fnx_signs_seatbelts >= 0.5 { 2 } else { 0 })
+    } else if is_bbs757 {
+        // BlueBird 757 `L:B757_OVHD_SEATBELTS_SWITCH` 0=OFF 1=AUTO 2=ON —
+        // schon die Snapshot-Skala. Die Standard-SimVar steht hier immer
+        // auf 0 (LTU 152 / ICE 520, 26.10.2026).
+        bbs757_schild(t.bbs_seatbelts_sw)
     } else if is_a346 {
         // `L:AB_OVH_SEATBELT`: Overhead-Schalterposition. Der reale
         // A340-Schalter ist 3-stufig (OFF/AUTO/ON) — wir clampen auf
@@ -4101,6 +4238,9 @@ fn telemetry_to_snapshot_gesperrt(
     };
     let no_smoking_sign = if is_fenix {
         Some(t.fnx_signs_smoking.round().clamp(0.0, 2.0) as u8)
+    } else if is_bbs757 {
+        // BlueBird 757 `L:B757_OVHD_NO_SMOKING_SWITCH` 0=OFF 1=AUTO 2=ON.
+        bbs757_schild(t.bbs_no_smoking_sw)
     } else if is_a346 {
         // `L:AB_OVH_NO_SMOKING`: wie Fenix' SMOKING-Sign auf 0..=2
         // geclamped (OFF/AUTO/ON-Labels im Activity-Log).
@@ -4203,7 +4343,12 @@ fn telemetry_to_snapshot_gesperrt(
     // Autobrake setting — derived from the three indicator-lamp
     // LVars (LO/MED/MAX). Only one of them is illuminated at a
     // time. Fenix exposes these as `L:I_MIP_AUTOBRAKE_*_L`.
-    let autobrake = if is_fenix {
+    let autobrake = if is_bbs757 {
+        // BlueBird 757 `L:BBS_AUTOBRAKE_KNOB` 0=RTO 1=OFF 2=DISARM 3..6 =
+        // 1..4 7=MAX AUTO — dieselben Beschriftungen wie die FF757 unter
+        // X-Plane. Die Messung vom 25.10. sah keine Standard-SimVar.
+        enum_label_mit_null(t.bbs_autobrake_knob, BBS757_AUTOBRAKE)
+    } else if is_fenix {
         if t.fnx_autobrake_max as i32 != 0 {
             Some("MAX".to_string())
         } else if t.fnx_autobrake_med as i32 != 0 {
@@ -4978,7 +5123,18 @@ fn telemetry_to_snapshot_gesperrt(
     // sinnvolles Label → None statt eines erfundenen STBY.
     // Audit 26.09.2026: weitere Muster mit belegtem Transponder-Wahlschalter,
     // Vokabular jeweils das von `pmdg_xpdr_mode_label`.
-    let xpdr_mode_label = if is_fenix {
+    let xpdr_mode_label = if is_bbs757 {
+        // BlueBird 757 `L:B757_PED_TCAS_MODE_KNOB` 0=STBY 1=ALT RPTG OFF
+        // 2=XPNDR 3=TA ONLY 4=TA/RA — Beschriftung wie beim 737-Knopf.
+        match t.bbs_tcas_mode_knob.round() as i64 {
+            0 => Some("STBY".to_string()),
+            1 => Some("ALT-OFF".to_string()),
+            2 => Some("XPNDR".to_string()),
+            3 => Some("TA".to_string()),
+            4 => Some("TA-RA".to_string()),
+            _ => None,
+        }
+    } else if is_fenix {
         airbus_xpdr_mode_label(t.fnx_xpdr_operation, t.fnx_xpdr_mode)
     } else if is_a346 {
         airbus_xpdr_mode_label(t.a346_xpdr_stby_auto_on, t.a346_xpdr_tcas_mode)
@@ -5205,6 +5361,13 @@ fn telemetry_to_snapshot_gesperrt(
         // Runde 2: FSL (Strobe/Belts/APU), iFly (Transponder/Belts) und
         // MD-11 (Belts) sowie A350-Belts/-Strobe werden jetzt ausgewertet
         // und stehen nicht mehr hier. Offen bleiben:
+        if is_bbs757 {
+            // BlueBird 757: Schalter und Kabinenlampe zur Gegenprobe am
+            // Kontrollflug (AUTO-Logik der Lampe noch nicht ausgewertet).
+            roh("L:B757_OVHD_SEATBELTS_SWITCH", t.bbs_seatbelts_sw);
+            roh("L:BBS757_PASS_SEAT_BELT_SIGNS_CABIN", t.bbs_gurt_lampe_kabine);
+            roh("L:AT_ARM_SWITCH", t.bbs_at_arm_switch);
+        }
         if is_a350 {
             // Belts/Strobe werden ausgewertet (Paket v1.2.6), laufen aber
             // zur Gegenprobe weiter roh mit — die iniBuilds-LVar-PDF
@@ -6174,8 +6337,9 @@ mod tests {
         // Vref (06.10.2026): +16 (FSS-PFD-VREF, DESIGN SPEED VS0).
         // 16.10.2026: −16 (EX1 und TRANSPONDER STATE:1 in eigene
         // Definitionen, `OPTIONALE_FELDER`). FSS-FGP-Lampen (19.10.2026):
-        // +40 (AP, HDG, NAV, ALT, APP).
-        assert_eq!(buf.len(), 3712, "total block size");
+        // +40 (AP, HDG, NAV, ALT, APP). BlueBird 757 (26.10.2026): +184
+        // (23 LVars).
+        assert_eq!(buf.len(), 3896, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -6500,14 +6664,37 @@ mod tests {
         assert_eq!(t.fnx_fcu_appr_lampe, 1381.0); // idx 381
         assert_eq!(t.fnx_fcu_hdg_dashed, 1382.0); // idx 382
         assert_eq!(t.fss_vref, 1383.0); // idx 383, Vref (06.10.2026)
-        assert_eq!(t.semibody_loadfactor_y, Some(1384.0)); // idx 384, Lernpaket
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1385.0); // idx 385
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1386.0)); // idx 386
-        assert_eq!(t.std_light_landing_on_1, Some(1387.0)); // idx 387
-        assert_eq!(t.std_light_landing_on_2, Some(1388.0)); // idx 388
-        assert_eq!(t.design_vs0, Some(1389.0)); // idx 389, zuletzt
+        assert_eq!(t.bbs_seatbelts_sw, 1384.0); // idx 384, BlueBird 757 (26.10.2026)
+        assert_eq!(t.bbs_no_smoking_sw, 1385.0); // idx 385
+        assert_eq!(t.bbs_gurt_lampe_kabine, 1386.0); // idx 386
+        assert_eq!(t.bbs_beacon_sw, 1387.0); // idx 387
+        assert_eq!(t.bbs_strobe_sw, 1388.0); // idx 388
+        assert_eq!(t.bbs_nav_sw, 1389.0); // idx 389
+        assert_eq!(t.bbs_logo_sw, 1390.0); // idx 390
+        assert_eq!(t.bbs_wing_sw, 1391.0); // idx 391
+        assert_eq!(t.bbs_landing_l_sw, 1392.0); // idx 392
+        assert_eq!(t.bbs_landing_r_sw, 1393.0); // idx 393
+        assert_eq!(t.bbs_landing_nose_sw, 1394.0); // idx 394
+        assert_eq!(t.bbs_apu_sw, 1395.0); // idx 395
+        assert_eq!(t.bbs_autobrake_knob, 1396.0); // idx 396
+        assert_eq!(t.bbs_tcas_mode_knob, 1397.0); // idx 397
+        assert_eq!(t.bbs_at_arm_switch, 1398.0); // idx 398
+        assert_eq!(t.bbs_cmd_l_lampe, 1399.0); // idx 399
+        assert_eq!(t.bbs_cmd_c_lampe, 1400.0); // idx 400
+        assert_eq!(t.bbs_cmd_r_lampe, 1401.0); // idx 401
+        assert_eq!(t.bbs_hdg_hold_lampe, 1402.0); // idx 402
+        assert_eq!(t.bbs_alt_hold_lampe, 1403.0); // idx 403
+        assert_eq!(t.bbs_lnav_lampe, 1404.0); // idx 404
+        assert_eq!(t.bbs_loc_lampe, 1405.0); // idx 405
+        assert_eq!(t.bbs_app_lampe, 1406.0); // idx 406
+        assert_eq!(t.semibody_loadfactor_y, Some(1407.0)); // idx 407, Lernpaket
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1408.0); // idx 408
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1409.0)); // idx 409
+        assert_eq!(t.std_light_landing_on_1, Some(1410.0)); // idx 410
+        assert_eq!(t.std_light_landing_on_2, Some(1411.0)); // idx 411
+        assert_eq!(t.design_vs0, Some(1412.0)); // idx 412, zuletzt
         assert_eq!(t.std_transponder_state, None); // → OPTIONALE_FELDER
-        assert_eq!(TELEMETRY_FIELDS.len(), 390, "letzter Index 389");
+        assert_eq!(TELEMETRY_FIELDS.len(), 413, "letzter Index 412");
     }
 
     #[test]
@@ -6581,7 +6768,8 @@ mod tests {
         // Vref (06.10.2026): FSS-VREF und DESIGN SPEED VS0 dazu → 66 * 8 = 528.
         // 16.10.2026: TRANSPONDER STATE:1 → OPTIONALE_FELDER → 65 * 8 = 520.
         // FSS-FGP-Lampen (19.10.2026): fuenf LVars dazu → 70 * 8 = 560.
-        buf.truncate(buf.len() - 560);
+        // BlueBird 757 (26.10.2026): 23 LVars dazu → 93 * 8 = 744.
+        buf.truncate(buf.len() - 744);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(
@@ -9765,6 +9953,118 @@ mod tests {
         // Fenix: eigene LVar, AUS gilt sofort — trotz frischer Sperre.
         let f = anschnall_folge("FenixA320 CFM SL", "A320", &[("L:S_OH_SIGNS", 0.0)]);
         assert_eq!(f, vec![Some(0)]);
+    }
+
+    // ---- BlueBird 757 (26.10.2026, Hersteller-Liste) ----
+
+    const BBS_LTU: (&str, &str) = ("BlueBird 757-200 RR LTU D-AMUZ", "B752");
+
+    #[test]
+    fn bluebird_757_schilder_aus_den_schaltern() {
+        for (roh, soll) in [(0.0, Some(0)), (1.0, Some(1)), (2.0, Some(2)), (1.5, None)] {
+            let s = runde2(
+                BBS_LTU.0,
+                BBS_LTU.1,
+                &[
+                    ("L:B757_OVHD_SEATBELTS_SWITCH", roh),
+                    ("L:B757_OVHD_NO_SMOKING_SWITCH", roh),
+                    // Die tote Standard-SimVar zaehlt nicht mehr.
+                    (STD_GURT, 0.0),
+                ],
+            );
+            assert_eq!(s.seatbelts_sign, soll, "Gurt {roh}");
+            assert_eq!(s.no_smoking_sign, soll, "Rauchen {roh}");
+        }
+        let s = runde2(BBS_LTU.0, BBS_LTU.1, &[("L:B757_OVHD_SEATBELTS_SWITCH", 2.0)]);
+        assert_eq!(s.aircraft_profile, AircraftProfile::BlueBird757);
+        assert_eq!(
+            s.cockpit_rohwerte
+                .as_ref()
+                .and_then(|r| r.werte.get("L:B757_OVHD_SEATBELTS_SWITCH"))
+                .copied(),
+            Some(2.0)
+        );
+    }
+
+    #[test]
+    fn bluebird_757_lichter_apu_autobrake_transponder() {
+        let aus = runde2(BBS_LTU.0, BBS_LTU.1, &[]);
+        assert_eq!(aus.light_beacon, Some(false));
+        assert_eq!(aus.light_landing, Some(false));
+        assert_eq!(aus.light_wing, Some(false));
+        assert_eq!(aus.apu_switch, Some(false));
+        assert_eq!(aus.autobrake.as_deref(), Some("RTO"));
+        assert_eq!(aus.xpdr_mode_label.as_deref(), Some("STBY"));
+        let an = runde2(
+            BBS_LTU.0,
+            BBS_LTU.1,
+            &[
+                ("L:B757_OVHD_BEACON_LIGHT", 1.0),
+                ("L:B757_OVHD_STROBE", 1.0),
+                ("L:B757_OVHD_NAV_LIGHTS", 1.0),
+                ("L:B757_OVHD_LOGO_BUTTON", 1.0),
+                ("L:B757_OVHD_WING_LIGHTS", 1.0),
+                ("L:B757_OVHD_NOSE_LANDING_LIGHT", 1.0),
+                ("L:B757_OVHD_APU_SWITCH", 2.0),
+                ("L:BBS_AUTOBRAKE_KNOB", 7.0),
+                ("L:B757_PED_TCAS_MODE_KNOB", 4.0),
+            ],
+        );
+        assert_eq!(an.light_beacon, Some(true));
+        assert_eq!(an.light_strobe, Some(true));
+        assert_eq!(an.light_nav, Some(true));
+        assert_eq!(an.light_logo, Some(true));
+        assert_eq!(an.light_wing, Some(true));
+        assert_eq!(an.light_landing, Some(true));
+        assert_eq!(an.apu_switch, Some(true), "START zaehlt als an");
+        assert_eq!(an.autobrake.as_deref(), Some("MAX"));
+        assert_eq!(an.xpdr_mode_label.as_deref(), Some("TA-RA"));
+        for (knopf, soll) in [(1.0, "OFF"), (2.0, "DISARM"), (3.0, "1"), (6.0, "4")] {
+            let s = runde2(BBS_LTU.0, BBS_LTU.1, &[("L:BBS_AUTOBRAKE_KNOB", knopf)]);
+            assert_eq!(s.autobrake.as_deref(), Some(soll), "{knopf}");
+        }
+        // Der alte NAV-Schalter `B757_OVHD_BEACON` ist nicht registriert —
+        // ein Beacon aus ihm waere falsch.
+        assert!(!TELEMETRY_FIELDS.iter().any(|f| f.name == "L:B757_OVHD_BEACON"));
+    }
+
+    #[test]
+    fn bluebird_757_autopilot_aus_den_mcp_lampen() {
+        let s = runde2(
+            BBS_LTU.0,
+            BBS_LTU.1,
+            &[
+                ("L:B757_MCP_CMD_3_BUTTON", 1.0),
+                ("L:B757_MCP_HOLD_2_BUTTON", 1.0),
+                ("L:B757_MCP_LNAV_BUTTON", 1.0),
+            ],
+        );
+        assert_eq!(s.autopilot_master, Some(true));
+        assert_eq!(s.autopilot_altitude, Some(true));
+        assert_eq!(s.autopilot_nav, Some(true));
+        assert_eq!(s.autopilot_heading, Some(false));
+        assert_eq!(s.autopilot_approach, Some(false));
+        let s = runde2(BBS_LTU.0, BBS_LTU.1, &[("L:B757_MCP_LOC_BUTTON", 1.0)]);
+        assert_eq!(s.autopilot_approach, Some(true), "LOC = Anflug");
+        assert_eq!(s.autopilot_master, Some(false));
+    }
+
+    #[test]
+    fn bluebird_lvars_beruehren_andere_muster_nicht() {
+        let werte = [
+            ("L:B757_OVHD_SEATBELTS_SWITCH", 2.0),
+            ("L:B757_OVHD_BEACON_LIGHT", 1.0),
+            ("L:B757_MCP_CMD_1_BUTTON", 1.0),
+            ("L:BBS_AUTOBRAKE_KNOB", 7.0),
+        ];
+        let baron = runde2(BARON.0, BARON.1, &werte);
+        assert_eq!(baron.seatbelts_sign, Some(0), "Standard-SimVar, offene Sperre");
+        assert_eq!(baron.light_beacon, Some(false));
+        assert_eq!(baron.autopilot_master, Some(false));
+        assert!(baron.autobrake.as_deref() != Some("MAX"));
+        let fss = runde2(FSS_E190.0, FSS_E190.1, &werte);
+        assert_eq!(fss.seatbelts_sign, Some(0));
+        assert_eq!(fss.autopilot_master, Some(false));
     }
 
     // ---- Optionale SimVars + Laengenwaechter (Pilot 15, MSFS 2020) ----
