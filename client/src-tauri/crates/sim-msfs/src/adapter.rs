@@ -1422,6 +1422,8 @@ fn run_dispatch(
     // zusammenfassen, bevor der 3-s-Streamer sie abtastet (sim_core::lampen).
     let mut halter_warning = sim_core::lampen::LampenHalter::default();
     let mut halter_caution = sim_core::lampen::LampenHalter::default();
+    // 26.10.2026: Standard-Anschnallzeichen erst nach einmal AN gueltig.
+    let mut anschnall_sperre = telemetry::StandardAnschnallSperre::default();
     let simulator = kind.as_simulator();
     // Force inspector re-registration after a reconnect — the new
     // SimConnect handle starts with an empty definition table even
@@ -2168,6 +2170,7 @@ fn run_dispatch(
                                 &eingaben,
                                 &optionale,
                                 &conn.haupt_ausgelassen,
+                                &mut anschnall_sperre,
                             );
                             // Spec v0.7.15 F5: Pause-State aus dem Atomic
                             // in den Snapshot kopieren — wird vom Streamer-
@@ -2385,7 +2388,13 @@ fn run_dispatch(
                         conn.eingaben_abmelden(&alt);
                         let detected = crate::pmdg::PmdgVariant::detect_from_air_path(&air_path);
                         let mut g = shared.pmdg.lock();
-                        g.air_path = Some(air_path.clone()).filter(|p| !p.trim().is_empty());
+                        let neuer_pfad = Some(air_path.clone()).filter(|p| !p.trim().is_empty());
+                        // Nur ein echter Flugzeugwechsel setzt die Sperre
+                        // zurueck, nicht jede wiederholte Antwort.
+                        if g.air_path != neuer_pfad {
+                            anschnall_sperre = telemetry::StandardAnschnallSperre::default();
+                        }
+                        g.air_path = neuer_pfad;
                         if g.variant != detected {
                             tracing::info!(
                                 ?detected,
@@ -2485,6 +2494,7 @@ fn run_dispatch(
                         // Dasselbe fuer die Input-Events: Werte des vorigen
                         // Flugzeugs sofort verwerfen.
                         // Eine noch gehaltene MASTER-Lampe gehoert dem alten Muster.
+                        anschnall_sperre = telemetry::StandardAnschnallSperre::default();
                         halter_warning = sim_core::lampen::LampenHalter::default();
                         halter_caution = sim_core::lampen::LampenHalter::default();
                         let alt = shared.eingaben.lock().flugzeug_gewechselt(Instant::now());

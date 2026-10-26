@@ -1286,6 +1286,27 @@ pub enum AircraftProfile {
     /// FGP-Lampen `L:FSS_EXX_FGC_LT_AP/HDG/NAV/Alt/APP`, 0 = aus — die
     /// Standard-`AUTOPILOT *`-SimVars bewegt der E-Jet nicht.
     FssEjet,
+    /// BlueBird Simulations 757-200/-300 (MSFS 2020/2024, Paketordner
+    /// `bbs-757-…`). Titel: "BlueBird 757-200 RR LTU D-AMUZ", "BlueBird
+    /// 757-200 Condor D-ABNR", "BlueBird 757-200 RR Icelandair TF-FIN".
+    /// Systeme in eigenem C++/WASM; `CABIN SEATBELTS ALERT SWITCH` steht
+    /// immer auf 0 (LTU 152 / ICE 520, 26.10.2026). Belegung aus der
+    /// offiziellen Hersteller-Liste support.bluebirdsim.com/docs/simvars
+    /// („checked against source as of 21 October 2026"):
+    ///   * `L:B757_OVHD_SEATBELTS_SWITCH` / `_NO_SMOKING_SWITCH` 0=OFF
+    ///     1=AUTO 2=ON
+    ///   * Licht-Schalter `L:B757_OVHD_BEACON_LIGHT`, `_STROBE`,
+    ///     `_NAV_LIGHTS`, `_LOGO_BUTTON`, `_WING_LIGHTS`,
+    ///     `_LEFT/_RIGHT/_NOSE_LANDING_LIGHT`, `_RWY_TURN_L/R` 0/1
+    ///     (`B757_OVHD_BEACON` ist das alte NAV-Licht, nicht der Beacon)
+    ///   * `L:B757_OVHD_APU_SWITCH` 0=OFF 1=ON 2=START,
+    ///     `L:B757_FC_PARK_BRAKE` 0/1, `L:BBS_AUTOBRAKE_KNOB` 0=RTO 1=OFF
+    ///     2=DISARM 3..6=1..4 7=MAX AUTO, `L:B757_PED_TCAS_MODE_KNOB`
+    ///     0=STBY 1=ALT RPTG OFF 2=XPNDR 3=TA ONLY 4=TA/RA
+    ///   * MCP-Lampen `L:B757_MCP_CMD_1/2/3_BUTTON`, `_HOLD_1_` (HDG
+    ///     HOLD), `_HOLD_2_` (ALT HOLD), `_LNAV_`, `_LOC_`, `_APP_BUTTON`
+    /// Am Flugzeug noch nicht gemessen — Kontrollflug steht aus.
+    BlueBird757,
 }
 
 impl AircraftProfile {
@@ -1536,6 +1557,12 @@ impl AircraftProfile {
         if fss_wort && (t.contains("embraer") || t.contains("e17") || t.contains("e19")) {
             return Self::FssEjet;
         }
+        // BlueBird 757: alle bekannten Titel beginnen mit "BlueBird 757-".
+        // Hersteller UND Muster im Titel — kein ICAO-Fallback (B752/B753
+        // fliegen auch andere Add-ons).
+        if t.contains("bluebird") && t.contains("757") {
+            return Self::BlueBird757;
+        }
         Self::Default
     }
 
@@ -1660,6 +1687,13 @@ impl AircraftProfile {
         {
             return Self::IflyMax8;
         }
+        // BlueBird 757 (Paketordner `bbs-757-200-pw-nw` u. a.) für
+        // Lackierungen ohne „BlueBird" im Titel. Titel oder ICAO muss nach
+        // 757 aussehen.
+        let bbs_ordner = p.split('/').any(|teil| teil.starts_with("bbs-757"));
+        if bbs_ordner && (t.contains("757") || modell.starts_with("B75")) {
+            return Self::BlueBird757;
+        }
         Self::Default
     }
 
@@ -1735,6 +1769,7 @@ impl AircraftProfile {
             Self::IniA380 => "INIBuilds A380",
             Self::IniA330 => "INIBuilds A330",
             Self::FssEjet => "FSS E-Jet",
+            Self::BlueBird757 => "BlueBird 757",
         }
     }
 
@@ -4020,6 +4055,37 @@ mod msfs2024_cockpit_tests {
         );
         assert_eq!(AircraftProfile::FssEjet.label(), "FSS E-Jet");
         assert_eq!(AircraftProfile::FssEjet.icao_fallback(), None);
+    }
+
+    #[test]
+    fn bluebird_757_nach_titel_und_pfad() {
+        // Echte Titel aus den Flug-Logs/der Messung (26.10.2026).
+        for (titel, icao) in [
+            ("BlueBird 757-200 RR LTU D-AMUZ", "B752"),
+            ("BlueBird 757-200 Condor D-ABNR", "B752"),
+            ("BlueBird 757-200 RR Icelandair TF-FIN", ""),
+            ("BlueBird 757-300 Condor D-ABOC", "B753"),
+        ] {
+            assert_eq!(
+                AircraftProfile::detect(titel, icao),
+                AircraftProfile::BlueBird757,
+                "{titel}"
+            );
+        }
+        // FlightFactor-757 (X-Plane-Titel) und fremde 757 ohne Marker nicht.
+        for (titel, icao) in [("Boeing 757-RF", "B752"), ("757-200 Generic", "B752")] {
+            assert_eq!(AircraftProfile::detect(titel, icao), AircraftProfile::Default, "{titel}");
+        }
+        let pfad = r"C:\Community\bbs-757-200-pw-nw\SimObjects\Airplanes\bbs-757-200-pw-nw\aircraft.CFG";
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("757-200 Condor D-ABNR", "B752", Some(pfad)),
+            AircraftProfile::BlueBird757
+        );
+        assert_eq!(
+            AircraftProfile::detect_mit_pfad("Cessna Skyhawk", "C172", Some(pfad)),
+            AircraftProfile::Default
+        );
+        assert_eq!(AircraftProfile::BlueBird757.label(), "BlueBird 757");
     }
 
     #[test]
