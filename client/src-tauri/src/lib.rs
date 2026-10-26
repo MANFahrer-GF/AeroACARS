@@ -690,6 +690,10 @@ struct LageReferenz {
 /// Wie lange vor dem letzten Punkt ein bestaetigtes Aufsetzen noch zur
 /// Luecke zaehlt. Ein Durchstart-Aufsetzer Minuten davor zaehlt nicht.
 const AUFSETZEN_VOR_LUECKE_MAX_S: i64 = 30;
+/// Wie lange NACH dem letzten Punkt das Aufsetzen hoechstens liegen darf:
+/// ein Abtast-Takt im Endanflug, mit Luft. Ein Aufsetzen, das erst nach
+/// einem Neuladen entsteht, liegt weit dahinter (Codex-Pruefung 26.10.2026).
+const AUFSETZEN_NACH_LETZTEM_PUNKT_MAX_S: i64 = 3;
 /// Wie weit der Aufsetzpunkt hoechstens vom letzten Punkt vor der Luecke
 /// liegt. Ein Aufsetzen ist keine Reise: Bei LTU 154 lagen 30 m dazwischen.
 const AUFSETZEN_VOR_LUECKE_MAX_NM: f64 = 1.0;
@@ -714,7 +718,8 @@ fn aufsetzen_der_luecke(stats: &FlightStats, lat: f64, lon: f64) -> Option<(f64,
     ) else {
         return None;
     };
-    let zeitlich = td_at >= at - chrono::Duration::seconds(AUFSETZEN_VOR_LUECKE_MAX_S);
+    let zeitlich = td_at >= at - chrono::Duration::seconds(AUFSETZEN_VOR_LUECKE_MAX_S)
+        && td_at <= at + chrono::Duration::seconds(AUFSETZEN_NACH_LETZTEM_PUNKT_MAX_S);
     let raeumlich = ::geo::distance_m(la, lo, lat, lon) / 1852.0 <= AUFSETZEN_VOR_LUECKE_MAX_NM;
     (zeitlich && raeumlich).then_some((la, lo))
 }
@@ -876,6 +881,19 @@ mod landung_in_der_luecke_tests {
         };
         assert_eq!(
             lage_abweichung(&lage_referenz(&st).unwrap(), &jetzt, utc("2026-10-24T18:07:19Z"), true),
+            Some(LageAbweichung::AmBoden)
+        );
+    }
+
+    /// Codex 26.10.: Ein Aufsetzen, das erst nach der Unterbrechung entsteht
+    /// (Neuladen nahe der Bahn), gehoert nicht zur Luecke.
+    #[test]
+    fn aufsetzen_erst_nach_der_luecke_zaehlt_nicht() {
+        let mut st = ltu154_stats();
+        st.sampler_touchdown_at = Some(utc("2026-10-26T17:20:15Z"));
+        assert_eq!(aufsetzen_der_luecke(&st, VORHER.0, VORHER.1), None);
+        assert_eq!(
+            urteil(&st, &sim_am_boden(JETZT.0, JETZT.1, 1_362.0)),
             Some(LageAbweichung::AmBoden)
         );
     }
@@ -45729,15 +45747,16 @@ fn touchdown_buffer_sample(stats: &FlightStats) -> Option<TelemetrySample> {
     stats.snapshot_buffer.iter().find(|s| s.on_ground).cloned()
 }
 
-/// Wie weit die Pufferprobe vom bestaetigten Aufsetzen abliegen darf, um
-/// noch als Aufsetzmoment zu gelten.
+/// Wie viel spaeter als das bestaetigte Aufsetzen die Pufferprobe liegen
+/// darf, um noch als Aufsetzmoment zu gelten.
 const AUFSETZPROBE_TOLERANZ_MS: i64 = 2_000;
 
 /// Behaelt der FSM-Landing-Arm den Stempel des Abtasters? Ja, wenn der
 /// Abtaster das Aufsetzen schon bestaetigt und gestempelt hat und der Puffer
-/// keine Probe aus dem Aufsetzmoment mehr haelt — nach einer Pause oder
-/// einem geleerten Puffer (LTU 154, 26.10.2026). Sonst stempelt der Arm wie
-/// bisher neu.
+/// nur noch Bodenproben von DANACH haelt oder leer ist — nach einer Pause
+/// oder einem geleerten Puffer (LTU 154, 26.10.2026). Liegt die Probe davor
+/// (erster Kontakt eines Hopsers), stempelt der Arm wie bisher neu
+/// (Codex-Pruefung 26.10.2026).
 fn abtaster_stempel_bleibt(stats: &FlightStats, td_buf_sample: Option<&TelemetrySample>) -> bool {
     let Some(td_at) = stats.sampler_touchdown_at else {
         return false;
@@ -45745,8 +45764,7 @@ fn abtaster_stempel_bleibt(stats: &FlightStats, td_buf_sample: Option<&Telemetry
     if gespeicherter_aufsetzpunkt(stats).is_none() {
         return false;
     }
-    !td_buf_sample
-        .is_some_and(|s| (s.at - td_at).num_milliseconds().abs() <= AUFSETZPROBE_TOLERANZ_MS)
+    td_buf_sample.is_none_or(|s| (s.at - td_at).num_milliseconds() > AUFSETZPROBE_TOLERANZ_MS)
 }
 
 #[cfg(test)]
@@ -45868,6 +45886,22 @@ mod abtaster_stempel_tests {
         assert_eq!((st.landing_lat, st.landing_lon), (Some(50.04365), Some(8.52455)));
         assert_eq!(st.landing_fuel_kg, Some(1_363.5));
         assert_eq!((st.rollout_last_lat, st.rollout_last_lon), (Some(50.0435), Some(8.5238)));
+    }
+
+    /// Gegenprobe Hopser (Codex 26.10.): Die erste Bodenprobe liegt VOR dem
+    /// bestaetigten Aufsetzen — keine Luecke, der Arm stempelt wie bisher.
+    #[test]
+    fn hopser_davor_stempelt_wie_bisher() {
+        let (flight, td_at) = gestempelter_flug();
+        let erster_kontakt =
+            probe(td_at - chrono::Duration::seconds(3), 50.0438, 8.5255, 247.0, 1_365.0);
+        flight.stats.lock().unwrap().snapshot_buffer.push_back(erster_kontakt);
+        let mut snap = steht(110.0);
+        snap.lat = 50.0435;
+        snap.lon = 8.5238;
+        step_flight_at(&flight, &snap, td_at + chrono::Duration::seconds(1));
+        let st = flight.stats.lock().unwrap();
+        assert_eq!((st.landing_lat, st.landing_lon), (Some(50.0438), Some(8.5255)));
     }
 
     /// Gegenprobe: Ohne Stempel des Abtasters (FSM zuerst, Resume nach

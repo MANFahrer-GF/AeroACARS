@@ -9,7 +9,9 @@
 //! Viertel aller Pausen keine Sekunde.
 //!
 //! Eine Pause gilt deshalb erst, wenn sie `ENTPRELLZEIT` ohne Unterbrechung
-//! ansteht. Ein Ende gilt sofort.
+//! ansteht. Ein Ende gilt sofort. Preis: Eine echte Pause sehen die Leser
+//! von `snap.paused` erst nach dieser Frist — darum kurz, viermal das
+//! laengste gemessene Flackern (Codex-Pruefung 26.10.2026).
 //!
 //! ⚠ Ausgewertet wird beim LESEN des Schnappschusses, nicht beim Bauen.
 //! Schickt der Simulator waehrend einer echten Pause keine Daten mehr,
@@ -17,7 +19,7 @@
 
 use std::time::{Duration, Instant};
 
-pub const ENTPRELLZEIT: Duration = Duration::from_secs(2);
+pub const ENTPRELLZEIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Default, Clone)]
 pub struct PausenEntpreller {
@@ -64,7 +66,7 @@ mod tests {
         e.melden(true, ms(t0, 501));
         assert!(!e.pausiert(ms(t0, 636)), "der Takt, der den Flug anhielt");
         e.melden(false, ms(t0, 642));
-        for t in [700, 2_500, 3_000, 10_000] {
+        for t in [700, 1_500, 3_000, 10_000] {
             assert!(!e.pausiert(ms(t0, t)), "bei {t} ms");
         }
     }
@@ -74,8 +76,8 @@ mod tests {
         let t0 = Instant::now();
         let mut e = PausenEntpreller::default();
         e.melden(true, t0);
-        assert!(!e.pausiert(ms(t0, 1_999)));
-        assert!(e.pausiert(ms(t0, 2_000)));
+        assert!(!e.pausiert(ms(t0, 999)));
+        assert!(e.pausiert(ms(t0, 1_000)));
         // Kein neuer Wert vom Simulator — die Pause bleibt beim Lesen erkannt.
         assert!(e.pausiert(ms(t0, 600_000)));
         e.melden(false, ms(t0, 600_001));
@@ -87,8 +89,8 @@ mod tests {
         let t0 = Instant::now();
         let mut e = PausenEntpreller::default();
         e.melden(true, t0);
-        e.melden(true, ms(t0, 1_500));
-        assert!(e.pausiert(ms(t0, 2_000)));
+        e.melden(true, ms(t0, 800));
+        assert!(e.pausiert(ms(t0, 1_000)));
     }
 
     #[test]
@@ -96,9 +98,9 @@ mod tests {
         let t0 = Instant::now();
         let mut e = PausenEntpreller::default();
         e.melden(true, t0);
-        e.melden(false, ms(t0, 1_900));
-        e.melden(true, ms(t0, 1_950));
-        assert!(!e.pausiert(ms(t0, 3_000)));
-        assert!(e.pausiert(ms(t0, 3_950)));
+        e.melden(false, ms(t0, 900));
+        e.melden(true, ms(t0, 950));
+        assert!(!e.pausiert(ms(t0, 1_500)));
+        assert!(e.pausiert(ms(t0, 1_950)));
     }
 }
