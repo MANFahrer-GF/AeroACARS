@@ -256,6 +256,13 @@ pub const KABINE_SINKFLUG_UNTER_FT: f64 = 20_000.0;
 pub const KAPITAEN_VOR_TOD_S: i64 = 90;
 /// … bzw. so viele Minuten vor der erwarteten Landung (vorher 25).
 pub const KAPITAEN_VOR_LANDUNG_MIN: f64 = 20.0;
+/// Die Phase „Sinkflug“ allein löst die Ansage nur aus, solange die Restzeit
+/// höchstens so lang ist (GAF278 OMDB–LOWW 24.10.2026: Ein Stufen-Sinkflug von
+/// 2,5 min mitten im Reiseflug spielte sie 259 min vor dem Endanflug, „noch
+/// 265 min“). Gemessen über 90 Flüge: gespielt 10–52 min vor dem Endanflug,
+/// Restzeit beim Abspielen höchstens 40 min (eine Umleitung 60). Nach einer
+/// Umleitung gilt die Grenze nicht (die Restzeit meint das alte Ziel).
+pub const PHASE_SINKFLUG_HOECHSTENS_REST_MIN: f64 = 75.0;
 /// Ende des Bordverkaufs bzw. zweiter Service so lange vor dem Top of Descent
 /// (Thomas 18.10.2026: „10, 15 Minuten vor Top of Descent“).
 pub const REISEFLUG80_VOR_TOD_S: i64 = 12 * 60;
@@ -1086,7 +1093,8 @@ impl Planer {
         if in_luft && self.steigflug_vorbei && r < rang(Final) {
             let nach_rest = !self.umgeleitet && t.rest_min.is_some_and(|m| m <= KAPITAEN_VOR_LANDUNG_MIN);
             let nach_tod = self.tod().is_some_and(|tod| t.jetzt >= tod - KAPITAEN_VOR_TOD_S);
-            let nach_phase = r >= rang(Descent);
+            let nach_phase = r >= rang(Descent)
+                && (self.umgeleitet || t.rest_min.is_none_or(|m| m <= PHASE_SINKFLUG_HOECHSTENS_REST_MIN));
             if nach_rest || nach_tod || nach_phase {
                 self.melde(&mut aus, Slot::KapitaenSinkflug, Verfall::AbPhase(Final));
                 if self.schon(Slot::KapitaenSinkflug) && self.kapitaen_sinkflug == KapitaenSinkflug::Offen && !self.abgewaehlt.contains(&Slot::KapitaenSinkflug) {
@@ -1276,6 +1284,26 @@ mod tests {
             rest_min: None,
             ..Default::default()
         }
+    }
+
+    /// GAF278 24.10.2026: Ein kurzer Sinkflug mitten im Reiseflug (Phase
+    /// Descent, noch 265 min) spielt die Sinkflug-Ansage nicht; kurz vor der
+    /// Landung und nach einer Umleitung weiter schon.
+    #[test]
+    fn stufen_sinkflug_im_reiseflug_loest_kapitaen_nicht_aus() {
+        let mut p = Planer::fortsetzen(flug(420), Cruise);
+        let lang = Tick { rest_min: Some(265.0), ..tick(10_000, Descent, 29_000.0, -1_500.0) };
+        assert!(!p.tick(&lang).iter().any(|f| f.slot == Slot::KapitaenSinkflug), "Stufen-Sinkflug, 265 min Rest");
+        let kurz = Tick { rest_min: Some(35.0), ..tick(20_000, Descent, 30_000.0, -1_800.0) };
+        assert!(p.tick(&kurz).iter().any(|f| f.slot == Slot::KapitaenSinkflug), "echter Sinkflug, 35 min Rest");
+
+        let mut u = Planer::fortsetzen(flug(420), Cruise);
+        let umgeleitet = Tick { rest_min: Some(265.0), ziel_icao: Some("LFBD".into()), ..tick(10_000, Descent, 29_000.0, -1_500.0) };
+        assert!(u.tick(&umgeleitet).iter().any(|f| f.slot == Slot::KapitaenSinkflug), "Umleitung: Restzeit meint das alte Ziel");
+
+        let mut o = Planer::fortsetzen(flug(420), Cruise);
+        let ohne = Tick { rest_min: None, ..tick(10_000, Descent, 29_000.0, -1_500.0) };
+        assert!(o.tick(&ohne).iter().any(|f| f.slot == Slot::KapitaenSinkflug), "ohne Restzeit wie bisher");
     }
 
     /// Die angezeigte Uhrzeit muss die sein, zu der `tick` die Ansage
