@@ -2556,7 +2556,10 @@ fn ankunft_nach_umleitung(stats: &mut FlightStats) {
     }
     lauf.angefragt.remove("ankunft");
     lauf.fehlversuche.remove("ankunft");
-    lauf.auffrischung = Auffrischung::default();
+    // Generation weiterzählen, nie auf null: Sonst gälte eine späte Antwort
+    // der alten Auffrischung für die neue (Codex 26.10.2026).
+    let generation = lauf.auffrischung.generation + 1;
+    lauf.auffrischung = Auffrischung { generation, ..Auffrischung::default() };
     let details = serde_json::json!({
         "von": lauf.ankunft_ziel,
         "nach": ziel,
@@ -3327,10 +3330,11 @@ fn holen(
             let lauf = &mut stats.kabinen_lauf;
             let fehler = ergebnis.as_ref().err().map(|e| kurz(&e.to_string()));
             // Antwort auf einen Ankunftsteil fürs alte Ziel (Umleitung, während
-            // die Anfrage lief): verwerfen, der neue ist schon bestellt.
+            // die Anfrage lief): verwerfen, auch einen Fehler — sonst träfe er
+            // Bestellung und Fehlerbudget des neuen Ziels (Codex 26.10.2026).
             let ziel_alt = schluessel.starts_with("ankunft")
                 && anfrage["flug"]["umleitung_icao"].as_str().map(str::to_string) != lauf.ankunft_ziel;
-            if ziel_alt && ergebnis.is_ok() {
+            if ziel_alt {
                 notiz(lauf, "text_verworfen", None, None, serde_json::json!({ "teil": schluessel, "grund": "umleitung" }));
                 drop(stats);
                 protokoll_leeren(&app, &flight);
@@ -6357,6 +6361,7 @@ mod tests {
         assert!(!l.ton.contains_key(&(Slot::NachDerLandung, "fr-FR".into())));
         assert!(l.texte.contains_key(&(Slot::Reiseflug50, "fr-FR".into())), "andere Teile bleiben");
         assert_eq!(l.ankunft_ziel.as_deref(), Some("NVVV"));
+        assert_eq!(l.auffrischung.generation, 1, "Generation weitergezählt, nie zurück auf null");
 
         st.kabinen_lauf.angefragt.insert("ankunft".into());
         ankunft_nach_umleitung(&mut st);
