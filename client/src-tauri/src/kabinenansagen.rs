@@ -2675,7 +2675,13 @@ fn abspielen_schritt(stats: &mut FlightStats, jetzt: i64, phase: FlightPhase, ru
     // Verfallene in jedem Takt abholen (nicht nur, wenn nichts spielt) und in
     // „Bisher“ mit Grund zeigen: Ton nicht rechtzeitig fertig oder zu spät dran.
     for weg in lauf.warteschlange.verfallene_abholen() {
-        let grund = if ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, weg), &lauf.ohne_stimme, &lauf.ohne_vorlage, weg) { "zu_spaet" } else { "ton_nicht_fertig" };
+        let sprachen_weg = sprachen_je_slot(&lauf.slot_sprachen, &lauf.sprachen, weg);
+        // Ohne Text in jeder Sprache gab es nie etwas zu sprechen: Das ist kein
+        // Ton-Problem (LTU 152, 26.10.2026: „Ton nicht fertig“ zeigte auf die
+        // Sprach-Worker, dabei hatte der Server keinen Text geliefert).
+        let ohne_text = !matches!(weg.rolle(), Rolle::Chime | Rolle::Kommando)
+            && sprachen_weg.iter().all(|sp| !lauf.texte.contains_key(&(weg, sp.clone())));
+        let grund = if ansage_bereit(&lauf.texte, &lauf.ton, &lauf.texte_fehler, &lauf.texte_fehlen, sprachen_weg, &lauf.ohne_stimme, &lauf.ohne_vorlage, weg) { "zu_spaet" } else if ohne_text { "text_fehlt" } else { "ton_nicht_fertig" };
         notiz(lauf, "verfallen", Some(weg), None, serde_json::json!({ "grund": grund }));
         verbuchen(lauf, weg, "entfallen", Some(grund), jetzt);
         verfallen_aufraeumen(lauf, weg);
@@ -5518,18 +5524,22 @@ mod tests {
         let mut st = FlightStats::new();
         st.kabinen_planer = Some(planer_mit(Flugart::Linie, Cruise));
         // R50: Ton fertig, aber Ruhephase bis zum Verfall → „zu spät“.
-        // R80: Ton fehlt bis zum Verfall → „Ton nicht fertig“.
+        // R80: Text da, Ton fehlt bis zum Verfall → „Ton nicht fertig“.
+        // R25: Der Server lieferte keinen Text → „Text fehlt“, nicht „Ton“
+        // (LTU 152, 26.10.2026: zeigte auf die Sprach-Worker).
         st.kabinen_lauf = lauf_mit_ton(&[Slot::Reiseflug50]);
+        st.kabinen_lauf.texte.insert((Slot::Reiseflug80, "de-DE".into()), "Reiseflug80".into());
         st.kabinen_lauf.warteschlange.aufnehmen([
             Faellig { slot: Slot::Reiseflug50, verfall: cabin_announcements::Verfall::AbPhase(Descent), trotz_ruhephase: false },
             Faellig { slot: Slot::Reiseflug80, verfall: cabin_announcements::Verfall::AbPhase(Descent), trotz_ruhephase: false },
+            Faellig { slot: Slot::Reiseflug25, verfall: cabin_announcements::Verfall::AbPhase(Descent), trotz_ruhephase: false },
         ]);
         let (g, neu) = abspielen_schritt(&mut st, 100, Cruise, true, false);
         assert!(g.is_none() && !neu, "Ruhephase: wartet noch");
         let (g, neu) = abspielen_schritt(&mut st, 200, Descent, false, false);
         assert!(g.is_none() && neu);
         let gruende: Vec<(Slot, Option<&str>, Option<&str>)> = st.kabinen_lauf.verlauf.iter().map(|g| (g.slot, g.ergebnis.as_deref(), g.grund.as_deref())).collect();
-        assert_eq!(gruende, vec![(Slot::Reiseflug50, Some("entfallen"), Some("zu_spaet")), (Slot::Reiseflug80, Some("entfallen"), Some("ton_nicht_fertig"))]);
+        assert_eq!(gruende, vec![(Slot::Reiseflug50, Some("entfallen"), Some("zu_spaet")), (Slot::Reiseflug80, Some("entfallen"), Some("ton_nicht_fertig")), (Slot::Reiseflug25, Some("entfallen"), Some("text_fehlt"))]);
         // Keine Stimme für keine Sprache: entfällt mit Grund statt nur im Log.
         let mut st = FlightStats::new();
         st.kabinen_planer = Some(planer_mit(Flugart::Linie, Cruise));
@@ -7640,11 +7650,11 @@ mod rundumschlag_p1_tests {
         let g = abspielen_schritt(&mut st, 8_000, Cruise, false, false).0.expect("Service spielt");
         assert!(ende_melden(&mut st, g.id, "abgebrochen", 8_010, "backend"));
         assert_eq!(beim_sinkflug(&mut st, 8_100), (false, true));
-        // Ohne Ton verfallen (Sinkflug): Der Host meldet es, das Ende entfällt
-        // sofort (sonst hielte der gemeldete Service es bis zum Anflug zurück).
+        // Ohne Text und Ton verfallen (Sinkflug): Der Host meldet es, das Ende
+        // entfällt sofort (sonst hielte der gemeldete Service es bis zum Anflug zurück).
         let mut st = mit_gemeldetem_service(false);
         abspielen_schritt(&mut st, 8_100, Descent, false, false);
-        assert_eq!(st.kabinen_lauf.verlauf.last().map(|g| (g.slot, g.grund.as_deref())), Some((Slot::Reiseflug25, Some("ton_nicht_fertig"))));
+        assert_eq!(st.kabinen_lauf.verlauf.last().map(|g| (g.slot, g.grund.as_deref())), Some((Slot::Reiseflug25, Some("text_fehlt"))));
         assert_eq!(beim_sinkflug(&mut st, 8_110), (false, true));
         // Stumm: ebenso.
         let mut st = mit_gemeldetem_service(true);
