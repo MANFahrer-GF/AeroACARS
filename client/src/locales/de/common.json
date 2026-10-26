@@ -2551,7 +2551,7 @@
     "countdown": "In {{seconds}}s wird der Flug fortgesetzt — solange läuft kein Position-Stream",
     "position_suspect": "⚠ Die aktuelle Sim-Position weicht stark vom gespeicherten Flug ab — der Sim ist evtl. nach einem Crash neu geladen worden. Kein automatisches Fortsetzen: bitte erst prüfen, dass der Sim sauber geladen ist, dann „Jetzt fortsetzen\" drücken.",
     "hard_stop_title": "Sim-Crash oder Reload erkannt",
-    "hard_stop_body": "Die aktuelle Sim-Position passt nicht zum gespeicherten Flug. Bitte erst im Sim wieder zur letzten Position bringen (Slew-Mode oder neu laden) und dann „Position jetzt prüfen + fortsetzen\" drücken. Wenn die Position innerhalb 5 nm vom gespeicherten Punkt liegt, läuft der Flug normal weiter ohne untrusted-Stempel.",
+    "hard_stop_body": "Die aktuelle Sim-Position passt nicht zum gespeicherten Flug. Bitte erst im Sim wieder zur letzten Position bringen (Slew-Mode oder neu laden) und dann „Position jetzt prüfen + fortsetzen\" drücken. Liegt der Flieger innerhalb 5 nm vom gespeicherten Punkt, in derselben Lage (in der Luft, wenn der Flug in der Luft war) und ohne zusätzlichen Sprit, läuft der Flug normal weiter ohne untrusted-Stempel.",
     "hard_stop_discard": "Flug verwerfen + neu starten",
     "hard_stop_force_resume": "Trotzdem fortsetzen (Sprung wird im Activity-Log dokumentiert)",
     "vom_boden_weiterfliegen": "Vom Boden weiterfliegen",
