@@ -7887,6 +7887,38 @@ mod reaktion_tests {
         assert_eq!(schritt(&mut st, eingang(AUFSETZEN_MS + 9_000, "DLH", [0.0; 3]), &mut z), ReaktionTun::Spielen(PathBuf::from("raunen-hart-1.mp3")));
     }
 
+    /// Haken „keine Kabinenansagen auf diesem Flug“ (2.1.14): auch kein
+    /// Applaus. Vor der Landung gesetzt → nichts entschieden; nach der Wahl
+    /// gesetzt → wartet und entfällt mit der Frist. Gegenprobe ohne Haken.
+    #[test]
+    fn haken_im_loadsheet_auch_keine_reaktion() {
+        let mut z = Vec::new();
+        let t0 = AUFSETZEN_MS + 9_000;
+        let mut st = stats("J", Some(150), Some("A+"), 0);
+        st.kabinen_lauf.beta = Beta::FlugAus;
+        for s in 0..20 {
+            assert_eq!(schritt(&mut st, eingang(t0 + s * 1000, "CFG", [0.1, 0.5, 0.0]), &mut z), ReaktionTun::Nichts);
+        }
+        assert!(!st.kabinen_lauf.reaktion.entschieden, "mit Haken nichts entschieden");
+        assert!(notizen(&st).is_empty());
+
+        // Gewählt, dann kommt der Haken: kein Start, entfällt mit der Frist.
+        let mut st = stats("J", Some(150), Some("A+"), 0);
+        assert_eq!(schritt(&mut st, eingang(t0, "CFG", [0.1, 0.5, 0.0]), &mut z), ReaktionTun::Nichts);
+        assert!(st.kabinen_lauf.reaktion.einsatz.is_some());
+        st.kabinen_lauf.beta = Beta::FlugAus;
+        assert_eq!(schritt(&mut st, eingang(t0 + 2_500, "CFG", [0.9; 3]), &mut z), ReaktionTun::Nichts);
+        let spaet = AUFSETZEN_MS + (cabin_announcements::reaktion::SPAETESTENS_NACH_AUFSETZEN_S + 1) * 1000;
+        assert_eq!(schritt(&mut st, eingang(spaet, "CFG", [0.9; 3]), &mut z), ReaktionTun::Nichts);
+        assert!(!notizen(&st).iter().any(|(a, _)| *a == "reaktion_start"), "nie gestartet");
+        assert_eq!(notizen(&st).last().unwrap().1["grund"], "zu_spaet");
+
+        // Gegenprobe: ohne Haken spielt sie.
+        let mut st = stats("J", Some(150), Some("A+"), 0);
+        schritt(&mut st, eingang(t0, "CFG", [0.1, 0.5, 0.0]), &mut z);
+        assert!(matches!(schritt(&mut st, eingang(t0 + 2_500, "CFG", [0.9; 3]), &mut z), ReaktionTun::Spielen(_)));
+    }
+
     #[test]
     fn nach_neustart_zu_spaet_kein_applaus() {
         let mut st = stats("J", Some(150), Some("A+"), 0);
