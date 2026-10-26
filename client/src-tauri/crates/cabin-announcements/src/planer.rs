@@ -1055,8 +1055,10 @@ impl Planer {
         if in_luft && self.steigflug_vorbei && r < rang(Final) {
             let nach_rest = !self.umgeleitet && t.rest_min.is_some_and(|m| m <= crate::tabelle().werte.kapitaen_vor_landung_min.wert);
             let nach_tod = self.tod().is_some_and(|tod| t.jetzt >= tod - crate::tabelle().werte.kapitaen_vor_tod_s.wert);
-            let nach_phase = r >= rang(Descent)
-                && (self.umgeleitet || t.rest_min.is_none_or(|m| m <= crate::tabelle().werte.phase_sinkflug_hoechstens_rest_min.wert));
+            // Ab dem Anflug ohne Grenze: Eine falsch hohe Restzeit darf die
+            // echte Ansage nicht ganz verhindern (Codex 26.10.2026).
+            let nach_phase = r >= rang(Approach)
+                || (r >= rang(Descent) && (self.umgeleitet || t.rest_min.is_none_or(|m| m <= crate::tabelle().werte.phase_sinkflug_hoechstens_rest_min.wert)));
             if nach_rest || nach_tod || nach_phase {
                 self.melde(&mut aus, Slot::KapitaenSinkflug, Verfall::AbPhase(Final));
                 if self.schon(Slot::KapitaenSinkflug) && self.kapitaen_sinkflug == KapitaenSinkflug::Offen && !self.abgewaehlt.contains(&Slot::KapitaenSinkflug) {
@@ -1266,6 +1268,14 @@ mod tests {
         let mut o = Planer::fortsetzen(flug(420), Cruise);
         let ohne = Tick { rest_min: None, ..tick(10_000, Descent, 29_000.0, -1_500.0) };
         assert!(o.tick(&ohne).iter().any(|f| f.slot == Slot::KapitaenSinkflug), "ohne Restzeit wie bisher");
+
+        // Codex 26.10.2026: Bleibt die Restzeit falsch hoch, kommt die Ansage
+        // spätestens im Anflug, nicht gar nicht.
+        let mut a = Planer::fortsetzen(flug(420), Cruise);
+        let sink = Tick { rest_min: Some(265.0), ..tick(10_000, Descent, 12_000.0, -1_500.0) };
+        assert!(!a.tick(&sink).iter().any(|f| f.slot == Slot::KapitaenSinkflug));
+        let anflug = Tick { rest_min: Some(265.0), ..tick(10_600, Approach, 4_000.0, -800.0) };
+        assert!(a.tick(&anflug).iter().any(|f| f.slot == Slot::KapitaenSinkflug), "im Anflug trotz falscher Restzeit");
     }
 
     /// Die angezeigte Uhrzeit muss die sein, zu der `tick` die Ansage
