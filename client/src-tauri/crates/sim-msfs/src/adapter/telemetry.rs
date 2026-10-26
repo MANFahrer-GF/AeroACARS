@@ -2603,7 +2603,50 @@ pub fn parse(bytes: &[u8], simulator: Simulator, cfg_pfad: Option<&str>) -> SimS
         &std::collections::BTreeMap::new(),
         &OptionaleWerte::default(),
         &[],
+        &mut StandardAnschnallSperre::offen(),
     )
+}
+
+/// Sperre fuer den Rueckfall auf die Standard-SimVar
+/// `CABIN SEATBELTS ALERT SWITCH` (26.10.2026, LTU 152 / ICE 520): Muster
+/// ohne Profil, die die SimVar nicht bedienen (BlueBird 757, Black
+/// Square …), liefern dauerhaft 0 — die Kabine nahm das als „Schalter
+/// AUS" und sagte „Anschnallzeichen aus" direkt nach dem Abheben an. Wie
+/// beim X-Plane-Standard-Dataref zaehlt der Wert erst, wenn er in diesem
+/// Flugzeug einmal stabil (2 Bloecke) AN war; bis dahin `None`. Gilt nur
+/// fuer den Standard-Rueckfall — Profile mit eigener Quelle beruehrt sie
+/// nicht. Zuruecksetzen bei SimStart und Flugzeugwechsel (Adapter).
+#[derive(Debug, Clone, Default)]
+pub struct StandardAnschnallSperre {
+    an_in_folge: u8,
+    frei: bool,
+}
+
+impl StandardAnschnallSperre {
+    /// Ohne Sperre (Einzelaufrufe ohne Verlauf, z. B. `parse`).
+    pub fn offen() -> Self {
+        Self {
+            an_in_folge: 0,
+            frei: true,
+        }
+    }
+
+    fn filtern(&mut self, wert: Option<u8>) -> Option<u8> {
+        if self.frei {
+            return wert;
+        }
+        match wert {
+            Some(n) if n != 0 => {
+                self.an_in_folge = self.an_in_folge.saturating_add(1);
+                if self.an_in_folge >= 2 {
+                    self.frei = true;
+                    return wert;
+                }
+            }
+            _ => self.an_in_folge = 0,
+        }
+        None
+    }
 }
 
 /// Wie [`parse`], zusaetzlich mit den Werten der abonnierten MSFS-2024-
@@ -2617,13 +2660,14 @@ pub fn parse_mit_eingaben(
     eingaben: &std::collections::BTreeMap<String, f64>,
     optionale: &OptionaleWerte,
     ausgelassen: &[usize],
+    anschnall_sperre: &mut StandardAnschnallSperre,
 ) -> SimSnapshot {
     let mut t = Telemetry::from_block_ohne(bytes, ausgelassen);
     t.eingaben = eingaben.clone();
     // Fehlt EX1 (MSFS 2020), bleibt 0 → Kraftstoff aus der Legacy-SimVar.
     t.fuel_total_lb_ex1 = optionale.0[OPT_FUEL_EX1].unwrap_or(0.0);
     t.std_transponder_state = optionale.0[OPT_TRANSPONDER_STATE];
-    telemetry_to_snapshot_mit_pfad(t, simulator, cfg_pfad)
+    telemetry_to_snapshot_gesperrt(t, simulator, cfg_pfad, anschnall_sperre)
 }
 
 /// Wert eines abonnierten Input-Events (B:-Variable), falls vorhanden.
@@ -3124,6 +3168,15 @@ fn telemetry_to_snapshot_mit_pfad(
     t: Telemetry,
     simulator: Simulator,
     cfg_pfad: Option<&str>,
+) -> SimSnapshot {
+    telemetry_to_snapshot_gesperrt(t, simulator, cfg_pfad, &mut StandardAnschnallSperre::offen())
+}
+
+fn telemetry_to_snapshot_gesperrt(
+    t: Telemetry,
+    simulator: Simulator,
+    cfg_pfad: Option<&str>,
+    anschnall_sperre: &mut StandardAnschnallSperre,
 ) -> SimSnapshot {
     let profile = AircraftProfile::detect_mit_pfad(&t.title, &t.atc_model, cfg_pfad);
     let is_fenix = profile.is_fenix();
@@ -4038,8 +4091,11 @@ fn telemetry_to_snapshot_mit_pfad(
         // A380X, Headwind A339). FSL, Fenix, PMDG, iFly, iniBuilds A350
         // und A220 bedienen sie NICHT. Zwei Stufen: an = ON, aus = OFF.
         // Fehlt die SimVar im Block (abgelehnt), bleibt es None.
-        t.std_cabin_seatbelts_alert
-            .map(|v| if v != 0.0 { 2 } else { 0 })
+        // Erst nach einmal stabil AN gueltig, siehe `StandardAnschnallSperre`.
+        anschnall_sperre.filtern(
+            t.std_cabin_seatbelts_alert
+                .map(|v| if v != 0.0 { 2 } else { 0 }),
+        )
     } else {
         None
     };
@@ -9643,6 +9699,74 @@ mod tests {
         runde3(titel, atc, None, werte)
     }
 
+    // ---- Standard-Anschnallzeichen erst nach einmal AN (26.10.2026) ----
+
+    /// Folge von Bloecken mit EINER Sperre, wie im Adapter.
+    fn anschnall_folge(titel: &str, atc: &str, folge: &[(&str, f64)]) -> Vec<Option<u8>> {
+        let mut sperre = StandardAnschnallSperre::default();
+        folge
+            .iter()
+            .map(|(name, wert)| {
+                let werte = [(*name, *wert)];
+                parse_mit_eingaben(
+                    &runde2_puffer(titel, atc, &werte),
+                    Simulator::Msfs2024,
+                    None,
+                    &std::collections::BTreeMap::new(),
+                    &optionale_aus(&werte),
+                    &[],
+                    &mut sperre,
+                )
+                .seatbelts_sign
+            })
+            .collect()
+    }
+
+    const STD_GURT: &str = "CABIN SEATBELTS ALERT SWITCH";
+
+    #[test]
+    fn standard_anschnallzeichen_dauerhaft_null_bleibt_unbekannt() {
+        // LTU 152 / ICE 520: die SimVar steht den ganzen Flug auf 0 —
+        // kein „AUS" mehr, die Kabine wartet auf FL100.
+        let f = anschnall_folge(BARON.0, BARON.1, &[(STD_GURT, 0.0); 20]);
+        assert!(f.iter().all(Option::is_none), "{f:?}");
+    }
+
+    #[test]
+    fn standard_anschnallzeichen_einzelner_ausschlag_gibt_nicht_frei() {
+        let f = anschnall_folge(
+            BARON.0,
+            BARON.1,
+            &[(STD_GURT, 0.0), (STD_GURT, 1.0), (STD_GURT, 0.0), (STD_GURT, 0.0)],
+        );
+        assert_eq!(f, vec![None, None, None, None]);
+    }
+
+    #[test]
+    fn standard_anschnallzeichen_nach_an_zaehlt_aus_wieder_sofort() {
+        // FBW A380X bedient die SimVar: AN vor dem Start, AUS im Steigflug
+        // → AUS kommt wie bisher als Some(0) an.
+        let f = anschnall_folge(
+            FBW_EK.0,
+            FBW_EK.1,
+            &[
+                (STD_GURT, 0.0),
+                (STD_GURT, 1.0),
+                (STD_GURT, 1.0),
+                (STD_GURT, 1.0),
+                (STD_GURT, 0.0),
+            ],
+        );
+        assert_eq!(f, vec![None, None, Some(2), Some(2), Some(0)]);
+    }
+
+    #[test]
+    fn anschnall_sperre_beruehrt_profile_mit_eigener_quelle_nicht() {
+        // Fenix: eigene LVar, AUS gilt sofort — trotz frischer Sperre.
+        let f = anschnall_folge("FenixA320 CFM SL", "A320", &[("L:S_OH_SIGNS", 0.0)]);
+        assert_eq!(f, vec![Some(0)]);
+    }
+
     // ---- Optionale SimVars + Laengenwaechter (Pilot 15, MSFS 2020) ----
 
     #[test]
@@ -9693,6 +9817,7 @@ mod tests {
             &std::collections::BTreeMap::new(),
             o,
             &[],
+            &mut StandardAnschnallSperre::offen(),
         )
     }
 
@@ -9813,6 +9938,7 @@ mod tests {
             &std::collections::BTreeMap::new(),
             &OptionaleWerte::default(),
             &ausgelassen,
+            &mut StandardAnschnallSperre::offen(),
         );
         assert_eq!(snap.wind_direction_deg, Some(20.0));
         assert_eq!(snap.wind_speed_kt, Some(15.0));
@@ -9860,6 +9986,7 @@ mod tests {
             &std::collections::BTreeMap::new(),
             &OptionaleWerte::default(),
             &r.ausgelassen,
+            &mut StandardAnschnallSperre::offen(),
         );
         assert_eq!(snap.wind_direction_deg, Some(20.0));
         assert_eq!(snap.wind_speed_kt, Some(15.0));
@@ -10343,6 +10470,7 @@ mod tests {
             &std::collections::BTreeMap::new(),
             &optionale_aus(werte),
             &[],
+            &mut StandardAnschnallSperre::offen(),
         )
     }
 
@@ -10657,6 +10785,7 @@ mod tests {
             &eingaben,
             &optionale_aus(werte),
             &[],
+            &mut StandardAnschnallSperre::offen(),
         )
     }
 
@@ -11257,6 +11386,7 @@ mod tests {
             &std::collections::BTreeMap::new(),
             &OptionaleWerte::default(),
             &[],
+            &mut StandardAnschnallSperre::offen(),
         );
         assert_eq!(a.seatbelts_sign, b.seatbelts_sign);
         assert_eq!(a.cockpit_rohwerte, b.cockpit_rohwerte);
