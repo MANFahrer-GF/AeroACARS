@@ -6387,8 +6387,8 @@ mod tests {
         // 16.10.2026: −16 (EX1 und TRANSPONDER STATE:1 in eigene
         // Definitionen, `OPTIONALE_FELDER`). FSS-FGP-Lampen (19.10.2026):
         // +40 (AP, HDG, NAV, ALT, APP). BlueBird 757 (26.10.2026): +184
-        // (23 LVars).
-        assert_eq!(buf.len(), 3896, "total block size");
+        // (23 LVars). Synaptic-A220-Gegenprobe (27.10.2026): +72 (9 LVars).
+        assert_eq!(buf.len(), 3968, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -6827,7 +6827,8 @@ mod tests {
         // 16.10.2026: TRANSPONDER STATE:1 → OPTIONALE_FELDER → 65 * 8 = 520.
         // FSS-FGP-Lampen (19.10.2026): fuenf LVars dazu → 70 * 8 = 560.
         // BlueBird 757 (26.10.2026): 23 LVars dazu → 93 * 8 = 744.
-        buf.truncate(buf.len() - 744);
+        // Synaptic-A220-Gegenprobe (27.10.2026): 9 LVars dazu → 102 * 8 = 816.
+        buf.truncate(buf.len() - 816);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(
@@ -6846,6 +6847,8 @@ mod tests {
         assert_eq!(t.ini_fcu_hdg_dashed, 0.0, "A380 = sicherer Default");
         assert_eq!(t.fnx_fcu_ap1_lampe, 0.0, "Fenix-FCU = sicherer Default");
         assert_eq!(t.fnx_fcu_hdg_dashed, 0.0, "Fenix-FCU = sicherer Default");
+        assert_eq!(t.syn_nav_lights, 0.0, "A220-Gegenprobe = sicherer Default");
+        assert_eq!(t.syn_transponder_mode, 0.0, "A220-Gegenprobe = sicherer Default");
         assert_eq!(
             t.std_light_landing_on_2, None,
             "Runde 3 = kein erfundener Wert"
