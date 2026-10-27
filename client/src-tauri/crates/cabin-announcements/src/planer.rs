@@ -293,6 +293,15 @@ pub const ROLLT_AB_KT: f64 = 3.0;
 pub const SERVICE_NACH_REISEFLUG_S: i64 = 10 * 60;
 /// So lange gilt der zuletzt aus der Route bekannte TOD ohne neuen Wert.
 pub const TOD_FRISCH_S: i64 = 10 * 60;
+/// Schalter AUS zählt für „Anschnallzeichen aus“ erst, wenn er so lange
+/// ununterbrochen aus steht. BTI 252 (A220, 27.10.2026): 6 s AUS beim
+/// Sinkflugbeginn (ON → OFF → ON) meldete die Ansage; nur die Pause
+/// verhinderte sie. Auch der Weg über AUTO dauerte beim Boarding 6 s.
+pub const ANSCHNALL_AUS_STABIL_S: i64 = 10;
+/// Ab diesem Sinken (fpm) wird „Anschnallzeichen aus“ nicht mehr gemeldet:
+/// Abschnallen ansagen, während das Flugzeug sinkt, ist falsch (BTI 252:
+/// −3.160 fpm, Phase stand noch auf Reiseflug).
+pub const ANSCHNALL_AUS_SINKEN_FPM: f64 = -1_000.0;
 
 #[derive(Debug, Default)]
 pub struct Planer {
@@ -377,6 +386,9 @@ pub struct Planer {
     /// Seit wann der ZFW ununterbrochen [`BOARDING_ZULADUNG_KG`] unter dem
     /// Höchstwert liegt (Entladen, erst nach [`BOARDING_ZULADUNG_S`] gültig).
     zuladung_sinkt_seit: Option<i64>,
+    /// Seit wann der Schalter ununterbrochen auf AUS steht
+    /// ([`ANSCHNALL_AUS_STABIL_S`]).
+    zeichen_aus_seit: Option<i64>,
     /// Die Abhebezeit ist echt (aus den Flugdaten oder im Steigflug
     /// beobachtet), nicht erst beim Wiedereinstieg im Reiseflug gesetzt.
     abheben_gesehen: bool,
@@ -921,9 +933,10 @@ impl Planer {
                 self.melde(&mut aus, Slot::Chime10000Sinkflug, Verfall::Um(t.jetzt + 30));
             }
         }
-        if in_luft && (rang(Climb)..=rang(Cruise)).contains(&r) {
+        self.zeichen_aus_seit = (t.anschnallzeichen == Some(0)).then(|| self.zeichen_aus_seit.unwrap_or(t.jetzt));
+        if in_luft && (rang(Climb)..=rang(Cruise)).contains(&r) && t.vs_fpm > ANSCHNALL_AUS_SINKEN_FPM {
             let aus_signal = match t.anschnallzeichen {
-                Some(0) => true,
+                Some(0) => self.zeichen_aus_seit.is_some_and(|s| t.jetzt - s >= ANSCHNALL_AUS_STABIL_S),
                 // AUTO wechselt nie auf 0: über 10.000 ft im Steigflug gilt
                 // es als erloschen (⚠️ je Profil prüfen).
                 Some(1) | None => t.hoehe_ft >= 10_000.0,
@@ -1499,9 +1512,11 @@ mod tests {
         // Gegenprobe: 30-min-Flug, beim Anschnallzeichen sind nur 25 min übrig.
         let mut p = Planer::neu(flug(30));
         p.tick(&tick(0, TakeoffRoll, 0.0, 0.0));
-        let mut tk = tick(300, Climb, 11_000.0, 2_000.0);
+        let mut tk = tick(300 - ANSCHNALL_AUS_STABIL_S, Climb, 11_000.0, 2_000.0);
         tk.anschnallzeichen = Some(0);
         tk.rest_min = Some(25.0);
+        p.tick(&tk);
+        tk.jetzt = 300;
         assert!(p.tick(&tk).iter().all(|f| f.slot != Slot::Reiseflug25));
         assert_eq!(p.entfallene_abholen(), vec![(Slot::Reiseflug25, Entfall::ZuWenigZeit)]);
     }
@@ -2258,6 +2273,8 @@ mod tests {
         assert!(slots(p.tick(&c)).is_empty(), "Zeichen noch an");
         c.jetzt = 120;
         c.anschnallzeichen = Some(0);
+        assert!(slots(p.tick(&c)).is_empty(), "Zeichen erst kurz aus");
+        c.jetzt = 120 + ANSCHNALL_AUS_STABIL_S;
         assert_eq!(slots(p.tick(&c)), vec![Slot::Reiseflug25], "Service ohne die abgewählte Ansage");
         // Kapitän-Sinkflug abgewählt: Die Kabine richtet sich nach der Höhe.
         let mut q = Planer::fortsetzen(flug(120), Cruise);
@@ -2275,6 +2292,53 @@ mod tests {
         tk.jetzt = 2;
         tk.hoehe_ft = 10_500.0;
         assert!(p.tick(&tk).iter().any(|f| f.slot == Slot::AnschnallzeichenAus));
+    }
+
+    /// BTI 252 (A220, 27.10.2026): Schalter 6 s AUS beim Sinkflugbeginn
+    /// (Phase noch Reiseflug, −3.162 fpm) meldete „Anschnallzeichen aus“.
+    /// Kurzes AUS zählt nicht, und beim Sinken wird es nicht mehr gemeldet.
+    #[test]
+    fn anschnallzeichen_aus_nur_stabil_und_nicht_beim_sinken() {
+        let aus = |p: &mut Planer, t: i64, z: u8, vs: f64| {
+            let mut tk = tick(t, Cruise, 27_000.0, vs);
+            tk.anschnallzeichen = Some(z);
+            tk.rest_min = Some(20.0);
+            p.tick(&tk).iter().any(|f| f.slot == Slot::AnschnallzeichenAus)
+        };
+        // Abgehoben, Zeichen den ganzen Steigflug AN, dann Reiseflug.
+        let gestartet = || {
+            let mut p = Planer::neu(flug(100));
+            p.tick(&tick(-100, TakeoffRoll, 0.0, 0.0));
+            let mut c = tick(-50, Climb, 20_000.0, 2_000.0);
+            c.anschnallzeichen = Some(2);
+            assert!(p.tick(&c).iter().all(|f| f.slot != Slot::AnschnallzeichenAus));
+            p
+        };
+        // Der Flug von BTI 252: 6 s AUS, dann wieder AN — nichts gemeldet.
+        let mut p = gestartet();
+        assert!(!aus(&mut p, 0, 2, 0.0));
+        for t in 1..=6 {
+            assert!(!aus(&mut p, t, 0, -3_162.0), "AUS beim Sinken, {t} s");
+        }
+        assert!(!aus(&mut p, 7, 2, -2_675.0));
+        assert!(p.kommt_noch(Slot::AnschnallzeichenAus, Cruise));
+        // Kurz AUS im Geradeausflug: erst nach der Frist, und die Uhr
+        // beginnt nach einem AN neu.
+        let mut q = gestartet();
+        assert!(!aus(&mut q, 0, 0, 0.0));
+        assert!(!aus(&mut q, 5, 2, 0.0));
+        assert!(!aus(&mut q, 6, 0, 0.0));
+        assert!(!aus(&mut q, 6 + ANSCHNALL_AUS_STABIL_S - 1, 0, 0.0));
+        assert!(aus(&mut q, 6 + ANSCHNALL_AUS_STABIL_S, 0, 0.0));
+        // Stabil AUS, aber das Flugzeug sinkt: nicht gemeldet; ebenso AUTO.
+        let mut r = gestartet();
+        assert!(!aus(&mut r, 0, 0, -1_500.0));
+        assert!(!aus(&mut r, 60, 0, -1_500.0));
+        assert!(!aus(&mut r, 61, 1, -1_500.0));
+        // Wieder im Geradeausflug (Stufensinkflug vorbei) und stabil AUS:
+        // jetzt schon (AUTO bei 61 s hat die Uhr neu gestartet).
+        assert!(!aus(&mut r, 62, 0, -200.0));
+        assert!(aus(&mut r, 62 + ANSCHNALL_AUS_STABIL_S, 0, -200.0));
     }
 
     #[test]
@@ -2656,6 +2720,8 @@ mod tests {
         let mut p = Planer::neu(flug(40));
         let mut tk = tick(0, Climb, 6_000.0, 2_000.0);
         tk.anschnallzeichen = Some(0);
+        p.tick(&tk);
+        tk.jetzt = ANSCHNALL_AUS_STABIL_S;
         let f = p.tick(&tk);
         let aus = f.iter().find(|x| x.slot == Slot::AnschnallzeichenAus).expect("gemeldet");
         assert!(aus.trotz_ruhephase);
