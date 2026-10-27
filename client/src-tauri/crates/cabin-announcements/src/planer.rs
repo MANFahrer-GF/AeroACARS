@@ -389,6 +389,9 @@ pub struct Planer {
     /// Seit wann der Schalter ununterbrochen auf AUS steht
     /// ([`ANSCHNALL_AUS_STABIL_S`]).
     zeichen_aus_seit: Option<i64>,
+    /// Letzter Takt, der AUS sah: Eine Lücke über der Frist (Hänger,
+    /// Pause) zählt nicht als „durchgehend aus“ (Codex 27.10.2026).
+    zeichen_aus_zuletzt: Option<i64>,
     /// Die Abhebezeit ist echt (aus den Flugdaten oder im Steigflug
     /// beobachtet), nicht erst beim Wiedereinstieg im Reiseflug gesetzt.
     abheben_gesehen: bool,
@@ -933,7 +936,10 @@ impl Planer {
                 self.melde(&mut aus, Slot::Chime10000Sinkflug, Verfall::Um(t.jetzt + 30));
             }
         }
-        self.zeichen_aus_seit = (t.anschnallzeichen == Some(0)).then(|| self.zeichen_aus_seit.unwrap_or(t.jetzt));
+        let zeichen_aus = t.anschnallzeichen == Some(0);
+        let luecke = self.zeichen_aus_zuletzt.is_none_or(|z| t.jetzt - z > ANSCHNALL_AUS_STABIL_S);
+        self.zeichen_aus_seit = zeichen_aus.then(|| if luecke { t.jetzt } else { self.zeichen_aus_seit.unwrap_or(t.jetzt) });
+        self.zeichen_aus_zuletzt = zeichen_aus.then_some(t.jetzt);
         if in_luft && (rang(Climb)..=rang(Cruise)).contains(&r) && t.vs_fpm > ANSCHNALL_AUS_SINKEN_FPM {
             let aus_signal = match t.anschnallzeichen {
                 Some(0) => self.zeichen_aus_seit.is_some_and(|s| t.jetzt - s >= ANSCHNALL_AUS_STABIL_S),
@@ -2335,6 +2341,12 @@ mod tests {
         assert!(!aus(&mut r, 0, 0, -1_500.0));
         assert!(!aus(&mut r, 60, 0, -1_500.0));
         assert!(!aus(&mut r, 61, 1, -1_500.0));
+        // Zwei AUS-Takte mit Lücke über der Frist (Hänger): was dazwischen
+        // war, ist unbekannt — die Frist beginnt neu (Codex 27.10.2026).
+        let mut g = gestartet();
+        assert!(!aus(&mut g, 0, 0, 0.0));
+        assert!(!aus(&mut g, ANSCHNALL_AUS_STABIL_S + 1, 0, 0.0), "Lücke zählt nicht");
+        assert!(aus(&mut g, 2 * ANSCHNALL_AUS_STABIL_S + 1, 0, 0.0));
         // Wieder im Geradeausflug (Stufensinkflug vorbei) und stabil AUS:
         // jetzt schon (AUTO bei 61 s hat die Uhr neu gestartet).
         assert!(!aus(&mut r, 62, 0, -200.0));
