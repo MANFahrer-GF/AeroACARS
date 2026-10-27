@@ -52432,7 +52432,8 @@ fn step_flight_at(
                 // Halt erst, wenn die Triebwerke aus sind oder die Bremse
                 // `ROLLWEG_HALT_BESTAETIGT_SECS` lang hält — die Block-On-Zeit
                 // ist dann der Beginn des Halts (`settle_at_arrival_stand`).
-                let is_block_on = is_block_on && {
+                // Nur mit Standdaten: ohne sie gilt weiter das alte Kriterium.
+                let is_block_on = is_block_on && (stand_data.is_none() || {
                     let auf_rollweg = stats
                         .arr_rollwege
                         .as_deref()
@@ -52456,7 +52457,7 @@ fn step_flight_at(
                     } else {
                         true
                     }
-                };
+                });
                 if is_block_on {
                     next_phase = FlightPhase::BlocksOn;
                     stats.blocks_on_reached = true;
@@ -52471,7 +52472,11 @@ fn step_flight_at(
                         }
                     }
                 }
-            } else {
+            } else if !stats.blocks_on_kandidat.as_ref().is_some_and(|k| kandidat_hier(k, snap.lat, snap.lon)) {
+                // Erst das Wegrollen verwirft den Haltbeginn, nicht schon das
+                // Lösen der Bremse: LJLJ (BoYJe50, 11.10.2026) löste nach 82 s
+                // und stellte 15 s später am selben Ort ab — der Arrived-
+                // Fallback nimmt dann den Haltbeginn als Block-On-Zeit.
                 stats.blocks_on_kandidat = None;
             }
         }
@@ -55931,6 +55936,38 @@ mod enroute_reconcile_replay_tests {
             flight
         }
 
+        /// LJLJ (BoYJe50, 11.10.2026): Bremse nach 82 s gelöst, 15 s später
+        /// am selben Ort abgestellt — die Block-On-Zeit bleibt der Haltbeginn.
+        #[test]
+        fn bremse_loesen_am_selben_ort_behaelt_den_haltbeginn() {
+            let flight = rollweg_halt_flight();
+            let t0 = Utc::now();
+            let halt = stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1);
+            step_flight_at(&flight, &halt, t0);
+            let mut geloest = halt.clone();
+            geloest.parking_brake = false;
+            step_flight_at(&flight, &geloest, t0 + chrono::Duration::seconds(82));
+            let mut aus = halt.clone();
+            aus.engines_running = 0;
+            let change = step_flight_at(&flight, &aus, t0 + chrono::Duration::seconds(97));
+            assert_eq!(change, Some(FlightPhase::BlocksOn));
+            assert_eq!(flight.stats.lock().unwrap().block_on_at, Some(t0));
+        }
+
+        /// Ohne Standdaten gilt das alte Kriterium, auch wenn die Bodenkarte
+        /// Rollwege kennt (nur Halte mit Standdaten sind vermessen).
+        #[test]
+        fn ohne_standdaten_wartet_der_rollweg_halt_nicht() {
+            let flight = taxi_in_flight(None);
+            {
+                let mut stats = flight.stats.lock().unwrap();
+                stats.arr_rollwege = Some(vec![vec![(50.0, 8.0), (50.0, 8.01)]]);
+                stats.arr_rollwege_icao = Some("ZZZZ".into());
+            }
+            let snap = stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1);
+            assert_eq!(step_flight_at(&flight, &snap, Utc::now()), Some(FlightPhase::BlocksOn));
+        }
+
         /// Codex-QS: versetzt Slew/GSX den Flieger bei gesetzter Bremse an
         /// den Stand, gilt die Zeit des Rollweg-Halts nicht als Block-On.
         #[test]
@@ -56008,7 +56045,7 @@ mod enroute_reconcile_replay_tests {
             let flight = rollweg_halt_flight();
             let t0 = Utc::now();
             let halt = stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1);
-            let mut rollt = halt.clone();
+            let mut rollt = stopped_at(50.0, 8.0060); // 64 m weiter
             rollt.parking_brake = false;
             rollt.groundspeed_kt = 10.0;
             step_flight_at(&flight, &halt, t0);
