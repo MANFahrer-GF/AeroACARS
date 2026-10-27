@@ -1440,6 +1440,13 @@ const ROLLWEG_HALT_BESTAETIGT_SECS: i64 = 120;
 fn rollweg_halt_bestaetigt(seit: DateTime<Utc>, now: DateTime<Utc>, engines_running: u8) -> bool {
     engines_running == 0 || (now - seit).num_seconds() >= ROLLWEG_HALT_BESTAETIGT_SECS
 }
+
+/// Gehört der gemerkte Haltbeginn zu DIESEM Halt? Nur, wenn das Flugzeug
+/// noch dort steht (Codex-QS 27.10.2026: Slew/GSX bei gesetzter Bremse oder
+/// ein erneutes Abheben ließen sonst eine fremde Zeit als Block-On stehen).
+fn kandidat_hier(kandidat: &(DateTime<Utc>, f64, f64), lat: f64, lon: f64) -> bool {
+    ::geo::distance_m(kandidat.1, kandidat.2, lat, lon) <= 10.0
+}
 /// v0.17.x (#Premium, Aircraft-Scan): längerer Dwell für den engines-
 /// UNABHÄNGIGEN Stillstands-Fallback (Groundspeed < 1 kt + Parkbremse am
 /// Ziel). Fängt Addons ab, deren `engines_running`-SimVar nach dem Shutdown
@@ -8921,14 +8928,18 @@ struct FlightStats {
     /// Für welchen ICAO `arr_stands` gilt — bei einem Divert passt die
     /// Liste nicht zum Flughafen, auf dem der Pilot steht.
     arr_stands_icao: Option<String>,
-    /// Rollweg-Mittellinien des Zielflughafens, geladen zusammen mit
-    /// `arr_stands` und an dasselbe `arr_stands_icao` gebunden.
+    /// Rollweg-Mittellinien des Zielflughafens aus derselben Bodenkarte wie
+    /// `arr_stands`. Eigene Zuordnung, weil die Stände auch aus der
+    /// Szenerie kommen können, wenn OSM keine Parkpositionen kennt.
     arr_rollwege: Option<Vec<Vec<(f64, f64)>>>,
-    /// Beginn eines Bremshalts auf einer Rollweg-Mittellinie, der in
-    /// Standnähe liegt, aber noch nicht als Block-On zählt (siehe
-    /// `ROLLWEG_HALT_BESTAETIGT_SECS`). Wird er bestätigt, ist das die
-    /// Block-On-Zeit. Nicht persistiert: nach Resume beginnt die Frist neu.
-    blocks_on_kandidat_seit: Option<DateTime<Utc>>,
+    arr_rollwege_icao: Option<String>,
+    /// Beginn (Zeit, lat, lon) eines Bremshalts auf einer Rollweg-
+    /// Mittellinie, der in Standnähe liegt, aber noch nicht als Block-On
+    /// zählt (siehe `ROLLWEG_HALT_BESTAETIGT_SECS`). Wird er bestätigt, ist
+    /// das die Block-On-Zeit — aber nur am selben Ort
+    /// (`kandidat_hier`): nach Versetzen oder erneutem Abheben gilt er nicht.
+    /// Nicht persistiert: nach Resume beginnt die Frist neu.
+    blocks_on_kandidat: Option<(DateTime<Utc>, f64, f64)>,
     /// Einmal-pro-Flug-Latch für die Diagnosezeile "Halt mit Bremse, aber
     /// kein Stand in Reichweite" — der Zustand hält sonst über viele Ticks
     /// an und würde das Log fluten.
@@ -11266,7 +11277,11 @@ fn settle_at_arrival_stand(
     now: DateTime<Utc>,
     at_icao: &str,
 ) {
-    let kandidat_seit = stats.blocks_on_kandidat_seit.take();
+    let kandidat_seit = stats
+        .blocks_on_kandidat
+        .take()
+        .filter(|k| kandidat_hier(k, snap.lat, snap.lon))
+        .map(|k| k.0);
     if stats.block_on_at.is_none() {
         stats.block_on_at = Some(kandidat_seit.unwrap_or(now));
     }
@@ -52421,12 +52436,15 @@ fn step_flight_at(
                     let auf_rollweg = stats
                         .arr_rollwege
                         .as_deref()
-                        .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_icao_norm.as_str()))
+                        .filter(|_| stats.arr_rollwege_icao.as_deref() == Some(at_icao_norm.as_str()))
                         .and_then(|r| stands::rollweg_abstand_m(r, snap.lat, snap.lon))
                         .is_some_and(|d| d <= stands::ROLLWEG_MITTELLINIE_M);
+                    if !stats.blocks_on_kandidat.as_ref().is_some_and(|k| kandidat_hier(k, snap.lat, snap.lon)) {
+                        stats.blocks_on_kandidat = None;
+                    }
                     if auf_rollweg {
-                        let neu = stats.blocks_on_kandidat_seit.is_none();
-                        let seit = *stats.blocks_on_kandidat_seit.get_or_insert(now);
+                        let neu = stats.blocks_on_kandidat.is_none();
+                        let seit = stats.blocks_on_kandidat.get_or_insert((now, snap.lat, snap.lon)).0;
                         let ok = rollweg_halt_bestaetigt(seit, now, snap.engines_running);
                         if neu && !ok {
                             tracing::info!(
@@ -52454,7 +52472,7 @@ fn step_flight_at(
                     }
                 }
             } else {
-                stats.blocks_on_kandidat_seit = None;
+                stats.blocks_on_kandidat = None;
             }
         }
         FlightPhase::BlocksOn => {
@@ -55905,8 +55923,40 @@ mod enroute_reconcile_replay_tests {
                 linie: Some(vec![(50.0001, 8.005), STAND_R1_ENDE]),
                 flaeche: false,
             }]));
-            flight.stats.lock().unwrap().arr_rollwege = Some(vec![vec![(50.0, 8.0), (50.0, 8.01)]]);
+            {
+                let mut stats = flight.stats.lock().unwrap();
+                stats.arr_rollwege = Some(vec![vec![(50.0, 8.0), (50.0, 8.01)]]);
+                stats.arr_rollwege_icao = Some("ZZZZ".into());
+            }
             flight
+        }
+
+        /// Codex-QS: versetzt Slew/GSX den Flieger bei gesetzter Bremse an
+        /// den Stand, gilt die Zeit des Rollweg-Halts nicht als Block-On.
+        #[test]
+        fn versetzt_an_den_stand_zaehlt_der_rollweg_halt_nicht() {
+            let flight = rollweg_halt_flight();
+            let t0 = Utc::now();
+            step_flight_at(&flight, &stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1), t0);
+            let t1 = t0 + chrono::Duration::seconds(40);
+            let change = step_flight_at(&flight, &stopped_at(STAND_R1_ENDE.0, STAND_R1_ENDE.1), t1);
+            assert_eq!(change, Some(FlightPhase::BlocksOn));
+            assert_eq!(flight.stats.lock().unwrap().block_on_at, Some(t1));
+        }
+
+        /// Codex-QS: ein Haltbeginn von anderswo (erneut abgehoben) darf
+        /// über den Arrived-Fallback nicht zur Block-On-Zeit werden.
+        #[test]
+        fn fremder_haltbeginn_wird_nicht_zur_block_on_zeit() {
+            let flight = rollweg_halt_flight();
+            let t0 = Utc::now();
+            let alt = t0 - chrono::Duration::hours(1);
+            flight.stats.lock().unwrap().blocks_on_kandidat = Some((alt, 51.0, 9.0));
+            let snap = stopped_at(STAND_R1_ENDE.0, STAND_R1_ENDE.1);
+            assert_eq!(step_flight_at(&flight, &snap, t0), Some(FlightPhase::BlocksOn));
+            let stats = flight.stats.lock().unwrap();
+            assert_eq!(stats.block_on_at, Some(t0));
+            assert!(stats.blocks_on_kandidat.is_none());
         }
 
         /// Thorben, TCX 24 EDDN (26.10.2026): Halt mit Bremse auf dem
@@ -55936,7 +55986,7 @@ mod enroute_reconcile_replay_tests {
             assert_eq!(change, Some(FlightPhase::BlocksOn));
             let stats = flight.stats.lock().unwrap();
             assert_eq!(stats.block_on_at, Some(t0));
-            assert!(stats.blocks_on_kandidat_seit.is_none());
+            assert!(stats.blocks_on_kandidat.is_none());
         }
 
         /// Wer auf dem Rollweg die Triebwerke abstellt, ist angekommen.
@@ -58569,6 +58619,9 @@ fn maybe_spawn_stand_fetch(
             // Megabyte gross sein (v2.0.17: keine Arbeit in Flughafengroesse
             // unter der Flugdaten-Sperre).
             let karte: Arc<str> = Arc::from(ground.geojson.as_str());
+            // Auch ohne OSM-Parkpositionen: die Stände können aus der
+            // Szenerie kommen, die Rollwege nur von hier (Codex-QS 27.10.).
+            let rollwege = stands::parse_rollwege(&ground.geojson);
             let mut stats = flight.stats.lock().expect("flight stats");
             if passt_zum_angefragten_ankunftsziel(&stats, &icao) {
                 // ⚠ Karte UND ihre Zugehoerigkeit in DERSELBEN
@@ -58577,14 +58630,15 @@ fn maybe_spawn_stand_fetch(
                 // falscher) Kennzeichnung hinterlassen.
                 stats.arr_ground_geojson = Some(karte);
                 stats.arr_ground_geojson_icao = Some(icao.clone());
+                stats.arr_rollwege = Some(rollwege);
+                stats.arr_rollwege_icao = Some(icao.clone());
             } else {
                 tracing::info!(%icao, "stale ground map dropped (target changed mid-fetch)");
             }
         }
 
         let list = stands::parse_stands(&ground.geojson);
-        let rollwege = stands::parse_rollwege(&ground.geojson);
-        tracing::info!(%icao, stands = list.len(), rollwege = rollwege.len(), "parking stands loaded for stand detection");
+        tracing::info!(%icao, stands = list.len(), "parking stands loaded for stand detection");
         if list.is_empty() {
             fetch_failed(&flight, "Bodendaten ohne Parkpositionen");
             return;
@@ -58616,7 +58670,6 @@ fn maybe_spawn_stand_fetch(
                 // geladene Liste des echten Ziels nicht ueberschreiben.
                 if passt_zum_angefragten_ankunftsziel(&stats, &icao) {
                     stats.arr_stands = Some(list);
-                    stats.arr_rollwege = Some(rollwege);
                     stats.arr_stands_icao = Some(icao);
                 } else {
                     tracing::info!(%icao, "stale stand list dropped (target changed mid-fetch)");
