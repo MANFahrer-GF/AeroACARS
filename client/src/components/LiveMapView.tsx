@@ -2528,7 +2528,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!sichtbar) return;
     const id = setInterval(() => {
       const dtH = (Date.now() - vaDrT0Ref.current) / 3600000; // Stunden seit Poll
-      if (dtH <= 0) return;
+      // Bleibt der Poll aus (Netz weg, Tab im Hintergrund), nicht endlos
+      // weiterrechnen: nach langer Pause lag die Breite jenseits ±90° und MapLibre
+      // warf „Invalid LngLat“ (GlitchTip #230, Client 2.1.13, 26.10.2026).
+      if (dtH <= 0 || dtH > 60 / 3600) return;
       for (const e of vaDrRef.current) {
         if (e.gs < 30) continue; // am Boden/langsam → nicht extrapolieren
         const distNm = e.gs * dtH;

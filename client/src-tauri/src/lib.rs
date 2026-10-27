@@ -1429,6 +1429,17 @@ const KG_TO_LB: f64 = 2.20462262;
 /// normal 3 s ground cadence; far more during the sub-second flare
 /// cadence).
 const ARRIVED_FALLBACK_DWELL_SECS: i64 = 9;
+/// Wie lange ein Bremshalt auf einer Rollweg-Mittellinie (bei laufenden
+/// Triebwerken) halten muss, bevor er als Block-On zählt. Die drei falschen
+/// Block-Ons aus 30 Tagen Feldflügen (27.10.2026) hielten 27, 27 und 84 s.
+const ROLLWEG_HALT_BESTAETIGT_SECS: i64 = 120;
+
+/// Zählt ein Bremshalt auf der Rollweg-Mittellinie schon als Block-On?
+/// Ja, sobald die Triebwerke aus sind (wer auf dem Rollweg abstellt, ist
+/// angekommen) oder die Frist seit Beginn des Halts verstrichen ist.
+fn rollweg_halt_bestaetigt(seit: DateTime<Utc>, now: DateTime<Utc>, engines_running: u8) -> bool {
+    engines_running == 0 || (now - seit).num_seconds() >= ROLLWEG_HALT_BESTAETIGT_SECS
+}
 /// v0.17.x (#Premium, Aircraft-Scan): längerer Dwell für den engines-
 /// UNABHÄNGIGEN Stillstands-Fallback (Groundspeed < 1 kt + Parkbremse am
 /// Ziel). Fängt Addons ab, deren `engines_running`-SimVar nach dem Shutdown
@@ -8910,6 +8921,14 @@ struct FlightStats {
     /// Für welchen ICAO `arr_stands` gilt — bei einem Divert passt die
     /// Liste nicht zum Flughafen, auf dem der Pilot steht.
     arr_stands_icao: Option<String>,
+    /// Rollweg-Mittellinien des Zielflughafens, geladen zusammen mit
+    /// `arr_stands` und an dasselbe `arr_stands_icao` gebunden.
+    arr_rollwege: Option<Vec<Vec<(f64, f64)>>>,
+    /// Beginn eines Bremshalts auf einer Rollweg-Mittellinie, der in
+    /// Standnähe liegt, aber noch nicht als Block-On zählt (siehe
+    /// `ROLLWEG_HALT_BESTAETIGT_SECS`). Wird er bestätigt, ist das die
+    /// Block-On-Zeit. Nicht persistiert: nach Resume beginnt die Frist neu.
+    blocks_on_kandidat_seit: Option<DateTime<Utc>>,
     /// Einmal-pro-Flug-Latch für die Diagnosezeile "Halt mit Bremse, aber
     /// kein Stand in Reichweite" — der Zustand hält sonst über viele Ticks
     /// an und würde das Log fluten.
@@ -11247,8 +11266,9 @@ fn settle_at_arrival_stand(
     now: DateTime<Utc>,
     at_icao: &str,
 ) {
+    let kandidat_seit = stats.blocks_on_kandidat_seit.take();
     if stats.block_on_at.is_none() {
-        stats.block_on_at = Some(now);
+        stats.block_on_at = Some(kandidat_seit.unwrap_or(now));
     }
     // v1.6.1: der fruehere `snap.parking_name`-Zweig ist ersatzlos raus —
     // beide Sims liefern das Feld nachweislich nie (MSFS: SimConnect
@@ -52391,6 +52411,34 @@ fn step_flight_at(
                         );
                     }
                 }
+                // Rollweg-Halt (EDDN/ENZV/KIAD, 27.10.2026): Lead-in-Linien
+                // beginnen am Rollweg, und ein Bremshalt auf der Rollweg-
+                // Mittellinie liegt oft noch im Stand-Radius. Dort zählt der
+                // Halt erst, wenn die Triebwerke aus sind oder die Bremse
+                // `ROLLWEG_HALT_BESTAETIGT_SECS` lang hält — die Block-On-Zeit
+                // ist dann der Beginn des Halts (`settle_at_arrival_stand`).
+                let is_block_on = is_block_on && {
+                    let auf_rollweg = stats
+                        .arr_rollwege
+                        .as_deref()
+                        .filter(|_| stats.arr_stands_icao.as_deref() == Some(at_icao_norm.as_str()))
+                        .and_then(|r| stands::rollweg_abstand_m(r, snap.lat, snap.lon))
+                        .is_some_and(|d| d <= stands::ROLLWEG_MITTELLINIE_M);
+                    if auf_rollweg {
+                        let neu = stats.blocks_on_kandidat_seit.is_none();
+                        let seit = *stats.blocks_on_kandidat_seit.get_or_insert(now);
+                        let ok = rollweg_halt_bestaetigt(seit, now, snap.engines_running);
+                        if neu && !ok {
+                            tracing::info!(
+                                at = %at_icao_norm,
+                                "stand gate: stopped with brake on a taxiway centreline — BlocksOn waits for shutdown or a sustained hold"
+                            );
+                        }
+                        ok
+                    } else {
+                        true
+                    }
+                };
                 if is_block_on {
                     next_phase = FlightPhase::BlocksOn;
                     stats.blocks_on_reached = true;
@@ -52405,6 +52453,8 @@ fn step_flight_at(
                         }
                     }
                 }
+            } else {
+                stats.blocks_on_kandidat_seit = None;
             }
         }
         FlightPhase::BlocksOn => {
@@ -55842,6 +55892,100 @@ mod enroute_reconcile_replay_tests {
             assert!(stats.block_on_at.is_none());
         }
 
+        /// Rollweg B ost-west auf 50,0° N; die Lead-in-Linie des Stands
+        /// „R1" beginnt 11 m nördlich davon und endet nach 55 m.
+        const AUF_ROLLWEG_B: (f64, f64) = (50.0, 8.0051);
+        const STAND_R1_ENDE: (f64, f64) = (50.0005, 8.005);
+
+        fn rollweg_halt_flight() -> ActiveFlight {
+            let flight = taxi_in_flight(Some(vec![crate::stands::ParkingStand {
+                name: Some("R1".into()),
+                lat: STAND_R1_ENDE.0,
+                lon: STAND_R1_ENDE.1,
+                linie: Some(vec![(50.0001, 8.005), STAND_R1_ENDE]),
+                flaeche: false,
+            }]));
+            flight.stats.lock().unwrap().arr_rollwege = Some(vec![vec![(50.0, 8.0), (50.0, 8.01)]]);
+            flight
+        }
+
+        /// Thorben, TCX 24 EDDN (26.10.2026): Halt mit Bremse auf dem
+        /// Rollweg, 48 m vom Ende einer kurzen Lead-in-Linie — bisher sofort
+        /// BlocksOn, 36 s später zurück nach TaxiIn.
+        #[test]
+        fn rollweg_halt_im_stand_radius_ist_noch_kein_block_on() {
+            let flight = rollweg_halt_flight();
+            let t0 = Utc::now();
+            let snap = stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1);
+            assert_eq!(step_flight_at(&flight, &snap, t0), None);
+            assert_eq!(step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(84)), None);
+            let stats = flight.stats.lock().unwrap();
+            assert_eq!(stats.phase, FlightPhase::TaxiIn);
+            assert!(stats.block_on_at.is_none());
+        }
+
+        /// Hält die Bremse die volle Frist, zählt der Halt — mit der Zeit,
+        /// zu der er begann, nicht der Zeit der Bestätigung.
+        #[test]
+        fn langer_rollweg_halt_wird_block_on_ab_haltbeginn() {
+            let flight = rollweg_halt_flight();
+            let t0 = Utc::now();
+            let snap = stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1);
+            step_flight_at(&flight, &snap, t0);
+            let change = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(120));
+            assert_eq!(change, Some(FlightPhase::BlocksOn));
+            let stats = flight.stats.lock().unwrap();
+            assert_eq!(stats.block_on_at, Some(t0));
+            assert!(stats.blocks_on_kandidat_seit.is_none());
+        }
+
+        /// Wer auf dem Rollweg die Triebwerke abstellt, ist angekommen.
+        #[test]
+        fn triebwerke_aus_auf_dem_rollweg_ist_sofort_block_on() {
+            let flight = rollweg_halt_flight();
+            let t0 = Utc::now();
+            let mut snap = stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1);
+            step_flight_at(&flight, &snap, t0);
+            snap.engines_running = 0;
+            let change = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(30));
+            assert_eq!(change, Some(FlightPhase::BlocksOn));
+            assert_eq!(flight.stats.lock().unwrap().block_on_at, Some(t0));
+        }
+
+        /// Losrollen verwirft den Haltbeginn; der nächste Halt zählt neu.
+        #[test]
+        fn weiterrollen_setzt_die_rollweg_frist_zurueck() {
+            let flight = rollweg_halt_flight();
+            let t0 = Utc::now();
+            let halt = stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1);
+            let mut rollt = halt.clone();
+            rollt.parking_brake = false;
+            rollt.groundspeed_kt = 10.0;
+            step_flight_at(&flight, &halt, t0);
+            step_flight_at(&flight, &rollt, t0 + chrono::Duration::seconds(30));
+            step_flight_at(&flight, &halt, t0 + chrono::Duration::seconds(60));
+            assert_eq!(step_flight_at(&flight, &halt, t0 + chrono::Duration::seconds(150)), None);
+            let change = step_flight_at(&flight, &halt, t0 + chrono::Duration::seconds(180));
+            assert_eq!(change, Some(FlightPhase::BlocksOn));
+            assert_eq!(
+                flight.stats.lock().unwrap().block_on_at,
+                Some(t0 + chrono::Duration::seconds(60))
+            );
+        }
+
+        /// Gegenprobe: am Ende der Lead-in-Linie, fern der Rollweg-Mittellinie,
+        /// gilt der Halt wie bisher sofort.
+        #[test]
+        fn halt_am_stand_neben_dem_rollweg_ist_sofort_block_on() {
+            let flight = rollweg_halt_flight();
+            let t0 = Utc::now();
+            let snap = stopped_at(STAND_R1_ENDE.0, STAND_R1_ENDE.1);
+            assert_eq!(step_flight_at(&flight, &snap, t0), Some(FlightPhase::BlocksOn));
+            let stats = flight.stats.lock().unwrap();
+            assert_eq!(stats.block_on_at, Some(t0));
+            assert_eq!(stats.arr_gate.as_deref(), Some("R1"));
+        }
+
         #[test]
         fn stop_at_stand_becomes_blocks_on_with_gate_name() {
             let flight = taxi_in_flight(Some(lppt_stands()));
@@ -58439,7 +58583,8 @@ fn maybe_spawn_stand_fetch(
         }
 
         let list = stands::parse_stands(&ground.geojson);
-        tracing::info!(%icao, stands = list.len(), "parking stands loaded for stand detection");
+        let rollwege = stands::parse_rollwege(&ground.geojson);
+        tracing::info!(%icao, stands = list.len(), rollwege = rollwege.len(), "parking stands loaded for stand detection");
         if list.is_empty() {
             fetch_failed(&flight, "Bodendaten ohne Parkpositionen");
             return;
@@ -58471,6 +58616,7 @@ fn maybe_spawn_stand_fetch(
                 // geladene Liste des echten Ziels nicht ueberschreiben.
                 if passt_zum_angefragten_ankunftsziel(&stats, &icao) {
                     stats.arr_stands = Some(list);
+                    stats.arr_rollwege = Some(rollwege);
                     stats.arr_stands_icao = Some(icao);
                 } else {
                     tracing::info!(%icao, "stale stand list dropped (target changed mid-fetch)");
