@@ -317,6 +317,55 @@ pub fn stand_at(stands: &[ParkingStand], lat: f64, lon: f64) -> Option<&ParkingS
     }
 }
 
+/// Wie nah (Meter) ein Halt an einer Rollweg-Mittellinie liegen muss, damit
+/// er als „auf dem Rollweg“ gilt. Kalibriert an 30 Tagen Feldflügen
+/// (27.10.2026, 444 Halte mit Standdaten): die drei falschen Block-Ons
+/// (EDDN, ENZV, KIAD) lagen 0,6–2,0 m neben der Mittellinie, echte
+/// Ankünfte fast immer weit darüber — nur an kleinen Plätzen, wo die
+/// Parkposition auf dem Rollweg gemappt ist, auch darunter.
+pub const ROLLWEG_MITTELLINIE_M: f64 = 3.0;
+
+/// Rollweg-Mittellinien (`taxiway`-Linien) aus demselben
+/// `airport_ground`-GeoJSON wie [`parse_stands`]. Rollgassen auf dem
+/// Vorfeld (`taxilane`) zählen bewusst NICHT — dort liegen die Stände.
+pub fn parse_rollwege(geojson: &str) -> Vec<Vec<(f64, f64)>> {
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(geojson) else {
+        return Vec::new();
+    };
+    let Some(features) = root.get("features").and_then(|f| f.as_array()) else {
+        return Vec::new();
+    };
+    features
+        .iter()
+        .filter(|f| {
+            let props = f.get("properties");
+            props
+                .and_then(|p| p.get("k").or_else(|| p.get("kind")).or_else(|| p.get("aeroway")))
+                .and_then(|v| v.as_str())
+                == Some("taxiway")
+        })
+        .filter_map(|f| {
+            let geom = f.get("geometry")?;
+            if geom.get("type").and_then(|t| t.as_str()) != Some("LineString") {
+                return None;
+            }
+            linien_punkte(geom.get("coordinates")?)
+        })
+        .collect()
+}
+
+/// Abstand (Meter) zur nächsten Rollweg-Mittellinie; `None` ohne Rollwege.
+pub fn rollweg_abstand_m(rollwege: &[Vec<(f64, f64)>], lat: f64, lon: f64) -> Option<f64> {
+    let mx = 111_320.0 * lat.to_radians().cos();
+    let my = 110_540.0;
+    let proj = |(la, lo): (f64, f64)| ((lo - lon) * mx, (la - lat) * my);
+    rollwege
+        .iter()
+        .flat_map(|l| l.windows(2))
+        .map(|seg| punkt_strecke_m((0.0, 0.0), proj(seg[0]), proj(seg[1])))
+        .min_by(|a, b| a.total_cmp(b))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,5 +593,22 @@ mod tests {
         // Die Naehe-Frage funktioniert wie bei OSM-Staenden ohne Weiteres.
         let s = stand_at(&stands, 50.0, 8.0).expect("am Szenerie-Stand");
         assert_eq!(s.name.as_deref(), Some("A1"));
+    }
+
+    #[test]
+    fn rollwege_nur_taxiway_linien() {
+        let gj = r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{"k":"taxiway","r":"B"},"geometry":{"type":"LineString","coordinates":[[8.0,50.0],[8.01,50.0]]}},
+          {"type":"Feature","properties":{"k":"taxilane"},"geometry":{"type":"LineString","coordinates":[[8.0,50.001],[8.01,50.001]]}},
+          {"type":"Feature","properties":{"k":"parking_position","r":"R1"},"geometry":{"type":"LineString","coordinates":[[8.005,50.0001],[8.005,50.0005]]}},
+          {"type":"Feature","properties":{"k":"taxiway"},"geometry":{"type":"Point","coordinates":[8.0,50.0]}}
+        ]}"#;
+        let rw = parse_rollwege(gj);
+        assert_eq!(rw, vec![vec![(50.0, 8.0), (50.0, 8.01)]]);
+        let auf = rollweg_abstand_m(&rw, 50.0, 8.0051).unwrap();
+        assert!(auf < 0.5, "auf der Mittellinie: {auf}");
+        let am_stand = rollweg_abstand_m(&rw, 50.0005, 8.005).unwrap();
+        assert!((am_stand - 55.3).abs() < 1.0, "55 m nördlich: {am_stand}");
+        assert_eq!(rollweg_abstand_m(&[], 50.0, 8.0), None);
     }
 }
