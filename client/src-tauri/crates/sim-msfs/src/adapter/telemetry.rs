@@ -1050,6 +1050,19 @@ pub const TELEMETRY_FIELDS: &[TelemetryField] = &[
     F::f64("L:B757_MCP_LNAV_BUTTON", "Number"),
     F::f64("L:B757_MCP_LOC_BUTTON", "Number"),
     F::f64("L:B757_MCP_APP_BUTTON", "Number"),
+    // Synaptic A220 (27.10.2026): eigene Licht- und Transponder-LVars laut
+    // docs.synapticsim.com/pilots/simvars (Stand 24.10.2026). Nur zur
+    // Gegenprobe ins Flug-Log (`cockpit_rohwerte`); ausgewertet werden
+    // weiter die Standard-SimVars, die in echten A220-Fluegen stimmen.
+    F::f64("L:A22X Nav Lights", "Bool"),
+    F::f64("L:A22X Beacon Lights", "Bool"),
+    F::f64("L:A22X Strobe Lights", "Bool"),
+    F::f64("L:A22X Logo Lights", "Bool"),
+    F::f64("L:A22X Taxi Lights", "Enum"),
+    F::f64("L:A22X L Landing Lights", "Bool"),
+    F::f64("L:A22X R Landing Lights", "Bool"),
+    F::f64("L:A22X Nose Landing Lights", "Bool"),
+    F::f64("L:A22X Transponder Mode", "Enum"),
     // Lernpaket vmsACARS (29.09.2026), AP1a: zweiter G-Kanal. vmsACARS 3
     // benotet die Landung unter MSFS aus `SEMIBODY LOADFACTOR Y` statt aus
     // `G FORCE`; unser `G FORCE` laeuft rund 614 ms hinter der Sinkrate
@@ -1815,6 +1828,16 @@ pub struct Telemetry {
     pub bbs_lnav_lampe: f64,
     pub bbs_loc_lampe: f64,
     pub bbs_app_lampe: f64,
+    /// Synaptic A220, nur Rohwerte zur Gegenprobe (`cockpit_rohwerte`).
+    pub syn_nav_lights: f64,
+    pub syn_beacon_lights: f64,
+    pub syn_strobe_lights: f64,
+    pub syn_logo_lights: f64,
+    pub syn_taxi_lights: f64,
+    pub syn_landing_l_lights: f64,
+    pub syn_landing_r_lights: f64,
+    pub syn_landing_nose_lights: f64,
+    pub syn_transponder_mode: f64,
     /// `SEMIBODY LOADFACTOR Y` (g). Zweiter G-Kanal zum Vergleich mit
     /// `G FORCE`. `None`, wenn der Block vor diesem Feld endet — eine
     /// erfundene 0 waere als G-Wert falsch.
@@ -2642,6 +2665,15 @@ impl Telemetry {
         pull_f64!(t.bbs_lnav_lampe);
         pull_f64!(t.bbs_loc_lampe);
         pull_f64!(t.bbs_app_lampe);
+        pull_f64!(t.syn_nav_lights);
+        pull_f64!(t.syn_beacon_lights);
+        pull_f64!(t.syn_strobe_lights);
+        pull_f64!(t.syn_logo_lights);
+        pull_f64!(t.syn_taxi_lights);
+        pull_f64!(t.syn_landing_l_lights);
+        pull_f64!(t.syn_landing_r_lights);
+        pull_f64!(t.syn_landing_nose_lights);
+        pull_f64!(t.syn_transponder_mode);
         // Option: ein abgeschnittener Block bleibt None, nie 0 g.
         pull_opt_f64!(t.semibody_loadfactor_y);
         pull_f64!(t.roh_std_autobrake_switch_cb);
@@ -5371,6 +5403,20 @@ fn telemetry_to_snapshot_gesperrt(
             roh("L:BBS757_PASS_SEAT_BELT_SIGNS_CABIN", t.bbs_gurt_lampe_kabine);
             roh("L:AT_ARM_SWITCH", t.bbs_at_arm_switch);
         }
+        if is_synaptic_a220 {
+            // Synaptic A220: eigene Licht-/Transponder-LVars neben den
+            // ausgewerteten Standard-SimVars, damit echte Fluege zeigen,
+            // ob beide uebereinstimmen (Thomas 27.10.2026).
+            roh("L:A22X Nav Lights", t.syn_nav_lights);
+            roh("L:A22X Beacon Lights", t.syn_beacon_lights);
+            roh("L:A22X Strobe Lights", t.syn_strobe_lights);
+            roh("L:A22X Logo Lights", t.syn_logo_lights);
+            roh("L:A22X Taxi Lights", t.syn_taxi_lights);
+            roh("L:A22X L Landing Lights", t.syn_landing_l_lights);
+            roh("L:A22X R Landing Lights", t.syn_landing_r_lights);
+            roh("L:A22X Nose Landing Lights", t.syn_landing_nose_lights);
+            roh("L:A22X Transponder Mode", t.syn_transponder_mode);
+        }
         if is_a350 {
             // Belts/Strobe werden ausgewertet (Paket v1.2.6), laufen aber
             // zur Gegenprobe weiter roh mit — die iniBuilds-LVar-PDF
@@ -6341,8 +6387,8 @@ mod tests {
         // 16.10.2026: −16 (EX1 und TRANSPONDER STATE:1 in eigene
         // Definitionen, `OPTIONALE_FELDER`). FSS-FGP-Lampen (19.10.2026):
         // +40 (AP, HDG, NAV, ALT, APP). BlueBird 757 (26.10.2026): +184
-        // (23 LVars).
-        assert_eq!(buf.len(), 3896, "total block size");
+        // (23 LVars). Synaptic-A220-Gegenprobe (27.10.2026): +72 (9 LVars).
+        assert_eq!(buf.len(), 3968, "total block size");
         let t = Telemetry::from_block(&buf);
 
         // Identity / head sentinels.
@@ -6690,14 +6736,23 @@ mod tests {
         assert_eq!(t.bbs_lnav_lampe, 1404.0); // idx 404
         assert_eq!(t.bbs_loc_lampe, 1405.0); // idx 405
         assert_eq!(t.bbs_app_lampe, 1406.0); // idx 406
-        assert_eq!(t.semibody_loadfactor_y, Some(1407.0)); // idx 407, Lernpaket
-        assert_eq!(t.roh_std_autobrake_switch_cb, 1408.0); // idx 408
-        assert_eq!(t.std_cabin_seatbelts_alert, Some(1409.0)); // idx 409
-        assert_eq!(t.std_light_landing_on_1, Some(1410.0)); // idx 410
-        assert_eq!(t.std_light_landing_on_2, Some(1411.0)); // idx 411
-        assert_eq!(t.design_vs0, Some(1412.0)); // idx 412, zuletzt
+        assert_eq!(t.syn_nav_lights, 1407.0); // idx 407, Synaptic A220 Gegenprobe (27.10.2026)
+        assert_eq!(t.syn_beacon_lights, 1408.0); // idx 408
+        assert_eq!(t.syn_strobe_lights, 1409.0); // idx 409
+        assert_eq!(t.syn_logo_lights, 1410.0); // idx 410
+        assert_eq!(t.syn_taxi_lights, 1411.0); // idx 411
+        assert_eq!(t.syn_landing_l_lights, 1412.0); // idx 412
+        assert_eq!(t.syn_landing_r_lights, 1413.0); // idx 413
+        assert_eq!(t.syn_landing_nose_lights, 1414.0); // idx 414
+        assert_eq!(t.syn_transponder_mode, 1415.0); // idx 415
+        assert_eq!(t.semibody_loadfactor_y, Some(1416.0)); // idx 416, Lernpaket
+        assert_eq!(t.roh_std_autobrake_switch_cb, 1417.0); // idx 417
+        assert_eq!(t.std_cabin_seatbelts_alert, Some(1418.0)); // idx 418
+        assert_eq!(t.std_light_landing_on_1, Some(1419.0)); // idx 419
+        assert_eq!(t.std_light_landing_on_2, Some(1420.0)); // idx 420
+        assert_eq!(t.design_vs0, Some(1421.0)); // idx 421, zuletzt
         assert_eq!(t.std_transponder_state, None); // → OPTIONALE_FELDER
-        assert_eq!(TELEMETRY_FIELDS.len(), 413, "letzter Index 412");
+        assert_eq!(TELEMETRY_FIELDS.len(), 422, "letzter Index 421");
     }
 
     #[test]
@@ -6772,7 +6827,8 @@ mod tests {
         // 16.10.2026: TRANSPONDER STATE:1 → OPTIONALE_FELDER → 65 * 8 = 520.
         // FSS-FGP-Lampen (19.10.2026): fuenf LVars dazu → 70 * 8 = 560.
         // BlueBird 757 (26.10.2026): 23 LVars dazu → 93 * 8 = 744.
-        buf.truncate(buf.len() - 744);
+        // Synaptic-A220-Gegenprobe (27.10.2026): 9 LVars dazu → 102 * 8 = 816.
+        buf.truncate(buf.len() - 816);
         let t = Telemetry::from_block(&buf);
         assert!(t.eng4_combustion_state, "ENG COMBUSTION intakt");
         assert_eq!(
@@ -6791,6 +6847,8 @@ mod tests {
         assert_eq!(t.ini_fcu_hdg_dashed, 0.0, "A380 = sicherer Default");
         assert_eq!(t.fnx_fcu_ap1_lampe, 0.0, "Fenix-FCU = sicherer Default");
         assert_eq!(t.fnx_fcu_hdg_dashed, 0.0, "Fenix-FCU = sicherer Default");
+        assert_eq!(t.syn_nav_lights, 0.0, "A220-Gegenprobe = sicherer Default");
+        assert_eq!(t.syn_transponder_mode, 0.0, "A220-Gegenprobe = sicherer Default");
         assert_eq!(
             t.std_light_landing_on_2, None,
             "Runde 3 = kein erfundener Wert"
@@ -8839,6 +8897,30 @@ mod tests {
         t.title = "Synaptic A220-300".into();
         t.atc_model = "BCS3".into();
         t
+    }
+
+    /// Thomas 27.10.2026: die A22X-Licht- und Transponder-LVars laufen nur
+    /// beim A220 roh ins Flug-Log mit; gedeutet wird weiter der Standard.
+    #[test]
+    fn synaptic_a220_licht_lvars_nur_als_rohwert() {
+        let mut t = synaptic_a220_telemetry();
+        t.syn_beacon_lights = 1.0;
+        t.syn_taxi_lights = 2.0;
+        t.syn_transponder_mode = 4.0;
+        let snap = telemetry_to_snapshot(t, Simulator::Msfs2024);
+        let roh = snap.cockpit_rohwerte.expect("MSFS liefert Rohwerte");
+        assert_eq!(roh.werte.get("L:A22X Beacon Lights"), Some(&1.0));
+        assert_eq!(roh.werte.get("L:A22X Taxi Lights"), Some(&2.0));
+        assert_eq!(roh.werte.get("L:A22X Transponder Mode"), Some(&4.0));
+        assert_eq!(roh.werte.get("L:A22X Nose Landing Lights"), Some(&0.0));
+        // Der Standard bleibt die Quelle: Beacon-SimVar aus → Beacon aus.
+        assert!(!snap.light_beacon.unwrap_or(false));
+        // Andere Flugzeuge schreiben die A22X-Schluessel nicht.
+        let mut a = Telemetry::default();
+        a.title = "Asobo A320 Neo".into();
+        a.syn_beacon_lights = 1.0;
+        let roh = telemetry_to_snapshot(a, Simulator::Msfs2024).cockpit_rohwerte.unwrap();
+        assert!(!roh.werte.keys().any(|k| k.contains("A22X")));
     }
 
     #[test]
