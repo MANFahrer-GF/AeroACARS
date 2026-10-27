@@ -2986,9 +2986,10 @@ fn ton_auftrag(
         if !faellig {
             lauf.ton_laufend = lauf.ton_laufend.saturating_sub(1);
         }
-        // Kam inzwischen ein neuer Text (zweite Turbulenz o. ä.), gehört
+        // Kam inzwischen ein neuer Text (zweite Turbulenz o. ä.) oder die
+        // Crew mit anderem Geschlecht (feste Texte vor dem Drehbuch), gehört
         // dieser Ton zum alten: verwerfen, der neue wird angefragt.
-        if lauf.texte.get(&k).is_some_and(|t| *t != text) {
+        if ton_veraltet(lauf, &k, &text, maennlich) {
             drop(stats);
             protokoll_leeren(&app, &flight);
             return;
@@ -3130,6 +3131,36 @@ fn wetterlage(m: &metar::MetarSnapshot) -> Option<&'static str> {
     Some("klar")
 }
 
+/// Gehört ein angekommener Ton nicht mehr zum Lauf (anderer Text oder
+/// anderes Geschlecht als bei der Anfrage)?
+fn ton_veraltet(lauf: &Lauf, k: &(Slot, String), text: &str, maennlich: bool) -> bool {
+    lauf.texte.get(k).is_some_and(|t| t != text) || stimme_maennlich(lauf, rolle_von(lauf, k.0)) != maennlich
+}
+
+/// Übernimmt die Crew. Feste Texte („Boarding completed“, Kommandos) holt der
+/// Client vor dem Drehbuch, also mit dem Geschlecht ohne Angabe; ändert die
+/// Crew es für ihre Rolle, wird ihr fertiger Ton verworfen und neu geholt —
+/// sonst sprach die Kabine zwei Stimmen und eine Kapitänin die Kommandos mit
+/// Männerstimme (Michael 27.10.2026). Was schon in „Bisher“ steht, bleibt.
+fn crew_setzen(lauf: &mut Lauf, crew: Option<api_client::KabinenCrew>) {
+    let vorher: Vec<((Slot, String), bool)> = lauf
+        .ton
+        .iter()
+        .filter(|(_, t)| t.is_some())
+        .map(|(k, _)| (k.clone(), stimme_maennlich(lauf, rolle_von(lauf, k.0))))
+        .collect();
+    lauf.crew = crew;
+    for (k, maennlich) in vorher {
+        let angesagt = lauf.verlauf.iter().any(|g| g.slot == k.0 && !g.vorschau);
+        if !angesagt && stimme_maennlich(lauf, rolle_von(lauf, k.0)) != maennlich {
+            lauf.ton.remove(&k);
+            // Slot nur in den Details: Mit Slot zählte die Auswertung
+            // (kabine_ton_auswerten.mjs) die Notiz als eigene Ansage.
+            notiz(lauf, "ton_verworfen", None, None, serde_json::json!({ "slot": slot_name(k.0), "sprache": k.1, "grund": "crew" }));
+        }
+    }
+}
+
 /// Übernimmt ein Drehbuch in den Lauf und liefert, was noch fehlt — je Slot
 /// UND Sprache (1f). Bizjet: Die Sicherheit gilt nur als Kurzfassung des
 /// Kapitäns (`rolle: kapitaen`); fehlt sie, entfällt der Slot sicher.
@@ -3158,7 +3189,7 @@ fn drehbuch_uebernehmen(lauf: &mut Lauf, d: api_client::KabinenDrehbuch, slots: 
         }
     }
     if d.crew.is_some() {
-        lauf.crew = d.crew.clone();
+        crew_setzen(lauf, d.crew.clone());
     }
     for (schluessel, grund) in &d.entfaellt {
         match (schluessel.split_once('/'), grund.as_str()) {
@@ -6186,6 +6217,70 @@ mod tests {
         // Eine spätere Antwort ohne `crew` (älteres Modul) vergisst die Crew nicht.
         drehbuch_uebernehmen(&mut l, api_client::KabinenDrehbuch { sprachen: vec![], eintraege: vec![], crew: None, boarding_lied: None, boarding_lied_spaeter: false, entfaellt: Default::default(), aufgefrischt: false }, &[], false, false);
         assert!(!stimme_maennlich(&l, Rolle::Kapitaen));
+    }
+
+    /// Michael 27.10.2026: Feste Texte kommen vor dem Drehbuch, also mit dem
+    /// Geschlecht ohne Angabe. Bringt das Drehbuch eine Kapitänin und einen
+    /// Purser, werden „Boarding completed“ und die Kommandos neu geholt; eine
+    /// Crew wie ohne Angabe holt nichts neu, Angesagtes bleibt.
+    #[test]
+    fn feste_texte_folgen_der_crew_aus_dem_drehbuch() {
+        let fertig = || Some(Ton { datei: "f/x.wav".into(), dauer_s: 1.0, stuecke: vec![], herkunft: "server" });
+        let crew = |kapitaen: &str, kabine: &str| api_client::KabinenDrehbuch {
+            sprachen: vec!["de-DE".into()],
+            eintraege: vec![],
+            crew: Some(api_client::KabinenCrew { kapitaen: None, kapitaen_geschlecht: Some(kapitaen.into()), kabine_geschlecht: Some(kabine.into()) }),
+            boarding_lied: None,
+            boarding_lied_spaeter: false,
+            entfaellt: Default::default(),
+            aufgefrischt: false,
+        };
+        let fest = |st: &FlightStats| -> Vec<Slot> {
+            ton_kandidaten(st, true, Flugart::Linie, 0).into_iter().map(|(s, _, _)| s).filter(|s| matches!(s, Slot::BoardingAbgeschlossen | Slot::KommandoTuerenScharf)).collect()
+        };
+        let neu = || {
+            let mut st = FlightStats::new();
+            st.kabinen_planer = Some(planer_mit(Flugart::Linie, crate::FlightPhase::Boarding));
+            st.phase = crate::FlightPhase::Boarding;
+            st
+        };
+        // Vor dem Drehbuch: beide festen Texte werden geholt, dann liegen sie vor.
+        let mut st = neu();
+        assert_eq!(fest(&st), vec![Slot::BoardingAbgeschlossen, Slot::KommandoTuerenScharf]);
+        for s in [Slot::BoardingAbgeschlossen, Slot::KommandoTuerenScharf] {
+            st.kabinen_lauf.ton.insert((s, "en-GB".into()), fertig());
+        }
+        assert!(fest(&st).is_empty());
+        // Kapitänin und Purser: beide neu, mit der Stimme der Crew.
+        drehbuch_uebernehmen(&mut st.kabinen_lauf, crew("w", "m"), &[], false, false);
+        assert_eq!(fest(&st), vec![Slot::BoardingAbgeschlossen, Slot::KommandoTuerenScharf]);
+        assert!(stimme_maennlich(&st.kabinen_lauf, rolle_von(&st.kabinen_lauf, Slot::BoardingAbgeschlossen)));
+        assert!(!stimme_maennlich(&st.kabinen_lauf, rolle_von(&st.kabinen_lauf, Slot::KommandoTuerenScharf)));
+        // Gegenprobe: Kapitän und Flugbegleiterin wie ohne Angabe — nichts neu.
+        let mut st = neu();
+        for s in [Slot::BoardingAbgeschlossen, Slot::KommandoTuerenScharf] {
+            st.kabinen_lauf.ton.insert((s, "en-GB".into()), fertig());
+        }
+        drehbuch_uebernehmen(&mut st.kabinen_lauf, crew("m", "w"), &[], false, false);
+        assert!(fest(&st).is_empty());
+        // Schon angesagt: bleibt, auch wenn die Crew das Geschlecht ändert.
+        let mut st = neu();
+        st.kabinen_lauf.ton.insert((Slot::BoardingAbgeschlossen, "en-GB".into()), fertig());
+        st.kabinen_lauf.verlauf.push(Gespielt { id: 1, slot: Slot::BoardingAbgeschlossen, rolle: Rolle::Kabine, zeit: 0, teile: vec![], vorschau: false, ergebnis: None, gestartet: true, grund: None });
+        drehbuch_uebernehmen(&mut st.kabinen_lauf, crew("w", "m"), &[], false, false);
+        assert!(st.kabinen_lauf.ton.contains_key(&(Slot::BoardingAbgeschlossen, "en-GB".into())));
+    }
+
+    /// Michael 27.10.2026: Ein Ton, der vor der Crew angefragt wurde und erst
+    /// danach ankommt, hat das alte Geschlecht und wird verworfen.
+    #[test]
+    fn ton_mit_altem_geschlecht_ist_veraltet() {
+        let mut l = Lauf::default();
+        let k = (Slot::BoardingAbgeschlossen, "en-GB".to_string());
+        let angefragt_maennlich = stimme_maennlich(&l, rolle_von(&l, k.0));
+        assert!(!ton_veraltet(&l, &k, "Boarding completed.", angefragt_maennlich));
+        crew_setzen(&mut l, Some(api_client::KabinenCrew { kapitaen: None, kapitaen_geschlecht: Some("m".into()), kabine_geschlecht: Some("m".into()) }));
+        assert!(ton_veraltet(&l, &k, "Boarding completed.", angefragt_maennlich));
     }
 
     /// 2.1.0: Ohne Crew-Angabe sprechen Kommandos männlich wie der Kapitän.
