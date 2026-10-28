@@ -35,7 +35,7 @@
 
 use chrono::{DateTime, Utc};
 use landing_scoring::anflug_forensik::GleitpfadPunkt;
-use storage::{AnflugGleitpfad, AnflugRuhe, GleitpfadTor, RuheTor};
+use storage::{AnflugGleitpfad, AnflugRuhe, GleitpfadTor, RuheTor, Scherung};
 
 use crate::ApproachBufferSample;
 
@@ -135,6 +135,30 @@ const MIN_RATEN: usize = 4;
 
 /// Unter dieser Dauer ist „Umkehrungen je Minute" keine Rate.
 const MIN_DAUER_SCHUB_S: f64 = 10.0;
+
+/// Windscherung (28.10.2026, Idee aus LocalTC, Schwellen nachgemessen):
+/// Gegenwind UND angezeigte Fahrt aendern sich in 4–5,5 s gleichsinnig um je
+/// mindestens 15 kt, zwischen 30 und 1500 ft ueber dem Bezug.
+///
+/// Gemessen ueber 1857 Client-Flugprotokolle: 3 Treffer, alle Airliner
+/// (XRNDLE A321 in 1480 ft: Gegenwind −31 kt, Fahrt −29 kt). Der Gegenwind
+/// kommt aus dem Simulator (`aircraft_wind_z_kt`), nicht aus TAS − GS —
+/// letzteres meldete auch einen Kampfjet im Sturzflug und eine C172 mit
+/// −10 000 fpm. Dass sich die Fahrt MIT dem Wind aendert, trennt die
+/// Scherung vom Piloten, der Schub gibt oder wegnimmt. Boeen, die schneller
+/// hin- und herspringen (q3B30), erfasst die Regel bewusst nicht.
+const SCHERUNG_MIN_KT: f64 = 15.0;
+const SCHERUNG_DT_MIN_S: f64 = 4.0;
+const SCHERUNG_DT_MAX_S: f64 = 5.5;
+const SCHERUNG_HOEHE_UNTEN_FT: f64 = 30.0;
+const SCHERUNG_HOEHE_OBEN_FT: f64 = 1500.0;
+/// Treffer innerhalb dieser Zeit gehoeren zu EINER Scherung; gemeldet wird
+/// die staerkste.
+const SCHERUNG_ENTPRELLEN_S: f64 = 60.0;
+/// Hoechstens so viele, die staerksten: Budget unter 256 Bytes
+/// (`zwei_scherungen_bleiben_unter_256_bytes` in landing-scoring). Gemessen
+/// kam nie mehr als eine je Flug vor.
+const SCHERUNGEN_MAX: usize = 2;
 
 pub(crate) const QUELLE_NAVIGRAPH_ILS: &str = "navigraph_ils";
 pub(crate) const QUELLE_NAVIGRAPH_BAHN: &str = "navigraph_bahn";
@@ -391,11 +415,14 @@ pub(crate) fn auswerten_ab_final(
 
     let ruhe_1000_500 = ruhe_tor(&punkte, HOEHE_MITTE_FT, HOEHE_OBEN_FT);
     let ruhe_500_200 = ruhe_tor(&punkte, HOEHE_UNTEN_FT, HOEHE_MITTE_FT);
-    let ruhe = (ruhe_1000_500.is_some() || ruhe_500_200.is_some()).then(|| AnflugRuhe {
-        hoehenbezug: bezug_name.to_string(),
-        tor_1000_500: ruhe_1000_500,
-        tor_500_200: ruhe_500_200,
-    });
+    let scherungen = scherungen(&proben, bezug_ft, td);
+    let ruhe = (ruhe_1000_500.is_some() || ruhe_500_200.is_some() || !scherungen.is_empty())
+        .then(|| AnflugRuhe {
+            hoehenbezug: bezug_name.to_string(),
+            tor_1000_500: ruhe_1000_500,
+            tor_500_200: ruhe_500_200,
+            scherungen,
+        });
 
     AnflugForensik {
         gleitpfad: Some(gleitpfad),
@@ -686,6 +713,65 @@ fn ruhe_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<RuheTor> {
         schub_umkehr_pro_min,
         schub_grund: schub_grund.map(str::to_string),
     })
+}
+
+/// Windscherungen im Anflug, siehe `SCHERUNG_MIN_KT`. Je Probe wird mit der
+/// Probe 4–5,5 s davor verglichen; Proben ohne Gegenwind zaehlen nicht.
+fn scherungen(
+    proben: &[&ApproachBufferSample],
+    bezug_ft: f64,
+    td: Option<DateTime<Utc>>,
+) -> Vec<Scherung> {
+    let anker = td.or_else(|| proben.last().map(|s| s.at));
+    let mut treffer: Vec<(DateTime<Utc>, Scherung)> = Vec::new();
+    for (i, b) in proben.iter().enumerate() {
+        let hoehe_ft = b.msl_ft as f64 - bezug_ft;
+        let Some(wind_b) = b.headwind_kt.map(f64::from) else { continue };
+        if !(SCHERUNG_HOEHE_UNTEN_FT..=SCHERUNG_HOEHE_OBEN_FT).contains(&hoehe_ft) {
+            continue;
+        }
+        let vorher = proben[..i].iter().rev().find(|a| {
+            let dt = sekunden(a.at, b.at);
+            (SCHERUNG_DT_MIN_S..=SCHERUNG_DT_MAX_S).contains(&dt) && a.headwind_kt.is_some()
+        });
+        let Some(a) = vorher else { continue };
+        let wind = wind_b - a.headwind_kt.map(f64::from).unwrap_or(wind_b);
+        let fahrt = b.ias_kt as f64 - a.ias_kt as f64;
+        // `!(… >= …)` statt `< …`: ein NaN faellt so heraus, statt zu zaehlen.
+        if !(wind.abs() >= SCHERUNG_MIN_KT && fahrt.abs() >= SCHERUNG_MIN_KT && wind * fahrt > 0.0) {
+            continue;
+        }
+        let s = Scherung {
+            t: anker.map_or(0.0, |t| runden(-sekunden(b.at, t), 1)),
+            hoehe_ft: runden(hoehe_ft, 0),
+            gegenwind_kt: runden(wind, 0),
+            fahrt_kt: runden(fahrt, 0),
+            dauer_s: runden(sekunden(a.at, b.at), 1),
+        };
+        match treffer.last_mut() {
+            Some((zuletzt, alt)) if sekunden(*zuletzt, b.at) <= SCHERUNG_ENTPRELLEN_S => {
+                if s.gegenwind_kt.abs() > alt.gegenwind_kt.abs() {
+                    *alt = s;
+                }
+                *zuletzt = b.at;
+            }
+            _ => treffer.push((b.at, s)),
+        }
+    }
+    // Die staerksten behalten (bei Gleichstand die fruehere), in zeitlicher
+    // Reihenfolge.
+    let mut nach_staerke: Vec<(usize, Scherung)> =
+        treffer.into_iter().map(|(_, s)| s).enumerate().collect();
+    nach_staerke.sort_by(|(i, x), (j, y)| {
+        y.gegenwind_kt
+            .abs()
+            .partial_cmp(&x.gegenwind_kt.abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(i.cmp(j))
+    });
+    nach_staerke.truncate(SCHERUNGEN_MAX);
+    nach_staerke.sort_by_key(|(i, _)| *i);
+    nach_staerke.into_iter().map(|(_, s)| s).collect()
 }
 
 /// Rundet fuer die Ablage. Die Anzeige braucht hoechstens eine
@@ -1639,5 +1725,190 @@ mod tests {
             .unwrap();
         assert!((max - 1.0).abs() < 0.02);
         assert!(analyse["anflug_ruhe"]["tor_500_200"].is_object());
+    }
+
+    // ── Windscherung (28.10.2026) ────────────────────────────────────
+
+    /// Probe ohne Bahnbezug: Hoehe ueber Platz 0 ft, Fahrt und Gegenwind frei.
+    fn wind_probe(t_s: f64, h_ft: f64, ias: f32, gegenwind: Option<f32>) -> ApproachBufferSample {
+        let mut p = probe_bei(t_s, SCHWELLE_LAT, SCHWELLE_LON, 0.0, 0.0, h_ft);
+        p.ias_kt = ias;
+        p.headwind_kt = gegenwind;
+        p
+    }
+
+    fn scherungen_aus(proben: Vec<ApproachBufferSample>) -> Vec<Scherung> {
+        let buf: VecDeque<_> = proben.into_iter().collect();
+        auswerten(&buf, None, Some(td()), Some(0.0))
+            .ruhe
+            .map(|r| r.scherungen)
+            .unwrap_or_default()
+    }
+
+    /// Ruhiger Anflug im Sekundentakt, 1400 → 400 ft, 140 kt, 20 kt Gegenwind.
+    fn ruhig() -> Vec<ApproachBufferSample> {
+        (0..=100)
+            .map(|i| wind_probe(160.0 - i as f64, 1400.0 - 10.0 * i as f64, 140.0, Some(20.0)))
+            .collect()
+    }
+
+    #[test]
+    fn scherung_xrndle_echte_werte() {
+        // XRNDLE A321 (29.09.2026), Client-Protokoll im Sekundenraster:
+        // (Sekunde, ft, IAS, aircraft_wind_z_kt). Gegenwind = −wind_z.
+        let roh = [
+            (0.0, 1604.0, 160.0, -46.0),
+            (1.0, 1574.0, 158.0, -44.0),
+            (3.0, 1561.0, 156.0, -44.0),
+            (4.0, 1561.0, 155.0, -42.0),
+            (6.0, 1572.0, 155.0, -42.0),
+            (7.0, 1559.0, 153.0, -41.0),
+            (9.0, 1539.0, 137.0, -23.0),
+            (10.0, 1516.0, 126.0, -11.0),
+            (12.0, 1480.0, 125.0, -10.0),
+            (13.0, 1461.0, 132.0, -16.0),
+            (14.0, 1426.0, 134.0, -19.0),
+            (15.0, 1403.0, 140.0, -21.0),
+            (16.0, 1370.0, 144.0, -24.0),
+            (17.0, 1320.0, 142.0, -19.0),
+        ];
+        let proben = roh
+            .iter()
+            .map(|&(s, h, ias, wz)| wind_probe(100.0 - s, h, ias as f32, Some(-(wz as f32))))
+            .collect();
+        let s = scherungen_aus(proben);
+        assert_eq!(s.len(), 1, "{s:?}");
+        assert_eq!(s[0].hoehe_ft, 1480.0);
+        assert_eq!(s[0].gegenwind_kt, -31.0);
+        assert_eq!(s[0].fahrt_kt, -28.0);
+        assert_eq!(s[0].dauer_s, 5.0);
+        assert_eq!(s[0].t, -88.0);
+    }
+
+    #[test]
+    fn scherung_ruhiger_anflug_hat_keine() {
+        assert!(scherungen_aus(ruhig()).is_empty());
+    }
+
+    #[test]
+    fn scherung_fahrt_ohne_wind_ist_der_pilot() {
+        // 30 kt Fahrtverlust in 5 s bei gleichem Wind: Schub weg, keine Scherung.
+        let mut p = ruhig();
+        for q in p.iter_mut().skip(50) {
+            q.ias_kt = 110.0;
+        }
+        assert!(scherungen_aus(p).is_empty());
+    }
+
+    #[test]
+    fn scherung_wind_und_fahrt_gegensinnig_zaehlt_nicht() {
+        let mut p = ruhig();
+        for q in p.iter_mut().skip(50) {
+            q.headwind_kt = Some(40.0);
+            q.ias_kt = 120.0;
+        }
+        assert!(scherungen_aus(p).is_empty());
+    }
+
+    #[test]
+    fn scherung_gegenprobe_gleichsinnig_zaehlt() {
+        // Dieselbe Folge wie oben, nur gleichsinnig — sonst prueften die
+        // beiden Tests davor nichts.
+        let mut p = ruhig();
+        for q in p.iter_mut().skip(50) {
+            q.headwind_kt = Some(0.0);
+            q.ias_kt = 120.0;
+        }
+        let s = scherungen_aus(p);
+        assert_eq!(s.len(), 1, "{s:?}");
+        assert_eq!(s[0].gegenwind_kt, -20.0);
+        assert_eq!(s[0].fahrt_kt, -20.0);
+    }
+
+    #[test]
+    fn scherung_ueber_1500_ft_und_ohne_wind_zaehlt_nicht() {
+        let hoch: Vec<_> = ruhig()
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut q)| {
+                q.msl_ft += 1000.0;
+                if i >= 50 {
+                    q.headwind_kt = Some(0.0);
+                    q.ias_kt = 120.0;
+                }
+                q
+            })
+            .collect();
+        assert!(scherungen_aus(hoch).is_empty());
+
+        let ohne_wind: Vec<_> = ruhig()
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut q)| {
+                q.headwind_kt = None;
+                if i >= 50 {
+                    q.ias_kt = 120.0;
+                }
+                q
+            })
+            .collect();
+        assert!(scherungen_aus(ohne_wind).is_empty());
+    }
+
+    #[test]
+    fn scherung_eine_je_minute_die_staerkste() {
+        // Zwei Spruenge 20 s auseinander: eine Scherung, die staerkere.
+        let mut p = ruhig();
+        for (i, q) in p.iter_mut().enumerate() {
+            if (40..60).contains(&i) {
+                q.headwind_kt = Some(0.0);
+                q.ias_kt = 120.0;
+            } else if i >= 60 {
+                q.headwind_kt = Some(-25.0);
+                q.ias_kt = 95.0;
+            }
+        }
+        let s = scherungen_aus(p);
+        assert_eq!(s.len(), 1, "{s:?}");
+        assert_eq!(s[0].gegenwind_kt, -25.0);
+    }
+
+    #[test]
+    fn scherung_hoechstens_zwei_die_staerksten_in_zeitfolge() {
+        // Drei Spruenge je 70 s auseinander (je eigene Scherung), Staerke
+        // 20, 30, 25 kt: die beiden staerkeren bleiben, in Zeitfolge.
+        let p: Vec<_> = (0..=240)
+            .map(|i| {
+                let (wind, fahrt) = match i {
+                    0..=29 => (40.0, 160.0),
+                    30..=99 => (20.0, 140.0),
+                    100..=169 => (-10.0, 110.0),
+                    _ => (-35.0, 85.0),
+                };
+                wind_probe(250.0 - i as f64, 1450.0 - 5.0 * i as f64, fahrt, Some(wind))
+            })
+            .collect();
+        let s = scherungen_aus(p);
+        let staerke: Vec<f32> = s.iter().map(|x| x.gegenwind_kt).collect();
+        assert_eq!(staerke, vec![-30.0, -25.0], "{s:?}");
+    }
+
+    #[test]
+    fn scherung_gleichstand_verdraengt_nicht_die_staerkste() {
+        // QS 28.10.2026: Staerke 25, 25, 30 — frueher blieben 25, 25.
+        let p: Vec<_> = (0..=240)
+            .map(|i| {
+                let (wind, fahrt) = match i {
+                    0..=29 => (40.0, 160.0),
+                    30..=99 => (15.0, 135.0),
+                    100..=169 => (-10.0, 110.0),
+                    _ => (-40.0, 80.0),
+                };
+                wind_probe(250.0 - i as f64, 1450.0 - 5.0 * i as f64, fahrt, Some(wind))
+            })
+            .collect();
+        let s = scherungen_aus(p);
+        let staerke: Vec<f32> = s.iter().map(|x| x.gegenwind_kt).collect();
+        assert_eq!(staerke, vec![-25.0, -30.0], "{s:?}");
     }
 }
