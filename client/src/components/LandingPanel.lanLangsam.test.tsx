@@ -175,4 +175,17 @@ describe("LandingPanel — langsame Antwort ueber die LAN-Bruecke", () => {
     }
     expect(screen.getByText(/GS6666/)).toBeInTheDocument();
   });
+
+  it("staut bei dauerhaft haengenden Abrufen hoechstens zwei auf", async () => {
+    vi.useFakeTimers();
+    invokeMock.mockImplementation(() => new Promise(() => {})); // alles haengt fuer immer
+    render(<LandingPanel />);
+    for (let i = 0; i < 120; i++) { // 10 Minuten
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+        for (let k = 0; k < 3; k++) await Promise.resolve();
+      });
+    }
+    expect(invokeMock.mock.calls.filter((c) => c[0] === "landing_get_current").length).toBeLessThanOrEqual(2);
+  });
 });

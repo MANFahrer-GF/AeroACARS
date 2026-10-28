@@ -1176,7 +1176,9 @@ export function LandingPanel() {
     // Refresh the preview every 5 s while we're on this tab so the
     // pilot sees their landing scores updating live during rollout.
     const t = setInterval(() => {
-      if (offenRef.current === 0 || Date.now() - offenSeitRef.current > HAENGT_MS) void refresh();
+      // Höchstens EIN Ersatz: hängt auch der, bleibt es bei zwei offenen
+      // Abrufen, statt alle 65 s einen weiteren anzustauen (Codex-QS).
+      if (offenRef.current === 0 || (offenRef.current === 1 && Date.now() - offenSeitRef.current > HAENGT_MS)) void refresh();
     }, 5000);
     return () => {
       clearInterval(t);
