@@ -2,7 +2,7 @@
 // logbook_pireps / logbook_stats / logbook_pirep), nichts lokal gespeichert.
 // Liste (Stats + Tabelle, keine Filter) → Klick → Detail mit geflogenem Track,
 // 3-Linien-Höhenprofil (MSL/AGL/Gelände) und Fluglogbuch.
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useTranslation } from "react-i18next";
@@ -13,6 +13,8 @@ import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
 import { ohneDatumsgrenzenSprung } from "../lib/datumsgrenze";
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus } from "./PirepPruefstatus";
 import { BordbuchRoutine } from "./bordbuch/BordbuchRoutine";
+// Flugkarte (Etappe 3): erst beim Öffnen laden — deck.gl soll den Start nicht bremsen
+const FlugkarteFenster = lazy(() => import("../flugkarte/FlugkarteFenster"));
 
 // Die Stil-Adressen kommen vom Server, damit ein Schluesselwechsel bei
 // CARTO kein Release kostet — siehe `BasemapContext`. Die eingebauten
@@ -138,6 +140,7 @@ export function LogbookView() {
   // nochmal. Mit der ID kann genau die angeklickte Zeile antworten.
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [karteOffen, setKarteOffen] = useState(false);
   // Manual "Erneut versuchen" — bumped on click, included in the fetch
   // effect's deps below so a click re-runs it even when `page` didn't
   // change (all automatic retries in invokeWithRetry already exhausted).
@@ -226,12 +229,13 @@ export function LogbookView() {
     return (
       <section className="aa-lb">
         <div className="aa-lb-det-head">
-          <button type="button" className="aa-lb-btn" onClick={() => setDetail(null)}>{t("logbook_view.detail_back")}</button>
+          <button type="button" className="aa-lb-btn" onClick={() => { setKarteOffen(false); setDetail(null); }}>{t("logbook_view.detail_back")}</button>
           <span className="aa-lb-cs">{detail.callsign}</span>
           <span className="aa-lb-route">{detail.dep_icao}<span className="aa-lb-arr">→</span>{detail.arr_icao}</span>
           <span className="aa-lb-muted">{detail.aircraft_icao} · {detail.aircraft_reg}</span>
           <span dangerouslySetInnerHTML={{ __html: badge(detail.status, t) }} />
           <PruefstatusMarke status={pruefstatus[detail.id]} />
+          <button type="button" className="aa-lb-btn" onClick={() => setKarteOffen(true)}>🗺 {t("flugkarte.fenster.titel")}</button>
           <div className="aa-lb-det-stats">
             <div><div className="aa-lb-k">{t("logbook_view.table_duration")}</div><div className="aa-lb-v">{dur(detail.duration_min)}</div></div>
             <div><div className="aa-lb-k">{t("logbook_view.table_distance")}</div><div className="aa-lb-v">{detail.distance_nm} nm</div></div>
@@ -260,6 +264,11 @@ export function LogbookView() {
           <h3>{t("logbook_view.detail_profile_title")}</h3>
           <FlightProfile route={route} />
         </div>
+        {karteOffen && (
+          <Suspense fallback={null}>
+            <FlugkarteFenster pirepId={detail.id} onClose={() => setKarteOffen(false)} />
+          </Suspense>
+        )}
       </section>
     );
   }

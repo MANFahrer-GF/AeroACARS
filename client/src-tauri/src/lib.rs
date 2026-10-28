@@ -16282,6 +16282,7 @@ mod mqtt_cache_zuordnung_tests {
         for kopf in [
             format!("{}{}", "async fn init_mqtt_publisher", "_via_provisioning("),
             format!("{}{}", "async fn pirep_", "pruefstatus("),
+            format!("{}{}", "async fn flugakte_", "laden("),
         ] {
             let start = SRC.find(&kopf).expect("Funktion nicht gefunden");
             let rest = &SRC[start..];
@@ -32030,6 +32031,51 @@ async fn pirep_pruefstatus(
     Ok(antwort)
 }
 
+/// Flugakte eines eigenen PIREPs für die Flugkarte (Etappe 3, 28.10.2026).
+///
+/// Der Live-Server rechnet sie aus dem hochgeladenen Flugprotokoll — dieselbe
+/// Rechnung wie in der Admin-Webapp. `Ok(None)`: zu diesem Flug gibt es kein
+/// Protokoll auf dem Server. Ohne Live-Server-Zugang oder bei fremdem
+/// Schlüsselbund ein Fehler mit eigenem Code, damit die Karte das sagen kann.
+#[tauri::command]
+async fn flugakte_laden(app: AppHandle, pirep_id: String) -> Result<Option<String>, UiError> {
+    // Wie `pirep_pruefstatus`: nur mit dem Zugang des angemeldeten Piloten
+    // fragen und eine Antwort verwerfen, wenn die Sitzung inzwischen wechselte.
+    let state = app.state::<AppState>();
+    let epoche_vorher = *state.session_epoch.lock().expect("session_epoch lock");
+    let angemeldet = *state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock");
+    let Some(angemeldet) = angemeldet else {
+        return Err(UiError::new("flugakte_kein_zugang", "nicht angemeldet"));
+    };
+    let (Some(username), Some(password)) = (
+        secrets::load_api_key(MQTT_KEYRING_USERNAME).ok().flatten(),
+        secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten(),
+    ) else {
+        return Err(UiError::new("flugakte_kein_zugang", "kein Live-Server-Zugang"));
+    };
+    let schluessel_nr = secrets::load_api_key(MQTT_KEYRING_PHPVMS_PILOT)
+        .ok()
+        .flatten();
+    if !mqtt_cache_gehoert_angemeldetem(schluessel_nr.as_deref(), angemeldet) {
+        return Err(UiError::new("flugakte_kein_zugang", "Schlüsselbund gehört nicht zum angemeldeten Piloten"));
+    }
+    let abruf = aeroacars_mqtt::flugakte::flugakte_abrufen(&pirep_id, &username, &password, None)
+        .await
+        .map_err(|e| UiError::new("flugakte_laden", e.to_string()))?;
+    if *state.session_epoch.lock().expect("session_epoch lock") != epoche_vorher {
+        return Err(UiError::new("flugakte_kein_zugang", "Sitzung gewechselt"));
+    }
+    match abruf {
+        aeroacars_mqtt::flugakte::Abruf::Akte(text) => Ok(Some(text)),
+        aeroacars_mqtt::flugakte::Abruf::Fehlt => Ok(None),
+        // abgelaufenes oder abgelehntes Zugangspaar: derselbe Hinweis wie ohne Zugang
+        aeroacars_mqtt::flugakte::Abruf::KeinZugang => Err(UiError::new("flugakte_kein_zugang", "Live-Server lehnt den Zugang ab")),
+    }
+}
+
 #[tauri::command]
 async fn landing_backup_now(app: AppHandle) -> Result<usize, UiError> {
     upload_landing_backup(app)
@@ -46669,6 +46715,29 @@ fn bahnmasse(rm: &runway::RunwayMatch) -> Bahnmasse {
     }
 }
 
+/// Aufsetzpunkt fuer PIREP-Feld und Notiz: ab der Lande-Schwelle wie die
+/// Bewertung (CES 442, VHHH 07L: 606 m ab Bahnanfang, 432 m ab Schwelle).
+/// Vor der Schwelle steht das ausdruecklich da statt eines Minuszeichens.
+/// Liefert (Aufsetzpunkt, Bahnlaenge); bei versetzter Schwelle nennt die
+/// Laenge die LDA, auf die sich der Aufsetzpunkt bezieht.
+fn aufsetzpunkt_texte(rm: &runway::RunwayMatch) -> (String, String) {
+    let m = bahnmasse(rm);
+    // `+ 0.0` macht aus einer gerundeten -0 eine 0 (sonst "-0 m").
+    let td = m.td_m.round() + 0.0;
+    let punkt = if td < 0.0 {
+        format!("{:.0} m before threshold", -td)
+    } else {
+        format!("{td:.0} m")
+    };
+    let laenge_m = rm.length_ft as f64 * 0.3048;
+    let laenge = if (laenge_m - m.nutzbare_laenge_m).abs() >= 1.0 {
+        format!("LDA {:.0} m of {laenge_m:.0} m", m.nutzbare_laenge_m)
+    } else {
+        format!("runway {laenge_m:.0} m long")
+    };
+    (punkt, laenge)
+}
+
 /// Schreibt den Flug auf die Platte, BEVOR eine Revision hinausgeht.
 ///
 /// # Warum das nicht der normale Speichertakt erledigt
@@ -57091,14 +57160,8 @@ fn build_pirep_fields(
             "Centerline Offset".into(),
             format!("{:.1} m {}", rw.centerline_distance_m.abs(), rw.side),
         );
-        f.insert(
-            "Touchdown Past Threshold".into(),
-            format!(
-                "{:.0} m (runway {:.0} m long)",
-                rw.touchdown_distance_from_threshold_ft as f64 * 0.3048,
-                rw.length_ft as f64 * 0.3048,
-            ),
-        );
+        let (punkt, laenge) = aufsetzpunkt_texte(rw);
+        f.insert("Touchdown Past Threshold".into(), format!("{punkt} ({laenge})"));
     }
 
     // ---- ATC-derived gates and approach runway (from MSFS SimVars) ----
@@ -57367,11 +57430,7 @@ fn build_pirep_notes(
             rw.centerline_distance_m.abs(),
             rw.side
         );
-        let _ = writeln!(
-            s,
-            "  Past thresh   {:.0} m",
-            rw.touchdown_distance_from_threshold_ft as f64 * 0.3048,
-        );
+        let _ = writeln!(s, "  Past thresh   {}", aufsetzpunkt_texte(rw).0);
     }
 
     // ---- Fuel & Weight ----
@@ -65312,6 +65371,7 @@ pub fn run() {
             landing_list,
             landing_get_current,
             pirep_pruefstatus,
+            flugakte_laden,
             landing_delete,
             metar_get,
             flight_forget,
@@ -78306,6 +78366,41 @@ mod touchdown_metadata_stamp_tests {
         let f = build_pirep_fields(&flight, &stats, "EDDP");
         assert!(f.get("Light Bounces").is_none(), "neben einem normalen Hopser zaehlt der leichte nicht");
         assert_eq!(f.get("Bounces").map(String::as_str), Some("1"));
+    }
+
+    /// CES 442 (VHHH 07L, 27.10.2026): 568 ft versetzte Schwelle. Die
+    /// Bewertung rechnete 432 m ab der Lande-Schwelle, das PIREP-Feld
+    /// zeigte 606 m ab dem physischen Bahnanfang. Feld und Notiz muessen
+    /// denselben Wert tragen wie die Bewertung (`bahnmasse().td_m`).
+    #[test]
+    fn aufsetzpunkt_im_pirep_ab_lande_schwelle_bei_versetzter_schwelle() {
+        let flight = flight_fixture("EDDP");
+        // (Rohwert ab Bahnanfang in m, gemeldeter Versatz ft, Versatz in
+        // der Geometrie ft, erwartetes Feld, erwartete Notiz)
+        for (roh_m, versatz_ft, geometrie_ft, feld, notiz) in [
+            // CES 442: Versatz nicht in der Geometrie → abziehen.
+            (605.5, 568, 0, "432 m (LDA 3427 m of 3600 m)", "Past thresh   432 m\n"),
+            // Versatz steckt schon im Schwellenpunkt → nichts abziehen.
+            (432.4, 568, 568, "432 m (LDA 3427 m of 3600 m)", "Past thresh   432 m\n"),
+            // Im Sperrbereich vor der Lande-Schwelle aufgesetzt.
+            (10.0, 50, 0, "5 m before threshold (LDA 3585 m of 3600 m)", "Past thresh   5 m before threshold\n"),
+            // Knapp vor der Schwelle (-0,3 m) rundet auf 0, nicht auf "-0".
+            (14.9, 50, 0, "0 m (LDA 3585 m of 3600 m)", "Past thresh   0 m\n"),
+            // Ohne Versatz unveraendert.
+            (388.0, 0, 0, "388 m (runway 3600 m long)", "Past thresh   388 m\n"),
+        ] {
+            let mut rm = eddp_26r_match_with_raw_td_and_displacement(roh_m * 3.280_839_895, versatz_ft);
+            rm.geometry_implied_displaced_threshold_ft = geometrie_ft;
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(rm);
+            // Dieselbe Zahl wie die Bewertung, nicht nur ein fester Text.
+            let bewertung = assess_touchdown(&stats).td_distance_from_threshold_m.expect("Bahn gematcht");
+            assert!(feld.starts_with(&format!("{:.0} m", bewertung.abs())), "{feld} vs Bewertung {bewertung}");
+            let f = build_pirep_fields(&flight, &stats, "EDDP");
+            assert_eq!(f.get("Touchdown Past Threshold").map(String::as_str), Some(feld));
+            let notes = build_pirep_notes(&flight, &stats, "EDDP");
+            assert!(notes.contains(notiz), "Notiz: {notes}");
+        }
     }
 
     #[test]

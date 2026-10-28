@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AltbestandKontext } from "./InfoBadge";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -74,6 +74,8 @@ import type {
   SubScoreEntry,
 } from "../lib/landungsDatensatz";
 import { DruckKontext } from "../lib/druck";
+// Flugkarte (Etappe 3): erst beim Öffnen laden — deck.gl soll den Start nicht bremsen
+const FlugkarteFenster = lazy(() => import("../flugkarte/FlugkarteFenster"));
 export type {
   ApproachSample,
   GateWindow,
@@ -904,6 +906,8 @@ export function LandingDetail({
   //      zeigen wir faelschlich die Fehlermeldung — im Zweifel besser als
   //      gar kein Feedback bei einem echten Fehlschlag.
   const [printing, setPrinting] = useState(false);
+  // Flugkarte dieses Flugs (Etappe 3) — derselbe Flug wie im Logbuch
+  const [karteOffen, setKarteOffen] = useState(false);
   const [printFailed, setPrintFailed] = useState(false);
   // Der Druck wartet, bis das Bordbuch dieser Landung geladen ist (über die
   // LAN-Oberfläche dauert das), höchstens 3 s — sonst fehlte es im PDF.
@@ -958,17 +962,25 @@ export function LandingDetail({
         <button type="button" className="landing-back" onClick={onBack}>
           ← {t("landing.back_to_list")}
         </button>
-        <button
-          type="button"
-          className="landing-export"
-          onClick={() => {
-            setPrintFailed(false);
-            setPrinting(true);
-          }}
-          title={t("landing.report.button")}
-        >
-          🖨 {t("landing.report.button")}
-        </button>
+        {/* PDF und Flugkarte als eine Gruppe: die Kopfzeile verteilt ihre Teile auf die Breite */}
+        <span className="landing-detail__aktionen">
+          <button
+            type="button"
+            className="landing-export"
+            onClick={() => {
+              setPrintFailed(false);
+              setPrinting(true);
+            }}
+            title={t("landing.report.button")}
+          >
+            🖨 {t("landing.report.button")}
+          </button>
+          {!isPreview && (
+            <button type="button" className="landing-export" onClick={() => setKarteOffen(true)}>
+              🗺 {t("flugkarte.fenster.oeffnen")}
+            </button>
+          )}
+        </span>
         {!isPreview && onDelete && (
           <button
             type="button"
@@ -980,6 +992,12 @@ export function LandingDetail({
           </button>
         )}
       </div>
+
+      {karteOffen && (
+        <Suspense fallback={null}>
+          <FlugkarteFenster pirepId={record.pirep_id} onClose={() => setKarteOffen(false)} />
+        </Suspense>
+      )}
 
       {printFailed && (
         <div role="alert" className="landing-export-error">
