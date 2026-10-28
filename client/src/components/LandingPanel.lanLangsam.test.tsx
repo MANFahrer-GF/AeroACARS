@@ -93,9 +93,15 @@ describe("LandingPanel — langsame Antwort ueber die LAN-Bruecke", () => {
   it("zeigt die Landungen, auch wenn jede Antwort 7 s braucht", async () => {
     vi.useFakeTimers();
     const rec = record({ pirep_id: "lan-1", flight_number: "3333" });
+    let offen = 0, maxOffen = 0;
+    const langsam = <T,>(wert: T) => {
+      offen++; maxOffen = Math.max(maxOffen, offen);
+      return new Promise<T>((res) => setTimeout(() => { offen--; res(wert); }, 7000));
+    };
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === "landing_list") return new Promise((res) => setTimeout(() => res([rec]), 7000));
-      if (cmd === "landing_get_current") return new Promise((res) => setTimeout(() => res(null), 7000));
+      if (cmd === "landing_list") return langsam([rec]);
+      if (cmd === "landing_get_current") return langsam(null);
+      if (cmd === "landing_list_stand") return langsam("1-100-1");
       return Promise.resolve(null);
     });
 
@@ -110,9 +116,11 @@ describe("LandingPanel — langsame Antwort ueber die LAN-Bruecke", () => {
     }
 
     expect(screen.getByText(/GS3333/)).toBeInTheDocument();
-    // Takt startet keine zweite Abfrage, solange eine laeuft (Leitung nicht stapeln)
-    const listen = invokeMock.mock.calls.filter((c) => c[0] === "landing_list").length;
-    expect(listen).toBeLessThanOrEqual(5);
+    // Takt startet keine zweite Abfrage, solange eine laeuft (Leitung nicht
+    // stapeln): hoechstens Vorschau + Merker gleichzeitig offen, nie doppelt.
+    expect(maxOffen).toBeLessThanOrEqual(2);
+    // Merker bleibt gleich: die volle Liste nur einmal
+    expect(invokeMock.mock.calls.filter((c) => c[0] === "landing_list")).toHaveLength(1);
   });
 
   it("holt die volle Liste nur, wenn sich der Stand-Merker aendert", async () => {
@@ -143,5 +151,28 @@ describe("LandingPanel — langsame Antwort ueber die LAN-Bruecke", () => {
     await takt();
     expect(listenAbrufe()).toBe(2);
     expect(screen.getByText(/GS5555/)).toBeInTheDocument();
+  });
+
+  it("fragt neu, wenn ein Abruf laenger als eine Minute haengt", async () => {
+    vi.useFakeTimers();
+    const rec = record({ pirep_id: "h-1", flight_number: "6666" });
+    let erster = true;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "landing_get_current") {
+        if (erster) { erster = false; return new Promise(() => {}); } // haengt fuer immer
+        return Promise.resolve(null);
+      }
+      if (cmd === "landing_list_stand") return Promise.resolve("1-1-1");
+      if (cmd === "landing_list") return Promise.resolve([rec]);
+      return Promise.resolve(null);
+    });
+    render(<LandingPanel />);
+    for (let i = 0; i < 14; i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+        for (let k = 0; k < 6; k++) await Promise.resolve();
+      });
+    }
+    expect(screen.getByText(/GS6666/)).toBeInTheDocument();
   });
 });

@@ -1037,6 +1037,11 @@ pub struct ApproachSample {
 }
 
 /// File-backed JSON store of past landings.
+/// Zählt jedes Schreiben der Landungsdatei in diesem Prozess (Teil von
+/// [`LandingStore::stand`]). Prozessweit, weil `LandingStore` je Aufruf neu
+/// geöffnet wird.
+static LANDINGS_SCHREIBZAEHLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub struct LandingStore {
     path: PathBuf,
 }
@@ -1357,10 +1362,13 @@ impl LandingStore {
         self.write_all(&items)
     }
 
-    /// Billiger Stand-Merker (Größe + Änderungszeit der Datei), ohne sie zu
-    /// lesen. Ändert sich bei jedem Schreiben; der Landungs-Tab lädt die
-    /// volle Liste nur, wenn er sich ändert (LAN-Brücke: 9,9 MB je Abruf).
+    /// Billiger Stand-Merker (Schreibzähler + Größe + Änderungszeit der
+    /// Datei), ohne sie zu lesen. Der Zähler fängt zwei Schreibvorgänge mit
+    /// gleicher Größe in derselben mtime-Einheit (Codex-QS); Größe und Zeit
+    /// fangen Schreiber außerhalb dieses Prozesses. Der Landungs-Tab lädt die
+    /// volle Liste nur, wenn sich der Merker ändert (LAN-Brücke: 9,9 MB je Abruf).
     pub fn stand(&self) -> Result<String, StorageError> {
+        let zaehler = LANDINGS_SCHREIBZAEHLER.load(std::sync::atomic::Ordering::Relaxed);
         match std::fs::metadata(&self.path) {
             Ok(m) => {
                 let zeit = m
@@ -1369,9 +1377,9 @@ impl LandingStore {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_nanos())
                     .unwrap_or(0);
-                Ok(format!("{}-{}", m.len(), zeit))
+                Ok(format!("{zaehler}-{}-{}", m.len(), zeit))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("leer".to_string()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(format!("{zaehler}-leer")),
             Err(e) => Err(e.into()),
         }
     }
@@ -1412,6 +1420,7 @@ impl LandingStore {
             if self.path.exists() {
                 let _ = std::fs::remove_file(&self.path);
             }
+            LANDINGS_SCHREIBZAEHLER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
         }
         self.write_all(items)
@@ -1479,6 +1488,7 @@ impl LandingStore {
         let bytes = serde_json::to_vec(&items)?;
         std::fs::write(&tmp, &bytes)?;
         std::fs::rename(&tmp, &self.path)?;
+        LANDINGS_SCHREIBZAEHLER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }
@@ -1986,7 +1996,7 @@ mod landing_store_tests {
     #[test]
     fn stand_aendert_sich_bei_jedem_schreiben() {
         let (store, dir) = temp_store();
-        assert_eq!(store.stand().expect("leer"), "leer");
+        assert!(store.stand().expect("leer").ends_with("-leer"));
         store.upsert(rec("A", &ts(100), &ts(100))).expect("schreiben");
         let eins = store.stand().expect("stand");
         assert_eq!(store.stand().expect("stand"), eins, "ohne Schreiben gleich");
@@ -1995,6 +2005,19 @@ mod landing_store_tests {
         let zwei = store.stand().expect("stand");
         store.replace_all(&[rec("A", &ts(100), &ts(100))]).expect("loeschen");
         assert_ne!(store.stand().expect("stand"), zwei, "geloescht");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stand_aendert_sich_auch_bei_gleicher_groesse() {
+        // Codex-QS: gleiche Größe in derselben mtime-Einheit darf nicht
+        // unbemerkt bleiben. Gleiche Länge erzwingen: denselben Datensatz
+        // noch einmal schreiben.
+        let (store, dir) = temp_store();
+        store.replace_all(&[rec("A", &ts(100), &ts(100))]).expect("schreiben");
+        let eins = store.stand().expect("stand");
+        store.replace_all(&[rec("A", &ts(100), &ts(100))]).expect("schreiben");
+        assert_ne!(store.stand().expect("stand"), eins, "zweites Schreiben gleicher Größe");
         let _ = std::fs::remove_dir_all(dir);
     }
 

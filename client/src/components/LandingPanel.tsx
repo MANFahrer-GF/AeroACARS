@@ -75,6 +75,9 @@ import type {
 } from "../lib/landungsDatensatz";
 import { DruckKontext } from "../lib/druck";
 // Flugkarte (Etappe 3): erst beim Öffnen laden — deck.gl soll den Start nicht bremsen
+// Landungs-Tab: nach dieser Zeit gilt ein offener Abruf als hängend (LAN-Brücke)
+const HAENGT_MS = 60_000;
+
 const FlugkarteFenster = lazy(() => import("../flugkarte/FlugkarteFenster"));
 export type {
   ApproachSample,
@@ -1132,7 +1135,11 @@ export function LandingPanel() {
   // Takt (alle Landungen übers WLAN zum Tablet), verwarf die laufende Nummer
   // jede Antwort — der Tab blieb leer. Der Takt wartet deshalb, bis der
   // laufende Abruf fertig ist; ausdrückliche Abrufe (nach dem Löschen) nicht.
+  // Hängt einer (WLAN-Aussetzer), darf der Takt nach HAENGT_MS neu fragen —
+  // nur hier, wo ausschließlich gelesen wird (Codex-QS: eine allgemeine
+  // Frist hätte z. B. eine laufende PIREP-Abgabe als Fehler gemeldet).
   const offenRef = useRef(0);
+  const offenSeitRef = useRef(0);
   // Die volle Liste (bei Thomas 9,9 MB) kommt nur, wenn sich die Datei
   // geändert hat; der Takt holt sonst nur Vorschau und Stand-Merker.
   // Kein Merker (Speicher nicht lesbar) = wie früher jedes Mal laden.
@@ -1141,6 +1148,7 @@ export function LandingPanel() {
   async function refresh(erzwingen = false) {
     const seq = ++refreshSeqRef.current;
     offenRef.current++;
+    offenSeitRef.current = Date.now();
     setLoading(true);
     try {
       const [current, stand] = await Promise.all([
@@ -1168,7 +1176,7 @@ export function LandingPanel() {
     // Refresh the preview every 5 s while we're on this tab so the
     // pilot sees their landing scores updating live during rollout.
     const t = setInterval(() => {
-      if (offenRef.current === 0) void refresh();
+      if (offenRef.current === 0 || Date.now() - offenSeitRef.current > HAENGT_MS) void refresh();
     }, 5000);
     return () => {
       clearInterval(t);
