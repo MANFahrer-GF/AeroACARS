@@ -32062,13 +32062,18 @@ async fn flugakte_laden(app: AppHandle, pirep_id: String) -> Result<Option<Strin
     if !mqtt_cache_gehoert_angemeldetem(schluessel_nr.as_deref(), angemeldet) {
         return Err(UiError::new("flugakte_kein_zugang", "Schlüsselbund gehört nicht zum angemeldeten Piloten"));
     }
-    let akte = aeroacars_mqtt::flugakte::flugakte_abrufen(&pirep_id, &username, &password, None)
+    let abruf = aeroacars_mqtt::flugakte::flugakte_abrufen(&pirep_id, &username, &password, None)
         .await
         .map_err(|e| UiError::new("flugakte_laden", e.to_string()))?;
     if *state.session_epoch.lock().expect("session_epoch lock") != epoche_vorher {
         return Err(UiError::new("flugakte_kein_zugang", "Sitzung gewechselt"));
     }
-    Ok(akte)
+    match abruf {
+        aeroacars_mqtt::flugakte::Abruf::Akte(text) => Ok(Some(text)),
+        aeroacars_mqtt::flugakte::Abruf::Fehlt => Ok(None),
+        // abgelaufenes oder abgelehntes Zugangspaar: derselbe Hinweis wie ohne Zugang
+        aeroacars_mqtt::flugakte::Abruf::KeinZugang => Err(UiError::new("flugakte_kein_zugang", "Live-Server lehnt den Zugang ab")),
+    }
 }
 
 #[tauri::command]

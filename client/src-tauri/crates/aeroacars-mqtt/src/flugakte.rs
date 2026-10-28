@@ -31,14 +31,25 @@ pub fn gueltige_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Holt die Flugakte als JSON-Text. `Ok(None)`: Der Server hat zu diesem
-/// PIREP kein Flugprotokoll (nicht hochgeladen, fremder Flug, vor Mai 2026).
+/// Ergebnis eines Abrufs.
+#[derive(Debug, PartialEq)]
+pub enum Abruf {
+    /// Die Akte als JSON-Text.
+    Akte(String),
+    /// Kein Flugprotokoll auf dem Server (nicht hochgeladen, fremder Flug, vor Mai 2026).
+    Fehlt,
+    /// Der Server lehnt den Zugang ab (401/403, z. B. abgelaufenes Zugangspaar) —
+    /// der Pilot soll „neu anmelden“ lesen, nicht einen rohen HTTP-Fehler (Codex 28.10.).
+    KeinZugang,
+}
+
+/// Holt die Flugakte eines eigenen PIREPs.
 pub async fn flugakte_abrufen(
     pirep_id: &str,
     username: &str,
     password: &str,
     endpoint: Option<&str>,
-) -> Result<Option<String>> {
+) -> Result<Abruf> {
     if !gueltige_id(pirep_id) {
         anyhow::bail!("flugakte: ungültige PIREP-Kennung");
     }
@@ -59,14 +70,16 @@ pub async fn flugakte_abrufen(
         .await
         .context("flugakte GET fehlgeschlagen")?;
     let status = res.status();
-    if status.as_u16() == 404 {
-        return Ok(None);
+    match status.as_u16() {
+        404 => return Ok(Abruf::Fehlt),
+        401 | 403 => return Ok(Abruf::KeinZugang),
+        _ => {}
     }
     if !status.is_success() {
         let body = res.text().await.unwrap_or_default();
         anyhow::bail!("flugakte abgelehnt: HTTP {} — {}", status.as_u16(), body);
     }
-    Ok(Some(res.text().await.context("flugakte: Antwort unlesbar")?))
+    Ok(Abruf::Akte(res.text().await.context("flugakte: Antwort unlesbar")?))
 }
 
 #[cfg(test)]
@@ -81,6 +94,42 @@ mod tests {
         assert!(!gueltige_id("../7/FREMDER"));
         assert!(!gueltige_id("a/b"));
         assert!(!gueltige_id(&"x".repeat(129)));
+    }
+
+    /// Kleiner Server: antwortet einmal mit `status` und `body`, gibt die Anfrage zurück.
+    async fn server(status: &'static str, body: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/api/flight-logs/flugakte", l.local_addr().unwrap());
+        let h = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = s.read(&mut buf).await.unwrap();
+            let antwort = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            s.write_all(antwort.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+        (url, h)
+    }
+
+    #[tokio::test]
+    async fn status_wird_richtig_zugeordnet_und_die_anmeldung_mitgeschickt() {
+        let (url, h) = server("200 OK", r#"{"version":3}"#).await;
+        assert_eq!(flugakte_abrufen("ABC_1", "u", "p", Some(&url)).await.unwrap(), Abruf::Akte(r#"{"version":3}"#.into()));
+        let anfrage = h.await.unwrap();
+        assert!(anfrage.starts_with("GET /api/flight-logs/flugakte/ABC_1 "), "{anfrage}");
+        assert!(anfrage.contains("authorization: Basic dTpw") || anfrage.contains("Authorization: Basic dTpw"), "{anfrage}");
+
+        let (url, _) = server("404 Not Found", "").await;
+        assert_eq!(flugakte_abrufen("ABC_1", "u", "p", Some(&url)).await.unwrap(), Abruf::Fehlt);
+        // Codex 28.10.: abgelaufenes Zugangspaar soll „neu anmelden“ heißen, nicht „HTTP 401“
+        for st in ["401 Unauthorized", "403 Forbidden"] {
+            let (url, _) = server(st, "nein").await;
+            assert_eq!(flugakte_abrufen("ABC_1", "u", "p", Some(&url)).await.unwrap(), Abruf::KeinZugang, "{st}");
+        }
+        let (url, _) = server("500 Internal Server Error", "kaputt").await;
+        let e = flugakte_abrufen("ABC_1", "u", "p", Some(&url)).await.unwrap_err().to_string();
+        assert!(e.contains("HTTP 500"), "{e}");
     }
 
     #[test]
