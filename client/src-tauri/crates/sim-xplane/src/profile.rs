@@ -441,7 +441,9 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
     XplaneAircraftProfile {
         name: "Felis 747-200",
         title_match: &["felis", "747"],
-        probe_dataref: "B742/AP_panel/AP_engage_A",
+        // NAV-MODE-Waehler: steht schon im geladenen Flugzeug auf HDG (1),
+        // traegt also auch ohne Web-API, wo eine Probe erst ab ≠ 0 zaehlt.
+        probe_dataref: "B742/AP_panel/AP_nav_mode_sel",
         titel_und_probe: false,
         overrides: &[
             DatarefOverride {
@@ -526,7 +528,9 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
     XplaneAircraftProfile {
         name: "DeltaWing ATR 72-600",
         title_match: &[],
-        probe_dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/beaconSwitch",
+        // Parkbremse: im abgestellten Flugzeug auf PARK (1) — ohne Titel muss
+        // die Probe auch ohne Web-API (erst ab ≠ 0) tragen.
+        probe_dataref: "DWSim/ATR_Series/datarefs/throttleQuadrant/parkingBrake/movement",
         titel_und_probe: false,
         overrides: &[
             DatarefOverride {
@@ -1205,6 +1209,43 @@ mod tests {
         );
         assert!(!halb.parking_brake, "HALB ist nicht PARK");
         assert!(halb.flaps_position < 0.70);
+    }
+
+    /// Erkennung (Codex-QS 28.10.2026): Titel und Probe waehlen das richtige
+    /// neue Profil, der ATR nur ueber die Probe.
+    #[test]
+    fn neue_profile_werden_erkannt() {
+        let idx = |n: &str| PROFILES.iter().position(|p| p.name == n).unwrap();
+        let keine = vec![false; PROFILES.len()];
+        let wahl = |titel: Option<&str>, probe: Option<usize>| {
+            let mut frisch = keine.clone();
+            if let Some(pi) = probe {
+                frisch[pi] = true;
+            }
+            crate::adapter::desired_profile(titel, &frisch, &frisch)
+        };
+        assert_eq!(wahl(Some("Felis 747-200 Cargo GE"), None), Some(idx("Felis 747-200")));
+        assert_eq!(wahl(Some("Dash 8 Q400"), None), Some(idx("FlyJSim Q4XP")));
+        assert_eq!(wahl(Some("ATR 72-600"), None), None);
+        for n in ["DeltaWing ATR 72-600", "Felis 747-200", "FlyJSim Q4XP"] {
+            assert_eq!(wahl(None, Some(idx(n))), Some(idx(n)), "{n}");
+        }
+        // Die Proben gehoeren keinem anderen Profil.
+        for (i, p) in PROFILES.iter().enumerate() {
+            for (j, q) in PROFILES.iter().enumerate() {
+                if i < j && p.probe_dataref != q.probe_dataref {
+                    continue;
+                }
+                assert!(i == j || p.name.starts_with("FlightFactor"), "{} / {}", p.name, q.name);
+            }
+        }
+        // Bestehende Titel bleiben bei ihren Profilen.
+        assert_eq!(profile_index_for_title("MD11 Rotate MD-11P"), Some(idx("Rotate MD-11")));
+        assert_eq!(
+            profile_index_for_title("Challenger 650 published by X-Aviation"),
+            Some(idx("Hot Start CL650"))
+        );
+        assert_eq!(profile_index_for_title("Boeing 737-800X"), Some(idx("Laminar/Zibo 737-800")));
     }
 
     /// Profilwechsel: die neuen Add-on-Ersetzungen (Lampen, Schilder,
