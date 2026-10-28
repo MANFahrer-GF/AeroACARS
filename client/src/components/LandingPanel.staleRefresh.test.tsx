@@ -97,8 +97,8 @@ function record(over: Partial<LandingRecord>): LandingRecord {
   } as LandingRecord;
 }
 
-describe("LandingPanel — stale-response guard on the 5s polling refresh", () => {
-  it("a late-resolving earlier refresh must not overwrite a newer refresh's records", async () => {
+describe("LandingPanel — 5s polling refresh does not overtake itself", () => {
+  it("waits for the running refresh and then replaces it with the next one", async () => {
     vi.useFakeTimers();
 
     const staleRecord = record({ pirep_id: "stale-1", flight_number: "1111" });
@@ -136,8 +136,10 @@ describe("LandingPanel — stale-response guard on the 5s polling refresh", () =
       await Promise.resolve();
     });
 
-    // Advance past the 5s interval: refresh() #2 fires and resolves
-    // immediately with the fresh record.
+    // Advance past the 5s interval. Seit dem LAN-Befund 28.10.2026 startet
+    // der Takt KEINE zweite Abfrage, solange #1 noch laeuft — das Ueberholen
+    // ueber den Takt ist damit ausgeschlossen (die laufende Nummer schuetzt
+    // weiter den ausdruecklichen Abruf nach dem Loeschen).
     await act(async () => {
       vi.advanceTimersByTime(5000);
       await Promise.resolve();
@@ -145,14 +147,22 @@ describe("LandingPanel — stale-response guard on the 5s polling refresh", () =
       await Promise.resolve();
     });
 
-    expect(screen.getByText(/GS2222/)).toBeInTheDocument();
-    expect(screen.queryByText(/GS1111/)).not.toBeInTheDocument();
+    expect(invokeMock.mock.calls.filter((c) => c[0] === "landing_list")).toHaveLength(1);
 
-    // NOW the slow mount-refresh (#1) resolves, with STALE data arriving
-    // last. The seq guard must discard it.
+    // #1 kommt spaet an und gilt, weil keine neuere Abfrage laeuft.
     await act(async () => {
       resolveStaleList([staleRecord]);
       resolveStaleCurrent(null);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/GS1111/)).toBeInTheDocument();
+
+    // Der naechste Takt holt den frischen Stand und ersetzt ihn.
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();

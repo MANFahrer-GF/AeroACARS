@@ -1128,9 +1128,15 @@ export function LandingPanel() {
   // beim Aushängen, damit eine noch offene Anfrage nach dem Verlassen
   // des Tabs nichts mehr schreibt.
   const refreshSeqRef = useRef(0);
+  // Feldbefund 28.10.2026 (LAN-Brücke): Braucht JEDER Abruf länger als der
+  // Takt (alle Landungen übers WLAN zum Tablet), verwarf die laufende Nummer
+  // jede Antwort — der Tab blieb leer. Der Takt wartet deshalb, bis der
+  // laufende Abruf fertig ist; ausdrückliche Abrufe (nach dem Löschen) nicht.
+  const offenRef = useRef(0);
 
   async function refresh() {
     const seq = ++refreshSeqRef.current;
+    offenRef.current++;
     setLoading(true);
     try {
       const [list, current] = await Promise.all([
@@ -1143,6 +1149,7 @@ export function LandingPanel() {
     } catch (e) {
       console.warn("landing_list failed", e);
     } finally {
+      offenRef.current--;
       if (seq === refreshSeqRef.current) setLoading(false);
     }
   }
@@ -1151,7 +1158,9 @@ export function LandingPanel() {
     void refresh();
     // Refresh the preview every 5 s while we're on this tab so the
     // pilot sees their landing scores updating live during rollout.
-    const t = setInterval(refresh, 5000);
+    const t = setInterval(() => {
+      if (offenRef.current === 0) void refresh();
+    }, 5000);
     return () => {
       clearInterval(t);
       refreshSeqRef.current++;
