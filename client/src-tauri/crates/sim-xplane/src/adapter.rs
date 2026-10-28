@@ -2010,6 +2010,9 @@ mod plugin2_loopback_tests {
         if name.starts_with("abus/")
             || name.starts_with("CL650/")
             || name.starts_with("Rotate/")
+            || name.starts_with("B742/")
+            || name.starts_with("FJS/Q4XP/")
+            || name.starts_with("DWSim/")
             || name == "AirbusFBW/AP1Engage"
         {
             serde_json::json!("fehlt")
