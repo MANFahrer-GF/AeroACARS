@@ -273,10 +273,13 @@ async function sammlungAbschicken(): Promise<void> {
     return;
   }
 
+  const ab = new AbortController();
+  const uhr = setTimeout(() => ab.abort(), BRUECKE_FRIST_MS);
   try {
     const token = currentToken();
     const res = await fetch("/api/cmd-batch", {
       method: "POST",
+      signal: ab.signal,
       headers: {
         "X-AeroACARS-Token": token ?? "",
         "Content-Type": "application/json",
@@ -304,11 +307,19 @@ async function sammlungAbschicken(): Promise<void> {
       else a.fehler(fehlerAus(t.status, a.cmd, t.error));
     });
   } catch (e) {
+    // Frist abgelaufen: NICHT einzeln nachfassen — das stellte dieselbe
+    // Last wieder in die Schlange (Feldbefund 28.10.2026).
+    if (ab.signal.aborted) {
+      for (const a of stapel) a.fehler(fristFehler(a.cmd));
+      return;
+    }
     // Netzfehler: nicht das ganze Buendel verlieren, sondern einzeln
     // nachfassen. Ist die Leitung wirklich tot, scheitern die auch — dann
     // aber mit dem Fehler, den die Aufrufer ohnehin erwarten.
     for (const a of stapel) einzelInvoke(a.cmd, a.args).then(a.fertig, a.fehler);
     void e;
+  } finally {
+    clearTimeout(uhr);
   }
 }
 
@@ -340,13 +351,44 @@ export function _buendelungZuruecksetzen(): void {
   buendelnMoeglich = true;
 }
 
+/**
+ * Feldbefund 28.10.2026: Ein Browser hält je Adresse nur ~6 Verbindungen.
+ * Hängt eine Abfrage (WLAN-Aussetzer, riesige Antwort), wartet alles andere
+ * dahinter — das Tablet wirkte eingefroren, der PC lief normal. Nach dieser
+ * Frist gibt die Abfrage ihre Verbindung frei. Großzügig: die längste
+ * Einzelfrist auf dem PC ist 60 s. Gilt bis die Antwort ganz gelesen ist.
+ */
+export const BRUECKE_FRIST_MS = 120_000;
+
+function fristFehler(cmd: string): UiError {
+  return { code: "bridge_timeout", message: `Keine Antwort vom PC nach ${BRUECKE_FRIST_MS / 1000} s (${cmd})` };
+}
+
 async function einzelInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
+  const ab = new AbortController();
+  const uhr = setTimeout(() => ab.abort(), BRUECKE_FRIST_MS);
+  try {
+    return await einzelInvokeMitSignal<T>(cmd, args, ab.signal);
+  } catch (e) {
+    if (ab.signal.aborted) throw fristFehler(cmd);
+    throw e;
+  } finally {
+    clearTimeout(uhr);
+  }
+}
+
+async function einzelInvokeMitSignal<T>(
+  cmd: string,
+  args: Record<string, unknown> | undefined,
+  signal: AbortSignal,
+): Promise<T> {
   const token = currentToken();
   const res = await fetch(`/api/cmd/${cmd}`, {
     method: "POST",
+    signal,
     headers: {
       "X-AeroACARS-Token": token ?? "",
       "Content-Type": "application/json",

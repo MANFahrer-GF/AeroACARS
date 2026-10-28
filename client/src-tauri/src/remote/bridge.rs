@@ -207,6 +207,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "activity_log_get" => ok_json(crate::activity_log_get(st!())),
         "landing_get_current" => ok_json(crate::landing_get_current(app.clone(), st!())),
         "landing_list" => ok_json(crate::landing_list(app.clone())),
+        "landing_list_stand" => ok_json(crate::landing_list_stand(app.clone())),
         // „Flugzeug vermessen" (28.09.2026) — auch vom Tablet aus: im Cockpit
         // schalten, am iPad „Erledigt" tippen. Jeder Befehl nennt die
         // Sitzung, damit ein verspäteter Befehl eine neuere nicht anfasst.

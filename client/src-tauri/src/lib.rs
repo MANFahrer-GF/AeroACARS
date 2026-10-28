@@ -14306,6 +14306,15 @@ fn vref_pauschal_neu_rechnen(r: &mut LandingRecord) {
     };
 }
 
+/// Stand-Merker der Landungsdatei (Größe + Änderungszeit), ohne sie zu
+/// lesen. Der Landungs-Tab fragt alle 5 s nur diesen ab und holt die volle
+/// Liste erst, wenn er sich ändert — über die LAN-Brücke waren das sonst
+/// 9,9 MB je Takt (Feldbefund 28.10.2026, Tablet fror ein).
+#[tauri::command(async)]
+fn landing_list_stand(app: AppHandle) -> Option<String> {
+    open_landing_store(&app).and_then(|s| s.stand().ok())
+}
+
 /// List every persisted landing record, newest first. Used by the
 /// Landing tab's list view.
 #[tauri::command(async)]
@@ -65369,6 +65378,7 @@ pub fn run() {
             activity_log_get,
             activity_log_clear,
             landing_list,
+            landing_list_stand,
             landing_get_current,
             pirep_pruefstatus,
             flugakte_laden,

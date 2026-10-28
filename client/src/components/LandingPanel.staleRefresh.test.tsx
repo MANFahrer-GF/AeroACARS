@@ -147,7 +147,7 @@ describe("LandingPanel — 5s polling refresh does not overtake itself", () => {
       await Promise.resolve();
     });
 
-    expect(invokeMock.mock.calls.filter((c) => c[0] === "landing_list")).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter((c) => c[0] === "landing_get_current")).toHaveLength(1);
 
     // #1 kommt spaet an und gilt, weil keine neuere Abfrage laeuft.
     await act(async () => {

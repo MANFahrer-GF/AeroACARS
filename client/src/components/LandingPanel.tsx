@@ -1133,19 +1133,28 @@ export function LandingPanel() {
   // jede Antwort — der Tab blieb leer. Der Takt wartet deshalb, bis der
   // laufende Abruf fertig ist; ausdrückliche Abrufe (nach dem Löschen) nicht.
   const offenRef = useRef(0);
+  // Die volle Liste (bei Thomas 9,9 MB) kommt nur, wenn sich die Datei
+  // geändert hat; der Takt holt sonst nur Vorschau und Stand-Merker.
+  // Kein Merker (Speicher nicht lesbar) = wie früher jedes Mal laden.
+  const standRef = useRef<string | null | undefined>(undefined);
 
-  async function refresh() {
+  async function refresh(erzwingen = false) {
     const seq = ++refreshSeqRef.current;
     offenRef.current++;
     setLoading(true);
     try {
-      const [list, current] = await Promise.all([
-        invoke<LandingRecord[]>("landing_list"),
+      const [current, stand] = await Promise.all([
         invoke<LandingRecord | null>("landing_get_current"),
+        invoke<string | null>("landing_list_stand"),
       ]);
       if (seq !== refreshSeqRef.current) return;
-      setRecords(list);
       setPreview(current ?? null);
+      if (erzwingen || stand == null || stand !== standRef.current) {
+        const list = await invoke<LandingRecord[]>("landing_list");
+        if (seq !== refreshSeqRef.current) return;
+        setRecords(list);
+        standRef.current = stand;
+      }
     } catch (e) {
       console.warn("landing_list failed", e);
     } finally {
@@ -1155,7 +1164,7 @@ export function LandingPanel() {
   }
 
   useEffect(() => {
-    void refresh();
+    void refresh(true);
     // Refresh the preview every 5 s while we're on this tab so the
     // pilot sees their landing scores updating live during rollout.
     const t = setInterval(() => {
@@ -1224,7 +1233,7 @@ export function LandingPanel() {
     try {
       await invoke("landing_delete", { pirepId: id });
       setSelectedId(null);
-      await refresh();
+      await refresh(true);
     } catch (e) {
       console.warn("landing_delete failed", e);
     }

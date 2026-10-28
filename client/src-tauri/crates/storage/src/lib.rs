@@ -1357,6 +1357,25 @@ impl LandingStore {
         self.write_all(&items)
     }
 
+    /// Billiger Stand-Merker (Größe + Änderungszeit der Datei), ohne sie zu
+    /// lesen. Ändert sich bei jedem Schreiben; der Landungs-Tab lädt die
+    /// volle Liste nur, wenn er sich ändert (LAN-Brücke: 9,9 MB je Abruf).
+    pub fn stand(&self) -> Result<String, StorageError> {
+        match std::fs::metadata(&self.path) {
+            Ok(m) => {
+                let zeit = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                Ok(format!("{}-{}", m.len(), zeit))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("leer".to_string()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Read all records, newest first.
     pub fn list(&self) -> Result<Vec<LandingRecord>, StorageError> {
         let mut items = self.read_all()?;
@@ -1962,6 +1981,21 @@ mod landing_store_tests {
         ));
         let store = LandingStore::open(&dir).expect("open temp store");
         (store, dir)
+    }
+
+    #[test]
+    fn stand_aendert_sich_bei_jedem_schreiben() {
+        let (store, dir) = temp_store();
+        assert_eq!(store.stand().expect("leer"), "leer");
+        store.upsert(rec("A", &ts(100), &ts(100))).expect("schreiben");
+        let eins = store.stand().expect("stand");
+        assert_eq!(store.stand().expect("stand"), eins, "ohne Schreiben gleich");
+        store.upsert(rec("B", &ts(200), &ts(200))).expect("schreiben");
+        assert_ne!(store.stand().expect("stand"), eins, "neue Landung");
+        let zwei = store.stand().expect("stand");
+        store.replace_all(&[rec("A", &ts(100), &ts(100))]).expect("loeschen");
+        assert_ne!(store.stand().expect("stand"), zwei, "geloescht");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

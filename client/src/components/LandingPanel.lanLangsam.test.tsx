@@ -114,4 +114,34 @@ describe("LandingPanel — langsame Antwort ueber die LAN-Bruecke", () => {
     const listen = invokeMock.mock.calls.filter((c) => c[0] === "landing_list").length;
     expect(listen).toBeLessThanOrEqual(5);
   });
+
+  it("holt die volle Liste nur, wenn sich der Stand-Merker aendert", async () => {
+    vi.useFakeTimers();
+    let stand = "100-1";
+    let liste = [record({ pirep_id: "a", flight_number: "4444" })];
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "landing_list") return Promise.resolve(liste);
+      if (cmd === "landing_list_stand") return Promise.resolve(stand);
+      return Promise.resolve(null);
+    });
+    const takt = async () => {
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+        for (let i = 0; i < 6; i++) await Promise.resolve();
+      });
+    };
+    const listenAbrufe = () => invokeMock.mock.calls.filter((c) => c[0] === "landing_list").length;
+
+    render(<LandingPanel />);
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
+    for (let i = 0; i < 4; i++) await takt();
+    expect(listenAbrufe()).toBe(1);
+    expect(screen.getByText(/GS4444/)).toBeInTheDocument();
+
+    stand = "200-2";
+    liste = [record({ pirep_id: "b", flight_number: "5555" }), ...liste];
+    await takt();
+    expect(listenAbrufe()).toBe(2);
+    expect(screen.getByText(/GS5555/)).toBeInTheDocument();
+  });
 });
