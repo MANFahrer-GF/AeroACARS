@@ -46,6 +46,14 @@ pub enum ValueMapping {
     /// gegenueber dem Grundeintrag verschoben ist (FF757/767-Autobrake
     /// beginnt bei RTO = -1, die FF777 bei 0).
     Versatz(f32),
+    /// 28.10.2026: wie `DetentTable`, die Tabelle beginnt aber bei diesem
+    /// Rohwert statt bei 0 — fuer Dreifachschalter mit -1/0/1 (CL650-
+    /// Schilder: -1 ON, 0 OFF, 1 AUTO laut P_-Profilen v2.0).
+    DetentTableAb(f32, &'static [f32]),
+    /// 28.10.2026: Lampe als Schalter — Rohwert ueber der Schwelle ergibt
+    /// den zweiten Wert, sonst 0 (Felis-Schilder: Leuchtkraft > 0.01 = an,
+    /// Schwelle aus den P_-Profilen).
+    Schwelle(f32, f32),
 }
 
 impl ValueMapping {
@@ -102,6 +110,10 @@ impl ValueMapping {
                 })
             }
             ValueMapping::Versatz(v) => raw.is_finite().then_some(raw + v),
+            ValueMapping::DetentTableAb(ab, table) => ValueMapping::DetentTable(table).map(raw - ab),
+            ValueMapping::Schwelle(schwelle, an) => {
+                raw.is_finite().then_some(if raw > *schwelle { *an } else { 0.0 })
+            }
         }
     }
 }
@@ -201,6 +213,59 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
                 dataref: "CL650/overhead/land_lts/recog_taxi",
                 mapping: ValueMapping::Passthrough,
             },
+            // 28.10.2026 — P_-Profile v2.0 (Michel). Live-Abgleich: im
+            // letzten CL650-Flug (19.10.) blieben Parkbremse und alle AP-
+            // Felder den ganzen Flug aus. Parkbremse = Hebelstellung 0/1;
+            // AP aus den FCP-Lampen der Kapitaensseite (> 0.01 = an, ueber
+            // die Lampenfelder der FF777, die als ODER in die AP-Felder
+            // gehen). Schilder -1 ON / 0 OFF / 1 AUTO (Tastenbilder; laut
+            // Michel vom baugleichen Notlichtschalter abgeleitet, am Zeichen
+            // selbst noch nicht bestaetigt).
+            DatarefOverride {
+                field: FieldId::ParkingBrake,
+                dataref: "CL650/pedestal/park_brake_value",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::Ff777ApL,
+                dataref: "CL650/lamps/glareshield/FCP/ap_eng_1",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::Ff777HdgHold,
+                dataref: "CL650/lamps/glareshield/FCP/hdg_1",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::Ff777AltHold,
+                dataref: "CL650/lamps/glareshield/FCP/alt_1",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::Ff777Lnav,
+                dataref: "CL650/lamps/glareshield/FCP/nav_1",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::Ff777App,
+                dataref: "CL650/lamps/glareshield/FCP/appr_1",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::Ff777At,
+                dataref: "CL650/lamps/glareshield/ats_L",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::FfAnschnallzeichen,
+                dataref: "CL650/overhead/signs/seatbelt_value",
+                mapping: ValueMapping::DetentTableAb(-1.0, CL650_SCHILDER),
+            },
+            DatarefOverride {
+                field: FieldId::FfRauchverbot,
+                dataref: "CL650/overhead/signs/no_smoking_value",
+                mapping: ValueMapping::DetentTableAb(-1.0, CL650_SCHILDER),
+            },
         ],
     },
     // v0.12.6 — Rotate MD-11 (X-Plane 12). Pilot-Befund (Michel/GSG):
@@ -211,11 +276,45 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
         title_match: &["rotate", "md-11"],
         probe_dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
         titel_und_probe: false,
-        overrides: &[DatarefOverride {
-            field: FieldId::FlapsHandle,
-            dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
-            mapping: ValueMapping::DegreeTable(MD11_FLAP_DEGREES),
-        }],
+        overrides: &[
+            DatarefOverride {
+                field: FieldId::FlapsHandle,
+                dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
+                mapping: ValueMapping::DegreeTable(MD11_FLAP_DEGREES),
+            },
+            // 28.10.2026 — P_-Profile v2.0 (Michel), Beta, alles noch nicht
+            // im Sim bestaetigt. Schilder 0 OFF / 1 AUTO / 2 ON und Nose 0 OFF
+            // / 1 TAXI / 2 T/O aus den Tastenbildern; Taxilicht brennt in
+            // TAXI und T/O. AP: das FCP hat keine Modus-Lampen; Michel nennt
+            // aus `MD-11-core.xpl` `fgs_autoflight` (AUTOFLIGHT) und
+            // `afs_appr_engaged` (APPR/LAND), Werte ungemessen — > 0.01 = an
+            // ueber die Lampenfelder.
+            DatarefOverride {
+                field: FieldId::FfAnschnallzeichen,
+                dataref: "Rotate/aircraft/controls/seatbelts_lts",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::FfRauchverbot,
+                dataref: "Rotate/aircraft/controls/nosmoke_lts",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::LightTaxi,
+                dataref: "Rotate/aircraft/controls/nose_lts",
+                mapping: ValueMapping::DetentTable(&[0.0, 1.0, 1.0]),
+            },
+            DatarefOverride {
+                field: FieldId::Ff777ApL,
+                dataref: "Rotate/aircraft/controls/fgs_autoflight",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::Ff777App,
+                dataref: "Rotate/aircraft/systems/afs_appr_engaged",
+                mapping: ValueMapping::Passthrough,
+            },
+        ],
     },
     // v0.17.x (#aircraft-scan): Laminar/Zibo Boeing 737-800(X). Die
     // `laminar/B738/autopilot/*_status`-Datarefs sind X-Plane-KERN (Laminars
@@ -329,7 +428,172 @@ pub const PROFILES: &[XplaneAircraftProfile] = &[
         titel_und_probe: true,
         overrides: FF757_767_OVERRIDES,
     },
+    // 28.10.2026 — Felis 747-200 / 747-200F, Quelle: P_-Profile v2.0 von
+    // Michel. Live-Abgleich: in beiden Oktober-Fluegen (02./13.10.) blieben
+    // alle AP-Felder, Autobrake und Fluegellicht den ganzen Flug aus.
+    // AP-Wahlschalter A/B 0 OFF / 1 MAN / 2 COMMAND; MAN zaehlt als an — der
+    // Autopilot ist dort eingekuppelt, der Pilot steuert ueber ihn. A und B
+    // gehen ueber die beiden Lampenfelder der FF777 (> 0.01) als ODER in
+    // `autopilot_master`. Autobrake (live gemessen) 0 OFF / 1 DISARM /
+    // 2 MIN / 3 MED / 4 MAX auf die FF777-Skala (MIN = „1", MED = „2").
+    // Der NAV-MODE-Waehler (0 INS … 4 LAND) bleibt aussen vor: er steht am
+    // Boden auf HDG, auch bei ausgeschaltetem Autopiloten.
+    XplaneAircraftProfile {
+        name: "Felis 747-200",
+        title_match: &["felis", "747"],
+        probe_dataref: "B742/AP_panel/AP_engage_A",
+        titel_und_probe: false,
+        overrides: &[
+            DatarefOverride {
+                field: FieldId::Ff777ApL,
+                dataref: "B742/AP_panel/AP_engage_A",
+                mapping: ValueMapping::DetentTable(&[0.0, 1.0, 1.0]),
+            },
+            DatarefOverride {
+                field: FieldId::Ff777ApR,
+                dataref: "B742/AP_panel/AP_engage_B",
+                mapping: ValueMapping::DetentTable(&[0.0, 1.0, 1.0]),
+            },
+            DatarefOverride {
+                field: FieldId::Ff777AltHold,
+                dataref: "B742/front_lamps/AP_alt_hold_lit",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::Ff777At,
+                dataref: "B742/front_lamps/AP_AT_on_lit",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::FfAutobrake,
+                dataref: "B742/OVHD/auto_brake_sel",
+                mapping: ValueMapping::DetentTable(&[1.0, 2.0, 3.0, 4.0, 7.0]),
+            },
+            DatarefOverride {
+                field: FieldId::FfFluegellicht,
+                dataref: "B742/ext_light/wing_sw",
+                mapping: ValueMapping::Passthrough,
+            },
+            // Schilder nur als Lampe (kein AUTO) → an = ON.
+            DatarefOverride {
+                field: FieldId::FfAnschnallzeichen,
+                dataref: "B742/ovhd_lamps/fasten_sbelts_but_lit",
+                mapping: ValueMapping::Schwelle(0.01, 2.0),
+            },
+            DatarefOverride {
+                field: FieldId::FfRauchverbot,
+                dataref: "B742/ovhd_lamps/no_smoking_but_lit",
+                mapping: ValueMapping::Schwelle(0.01, 2.0),
+            },
+        ],
+    },
+    // 28.10.2026 — FlyJSim Dash 8-400 (Q4XP), P_-Profile v2.0. Kollisions-
+    // licht kommt schon ueber `Q4xpKollisionslicht` (dataref.rs). Hier die
+    // Kippschalter 0/1 fuer Fluegel (WING INSP), Anschnall- und Rauchverbots-
+    // zeichen (an = ON). Klappen laufen ueber den Standard (im Flug vom
+    // 28.09. belegt). Fuer AP-Modi gibt es keine Quelle: das FGCP hat keine
+    // Lampen, das FMA (`FJS/Q4XP/FMA/*`) liefert Zahlencodes, deren
+    // Bedeutung Michel noch misst.
+    XplaneAircraftProfile {
+        name: "FlyJSim Q4XP",
+        title_match: &["dash 8", "q400"],
+        probe_dataref: "FJS/Q4XP/FlightControls/FlapsHandle",
+        titel_und_probe: false,
+        overrides: &[
+            DatarefOverride {
+                field: FieldId::FfFluegellicht,
+                dataref: "FJS/Q4XP/Manips/TwoSwitch_Anim[22]",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::FfAnschnallzeichen,
+                dataref: "FJS/Q4XP/Manips/TwoSwitch_Anim[34]",
+                mapping: ValueMapping::Schwelle(0.5, 2.0),
+            },
+            DatarefOverride {
+                field: FieldId::FfRauchverbot,
+                dataref: "FJS/Q4XP/Manips/TwoSwitch_Anim[35]",
+                mapping: ValueMapping::Schwelle(0.5, 2.0),
+            },
+        ],
+    },
+    // 28.10.2026 — DeltaWing ATR 72-600 (`DWSim/ATR_Series`), P_-Profile
+    // v2.0, Beta: noch kein Flug mit AeroACARS, Werte aus den Tasten-
+    // bildern. Lichter und Schilder 0/1; Parkbremse 0 OFF / 0.5 HALB /
+    // 1 PARK (nur PARK zaehlt, `parking_brake` > 0.5); Klappenhebel in Grad
+    // 0/15/30, Landeklappen 30; AP aus der AP-Lampe links. Der acf-Titel
+    // ist unbekannt — Erkennung nur ueber die Probe.
+    XplaneAircraftProfile {
+        name: "DeltaWing ATR 72-600",
+        title_match: &[],
+        probe_dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/beaconSwitch",
+        titel_und_probe: false,
+        overrides: &[
+            DatarefOverride {
+                field: FieldId::LightBeacon,
+                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/beaconSwitch",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::LightStrobe,
+                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/strobeSwitch",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::LightNav,
+                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/navSwitch",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::LightTaxi,
+                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/taxiToSwitch",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::LightLanding,
+                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/landingLSwitch",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::FfFluegellicht,
+                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/wingSwitch",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::FfAnschnallzeichen,
+                dataref: "DWSim/ATR_Series/datarefs/overhead/signs/seatBeltsSwitch",
+                mapping: ValueMapping::Schwelle(0.5, 2.0),
+            },
+            DatarefOverride {
+                field: FieldId::FfRauchverbot,
+                dataref: "DWSim/ATR_Series/datarefs/overhead/signs/noDeviceSwitch",
+                mapping: ValueMapping::Schwelle(0.5, 2.0),
+            },
+            DatarefOverride {
+                field: FieldId::Ff777ApL,
+                dataref: "DWSim/ATR_Series/lit/front/afcs/apLeft",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::ParkingBrake,
+                dataref: "DWSim/ATR_Series/datarefs/throttleQuadrant/parkingBrake/movement",
+                mapping: ValueMapping::Passthrough,
+            },
+            DatarefOverride {
+                field: FieldId::FlapsHandle,
+                dataref: "DWSim/ATR_Series/datarefs/throttleQuadrant/flapsLever/rotation",
+                mapping: ValueMapping::DegreeTable(ATR72_FLAP_DEGREES),
+            },
+        ],
+    },
 ];
+
+/// CL650-Schilder ab Rohwert -1: -1 ON, 0 OFF, 1 AUTO → 2/0/1.
+const CL650_SCHILDER: &[f32] = &[2.0, 0.0, 1.0];
+
+/// ATR 72-600 Klappenhebel in Grad → interner Anteil; 30 = Landeklappen
+/// (Landing-Config ab 0.70), 15 nicht.
+pub const ATR72_FLAP_DEGREES: &[(f32, f32)] = &[(0.0, 0.0), (15.0, 0.5), (30.0, 1.0)];
 
 /// Gemeinsame Umbiegungen der FF757/767 (Werte „live bestaetigt" laut
 /// P_-Profilen: Autobrake RTO = -1 … MAX AUTO = 6).
@@ -447,7 +711,11 @@ mod tests {
             profile_index_for_title("Challenger 650 published by X-Aviation"),
             Some(0),
         );
-        assert_eq!(profile_index_for_title("Felis 747-200"), None);
+        // Seit 28.10.2026 hat die Felis ein eigenes Profil, nicht das CL650.
+        let felis = PROFILES.iter().position(|p| p.name == "Felis 747-200");
+        assert!(felis.is_some());
+        assert_eq!(profile_index_for_title("Felis 747-200"), felis);
+        assert_eq!(profile_index_for_title("Boeing 747-400"), None);
     }
 
     #[test]
@@ -744,5 +1012,217 @@ mod tests {
         let grund = build_active_catalog(None);
         let ab = grund.iter().find(|e| e.field == FieldId::FfAutobrake).unwrap();
         assert_eq!(ab.name, "1-sim/ckpt/autobrakeSwitch/anim");
+    }
+
+    #[test]
+    fn neue_umrechnungen_ab_und_schwelle() {
+        let ab = ValueMapping::DetentTableAb(-1.0, CL650_SCHILDER);
+        assert_eq!(ab.map(-1.0), Some(2.0));
+        assert_eq!(ab.map(0.0), Some(0.0));
+        assert_eq!(ab.map(1.0), Some(1.0));
+        assert_eq!(ab.map(2.0), None);
+        assert_eq!(ab.map(-0.5), None);
+        assert_eq!(ab.map(f32::NAN), None);
+        let s = ValueMapping::Schwelle(0.01, 2.0);
+        assert_eq!(s.map(0.0), Some(0.0));
+        assert_eq!(s.map(0.01), Some(0.0));
+        assert_eq!(s.map(0.4), Some(2.0));
+        assert_eq!(s.map(f32::NAN), None);
+        assert_eq!(s.map(f32::INFINITY), None);
+    }
+
+    /// Ganze Kette: Rohwert durch die Umrechnung des aktiven Katalogs in den
+    /// Zustand, dann in den Snapshot.
+    fn snapshot_mit(name: &str, werte: &[(&str, f32)]) -> sim_core::SimSnapshot {
+        let aktiv = build_active_catalog(Some(profil(name)));
+        let mut s = crate::dataref::XPlaneState::default();
+        for (dataref, roh) in werte {
+            let e = aktiv.iter().find(|e| e.name == *dataref).expect(dataref);
+            if let Some(v) = e.mapping.map(*roh) {
+                s.apply_field(e.field, v);
+            }
+        }
+        s.to_snapshot(sim_core::Simulator::XPlane12)
+    }
+
+    #[test]
+    fn felis_ap_autobrake_schilder_fluegel() {
+        let snap = snapshot_mit(
+            "Felis 747-200",
+            &[
+                ("B742/AP_panel/AP_engage_A", 0.0),
+                ("B742/AP_panel/AP_engage_B", 2.0),
+                ("B742/front_lamps/AP_alt_hold_lit", 0.8),
+                ("B742/front_lamps/AP_AT_on_lit", 0.8),
+                ("B742/OVHD/auto_brake_sel", 3.0),
+                ("B742/ext_light/wing_sw", 1.0),
+                ("B742/ovhd_lamps/fasten_sbelts_but_lit", 0.6),
+                ("B742/ovhd_lamps/no_smoking_but_lit", 0.0),
+            ],
+        );
+        assert_eq!(snap.autopilot_master, Some(true), "B in COMMAND");
+        assert_eq!(snap.autopilot_altitude, Some(true));
+        assert_eq!(snap.autothrottle_on, Some(true));
+        assert_eq!(snap.autobrake.as_deref(), Some("2"), "MED");
+        assert_eq!(snap.light_wing, Some(true));
+        assert_eq!(snap.seatbelts_sign, Some(2));
+        assert_eq!(snap.no_smoking_sign, Some(0));
+        // MAN zaehlt als an, OFF als aus; Autobrake OFF/DISARM/MAX.
+        let man = snapshot_mit("Felis 747-200", &[("B742/AP_panel/AP_engage_A", 1.0)]);
+        assert_eq!(man.autopilot_master, Some(true));
+        let aus = snapshot_mit(
+            "Felis 747-200",
+            &[("B742/AP_panel/AP_engage_A", 0.0), ("B742/AP_panel/AP_engage_B", 0.0)],
+        );
+        assert_eq!(aus.autopilot_master, Some(false));
+        for (roh, label) in [(0.0, "OFF"), (1.0, "DISARM"), (2.0, "1"), (4.0, "MAX")] {
+            let s = snapshot_mit("Felis 747-200", &[("B742/OVHD/auto_brake_sel", roh)]);
+            assert_eq!(s.autobrake.as_deref(), Some(label), "{roh}");
+        }
+        assert!(profil("Felis 747-200").matches_title("Felis 747-200 Cargo GE"));
+    }
+
+    #[test]
+    fn cl650_parkbremse_ap_lampen_schilder() {
+        let snap = snapshot_mit(
+            "Hot Start CL650",
+            &[
+                ("CL650/pedestal/park_brake_value", 1.0),
+                ("CL650/lamps/glareshield/FCP/ap_eng_1", 0.9),
+                ("CL650/lamps/glareshield/FCP/hdg_1", 0.9),
+                ("CL650/lamps/glareshield/FCP/alt_1", 0.0),
+                ("CL650/lamps/glareshield/FCP/nav_1", 0.0),
+                ("CL650/lamps/glareshield/FCP/appr_1", 0.9),
+                ("CL650/overhead/signs/seatbelt_value", -1.0),
+                ("CL650/overhead/signs/no_smoking_value", 1.0),
+            ],
+        );
+        assert!(snap.parking_brake);
+        assert_eq!(snap.autopilot_master, Some(true));
+        assert_eq!(snap.autopilot_heading, Some(true));
+        assert_eq!(snap.autopilot_altitude, Some(false));
+        assert_eq!(snap.autopilot_approach, Some(true));
+        assert_eq!(snap.seatbelts_sign, Some(2), "-1 = ON");
+        assert_eq!(snap.no_smoking_sign, Some(1), "1 = AUTO");
+        let aus = snapshot_mit(
+            "Hot Start CL650",
+            &[
+                ("CL650/pedestal/park_brake_value", 0.0),
+                ("CL650/overhead/signs/seatbelt_value", 0.0),
+            ],
+        );
+        assert!(!aus.parking_brake);
+        assert_eq!(aus.seatbelts_sign, Some(0));
+        // Die Klappen-Ersetzung des GSG225-Befunds bleibt.
+        let aktiv = build_active_catalog(Some(cl650()));
+        let flaps = aktiv.iter().find(|e| e.field == FieldId::FlapsHandle).unwrap();
+        assert_eq!(flaps.name, "abus/CL650/ARINC429/L-DCU-7/words/FCTL/0/FLAPS_LVR");
+    }
+
+    #[test]
+    fn md11_schilder_nose_und_ap() {
+        let snap = snapshot_mit(
+            "Rotate MD-11",
+            &[
+                ("Rotate/aircraft/controls/seatbelts_lts", 1.0),
+                ("Rotate/aircraft/controls/nosmoke_lts", 2.0),
+                ("Rotate/aircraft/controls/nose_lts", 2.0),
+                ("Rotate/aircraft/controls/fgs_autoflight", 1.0),
+                ("Rotate/aircraft/systems/afs_appr_engaged", 1.0),
+            ],
+        );
+        assert_eq!(snap.seatbelts_sign, Some(1), "AUTO");
+        assert_eq!(snap.no_smoking_sign, Some(2), "ON");
+        assert_eq!(snap.light_taxi, Some(true), "T/O");
+        assert_eq!(snap.autopilot_master, Some(true));
+        assert_eq!(snap.autopilot_approach, Some(true));
+        for (roh, an) in [(0.0, false), (1.0, true)] {
+            let s = snapshot_mit("Rotate MD-11", &[("Rotate/aircraft/controls/nose_lts", roh)]);
+            assert_eq!(s.light_taxi, Some(an), "{roh}");
+        }
+    }
+
+    #[test]
+    fn q4xp_fluegel_und_schilder() {
+        let p = profil("FlyJSim Q4XP");
+        assert!(p.matches_title("Dash 8 Q400"));
+        let snap = snapshot_mit(
+            "FlyJSim Q4XP",
+            &[
+                ("FJS/Q4XP/Manips/TwoSwitch_Anim[22]", 1.0),
+                ("FJS/Q4XP/Manips/TwoSwitch_Anim[34]", 1.0),
+                ("FJS/Q4XP/Manips/TwoSwitch_Anim[35]", 0.0),
+            ],
+        );
+        assert_eq!(snap.light_wing, Some(true));
+        assert_eq!(snap.seatbelts_sign, Some(2));
+        assert_eq!(snap.no_smoking_sign, Some(0));
+        // Klappen bleiben auf dem Standard.
+        let aktiv = build_active_catalog(Some(p));
+        let grund = build_active_catalog(None);
+        let f = |k: &[ActiveEntry]| k.iter().find(|e| e.field == FieldId::FlapsHandle).unwrap().name;
+        assert_eq!(f(&aktiv), f(&grund));
+    }
+
+    #[test]
+    fn atr72_lichter_parkbremse_klappen_ap() {
+        let p = profil("DeltaWing ATR 72-600");
+        assert!(!p.matches_title("ATR 72-600"), "nur ueber die Probe");
+        let x = "DWSim/ATR_Series/datarefs/";
+        let snap = snapshot_mit(
+            "DeltaWing ATR 72-600",
+            &[
+                (&format!("{x}overhead/extLt/beaconSwitch"), 1.0),
+                (&format!("{x}overhead/extLt/strobeSwitch"), 0.0),
+                (&format!("{x}overhead/extLt/navSwitch"), 1.0),
+                (&format!("{x}overhead/extLt/taxiToSwitch"), 1.0),
+                (&format!("{x}overhead/extLt/landingLSwitch"), 1.0),
+                (&format!("{x}overhead/extLt/wingSwitch"), 1.0),
+                (&format!("{x}overhead/signs/seatBeltsSwitch"), 1.0),
+                (&format!("{x}overhead/signs/noDeviceSwitch"), 0.0),
+                (&format!("{x}throttleQuadrant/parkingBrake/movement"), 1.0),
+                (&format!("{x}throttleQuadrant/flapsLever/rotation"), 30.0),
+                ("DWSim/ATR_Series/lit/front/afcs/apLeft", 0.7),
+            ],
+        );
+        assert_eq!(snap.light_beacon, Some(true));
+        assert_eq!(snap.light_strobe, Some(false));
+        assert_eq!(snap.light_nav, Some(true));
+        assert_eq!(snap.light_taxi, Some(true));
+        assert_eq!(snap.light_landing, Some(true));
+        assert_eq!(snap.light_wing, Some(true));
+        assert_eq!(snap.seatbelts_sign, Some(2));
+        assert_eq!(snap.no_smoking_sign, Some(0));
+        assert!(snap.parking_brake);
+        assert_eq!(snap.autopilot_master, Some(true));
+        assert!(snap.flaps_position >= 0.70, "Klappen 30 = Landeklappen");
+        let halb = snapshot_mit(
+            "DeltaWing ATR 72-600",
+            &[
+                (&format!("{x}throttleQuadrant/parkingBrake/movement"), 0.5),
+                (&format!("{x}throttleQuadrant/flapsLever/rotation"), 15.0),
+            ],
+        );
+        assert!(!halb.parking_brake, "HALB ist nicht PARK");
+        assert!(halb.flaps_position < 0.70);
+    }
+
+    /// Profilwechsel: die neuen Add-on-Ersetzungen (Lampen, Schilder,
+    /// Fluegellicht) werden beim Wechsel weg vom Profil geleert.
+    #[test]
+    fn neue_profile_leeren_ihre_ersetzungen() {
+        for name in ["Felis 747-200", "FlyJSim Q4XP", "DeltaWing ATR 72-600", "Hot Start CL650"] {
+            let pi = PROFILES.iter().position(|p| p.name == name).unwrap();
+            let mut s = crate::dataref::XPlaneState::default();
+            s.apply_field(FieldId::FfFluegellicht, 1.0);
+            s.apply_field(FieldId::FfAnschnallzeichen, 2.0);
+            s.apply_field(FieldId::Ff777ApL, 1.0);
+            profil_ersetzungen_leeren(&mut s, Some(pi), None);
+            assert_eq!(s.ff_anschnallzeichen, None, "{name}");
+            let fluegel = profil(name).overrides.iter().any(|o| o.field == FieldId::FfFluegellicht);
+            assert_eq!(s.ff_fluegellicht.is_none(), fluegel, "{name}");
+            let ap = profil(name).overrides.iter().any(|o| o.field == FieldId::Ff777ApL);
+            assert_eq!(s.ff777_ap_l.is_none(), ap, "{name}");
+        }
     }
 }
