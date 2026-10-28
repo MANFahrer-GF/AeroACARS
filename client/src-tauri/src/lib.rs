@@ -66380,17 +66380,24 @@ mod canonical_landing_rate_fpm_tests {
         let vorher = serde_json::to_value(&r).unwrap();
         let nachher = serde_json::to_value(ohne_schwere_felder(r)).unwrap();
         let (vorher, nachher) = (vorher.as_object().unwrap(), nachher.as_object().unwrap());
-        assert_eq!(vorher.len(), nachher.len());
+        // Leere Felder lässt die Serialisierung teils ganz weg
+        // (`skip_serializing_if`) — bei den schweren zählt das als geleert.
+        for feld in nachher.keys() {
+            assert!(vorher.contains_key(feld), "{feld} ist neu dazugekommen");
+        }
         for (feld, wert) in vorher {
+            let neu = nachher.get(feld);
             if SCHWER.contains(&feld.as_str()) {
                 assert!(
                     !(wert.is_null() || wert.as_array().is_some_and(|a| a.is_empty())),
                     "{feld}: Vorlage leer, Test sagt nichts"
                 );
-                let neu = &nachher[feld];
-                assert!(neu.is_null() || neu.as_array().is_some_and(|a| a.is_empty()), "{feld} nicht geleert");
+                assert!(
+                    neu.is_none_or(|v| v.is_null() || v.as_array().is_some_and(|a| a.is_empty())),
+                    "{feld} nicht geleert"
+                );
             } else {
-                assert_eq!(&nachher[feld], wert, "{feld} darf sich nicht ändern");
+                assert_eq!(neu, Some(wert), "{feld} darf sich nicht ändern");
             }
         }
     }
