@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-const FINGERABDRUCK = "37b5a46dea73c9cd040c9dc0a81b24f7fadfd7a87e08d1e252b0eda4f4b47001";
+const FINGERABDRUCK = "ac3a72704abdcc1e56e2420ff572026991fe4b8b5018c625e6f7bcb411372694";
 
 describe("Flugkarte: Gleichstand Webapp ↔ AeroACARS", () => {
   it("Baustein, Kartenstil und Texte sind dieselben wie im anderen Repo", () => {

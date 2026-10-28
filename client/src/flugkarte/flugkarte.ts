@@ -107,6 +107,20 @@ const geruest = (u: (k: string) => string) => `
   <div class="fk-bandtipp" data-fk="bandtipp" hidden></div>
 </div>`;
 
+/**
+ * 3D-Hoehe ueber Grund (ft) je Spurpunkt [lat, lon, alt, agl, …]. Fehlt die Hoehe ueber Grund, gilt das zuletzt
+ * gemessene Gelaende — und VOR dem ersten Messwert das erste gemessene (Codex 28.10.: sonst lag ein fortgesetzter
+ * Flug, der in 5 000 ft ohne AGL beginnt, erst am Boden und sprang dann hoch). Ganz ohne AGL: Gelaende aus dem
+ * ersten Punkt am Boden, sonst Meereshoehe.
+ */
+export function hoeheUeberGrund(track: Array<Array<number | string | null>>): number[] {
+  const z = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const erster = track.find((r) => r[2] != null && r[3] != null);
+  const amBoden = track.find((r) => r[12] === 1 && r[2] != null);
+  let gelaende = erster ? z(erster[2]) - z(erster[3]) : amBoden ? z(amBoden[2]) : 0;
+  return track.map((r) => { if (r[2] != null && r[3] != null) gelaende = z(r[2]) - z(r[3]); return Math.max(0, z(r[2]) - gelaende); });
+}
+
 /** Baut die Flugkarte in `root` auf. Rueckgabe: Aufraeumen (Karte, Zeitgeber, Ereignisse). */
 export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: FlugkarteOptionen): () => void {
   // ---------- Sprache ----------
@@ -151,8 +165,7 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   // 3D-Hoehe ueber Grund (ft): die Grundkarte liegt flach auf Meereshoehe. Mit der Hoehe ueber dem Meer schwebte am
   // Boden alles um die Platzhoehe ueber der Karte (Vilnius 636 ft; Thomas 28.10.) — und manche Add-ons melden am
   // Boden sogar Unsinn (X-Plane in Helsinki −21 ft). Fehlt die Hoehe ueber Grund, gilt das zuletzt gemessene Gelaende.
-  const HOEHE: number[] = [];
-  { let gelaende: number | null = null; for (const r of T) { if (r[2] != null && r[3] != null) gelaende = alt(r) - agl(r); HOEHE.push(Math.max(0, alt(r) - (gelaende ?? alt(r)))); } }
+  const HOEHE = hoeheUeberGrund(T);
 
   // Zeitachse mit Datumswechsel
   const S: number[] = [];
@@ -529,7 +542,7 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   function haufenAuf(g: Haufen) {
     offen = g;
     if (g.art === "spinne") {
-      spinneEl.innerHTML = '<svg aria-hidden="true"></svg>' + g.m.map((e) => `<button class="fk-smark${sel === e.n ? " fk-sel" : ""}" data-n="${e.n}" style="background:${CATS[e.k].col};${e.k === "warn" ? "color:#fff" : ""}" title="${esc(e.t.slice(11, 19))} · ${esc(e.txt)}" aria-label="${esc(e.t.slice(11, 19))} ${esc(e.txt)}">${CATS[e.k].c}</button>`).join("");
+      spinneEl.innerHTML = '<svg aria-hidden="true"></svg>' + g.m.map((e) => `<button class="fk-smark${sel === e.n ? " fk-sel" : ""}" data-n="${e.n}" style="background:${CATS[e.k].col};${e.k === "warn" ? "color:#fff" : ""}" title="${esc(e.t.slice(11, 19))} · ${esc(e.txt)}" aria-label="${esc(e.t.slice(11, 19))} ${esc(e.txt)}">${esc(CATS[e.k].c)}</button>`).join("");
       spinneEl.hidden = false;
       kreisFreiStellen(g);
     }
@@ -567,7 +580,7 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   }
   function listeZeigen() {
     const g = offen!; sel = null; popArt = "liste";
-    pop.innerHTML = `<h4><span>${esc(U("liste_titel", { n: g.m.length }))}</span><button aria-label="${esc(U("schliessen"))}">×</button></h4><ol class="fk-poplist">${g.m.map((e) => `<li><button data-n="${e.n}"><span class="fk-t">${esc(e.t.slice(11, 19))}</span><span class="fk-punkt" style="background:${CATS[e.k].col};${e.k === "warn" ? "color:#fff" : ""}">${CATS[e.k].c}</span><span>${esc(e.txt)}</span></button></li>`).join("")}</ol>`;
+    pop.innerHTML = `<h4><span>${esc(U("liste_titel", { n: g.m.length }))}</span><button aria-label="${esc(U("schliessen"))}">×</button></h4><ol class="fk-poplist">${g.m.map((e) => `<li><button data-n="${e.n}"><span class="fk-t">${esc(e.t.slice(11, 19))}</span><span class="fk-punkt" style="background:${CATS[e.k].col};${e.k === "warn" ? "color:#fff" : ""}">${esc(CATS[e.k].c)}</span><span>${esc(e.txt)}</span></button></li>`).join("")}</ol>`;
     pop.querySelector<HTMLElement>("h4 button")!.onclick = () => { haufenZu(); select(null); };
     pop.querySelectorAll<HTMLElement>(".fk-poplist button").forEach((b) => (b.onclick = () => select(+b.dataset.n!, false)));
     pop.hidden = false; refresh(); renderList();
@@ -674,7 +687,7 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
     if (!best) { lastEl.hidden = true; lastShown = null; return; }
     if (best.n !== lastShown) {
       lastShown = best.n;
-      lastEl.innerHTML = `<span class="fk-punkt" style="background:${CATS[best.k].col};${best.k === "warn" ? "color:#fff" : ""}">${CATS[best.k].c}</span><b>${esc(best.txt)}</b><small>${esc(best.t.slice(11, 19))} UTC · ${fmt(best.altFt)} ft</small>`;
+      lastEl.innerHTML = `<span class="fk-punkt" style="background:${CATS[best.k].col};${best.k === "warn" ? "color:#fff" : ""}">${esc(CATS[best.k].c)}</span><b>${esc(best.txt)}</b><small>${esc(best.t.slice(11, 19))} UTC · ${fmt(best.altFt)} ft</small>`;
       lastEl.classList.remove("fk-neu"); void lastEl.offsetWidth; lastEl.classList.add("fk-neu");
     }
     lastEl.hidden = false;
@@ -698,7 +711,7 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
       if (!CATS[e.k].on) return;
       const r = T[e.i];
       const sub = e.k === "pa" ? `${fmt(e.dauer)} s · ${fmt(e.altFt)} ft` : `${fmt(e.altFt)} ft · ${fmt(r[5])} kt`; // nur Zahlen und Einheiten
-      out.push(`<li><button data-n="${e.n}" class="${sel === e.n ? "fk-sel" : ""}"><span class="fk-t">${esc(e.t.slice(11, 19))}</span><span class="fk-punkt" style="background:${CATS[e.k].col};${e.k === "warn" ? "color:#fff" : ""}">${CATS[e.k].c}</span><span>${esc(e.txt)}<small>${sub}</small></span></button></li>`);
+      out.push(`<li><button data-n="${e.n}" class="${sel === e.n ? "fk-sel" : ""}"><span class="fk-t">${esc(e.t.slice(11, 19))}</span><span class="fk-punkt" style="background:${CATS[e.k].col};${e.k === "warn" ? "color:#fff" : ""}">${esc(CATS[e.k].c)}</span><span>${esc(e.txt)}<small>${sub}</small></span></button></li>`);
     });
     list.innerHTML = out.join(""); listKey = null;
     $("anzahl").textContent = U("anzahl", { n: visible().filter((e) => e.k !== "phase").length, m: E.filter((e) => e.k !== "phase").length });
