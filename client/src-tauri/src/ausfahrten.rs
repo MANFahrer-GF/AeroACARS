@@ -122,6 +122,18 @@ const KANTEN_TOLERANZ_M: f64 = 25.0;
 /// Bahn auf dieser Seite wirklich verlässt, in Metern.
 const DRAUSSEN_MIN_M: f64 = 2.0;
 
+/// Wie weit zwei Übergänge desselben Namens auf derselben Seite höchstens
+/// auseinander liegen, um EINE Ausfahrt zu sein, in Metern.
+///
+/// Ein Name kann an einer Bahn zweimal vorkommen: In den OSM-Bodenkarten
+/// berühren an 30 Bahnseiten zwei getrennte Rollwegstücke gleichen Namens
+/// dieselbe Seite, über 300 m auseinander (LFPG Z2/Z3, KMIA K2, VABB S1;
+/// gemessen 28.10.2026 über 473 Karten). Bis hier galt „ein Stummel je Name
+/// und Seite“, und die zweite Ausfahrt fiel weg. Mehrere Stützpunkte DESSELBEN
+/// Übergangs liegen dagegen wenige Meter auseinander
+/// (`ein_rollweg_gibt_einen_stummel_je_seite`).
+const DIESELBE_STELLE_M: f64 = 150.0;
+
 /// Wo ein Rollwegzug die Bahn verlässt: (laengs, Kantenabstand, Seite).
 ///
 /// # Nur echte Ausfahrten (#1936, EDDG 25, 22.10.2026)
@@ -340,7 +352,9 @@ pub fn ausfahrten_fuer_bahn(
             }
             match beste
                 .iter_mut()
-                .find(|(n, s, _, _, _, _)| n == name && s == seite)
+                .find(|(n, s, l, _, _, _)| {
+                    n == name && s == seite && (l - laengs).abs() <= DIESELBE_STELLE_M
+                })
             {
                 Some(eintrag) if kantenabstand < eintrag.3 => {
                     eintrag.2 = laengs;
@@ -796,6 +810,21 @@ mod tests {
         ));
         let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
         assert_eq!(a.len(), 1, "{a:?}");
+    }
+
+    #[test]
+    fn gleicher_name_an_zwei_stellen_derselben_seite_bleibt_zweimal() {
+        // LFPG Z2, KMIA K2 (OSM, 28.10.2026): zwei getrennte Stücke gleichen
+        // Namens verlassen dieselbe Seite 300 m und mehr auseinander.
+        let g = karte(&format!(
+            "{},{}",
+            rollweg("K2", 900.0, 23.0),
+            rollweg("K2", 1300.0, 23.0)
+        ));
+        let a = ausfahrten_fuer_bahn(&g, T.0, T.1, T.2, T.3, 46.0);
+        assert_eq!(a.len(), 2, "{a:?}");
+        assert!(a.iter().all(|x| x.name == "K2" && x.seite == "right"), "{a:?}");
+        assert!((a[1].laengs_m - a[0].laengs_m - 400.0).abs() < 30.0, "{a:?}");
     }
 
     #[test]

@@ -111,6 +111,26 @@ pub struct AnflugRuhe {
     pub tor_1000_500: Option<RuheTor>,
     #[serde(default)]
     pub tor_500_200: Option<RuheTor>,
+    /// Windscherungen im Anflug (28.10.2026) — Wetter, kein Pilotenfehler.
+    /// Leer bei ruhigem Anflug und bei aelteren Fluegen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scherungen: Vec<Scherung>,
+}
+
+/// Eine Windscherung: Gegenwind und Fahrt aendern sich binnen Sekunden
+/// gleichsinnig um mindestens 15 kt. Nur Hinweis, keine Note.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Scherung {
+    /// Sekunden relativ zum Aufsetzen (negativ = davor).
+    pub t: f32,
+    /// Hoehe ueber dem Bezug der Anflugruhe, Fuss.
+    pub hoehe_ft: f32,
+    /// Aenderung des Gegenwinds, kt (− = Gegenwind nimmt ab).
+    pub gegenwind_kt: f32,
+    /// Aenderung der angezeigten Fahrt, kt.
+    pub fahrt_kt: f32,
+    /// Zeit, in der sich beides geaendert hat, Sekunden.
+    pub dauer_s: f32,
 }
 
 /// Kennwerte der Anflugruhe in einem Hoehenband. Jeder Wert ist `None`,
@@ -202,10 +222,44 @@ mod tests {
             hoehenbezug: "sim_boden".into(),
             tor_1000_500: Some(ruhe_tor()),
             tor_500_200: Some(ruhe_tor()),
+            scherungen: Vec::new(),
         };
         let g_len = serde_json::to_string(&g).unwrap().len();
         let r_len = serde_json::to_string(&r).unwrap().len();
         println!("anflug_gleitpfad {g_len} B, anflug_ruhe {r_len} B");
         assert!(g_len + r_len < 1024, "{g_len} + {r_len} Bytes");
+    }
+
+    /// Die Scherungen (28.10.2026) haben ein eigenes Budget neben dem
+    /// Kilobyte oben: hoechstens `SCHERUNGEN_MAX` = 2 (App-Crate), voll
+    /// befuellt unter 256 Bytes. Gemessen kam nie mehr als eine je Flug vor
+    /// (3 in 1857 Fluegen). Die Leitung traegt das: MQTT nimmt seit
+    /// 20.09.2026 bis 64 KB (`MAX_PAKET_BYTES`), nicht mehr 10 KB.
+    #[test]
+    fn zwei_scherungen_bleiben_unter_256_bytes() {
+        let mit = AnflugRuhe {
+            hoehenbezug: "sim_boden".into(),
+            scherungen: vec![
+                Scherung {
+                    t: -123.4,
+                    hoehe_ft: 1480.0,
+                    gegenwind_kt: -31.0,
+                    fahrt_kt: -29.0,
+                    dauer_s: 4.5,
+                };
+                2
+            ],
+            ..Default::default()
+        };
+        let ohne = AnflugRuhe {
+            hoehenbezug: "sim_boden".into(),
+            ..Default::default()
+        };
+        let kosten = serde_json::to_string(&mit).unwrap().len()
+            - serde_json::to_string(&ohne).unwrap().len();
+        println!("scherungen {kosten} B");
+        assert!(kosten < 256, "{kosten} Bytes");
+        // Ohne Scherung steht das Feld gar nicht im JSON (aeltere Leser).
+        assert!(!serde_json::to_string(&ohne).unwrap().contains("scherungen"));
     }
 }

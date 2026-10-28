@@ -1349,6 +1349,8 @@
       "ruhe_nick": "Nickrate ±{{v}} °/s",
       "ruhe_roll": "Rollrate ±{{v}} °/s",
       "ruhe_schub": "{{v}} Schubwechsel/min",
+      "scherung": "Windscherung in {{h}} ft: In {{s}} s änderten sich Gegenwind um {{wind}} kt und Fahrt um {{fahrt}} kt.",
+      "scherung_hinweis": "Eine Windscherung ist Wetter, kein Flugfehler. Sie erklärt eine unruhige Fahrt oder Sinkrate in diesem Anflug.",
       "erfasst_ab": "(erfasst ab {{h}} ft)",
       "hinweis_sim_boden": "Höhenbezug: Boden des Simulators an der Schwelle ({{sim}} ft; Navdaten nennen {{nav}} ft).",
       "hinweis_sim_boden_ohne_navdaten": "Höhenbezug: Boden des Simulators an der Schwelle ({{sim}} ft; die Navdaten nennen keine Schwellenhöhe).",

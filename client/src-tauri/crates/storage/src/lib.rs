@@ -990,7 +990,7 @@ pub struct LandingRecord {
 // EINE Definition fuer Datensatz und Leitung, damit die JSON-Form nicht
 // auseinanderlaeuft. Hier re-exportiert, damit `storage::AnflugGleitpfad`
 // weiter gilt.
-pub use landing_scoring::anflug_forensik::{AnflugGleitpfad, AnflugRuhe, GleitpfadTor, RuheTor};
+pub use landing_scoring::anflug_forensik::{AnflugGleitpfad, AnflugRuhe, GleitpfadTor, RuheTor, Scherung};
 
 /// v0.7.1: Stability-Gate-Window-Metadaten (Spec §5.4).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

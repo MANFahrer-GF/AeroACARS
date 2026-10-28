@@ -162,6 +162,37 @@ describe("AnflugForensikInfo", () => {
     expect(t).not.toContain("Schubwechsel/min");
   });
 
+  it("zeigt eine Windscherung als Wetter-Hinweis, auch ohne Ruhe-Tore", () => {
+    // XRNDLE A321 (29.09.2026): Gegenwind −31 kt, Fahrt −28 kt in 5 s, 1480 ft.
+    render(
+      <AnflugForensikInfo
+        gleitpfad={null}
+        ruhe={{
+          hoehenbezug: "schwelle",
+          scherungen: [{ t: -88, hoehe_ft: 1480, gegenwind_kt: -31, fahrt_kt: -28, dauer_s: 5 }],
+        }}
+      />,
+    );
+    expect(screen.getAllByTestId("anflug-scherung")).toHaveLength(1);
+    const t = text();
+    expect(t).toContain("Windscherung in 1.480 ft: In 5 s änderten sich Gegenwind um −31 kt und Fahrt um −28 kt.");
+    expect(t).toContain("Wetter, kein Flugfehler");
+  });
+
+  it("zeigt ohne Scherung keine Scherungszeile", () => {
+    render(
+      <AnflugForensikInfo
+        gleitpfad={null}
+        ruhe={{
+          hoehenbezug: "schwelle",
+          tor_500_200: { proben: 20, dauer_s: 18, nick_unruhe_deg_s: 0.4 },
+        }}
+      />,
+    );
+    expect(screen.queryAllByTestId("anflug-scherung")).toHaveLength(0);
+    expect(text()).not.toContain("Windscherung");
+  });
+
   it("rendert nichts bei alten Landungen ohne die Felder", () => {
     const { container } = render(<AnflugForensikInfo gleitpfad={undefined} ruhe={null} />);
     expect(container.innerHTML).toBe("");

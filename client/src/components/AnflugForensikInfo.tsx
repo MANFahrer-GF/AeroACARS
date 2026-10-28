@@ -71,6 +71,19 @@ export interface AnflugRuhe {
   hoehenbezug: string;
   tor_1000_500?: RuheTor | null;
   tor_500_200?: RuheTor | null;
+  /** 28.10.2026: Windscherungen im Anflug. Fehlt bei ruhigem Anflug und
+   *  bei älteren Flügen. */
+  scherungen?: Scherung[] | null;
+}
+
+/** Gegenwind und Fahrt ändern sich binnen Sekunden gleichsinnig um je
+ *  mindestens 15 kt — Wetter, kein Pilotenfehler. */
+export interface Scherung {
+  t: number;
+  hoehe_ft: number;
+  gegenwind_kt: number;
+  fahrt_kt: number;
+  dauer_s: number;
 }
 
 interface Props {
@@ -151,6 +164,14 @@ export function AnflugForensikInfo({ gleitpfad, ruhe }: Props) {
         ruhe.tor_500_200 ? ruheText("tor_500_200", ruhe.tor_500_200) : null,
       ].filter((z): z is string => z != null)
     : [];
+  const scherZeilen = (ruhe?.scherungen ?? []).map((s) =>
+    t("landing.anflug_forensik.scherung", {
+      h: zahl(s.hoehe_ft, 0),
+      wind: mitVorzeichen(s.gegenwind_kt, 0),
+      fahrt: mitVorzeichen(s.fahrt_kt, 0),
+      s: zahl(s.dauer_s, 0),
+    }),
+  );
 
   const g = gleitpfad;
   // Ohne Bahn speichert das Backend keinen Winkel und keine TCH — dann
@@ -218,7 +239,7 @@ export function AnflugForensikInfo({ gleitpfad, ruhe }: Props) {
         </div>
       )}
 
-      {ruheZeilen.length > 0 && (
+      {(ruheZeilen.length > 0 || scherZeilen.length > 0) && (
         <div style={{ fontSize: "0.84rem", lineHeight: 1.5 }}>
           <div style={{ fontWeight: 600 }}>
             {t("landing.anflug_forensik.ruhe_titel")}{" "}
@@ -227,6 +248,16 @@ export function AnflugForensikInfo({ gleitpfad, ruhe }: Props) {
           {ruheZeilen.map((z) => (
             <div key={z}>{z}</div>
           ))}
+          {scherZeilen.map((z, i) => (
+            <div key={`scherung-${i}`} data-testid="anflug-scherung">
+              {z}
+            </div>
+          ))}
+          {scherZeilen.length > 0 && (
+            <div style={{ fontSize: "0.74rem", opacity: 0.6 }}>
+              {t("landing.anflug_forensik.scherung_hinweis")}
+            </div>
+          )}
         </div>
       )}
     </section>
