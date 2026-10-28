@@ -46676,7 +46676,8 @@ fn bahnmasse(rm: &runway::RunwayMatch) -> Bahnmasse {
 /// Laenge die LDA, auf die sich der Aufsetzpunkt bezieht.
 fn aufsetzpunkt_texte(rm: &runway::RunwayMatch) -> (String, String) {
     let m = bahnmasse(rm);
-    let td = m.td_m.round();
+    // `+ 0.0` macht aus einer gerundeten -0 eine 0 (sonst "-0 m").
+    let td = m.td_m.round() + 0.0;
     let punkt = if td < 0.0 {
         format!("{:.0} m before threshold", -td)
     } else {
@@ -78336,6 +78337,8 @@ mod touchdown_metadata_stamp_tests {
             (432.4, 568, 568, "432 m (LDA 3427 m of 3600 m)", "Past thresh   432 m\n"),
             // Im Sperrbereich vor der Lande-Schwelle aufgesetzt.
             (10.0, 50, 0, "5 m before threshold (LDA 3585 m of 3600 m)", "Past thresh   5 m before threshold\n"),
+            // Knapp vor der Schwelle (-0,3 m) rundet auf 0, nicht auf "-0".
+            (14.9, 50, 0, "0 m (LDA 3585 m of 3600 m)", "Past thresh   0 m\n"),
             // Ohne Versatz unveraendert.
             (388.0, 0, 0, "388 m (runway 3600 m long)", "Past thresh   388 m\n"),
         ] {
