@@ -57095,7 +57095,8 @@ fn build_pirep_fields(
             "Touchdown Past Threshold".into(),
             format!(
                 "{:.0} m (runway {:.0} m long)",
-                rw.touchdown_distance_from_threshold_ft as f64 * 0.3048,
+                // Ab der Lande-Schwelle, wie die Bewertung (CES 442, VHHH 07L).
+                bahnmasse(rw).td_m,
                 rw.length_ft as f64 * 0.3048,
             ),
         );
@@ -57370,7 +57371,7 @@ fn build_pirep_notes(
         let _ = writeln!(
             s,
             "  Past thresh   {:.0} m",
-            rw.touchdown_distance_from_threshold_ft as f64 * 0.3048,
+            bahnmasse(rw).td_m,
         );
     }
 
@@ -78306,6 +78307,24 @@ mod touchdown_metadata_stamp_tests {
         let f = build_pirep_fields(&flight, &stats, "EDDP");
         assert!(f.get("Light Bounces").is_none(), "neben einem normalen Hopser zaehlt der leichte nicht");
         assert_eq!(f.get("Bounces").map(String::as_str), Some("1"));
+    }
+
+    /// CES 442 (VHHH 07L, 27.10.2026): 568 ft versetzte Schwelle. Die
+    /// Bewertung rechnete 432 m ab der Lande-Schwelle, das PIREP-Feld
+    /// zeigte 606 m ab dem physischen Bahnanfang. Feld und Notiz muessen
+    /// denselben Wert tragen wie die Bewertung (`bahnmasse().td_m`).
+    #[test]
+    fn aufsetzpunkt_im_pirep_ab_lande_schwelle_bei_versetzter_schwelle() {
+        let flight = flight_fixture("EDDP");
+        let mut stats = FlightStats::default();
+        stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(605.5 * 3.280_839_895, 568));
+        let f = build_pirep_fields(&flight, &stats, "EDDP");
+        assert_eq!(
+            f.get("Touchdown Past Threshold").map(String::as_str),
+            Some("432 m (runway 3600 m long)")
+        );
+        let notes = build_pirep_notes(&flight, &stats, "EDDP");
+        assert!(notes.contains("Past thresh   432 m"), "Notiz: {notes}");
     }
 
     #[test]
