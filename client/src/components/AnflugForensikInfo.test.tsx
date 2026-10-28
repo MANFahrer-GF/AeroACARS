@@ -175,7 +175,7 @@ describe("AnflugForensikInfo", () => {
     );
     expect(screen.getAllByTestId("anflug-scherung")).toHaveLength(1);
     const t = text();
-    expect(t).toContain("Windscherung in 1.480 ft: Gegenwind −31 kt, Fahrt −28 kt in 5 s");
+    expect(t).toContain("Windscherung in 1.480 ft: In 5 s änderten sich Gegenwind um −31 kt und Fahrt um −28 kt.");
     expect(t).toContain("Wetter, kein Flugfehler");
   });
 

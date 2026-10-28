@@ -1349,7 +1349,7 @@
       "ruhe_nick": "pitch rate ±{{v}} °/s",
       "ruhe_roll": "roll rate ±{{v}} °/s",
       "ruhe_schub": "{{v}} thrust changes/min",
-      "scherung": "Wind shear at {{h}} ft: headwind {{wind}} kt, airspeed {{fahrt}} kt within {{s}} s",
+      "scherung": "Wind shear at {{h}} ft: within {{s}} s the headwind changed by {{wind}} kt and the airspeed by {{fahrt}} kt.",
       "scherung_hinweis": "Wind shear is weather, not a piloting error. It explains unsteady speed or sink rate on this approach.",
       "erfasst_ab": "(recorded from {{h}} ft)",
       "hinweis_sim_boden": "Height reference: simulator ground at the threshold ({{sim}} ft; navdata says {{nav}} ft).",

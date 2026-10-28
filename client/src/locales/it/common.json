@@ -1349,7 +1349,7 @@
       "ruhe_nick": "velocità di beccheggio ±{{v}} °/s",
       "ruhe_roll": "velocità di rollio ±{{v}} °/s",
       "ruhe_schub": "{{v}} variazioni di spinta/min",
-      "scherung": "Wind shear a {{h}} ft: vento contrario {{wind}} kt, velocità {{fahrt}} kt in {{s}} s",
+      "scherung": "Wind shear a {{h}} ft: in {{s}} s il vento contrario è variato di {{wind}} kt e la velocità di {{fahrt}} kt.",
       "scherung_hinweis": "Il wind shear è meteo, non un errore di pilotaggio. Spiega velocità o rateo di discesa irregolari in questo avvicinamento.",
       "erfasst_ab": "(rilevato da {{h}} ft)",
       "hinweis_sim_boden": "Riferimento di quota: suolo del simulatore alla soglia ({{sim}} ft; i navdata indicano {{nav}} ft).",
