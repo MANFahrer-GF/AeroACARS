@@ -46669,6 +46669,28 @@ fn bahnmasse(rm: &runway::RunwayMatch) -> Bahnmasse {
     }
 }
 
+/// Aufsetzpunkt fuer PIREP-Feld und Notiz: ab der Lande-Schwelle wie die
+/// Bewertung (CES 442, VHHH 07L: 606 m ab Bahnanfang, 432 m ab Schwelle).
+/// Vor der Schwelle steht das ausdruecklich da statt eines Minuszeichens.
+/// Liefert (Aufsetzpunkt, Bahnlaenge); bei versetzter Schwelle nennt die
+/// Laenge die LDA, auf die sich der Aufsetzpunkt bezieht.
+fn aufsetzpunkt_texte(rm: &runway::RunwayMatch) -> (String, String) {
+    let m = bahnmasse(rm);
+    let td = m.td_m.round();
+    let punkt = if td < 0.0 {
+        format!("{:.0} m before threshold", -td)
+    } else {
+        format!("{td:.0} m")
+    };
+    let laenge_m = rm.length_ft as f64 * 0.3048;
+    let laenge = if (laenge_m - m.nutzbare_laenge_m).abs() >= 1.0 {
+        format!("LDA {:.0} m of {laenge_m:.0} m", m.nutzbare_laenge_m)
+    } else {
+        format!("runway {laenge_m:.0} m long")
+    };
+    (punkt, laenge)
+}
+
 /// Schreibt den Flug auf die Platte, BEVOR eine Revision hinausgeht.
 ///
 /// # Warum das nicht der normale Speichertakt erledigt
@@ -57091,15 +57113,8 @@ fn build_pirep_fields(
             "Centerline Offset".into(),
             format!("{:.1} m {}", rw.centerline_distance_m.abs(), rw.side),
         );
-        f.insert(
-            "Touchdown Past Threshold".into(),
-            format!(
-                "{:.0} m (runway {:.0} m long)",
-                // Ab der Lande-Schwelle, wie die Bewertung (CES 442, VHHH 07L).
-                bahnmasse(rw).td_m,
-                rw.length_ft as f64 * 0.3048,
-            ),
-        );
+        let (punkt, laenge) = aufsetzpunkt_texte(rw);
+        f.insert("Touchdown Past Threshold".into(), format!("{punkt} ({laenge})"));
     }
 
     // ---- ATC-derived gates and approach runway (from MSFS SimVars) ----
@@ -57368,11 +57383,7 @@ fn build_pirep_notes(
             rw.centerline_distance_m.abs(),
             rw.side
         );
-        let _ = writeln!(
-            s,
-            "  Past thresh   {:.0} m",
-            bahnmasse(rw).td_m,
-        );
+        let _ = writeln!(s, "  Past thresh   {}", aufsetzpunkt_texte(rw).0);
     }
 
     // ---- Fuel & Weight ----
@@ -78316,15 +78327,30 @@ mod touchdown_metadata_stamp_tests {
     #[test]
     fn aufsetzpunkt_im_pirep_ab_lande_schwelle_bei_versetzter_schwelle() {
         let flight = flight_fixture("EDDP");
-        let mut stats = FlightStats::default();
-        stats.runway_match = Some(eddp_26r_match_with_raw_td_and_displacement(605.5 * 3.280_839_895, 568));
-        let f = build_pirep_fields(&flight, &stats, "EDDP");
-        assert_eq!(
-            f.get("Touchdown Past Threshold").map(String::as_str),
-            Some("432 m (runway 3600 m long)")
-        );
-        let notes = build_pirep_notes(&flight, &stats, "EDDP");
-        assert!(notes.contains("Past thresh   432 m"), "Notiz: {notes}");
+        // (Rohwert ab Bahnanfang in m, gemeldeter Versatz ft, Versatz in
+        // der Geometrie ft, erwartetes Feld, erwartete Notiz)
+        for (roh_m, versatz_ft, geometrie_ft, feld, notiz) in [
+            // CES 442: Versatz nicht in der Geometrie → abziehen.
+            (605.5, 568, 0, "432 m (LDA 3427 m of 3600 m)", "Past thresh   432 m\n"),
+            // Versatz steckt schon im Schwellenpunkt → nichts abziehen.
+            (432.4, 568, 568, "432 m (LDA 3427 m of 3600 m)", "Past thresh   432 m\n"),
+            // Im Sperrbereich vor der Lande-Schwelle aufgesetzt.
+            (10.0, 50, 0, "5 m before threshold (LDA 3585 m of 3600 m)", "Past thresh   5 m before threshold\n"),
+            // Ohne Versatz unveraendert.
+            (388.0, 0, 0, "388 m (runway 3600 m long)", "Past thresh   388 m\n"),
+        ] {
+            let mut rm = eddp_26r_match_with_raw_td_and_displacement(roh_m * 3.280_839_895, versatz_ft);
+            rm.geometry_implied_displaced_threshold_ft = geometrie_ft;
+            let mut stats = FlightStats::default();
+            stats.runway_match = Some(rm);
+            // Dieselbe Zahl wie die Bewertung, nicht nur ein fester Text.
+            let bewertung = assess_touchdown(&stats).td_distance_from_threshold_m.expect("Bahn gematcht");
+            assert!(feld.starts_with(&format!("{:.0} m", bewertung.abs())), "{feld} vs Bewertung {bewertung}");
+            let f = build_pirep_fields(&flight, &stats, "EDDP");
+            assert_eq!(f.get("Touchdown Past Threshold").map(String::as_str), Some(feld));
+            let notes = build_pirep_notes(&flight, &stats, "EDDP");
+            assert!(notes.contains(notiz), "Notiz: {notes}");
+        }
     }
 
     #[test]
