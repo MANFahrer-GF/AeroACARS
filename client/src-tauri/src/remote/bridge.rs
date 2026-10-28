@@ -986,6 +986,18 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        // Flugkarte: Akte vom Live-Server, mit dem Zugang des HOSTS (wie der Prüfstatus).
+        "flugakte_laden" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                pirep_id: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::flugakte_laden(app.clone(), a.pirep_id).await),
+                Err(e) => Err(e),
+            }
+        }
         "landing_backup_now" => from_uierr(crate::landing_backup_now(app.clone()).await),
         "landing_backup_restore" => from_uierr(crate::landing_backup_restore(app.clone()).await),
         "flight_logs_stats" => from_uierr(crate::flight_logs_stats(app.clone())),

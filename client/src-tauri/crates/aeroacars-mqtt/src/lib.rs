@@ -43,6 +43,7 @@ use url::Url;
 pub mod backup;
 pub mod bordbuch;
 pub mod chat;
+pub mod flugakte;
 pub mod log_upload;
 pub mod messung;
 pub mod navdata;

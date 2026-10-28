@@ -16282,6 +16282,7 @@ mod mqtt_cache_zuordnung_tests {
         for kopf in [
             format!("{}{}", "async fn init_mqtt_publisher", "_via_provisioning("),
             format!("{}{}", "async fn pirep_", "pruefstatus("),
+            format!("{}{}", "async fn flugakte_", "laden("),
         ] {
             let start = SRC.find(&kopf).expect("Funktion nicht gefunden");
             let rest = &SRC[start..];
@@ -32028,6 +32029,46 @@ async fn pirep_pruefstatus(
         return Ok(Vec::new());
     }
     Ok(antwort)
+}
+
+/// Flugakte eines eigenen PIREPs für die Flugkarte (Etappe 3, 28.10.2026).
+///
+/// Der Live-Server rechnet sie aus dem hochgeladenen Flugprotokoll — dieselbe
+/// Rechnung wie in der Admin-Webapp. `Ok(None)`: zu diesem Flug gibt es kein
+/// Protokoll auf dem Server. Ohne Live-Server-Zugang oder bei fremdem
+/// Schlüsselbund ein Fehler mit eigenem Code, damit die Karte das sagen kann.
+#[tauri::command]
+async fn flugakte_laden(app: AppHandle, pirep_id: String) -> Result<Option<String>, UiError> {
+    // Wie `pirep_pruefstatus`: nur mit dem Zugang des angemeldeten Piloten
+    // fragen und eine Antwort verwerfen, wenn die Sitzung inzwischen wechselte.
+    let state = app.state::<AppState>();
+    let epoche_vorher = *state.session_epoch.lock().expect("session_epoch lock");
+    let angemeldet = *state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock");
+    let Some(angemeldet) = angemeldet else {
+        return Err(UiError::new("flugakte_kein_zugang", "nicht angemeldet"));
+    };
+    let (Some(username), Some(password)) = (
+        secrets::load_api_key(MQTT_KEYRING_USERNAME).ok().flatten(),
+        secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten(),
+    ) else {
+        return Err(UiError::new("flugakte_kein_zugang", "kein Live-Server-Zugang"));
+    };
+    let schluessel_nr = secrets::load_api_key(MQTT_KEYRING_PHPVMS_PILOT)
+        .ok()
+        .flatten();
+    if !mqtt_cache_gehoert_angemeldetem(schluessel_nr.as_deref(), angemeldet) {
+        return Err(UiError::new("flugakte_kein_zugang", "Schlüsselbund gehört nicht zum angemeldeten Piloten"));
+    }
+    let akte = aeroacars_mqtt::flugakte::flugakte_abrufen(&pirep_id, &username, &password, None)
+        .await
+        .map_err(|e| UiError::new("flugakte_laden", e.to_string()))?;
+    if *state.session_epoch.lock().expect("session_epoch lock") != epoche_vorher {
+        return Err(UiError::new("flugakte_kein_zugang", "Sitzung gewechselt"));
+    }
+    Ok(akte)
 }
 
 #[tauri::command]
@@ -65312,6 +65353,7 @@ pub fn run() {
             landing_list,
             landing_get_current,
             pirep_pruefstatus,
+            flugakte_laden,
             landing_delete,
             metar_get,
             flight_forget,

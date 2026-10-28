@@ -1,0 +1,188 @@
+/* Flugkarte — derselbe Baustein fuer Admin-Webapp und AeroACARS-Client (eine Sicht).
+   Alle Klassen mit fk- und unter .fk, damit nichts mit der umgebenden Seite kollidiert. */
+.fk {
+  --fk-cockpit: #0b121b; --fk-cockpit-2: #121c28; --fk-cockpit-3: #1a2736;
+  --fk-fg: #dbe5ef; --fk-muted: #8394a6; --fk-line: #223142; --fk-hi: #f2f6fa;
+  --fk-f-display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --fk-f-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--fk-cockpit); color: var(--fk-fg); display: grid; grid-template-rows: auto minmax(340px, 1fr) auto;
+  /* fuellt das Fenster; ist es zu niedrig, laufen die Zeilen ueber den Rand hinaus (nie uebereinander), das Fenster rollt */
+  height: 100%; min-height: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 15px; line-height: 1.45;
+}
+.fk button { font: inherit; cursor: pointer; }
+.fk button:disabled { opacity: .4; cursor: not-allowed; }
+.fk button:focus-visible { outline: 2px solid #5fb0ff; outline-offset: 2px; }
+.fk-bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--fk-line); background: var(--fk-cockpit-2); }
+/* Titel zweizeilig (Flug, darunter die Angaben): so passt die Kopfzeile in eine Reihe */
+.fk-titel { font-family: var(--fk-f-display); font-size: 1.15rem; line-height: 1.2; font-weight: 700; color: var(--fk-hi); display: flex; flex-direction: column; gap: 1px; margin-right: auto; min-width: 0; }
+.fk-titel small { font-family: var(--fk-f-data); font-size: .76rem; font-weight: 400; color: #9aabbd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fk-grp { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.fk-lbl { font-family: var(--fk-f-data); font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; color: var(--fk-muted); margin-right: 5px; }
+.fk-seg button { background: transparent; color: var(--fk-fg); border: 1px solid #2a3a4c; padding: 4px 10px; font-size: .82rem; line-height: 1.3; border-radius: 6px; }
+.fk-seg button[aria-pressed="true"] { background: var(--fk-hi); color: var(--fk-cockpit); border-color: var(--fk-hi); font-weight: 600; }
+/* Knopfgruppen als zusammenhaengende Segmente: ein Rahmen, gleiche Hoehe, nur die Enden gerundet (Thomas 28.10.: „die Form
+   sieht nicht schoen aus“ — vorher lose Einzelknoepfe mit Luecken, im Ebenen-Feld ungleich lange Zeilen) */
+.fk-seg { gap: 0; }
+.fk-seg button { border-radius: 0; margin-left: -1px; white-space: nowrap; }
+.fk-seg button:first-of-type { border-radius: 6px 0 0 6px; margin-left: 0; }
+.fk-seg button:last-of-type { border-radius: 0 6px 6px 0; }
+.fk-seg button:only-of-type { border-radius: 6px; }
+.fk-seg button[aria-pressed="true"] { position: relative; z-index: 1; }
+.fk-seg button:not([aria-pressed="true"]):not(:disabled):hover { background: rgba(255, 255, 255, .08); }
+.fk-main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: 0; }
+.fk-kartenfeld { position: relative; min-width: 0; min-height: 0; overflow: hidden; } /* Flugzeug und Marker ausserhalb nicht ueber die Leiste */
+.fk-karte { position: absolute; inset: 0; }
+.fk .maplibregl-ctrl-group { background: rgba(18,28,40,.92) !important; border: 1px solid #2a3a4c; }
+.fk .maplibregl-ctrl-group button + button { border-top-color: #2a3a4c !important; }
+.fk .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1) brightness(1.4); }
+.fk .maplibregl-ctrl-attrib { background: rgba(11,18,27,.75) !important; color: #9aabbd; font-size: 11px; }
+.fk .maplibregl-ctrl-attrib a { color: var(--fk-muted); }
+.fk .maplibregl-ctrl-attrib-button { filter: invert(1); }
+.fk-legende { position: absolute; left: 12px; bottom: 12px; background: rgba(11,18,27,.82); border: 1px solid #22303f; border-radius: 8px; padding: 8px 10px; font-family: var(--fk-f-data); font-size: .66rem; color: var(--fk-muted); display: grid; gap: 5px; pointer-events: none; }
+.fk-rampe { width: 170px; height: 7px; border-radius: 4px; }
+.fk-enden { display: flex; justify-content: space-between; }
+.fk-letztes { position: absolute; right: 12px; z-index: 1; max-width: 340px; background: rgba(11,18,27,.9); border: 1px solid #22303f; border-radius: 10px; padding: 7px 10px; display: grid; grid-template-columns: 22px 1fr; gap: 2px 9px; align-items: center; pointer-events: none; }
+.fk-letztes .fk-punkt { width: 22px; height: 22px; grid-row: span 2; }
+.fk-letztes b { font-size: .86rem; font-weight: 600; color: var(--fk-hi); line-height: 1.25; }
+.fk-letztes small { font-family: var(--fk-f-data); font-size: .66rem; color: var(--fk-muted); }
+.fk-letztes.fk-neu { animation: fk-ein .5s ease-out; }
+@keyframes fk-ein { from { transform: translateY(6px); border-color: #7fbfff; } to { transform: none; } }
+.fk-hud { position: absolute; right: 12px; bottom: 46px; /* frei ueber der Quellenangabe */ background: rgba(11,18,27,.86); border: 1px solid #22303f; border-radius: 10px; padding: 10px 12px; display: grid; grid-template-columns: repeat(4, auto); gap: 6px 16px; font-family: var(--fk-f-data); font-variant-numeric: tabular-nums; pointer-events: none; }
+.fk-hud div { display: grid; }
+.fk-hud small { font-size: .58rem; letter-spacing: .1em; color: var(--fk-muted); text-transform: uppercase; }
+.fk-hud b { font-size: .96rem; font-weight: 600; color: var(--fk-hi); white-space: nowrap; }
+.fk-cfg { grid-column: 1 / -1; display: flex !important; gap: 6px; flex-wrap: wrap; border-top: 1px solid #22303f; padding-top: 7px; }
+.fk-cfg span { font-size: .66rem; padding: 2px 6px; border-radius: 4px; border: 1px solid #2c3d50; color: var(--fk-muted); }
+.fk-cfg span.fk-an { color: #0b121b; border-color: transparent; font-weight: 700; }
+.fk-cfg span.fk-nm { border-style: dashed; opacity: .6; }
+.fk-punkt { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-family: var(--fk-f-data); font-size: .52rem; font-weight: 700; color: #0b121b; }
+.fk-pop { position: absolute; z-index: 3; width: 270px; background: #142131; border: 1px solid #2e4156; border-radius: 9px; padding: 10px 12px; box-shadow: 0 10px 28px rgba(0,0,0,.5); font-size: .83rem; } /* Lage setzt placePop() als linke obere Ecke */
+.fk-pop[data-lage="oben"]::after { content: ""; position: absolute; left: 50%; bottom: -7px; width: 12px; height: 12px; background: #142131; border-right: 1px solid #2e4156; border-bottom: 1px solid #2e4156; transform: translateX(-50%) rotate(45deg); }
+.fk-pop[data-lage="unten"]::after { content: ""; position: absolute; left: 50%; top: -7px; width: 12px; height: 12px; background: #142131; border-right: 1px solid #2e4156; border-bottom: 1px solid #2e4156; transform: translateX(-50%) rotate(225deg); }
+.fk-pop h4 { margin: 0 0 3px; font-family: var(--fk-f-display); font-size: 1.02rem; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; align-items: center; color: var(--fk-hi); }
+.fk-pop h4 button { background: none; border: 0; color: var(--fk-muted); font-size: 1.1rem; padding: 0 2px; }
+.fk-was { margin: 0 0 7px; color: var(--fk-fg); }
+.fk-pop dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; }
+.fk-pop dt { color: var(--fk-muted); }
+.fk-pop dd { margin: 0; text-align: right; font-family: var(--fk-f-data); font-variant-numeric: tabular-nums; }
+.fk-zurueck { display: block; width: calc(100% + 24px); margin: -10px -12px 8px; padding: 7px 12px; text-align: left; background: #1d2c3d; border: 0; border-bottom: 1px solid #2e4156; border-radius: 9px 9px 0 0; color: #9fd0ff; font-size: .8rem; }
+.fk-poplist { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; display: grid; gap: 1px; }
+.fk-poplist button { width: 100%; display: grid; grid-template-columns: 54px 22px 1fr; gap: 8px; align-items: center; text-align: left; background: none; border: 0; color: var(--fk-fg); padding: 5px 4px; border-radius: 5px; font-size: .8rem; }
+.fk-poplist button:hover { background: #1d2c3d; }
+.fk-t { font-family: var(--fk-f-data); font-size: .7rem; color: var(--fk-muted); font-variant-numeric: tabular-nums; }
+.fk-flugzeug { position: absolute; left: 0; top: 0; width: 34px; height: 34px; pointer-events: none; z-index: 2; filter: drop-shadow(0 0 2px #000) drop-shadow(0 1px 3px rgba(0,0,0,.7)); will-change: transform; }
+.fk-flugzeug img { width: 100%; height: 100%; display: block; }
+.fk-spinne { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.fk-spinne svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.fk-spinne svg line { stroke: rgba(230,238,245,.45); stroke-width: 1.2; }
+.fk-spinne svg line.fk-zum-ort { stroke-dasharray: 3 3; }
+.fk-smark { position: absolute; left: 0; top: 0; width: 32px; height: 32px; margin: -16px 0 0 -16px; border-radius: 50%; border: 2px solid #0b121b; padding: 0; font: 700 .58rem/1 var(--fk-f-data); color: #0b121b; pointer-events: auto; box-shadow: 0 2px 8px rgba(0,0,0,.55); transition: transform .18s ease-out; }
+.fk-smark:hover { transform: scale(1.12); }
+.fk-smark.fk-sel { border-color: #fff; box-shadow: 0 0 0 2px #0b121b, 0 2px 8px rgba(0,0,0,.55); }
+.fk-laden { position: absolute; inset: 0; display: grid; place-items: center; color: var(--fk-muted); font-family: var(--fk-f-data); font-size: .8rem; pointer-events: none; }
+.fk-seite { border-left: 1px solid var(--fk-line); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* Filter hoechstens gut die Haelfte, die Liste behaelt immer Platz (Grid-auto-Zeile ignorierte max-height) */
+.fk-filter { padding: 10px 12px; border-bottom: 1px solid var(--fk-line); display: grid; gap: 8px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+.fk-chips[hidden] { display: none; }
+.fk-zeile { display: flex; justify-content: space-between; align-items: baseline; }
+.fk-zeile button { background: none; border: 0; color: #7fbfff; font-size: .78rem; padding: 0; }
+.fk-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.fk-chip { display: inline-flex; gap: 5px; align-items: center; background: transparent; color: var(--fk-fg); border: 1px solid #2a3a4c; border-radius: 999px; padding: 2px 9px 2px 3px; font-size: .76rem; }
+.fk-chip i { width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center; font-style: normal; font-family: var(--fk-f-data); font-size: .52rem; font-weight: 700; color: #0b121b; }
+.fk-chip em { font-style: normal; color: var(--fk-muted); font-family: var(--fk-f-data); font-size: .68rem; }
+.fk-chip[aria-pressed="false"] { opacity: .42; }
+.fk-chip[aria-pressed="false"] i { background: transparent !important; color: var(--fk-fg); outline: 1px dashed #5b6b7c; }
+.fk-chip.fk-nm { opacity: .5; border-style: dashed; cursor: help; }
+.fk-chip.fk-nm i { background: transparent !important; color: var(--fk-muted); outline: 1px dashed #5b6b7c; }
+.fk-liste { overflow-y: auto; flex: 1 1 0; min-height: 140px; }
+/* passen offene Filter und Liste nicht beide ganz hinein, zeigt die Leiste nur die Filter (nichts abgeschnitten) */
+.fk-seite.fk-nur-filter .fk-liste { display: none; }
+.fk-nf-hinweis { display: none; margin: 0; font-size: .74rem; color: #9aabbd; }
+.fk-seite.fk-nur-filter .fk-nf-hinweis { display: block; }
+.fk-seite.fk-nur-filter .fk-filter { flex: 1 1 auto; border-bottom: 0; align-content: start; }
+.fk-liste ol { list-style: none; margin: 0; padding: 0 0 8px; }
+.fk-ph { position: sticky; top: 0; z-index: 1; background: var(--fk-cockpit-2); padding: 5px 12px; font-family: var(--fk-f-data); font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--fk-muted); display: flex; justify-content: space-between; border-bottom: 1px solid var(--fk-line); }
+.fk-liste li button { width: 100%; text-align: left; background: none; border: 0; color: var(--fk-fg); padding: 5px 12px; display: grid; grid-template-columns: 56px 22px 1fr; gap: 8px; align-items: start; font-size: .82rem; line-height: 1.35; }
+.fk-liste li button:hover { background: var(--fk-cockpit-3); }
+.fk-liste li button.fk-sel { background: #1e3147; }
+.fk-liste li button.fk-fut { color: var(--fk-muted); }
+.fk-liste small { display: block; color: var(--fk-muted); font-family: var(--fk-f-data); font-size: .68rem; }
+.fk-hinweis { padding: 6px 12px; font-size: .74rem; color: var(--fk-muted); border-bottom: 1px solid var(--fk-line); }
+.fk-streifen { border-top: 1px solid var(--fk-line); padding: 8px 14px 12px; display: grid; gap: 8px; background: var(--fk-cockpit); }
+.fk-steuer { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.fk-play { background: var(--fk-hi); color: var(--fk-cockpit); border: 0; border-radius: 6px; padding: 5px 14px; font-weight: 700; font-size: .84rem; min-width: 96px; }
+.fk-steuer label { display: inline-flex; gap: 6px; align-items: center; font-size: .82rem; cursor: pointer; }
+.fk-jetzt { margin-left: auto; font-family: var(--fk-f-data); font-size: .8rem; color: var(--fk-muted); font-variant-numeric: tabular-nums; }
+.fk-diagramm { width: 100%; height: 236px; display: block; touch-action: none; cursor: crosshair; }
+/* niedrige Fenster (Laptop): Datenstreifen flacher, der Hoehenteil schrumpft, die Baender bleiben */
+@media (max-height: 860px) and (min-width: 1061px) { .fk-diagramm { height: 190px; } }
+@media (max-width: 1060px) {
+  /* gestapelt: Zeilen in voller Hoehe, das Fenster rollt (auto-Zeilen schrumpften in der festen Fensterhoehe, der Streifen lag ueber der Karte) */
+  .fk { grid-template-rows: max-content max-content max-content; }
+  .fk-main { grid-template-columns: minmax(0, 1fr); }
+  .fk-kartenfeld { height: 520px; }
+  .fk-seite { border-left: 0; border-top: 1px solid var(--fk-line); height: 380px; }
+}
+@media (max-width: 640px) {
+  /* Handy: Gruppen brechen um — dann wieder einzelne Knoepfe, ein zerrissenes Segment saehe kaputt aus */
+  .fk-bar .fk-seg, .fk-steuer .fk-seg { gap: 3px; }
+  .fk-bar .fk-seg button, .fk-steuer .fk-seg button { border-radius: 6px; margin-left: 0; }
+  .fk-titel small { white-space: normal; }
+  .fk-seg button, .fk-chip { min-height: 34px; }
+  .fk-play { min-height: 36px; }
+  .fk-liste li button, .fk-poplist button { min-height: 40px; }
+  .fk-pop h4 button { min-width: 36px; min-height: 36px; }
+  /* Handy: Popup steht im Fluss unter der Karte (vor letztem Ereignis und HUD) — kein Blatt ueber anderen Kaesten */
+  .fk-pop { position: static; order: 1; margin: 8px 8px 0; width: auto; left: auto !important; top: auto !important; }
+  .fk-pop[data-lage]::after { display: none; }
+  .fk-poplist { max-height: none; }
+  .fk-kartenfeld { height: auto; display: flex; flex-direction: column; }
+  .fk-karte { position: relative; inset: auto; height: 400px; }
+  .fk-letztes { position: static; order: 2; margin: 8px 8px 0; max-width: none; }
+  .fk-hud { position: static; order: 3; margin: 8px; gap: 4px 10px; padding: 7px 9px; }
+  .fk-hud > div:nth-child(n+5):not(.fk-cfg) { display: none; }
+  .fk-hud b { font-size: .8rem; }
+  .fk-legende { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .fk * { transition: none !important; animation: none !important; } }
+
+/* Kartenebenen-Knopf unter den Zoomknoepfen; das Feld klappt nach links auf */
+.fk .fk-ebenen { position: relative; }
+.fk .fk-ebenen > button { width: 29px; height: 29px; display: grid; place-items: center; color: #dbe5ef; background: transparent; border: 0; }
+.fk .fk-ebenen > button[aria-expanded="true"] { color: var(--fk-cockpit); background: var(--fk-hi); }
+.fk-ebenen-feld { position: absolute; top: 0; right: calc(100% + 8px); display: grid; gap: 8px; padding: 10px; width: max-content; background: rgba(18,28,40,.97); border: 1px solid #2a3a4c; border-radius: 8px; }
+.fk-ebenen-feld[hidden] { display: none; }
+/* MapLibre zwingt Knoepfen in .maplibregl-ctrl-group 29x29 px auf — im Ebenen-Feld normale Segmentknoepfe */
+.fk .fk-ebenen-feld button { width: auto; height: auto; display: inline-block; border-top: 1px solid #2a3a4c !important; }
+.fk .fk-ebenen-feld .fk-grp { flex-wrap: nowrap; }
+/* Raster: Beschriftung links, die Knoepfe beider Zeilen gleich breit und buendig untereinander */
+.fk .fk-ebenen-feld .fk-grp { display: grid; grid-template-columns: 46px repeat(3, minmax(0, 1fr)); align-items: stretch; }
+.fk .fk-ebenen-feld .fk-lbl { align-self: center; }
+.fk .fk-ebenen-feld .fk-seg button { text-align: center; padding: 5px 12px; }
+/* Relief ist ein Zuschalter, keine Wahl wie Karte/Satellit: abgesetzt, sonst saehen zwei Segmente gewaehlt aus */
+.fk .fk-ebenen-feld [data-fk="relief"] { margin-left: 10px; border-radius: 6px; }
+.fk .fk-ebenen-feld [data-base="sat"] { border-radius: 0 6px 6px 0; }
+/* MapLibres Hover-Regel fuer Steuerknoepfe (.maplibregl-ctrl button:not(:disabled):hover, fast durchsichtiges Schwarz)
+   ist spezifischer als „gedrueckt“ — unter der Maus wurde ein gewaehlter Knopf dunkel auf dunkel (Thomas 28.10.) */
+.fk .fk-ebenen-feld .fk-seg button[aria-pressed="true"]:not(:disabled) { background: var(--fk-hi); color: var(--fk-cockpit); }
+.fk .fk-ebenen-feld .fk-seg button[aria-pressed="false"]:not(:disabled):hover { background: rgba(255, 255, 255, .08); }
+.fk-ebenen-feld { max-width: calc(100vw - 72px); }
+
+/* Touch-Geraete: Bedienflaechen mindestens 44 px */
+@media (pointer: coarse) {
+  .fk .fk-ebenen > button { width: 44px; height: 44px; }
+  .fk-seg button, .fk-chip, .fk-play, .fk-zeile button, .fk-klapp { min-height: 44px; }
+  .fk-liste li button, .fk-poplist button { min-height: 44px; }
+  .fk-pop h4 button { min-width: 44px; min-height: 44px; }
+  .fk .fk-ebenen-feld .fk-grp { flex-wrap: wrap; }
+}
+
+/* Ereignisleiste / Datenstreifen weggeklappt: die Karte bekommt den Platz */
+.fk.fk-ohne-seite .fk-main { grid-template-columns: minmax(0, 1fr); }
+.fk.fk-ohne-seite .fk-seite { display: none; }
+.fk.fk-ohne-streifen .fk-diagramm { display: none; }
+.fk-klapp { background: none; border: 1px solid #2a3a4c; border-radius: 6px; color: var(--fk-fg); padding: 4px 10px; font-size: .82rem; }
+.fk-klapp:hover { background: var(--fk-cockpit-3); }
+.fk-streifen { position: relative; }
+.fk-bandtipp { position: absolute; z-index: 4; pointer-events: none; white-space: nowrap; background: #142131; border: 1px solid #2e4156; border-radius: 6px; padding: 3px 8px; font-family: var(--fk-f-data); font-size: .74rem; color: var(--fk-hi); }
+.fk-bandtipp[hidden] { display: none; }

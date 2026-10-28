@@ -5754,6 +5754,12 @@ input:disabled {
   gap: 0.5rem;
 }
 
+/* PDF und Flugkarte nebeneinander, zusammen zwischen Zurück und Löschen */
+.landing-detail__aktionen {
+  display: flex;
+  gap: 0.5rem;
+}
+
 /* v0.12.8-dev: PDF-Export-Button — sitzt zwischen Zurück und Löschen. */
 .landing-export {
   background: transparent;

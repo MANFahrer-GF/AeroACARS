@@ -1,0 +1,10 @@
+/* Vollbild-Fenster der Flugkarte — wie in der Admin-Webapp (webapp/src/styles.css, .flugkarte-*) */
+.flugkarte-fenster { position: fixed; inset: 0; z-index: 2000; background: #0b121b; display: flex; flex-direction: column; }
+.flugkarte-zu { position: absolute; top: 10px; right: 12px; z-index: 5; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; border: 1px solid #2a3a4c; background: #121c28; color: #dbe5ef; font-size: 1rem; cursor: pointer; }
+.flugkarte-zu:hover { background: #1a2736; }
+@media (pointer: coarse) { .flugkarte-zu { width: 44px; height: 44px; } .flugkarte-fenster .fk-bar { padding-right: 68px; } }
+.flugkarte-zu:focus-visible { outline: 2px solid #5fb0ff; outline-offset: 2px; }
+.flugkarte-fenster .fk-bar { padding-right: 58px; } /* Platz fuer das Kreuz */
+.flugkarte-hinweis { padding: 24px; color: #9fb0c2; }
+.flugkarte-hinweis:empty { display: none; }
+.flugkarte-inhalt { flex: 1 1 0; min-height: 0; overflow: auto; }
