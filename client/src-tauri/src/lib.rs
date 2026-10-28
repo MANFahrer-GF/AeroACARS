@@ -14316,7 +14316,9 @@ fn landing_list_stand(app: AppHandle) -> Option<String> {
 }
 
 /// List every persisted landing record, newest first. Used by the
-/// Landing tab's list view.
+/// Landing tab's list view — OHNE die schweren Felder (siehe
+/// [`ohne_schwere_felder`]); die Detailansicht holt die volle Landung über
+/// `landing_get`.
 #[tauri::command(async)]
 fn landing_list(app: AppHandle) -> Vec<LandingRecord> {
     open_landing_store(&app)
@@ -14324,12 +14326,37 @@ fn landing_list(app: AppHandle) -> Vec<LandingRecord> {
         .unwrap_or_default()
         .into_iter()
         .map(normalize_derived_scores)
+        .map(ohne_schwere_felder)
         .collect()
 }
 
-// v0.7.13: `landing_get(pirep_id)` Tauri-Command entfernt — Frontend nutzt
-// nur `landing_list` (Landing-Tab) + `landing_get_current` (Live-Vorschau).
-// Audit Q4-2026-05.
+/// Eine Landung vollständig, für die Detailansicht und den PDF-Bericht.
+/// v0.7.13 entfernt, 28.10.2026 zurück: seit `landing_list` schlank ist.
+#[tauri::command(async)]
+fn landing_get(app: AppHandle, pirep_id: String) -> Option<LandingRecord> {
+    open_landing_store(&app)
+        .and_then(|s| s.get(&pirep_id).ok().flatten())
+        .map(normalize_derived_scores)
+}
+
+/// Lässt die Felder weg, die nur die Detailansicht liest (Spuren, Sprit je
+/// Wegpunkt, Gleitpfad, Bahnauswertung). Feldbefund 28.10.2026: die volle
+/// Liste waren 9,9 MB, über die LAN-Brücke dauerte das Öffnen des Tabs
+/// lange. Übersicht, Kurve, Kennzahlen und der Bestwert-Vergleich der
+/// Detailansicht lesen keines dieser Felder (geprüft am Frontend-Code).
+fn ohne_schwere_felder(mut r: LandingRecord) -> LandingRecord {
+    r.lateral_samples = Vec::new();
+    r.touchdown_profile = Vec::new();
+    r.approach_samples = Vec::new();
+    r.runway_exits = Vec::new();
+    r.sub_scores = Vec::new();
+    r.sprit = None;
+    r.runway_match = None;
+    r.sampler_diagnose = None;
+    r.gate_window = None;
+    r.anflug_gleitpfad = None;
+    r
+}
 
 /// Build a *preview* landing record from the currently-active flight.
 /// Used by the Landing tab during the rollout / before file: shows the
@@ -65379,6 +65406,7 @@ pub fn run() {
             activity_log_clear,
             landing_list,
             landing_list_stand,
+            landing_get,
             landing_get_current,
             pirep_pruefstatus,
             flugakte_laden,
@@ -66328,6 +66356,23 @@ mod canonical_landing_rate_fpm_tests {
         stats.landing_source = Some("fallback_zero".to_string());
         stats.landing_analysis = Some(json!({ "vs_at_edge_fpm": -180.0 }));
         assert_eq!(stats.canonical_landing_rate_fpm(), Some(-180.0));
+    }
+
+    #[test]
+    fn schlanke_liste_laesst_nur_schwere_felder_weg() {
+        // Feldbefund 28.10.2026: landing_list ist schlank, die Übersicht
+        // braucht aber Sinkrate, G, Score und Note weiter.
+        let mut r = landing_record_fixture();
+        r.lateral_samples = vec![storage::LateralSample { laengs_m: 100.0, quer_m: 1.0 }];
+        r.vs_at_edge_fpm = Some(-140.0);
+        r.landing_scored_g_force = Some(1.31);
+        r.score_numeric = Some(88);
+        let s = ohne_schwere_felder(r);
+        assert!(s.lateral_samples.is_empty());
+        assert!(s.sprit.is_none() && s.anflug_gleitpfad.is_none() && s.runway_match.is_none());
+        assert_eq!(s.vs_at_edge_fpm, Some(-140.0));
+        assert_eq!(s.landing_scored_g_force, Some(1.31));
+        assert_eq!(s.score_numeric, Some(88));
     }
 
     /// Minimal-Datensatz fuer die Normalisierungs-Tests. Wie im

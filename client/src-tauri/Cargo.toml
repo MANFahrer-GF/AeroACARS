@@ -224,7 +224,9 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 # `cors` → strict same-host CORS layer. The SPA itself is served from the
 # EMBEDDED Tauri assets via `app.asset_resolver()` (see `remote/router.rs`),
 # not `ServeDir`, so the `fs` feature is no longer needed.
-tower-http = { version = "0.6", features = ["cors"] }
+# `compression-gzip` → /api-Antworten gepackt (Feldbefund 28.10.2026: die
+# Landungsliste waren über die LAN-Brücke 9,9 MB; JSON packt ~7:1).
+tower-http = { version = "0.6", features = ["cors", "compression-gzip"] }
 # Enumerate the host's RFC1918 interface addresses to build the
 # http://<lan-ip>:<port> connect URLs shown in the QR code.
 if-addrs = "0.13"

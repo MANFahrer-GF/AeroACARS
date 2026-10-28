@@ -39,6 +39,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 
 use crate::remote::{auth::AuthError, bridge, events, net, RemoteContext};
@@ -202,6 +203,11 @@ fn mime_for_ext(path: &std::path::Path) -> &'static str {
 // ----------------------------------------------------------------------
 
 /// Build the full axum `Router` for the LAN server.
+/// gzip für die `/api`-Antworten (Feldbefund 28.10.2026, siehe `build_router`).
+fn api_kompression() -> CompressionLayer {
+    CompressionLayer::new().gzip(true)
+}
+
 pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
     // SPA fallback: in a PACKAGED build the frontend is EMBEDDED in the
     // binary (via `generate_context!`), NOT shipped as loose files, so
@@ -216,10 +222,17 @@ pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
         async move { serve_spa(&state.0.app, &dev_spa_dir, uri).await }
     };
 
-    Router::new()
+    // Feldbefund 28.10.2026: Antworten der Befehle gepackt (gzip; der
+    // Browser entpackt selbst). Nur hier, nicht an `/ws` (Upgrade) und
+    // nicht an den SPA-Dateien.
+    let api = Router::new()
         .route("/api/auth", post(auth_handler))
         .route("/api/cmd/{name}", post(cmd_handler))
         .route("/api/cmd-batch", post(cmd_batch_handler))
+        .layer(api_kompression());
+
+    Router::new()
+        .merge(api)
         // SECURITY: the `/ws` route authenticates via the `?token=` query
         // parameter (a WebSocket upgrade can't carry a custom header from a
         // browser). That token therefore lives in the request URI. NO
@@ -561,6 +574,37 @@ fn reject_foreign_origin(headers: &HeaderMap) -> Option<Response> {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// Feldbefund 28.10.2026: die Landungsliste kam ungepackt (9,9 MB) zum
+    /// Tablet. Echter Server auf 127.0.0.1, Abruf mit `Accept-Encoding: gzip`
+    /// wie ein Browser; der Client entpackt bewusst NICHT, damit die
+    /// Kopfzeile und die echte Übertragungsgröße sichtbar bleiben.
+    #[tokio::test]
+    async fn api_antworten_kommen_gepackt() {
+        let gross: Vec<String> = (0..5000).map(|i| format!("landung-{i}-{}", "x".repeat(40))).collect();
+        let roh = serde_json::to_vec(&gross).unwrap().len();
+        let app = Router::new()
+            .route("/api/probe", get(move || { let g = gross.clone(); async move { Json(g) } }))
+            .layer(api_kompression());
+        let lauscher = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let adresse = lauscher.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(lauscher, app).await.unwrap() });
+        let antwort = reqwest::Client::builder()
+            .no_gzip()
+            .build()
+            .unwrap()
+            .get(format!("http://{adresse}/api/probe"))
+            .header("accept-encoding", "gzip")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            antwort.headers().get("content-encoding").and_then(|v| v.to_str().ok()),
+            Some("gzip")
+        );
+        let uebertragen = antwort.bytes().await.unwrap().len();
+        assert!(uebertragen * 5 < roh, "gepackt {uebertragen} B, roh {roh} B");
+    }
 
     #[test]
     fn rejects_public_peer_at_socket() {

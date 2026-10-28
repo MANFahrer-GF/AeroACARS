@@ -1122,6 +1122,25 @@ export function LandingPanel() {
   );
   const pruefstatus = usePirepPruefstatus(pruefIds);
 
+  // `landing_list` ist schlank (ohne Spuren, Sprit je Wegpunkt, Gleitpfad …,
+  // Feldbefund 28.10.2026: 9,9 MB über die LAN-Brücke). Die Detailansicht
+  // holt deshalb die eine Landung vollständig nach.
+  const [voll, setVoll] = useState<{ id: string; rec: LandingRecord | null } | null>(null);
+  useEffect(() => {
+    if (!selectedId) {
+      setVoll(null);
+      return;
+    }
+    let weg = false;
+    invoke<LandingRecord | null>("landing_get", { pirepId: selectedId })
+      .then((rec) => { if (!weg) setVoll({ id: selectedId, rec: rec ?? null }); })
+      .catch((e) => {
+        console.warn("landing_get failed", e);
+        if (!weg) setVoll({ id: selectedId, rec: null });
+      });
+    return () => { weg = true; };
+  }, [selectedId]);
+
   // QS 2026-08-04: `refresh` läuft alle 5 s. Dauert ein Abruf einmal
   // länger als der Takt (träger VPS/phpVMS), überholen sich zwei
   // Anfragen — und die ÄLTERE Antwort überschrieb dann klaglos die
@@ -1270,7 +1289,18 @@ export function LandingPanel() {
 
   // Detail view
   if (selectedId) {
-    const rec = records.find((r) => r.pirep_id === selectedId);
+    if (voll?.id !== selectedId) {
+      return (
+        <section className="landing-panel">
+          <button type="button" className="landing-back" onClick={() => setSelectedId(null)}>
+            ← {t("landing.back_to_list")}
+          </button>
+          <p>{t("landing.loading")}</p>
+        </section>
+      );
+    }
+    // Nicht (mehr) da, etwa gerade gelöscht: zurück zur Übersicht wie bisher
+    const rec = voll.rec;
     if (rec) {
       return (
         <section className="landing-panel">
@@ -1401,6 +1431,10 @@ export function LandingPanel() {
                 <th scope="col" className="landing-ov-table__num">
                   {t("landing.col_rate")}
                 </th>
+                {/* Wunsch Michel 28.10.2026: G-Kraft direkt nach der Sinkrate */}
+                <th scope="col" className="landing-ov-table__num">
+                  {t("landing.g_force")}
+                </th>
                 <th scope="col" className="landing-ov-table__num">
                   {t("landing.col_score")}
                 </th>
@@ -1415,14 +1449,14 @@ export function LandingPanel() {
                 records.length === 0 &&
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={`skeleton-${i}`} className="landing-ov-skeleton-row" aria-hidden="true">
-                    <td colSpan={7}>
+                    <td colSpan={8}>
                       <div className="landing-ov-skeleton-bar" />
                     </td>
                   </tr>
                 ))}
               {!loading && records.length === 0 && (
                 <tr className="landing-ov-empty-row">
-                  <td colSpan={7}>{t("landing.no_landings")}</td>
+                  <td colSpan={8}>{t("landing.no_landings")}</td>
                 </tr>
               )}
               {visibleRecords.map((r) => {
@@ -1430,6 +1464,7 @@ export function LandingPanel() {
                 // Liste — der Flug fand ja statt —, nur die Sinkrate fehlt.
                 const gemessen = scoreBasisVs(r);
                 const rate = gemessen ?? 0;
+                const gWert = scoreG(r);
                 const cat = recordCategory(r) ?? "unbewertet";
                 const pattern = r.aircraft_icao || r.aircraft_title || "—";
                 const reg = r.aircraft_registration || "—";
@@ -1486,6 +1521,19 @@ export function LandingPanel() {
                             : t("landing.nicht_bewertbar.kein_wert")}
                         </span>
                       </span>
+                    </td>
+                    {/* Derselbe Wert wie in der Detailansicht (scoreG, TouchdownAbschnitt) */}
+                    <td className="landing-ov-table__num landing-ov-score">
+                      {gemessen != null && gWert != null ? (
+                        <>
+                          {fmtDeDe(gWert, 2)}
+                          <span className="landing-ov-score__suffix">G</span>
+                        </>
+                      ) : (
+                        <span className="landing-ov-score__suffix">
+                          {t("landing.nicht_bewertbar.kein_wert")}
+                        </span>
+                      )}
                     </td>
                     <td className="landing-ov-table__num landing-ov-score">
                       {r.score_numeric != null ? (

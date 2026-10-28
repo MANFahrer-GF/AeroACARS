@@ -1,7 +1,7 @@
 // Regressionstest: Landungs-Tab ueber die LAN-Bruecke mit langsamer Antwort.
 
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
-import { render, screen, cleanup, act } from "@testing-library/react";
+import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../locales/de/common.json";
@@ -189,3 +189,44 @@ describe("LandingPanel — langsame Antwort ueber die LAN-Bruecke", () => {
     expect(invokeMock.mock.calls.filter((c) => c[0] === "landing_get_current").length).toBeLessThanOrEqual(2);
   });
 });
+
+describe("LandingPanel — schlanke Liste, volle Landung beim Antippen", () => {
+  const warten = async () => {
+    await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); });
+  };
+
+  it("holt die volle Landung per landing_get und zeigt sie", async () => {
+    const schlank = record({ pirep_id: "p-7", flight_number: "7777" });
+    const voll = record({ pirep_id: "p-7", flight_number: "7777", arr_airport: "LOWW" });
+    invokeMock.mockImplementation((cmd: string, args?: { pirepId?: string }) => {
+      if (cmd === "landing_list") return Promise.resolve([schlank]);
+      if (cmd === "landing_get") return Promise.resolve(args?.pirepId === "p-7" ? voll : null);
+      return Promise.resolve(null);
+    });
+    render(<LandingPanel />);
+    await warten();
+    expect(screen.queryAllByText(/LOWW/)).toHaveLength(0);
+    fireEvent.click(screen.getByText(/GS7777/).closest("tr")!);
+    await warten();
+    expect(invokeMock).toHaveBeenCalledWith("landing_get", { pirepId: "p-7" });
+    // Nur die VOLLE Landung hat LOWW — die Detailansicht zeigt sie, nicht den Listen-Datensatz
+    expect(screen.queryAllByText(/LOWW/).length).toBeGreaterThan(0);
+  });
+
+  it("zeigt die G-Kraft nach der Sinkrate, bei nicht bewertbarer Landung einen Strich", async () => {
+    const gut = record({ pirep_id: "g-1", flight_number: "1001", vs_at_edge_fpm: -120, landing_scored_g_force: 1.31 } as Partial<LandingRecord>);
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "landing_list") return Promise.resolve([gut]);
+      return Promise.resolve(null);
+    });
+    render(<LandingPanel />);
+    await warten();
+    const kopf = screen.getAllByRole("columnheader").map((h) => h.textContent ?? "");
+    const iRate = kopf.findIndex((k) => /Sinkrate/.test(k));
+    expect(kopf[iRate + 1]).toMatch(/G-Kraft/);
+    const zeile = screen.getByText(/GS1001/).closest("tr")!;
+    const zellen = Array.from(zeile.querySelectorAll("td")).map((td) => td.textContent ?? "");
+    expect(zellen[iRate + 1]).toBe("1,31G");
+  });
+});
+
