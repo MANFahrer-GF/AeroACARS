@@ -226,7 +226,8 @@ describe("LandingPanel — schlanke Liste, volle Landung beim Antippen", () => {
     expect(kopf[iRate + 1]).toMatch(/G-Kraft/);
     const zeile = screen.getByText(/GS1001/).closest("tr")!;
     const zellen = Array.from(zeile.querySelectorAll("td")).map((td) => td.textContent ?? "");
-    expect(zellen[iRate + 1]).toBe("1,31G");
+    // gleiche Schreibweise wie die Detailansicht (fmtNumber, TouchdownAbschnitt)
+    expect(zellen[iRate + 1]).toBe("1.31G");
   });
 });
 

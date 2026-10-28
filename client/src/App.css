@@ -5260,6 +5260,9 @@ input:disabled {
   background: var(--surface-2);
   border-bottom: 1px solid var(--line);
   display: flex;
+  /* iPad hochkant: Kennzahlen in eine zweite Zeile, statt die Überschrift
+     zu überdecken (Feldbefund 28.10.2026) */
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: var(--sp-4);
@@ -5482,11 +5485,16 @@ input:disabled {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* iPad hochkant (Feldbefund 28.10.2026): die festen Spalten sind breiter
+     als der Platz, die Strecke bekam 0 px. Lieber seitlich schieben. */
+  overflow-x: auto;
   background: var(--bg);
 }
 
 .landing-ov-table {
   width: 100%;
+  /* feste Spalten (740 px) + mindestens 160 px für die Strecke */
+  min-width: 900px;
   border-collapse: collapse;
   table-layout: fixed;
 }

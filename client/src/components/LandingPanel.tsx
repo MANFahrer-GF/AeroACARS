@@ -37,7 +37,7 @@ import {
 // (gespiegelt in die Webapp).
 import { AnflugGrafikAbschnitt } from "./AnflugGrafik";
 // Zahlformate, scoreG, Fenster-Gültigkeit: lib/landungsFormat.ts (gespiegelt).
-import { fensterWerteGueltig, scoreG } from "../lib/landungsFormat";
+import { fensterWerteGueltig, fmtNumber, scoreG } from "../lib/landungsFormat";
 import { TouchdownAbschnitt } from "./TouchdownAbschnitt";
 // Kopf, Banner, Hinweise, Teilnoten: components/LandungsBewertung.tsx (gespiegelt).
 import {
@@ -1407,6 +1407,7 @@ export function LandingPanel() {
               <col />
               <col style={{ width: 168 }} />
               <col style={{ width: 150 }} />
+              <col style={{ width: 76 }} />
               <col style={{ width: 108 }} />
               <col style={{ width: 84 }} />
               <col style={{ width: 26 }} />
@@ -1526,7 +1527,7 @@ export function LandingPanel() {
                     <td className="landing-ov-table__num landing-ov-score">
                       {gemessen != null && gWert != null ? (
                         <>
-                          {fmtDeDe(gWert, 2)}
+                          {fmtNumber(gWert, 2)}
                           <span className="landing-ov-score__suffix">G</span>
                         </>
                       ) : (
