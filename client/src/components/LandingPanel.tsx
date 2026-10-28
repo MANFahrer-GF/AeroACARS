@@ -1063,6 +1063,12 @@ function useOverviewStats(records: LandingRecord[]) {
     const avgRate: number | null = messbar.length
       ? messbar.reduce((s, r) => s + (scoreBasisVs(r) ?? 0), 0) / messbar.length
       : null;
+    // Ø G-Kraft (Wunsch Michel 28.10.2026): dieselben gemessenen Landungen
+    // wie die Ø Sinkrate, derselbe Wert wie Spalte und Detailansicht (scoreG).
+    const mitG = messbar.filter((r) => scoreG(r) != null);
+    const avgG: number | null = mitG.length
+      ? mitG.reduce((s, r) => s + (scoreG(r) ?? 0), 0) / mitG.length
+      : null;
     // Auch die Durchschnittsnote zählt nur bewertete Landungen — sonst
     // zöge eine nicht gemessene Landung den Schnitt (Codex-Abnahme
     // 12.09.2026: gesperrt mit 97 und gültig mit 80 ergaben 88,5).
@@ -1093,7 +1099,7 @@ function useOverviewStats(records: LandingRecord[]) {
     const totalBounces = records
       .filter(fensterWerteGueltig)
       .reduce((s, r) => s + (r.bounce_count ?? 0), 0);
-    return { total, avgRate, avgScore, byCategory, softest, hardest, totalBounces };
+    return { total, avgRate, avgG, avgScore, byCategory, softest, hardest, totalBounces };
   }, [records]);
 }
 
@@ -1353,6 +1359,19 @@ export function LandingPanel() {
                   <>
                     {fmtDeDe(Math.round(stats.avgRate))}
                     <span className="landing-ov-stat__unit"> fpm</span>
+                  </>
+                ) : (
+                  "—"
+                )}
+              </span>
+            </div>
+            <div className="landing-ov-stat">
+              <span className="landing-ov-stat__label">{t("landing.ov_avg_g")}</span>
+              <span className="landing-ov-stat__value">
+                {stats?.avgG != null ? (
+                  <>
+                    {fmtNumber(stats.avgG, 2)}
+                    <span className="landing-ov-stat__unit"> G</span>
                   </>
                 ) : (
                   "—"

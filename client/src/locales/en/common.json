@@ -484,6 +484,7 @@
     "ov_subtitle": "last {{count}} touchdowns · from the recorder",
     "ov_avg_rate": "Avg sink rate",
     "ov_avg_score": "Avg score",
+    "ov_avg_g": "Avg G force",
     "ov_distribution": "Distribution",
     "ov_chart_title": "Sink rate of the last 12 landings · fpm",
     "ov_chart_last": "latest: {{date}} · {{rate}} fpm",

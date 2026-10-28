@@ -229,5 +229,18 @@ describe("LandingPanel — schlanke Liste, volle Landung beim Antippen", () => {
     // gleiche Schreibweise wie die Detailansicht (fmtNumber, TouchdownAbschnitt)
     expect(zellen[iRate + 1]).toBe("1.31G");
   });
+
+  it("zeigt oben die Ø G-Kraft nur aus gemessenen Landungen", async () => {
+    const a = record({ pirep_id: "a", flight_number: "2001", vs_at_edge_fpm: -120, landing_scored_g_force: 1.31 } as Partial<LandingRecord>);
+    const b = record({ pirep_id: "b", flight_number: "2002", vs_at_edge_fpm: -160, landing_scored_g_force: 1.21 } as Partial<LandingRecord>);
+    // nicht bewertbar: darf den Schnitt nicht verschieben
+    const c = record({ pirep_id: "c", flight_number: "2003", landung_nicht_bewertbar: true, landing_scored_g_force: 3.0 } as Partial<LandingRecord>);
+    invokeMock.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "landing_list" ? [a, b, c] : null));
+    render(<LandingPanel />);
+    await warten();
+    const kachel = screen.getByText("Ø G-Kraft").closest(".landing-ov-stat")!;
+    expect(kachel.textContent).toContain("1.26");
+  });
 });
 
