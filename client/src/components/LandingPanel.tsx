@@ -1132,6 +1132,9 @@ export function LandingPanel() {
   // Feldbefund 28.10.2026: 9,9 MB über die LAN-Brücke). Die Detailansicht
   // holt deshalb die eine Landung vollständig nach.
   const [voll, setVoll] = useState<{ id: string; rec: LandingRecord | null } | null>(null);
+  // Codex-QS: scheitert das Nachladen (WLAN-Aussetzer), muss ein neuer
+  // Versuch möglich sein — dieselbe Zeile erneut antippen änderte nichts.
+  const [ladeVersuch, setLadeVersuch] = useState(0);
   useEffect(() => {
     if (!selectedId) {
       setVoll(null);
@@ -1145,7 +1148,7 @@ export function LandingPanel() {
         if (!weg) setVoll({ id: selectedId, rec: null });
       });
     return () => { weg = true; };
-  }, [selectedId]);
+  }, [selectedId, ladeVersuch]);
 
   // QS 2026-08-04: `refresh` läuft alle 5 s. Dauert ein Abruf einmal
   // länger als der Takt (träger VPS/phpVMS), überholen sich zwei
@@ -1305,23 +1308,37 @@ export function LandingPanel() {
         </section>
       );
     }
-    // Nicht (mehr) da, etwa gerade gelöscht: zurück zur Übersicht wie bisher
     const rec = voll.rec;
-    if (rec) {
+    if (!rec) {
       return (
         <section className="landing-panel">
-          {confirmDialog}
-          <LandingDetail
-            record={rec}
-            allRecords={records}
-            onBack={() => setSelectedId(null)}
-            onDelete={() => handleDelete(rec.pirep_id)}
-            isPreview={false}
-            pruefstatus={pruefstatus[rec.pirep_id]}
-          />
+          <button type="button" className="landing-back" onClick={() => setSelectedId(null)}>
+            ← {t("landing.back_to_list")}
+          </button>
+          <p>{t("landing.detail_fehler")}</p>
+          <button
+            type="button"
+            className="landing-export"
+            onClick={() => { setVoll(null); setLadeVersuch((n) => n + 1); }}
+          >
+            {t("landing.detail_erneut")}
+          </button>
         </section>
       );
     }
+    return (
+      <section className="landing-panel">
+        {confirmDialog}
+        <LandingDetail
+          record={rec}
+          allRecords={records}
+          onBack={() => setSelectedId(null)}
+          onDelete={() => handleDelete(rec.pirep_id)}
+          isPreview={false}
+          pruefstatus={pruefstatus[rec.pirep_id]}
+        />
+      </section>
+    );
   }
 
   // Preview-only state (active flight has touched down but record not yet filed)

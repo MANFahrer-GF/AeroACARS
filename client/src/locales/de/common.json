@@ -485,6 +485,8 @@
     "ov_avg_rate": "Ø Sinkrate",
     "ov_avg_score": "Ø Score",
     "ov_avg_g": "Ø G-Kraft",
+    "detail_fehler": "Diese Landung konnte nicht geladen werden.",
+    "detail_erneut": "Erneut versuchen",
     "ov_distribution": "Verteilung",
     "ov_chart_title": "Sinkrate der letzten 12 Landungen · fpm",
     "ov_chart_last": "letzte: {{date}} · {{rate}} fpm",

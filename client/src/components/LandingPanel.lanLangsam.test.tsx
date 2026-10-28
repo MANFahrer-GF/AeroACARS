@@ -213,10 +213,12 @@ describe("LandingPanel — schlanke Liste, volle Landung beim Antippen", () => {
     expect(screen.queryAllByText(/LOWW/).length).toBeGreaterThan(0);
   });
 
-  it("zeigt die G-Kraft nach der Sinkrate, bei nicht bewertbarer Landung einen Strich", async () => {
+  it("zeigt die G-Kraft nach der Sinkrate, bei nicht bewertbarer Landung „nicht gemessen“", async () => {
     const gut = record({ pirep_id: "g-1", flight_number: "1001", vs_at_edge_fpm: -120, landing_scored_g_force: 1.31 } as Partial<LandingRecord>);
+    // nicht bewertbar, aber mit G-Wert: die Spalte muss trotzdem einen Strich zeigen
+    const ungemessen = record({ pirep_id: "g-2", flight_number: "1002", landung_nicht_bewertbar: true, landing_scored_g_force: 2.4 } as Partial<LandingRecord>);
     invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === "landing_list") return Promise.resolve([gut]);
+      if (cmd === "landing_list") return Promise.resolve([gut, ungemessen]);
       return Promise.resolve(null);
     });
     render(<LandingPanel />);
@@ -225,6 +227,10 @@ describe("LandingPanel — schlanke Liste, volle Landung beim Antippen", () => {
     const iRate = kopf.findIndex((k) => /Sinkrate/.test(k));
     expect(kopf[iRate + 1]).toMatch(/G-Kraft/);
     const zeile = screen.getByText(/GS1001/).closest("tr")!;
+    const strich = Array.from(screen.getByText(/GS1002/).closest("tr")!.querySelectorAll("td")).map((td) => td.textContent ?? "");
+    // wie die Sinkrate daneben: „nicht gemessen“, kein G-Wert
+    expect(strich[iRate + 1]).toBe("nicht gemessen");
+    expect(strich[iRate]).toContain("nicht gemessen");
     const zellen = Array.from(zeile.querySelectorAll("td")).map((td) => td.textContent ?? "");
     // gleiche Schreibweise wie die Detailansicht (fmtNumber, TouchdownAbschnitt)
     expect(zellen[iRate + 1]).toBe("1.31G");
@@ -241,6 +247,26 @@ describe("LandingPanel — schlanke Liste, volle Landung beim Antippen", () => {
     await warten();
     const kachel = screen.getByText("Ø G-Kraft").closest(".landing-ov-stat")!;
     expect(kachel.textContent).toContain("1.26");
+  });
+
+  it("zeigt bei gescheitertem Nachladen einen Hinweis und laedt beim zweiten Versuch", async () => {
+    const schlank = record({ pirep_id: "f-1", flight_number: "8888" });
+    const voll = record({ pirep_id: "f-1", flight_number: "8888", arr_airport: "LOWW" });
+    let versuche = 0;
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "landing_list") return Promise.resolve([schlank]);
+      if (cmd === "landing_get") return ++versuche === 1 ? Promise.reject(new Error("WLAN weg")) : Promise.resolve(voll);
+      return Promise.resolve(null);
+    });
+    render(<LandingPanel />);
+    await warten();
+    fireEvent.click(screen.getByText(/GS8888/).closest("tr")!);
+    await warten();
+    expect(screen.getByText("Diese Landung konnte nicht geladen werden.")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Erneut versuchen"));
+    await warten();
+    expect(versuche).toBe(2);
+    expect(screen.queryAllByText(/LOWW/).length).toBeGreaterThan(0);
   });
 });
 

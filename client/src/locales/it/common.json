@@ -485,6 +485,8 @@
     "ov_avg_rate": "Rateo medio",
     "ov_avg_score": "Punteggio medio",
     "ov_avg_g": "Forza G media",
+    "detail_fehler": "Impossibile caricare questo atterraggio.",
+    "detail_erneut": "Riprova",
     "ov_distribution": "Distribuzione",
     "ov_chart_title": "Rateo di discesa degli ultimi 12 atterraggi · fpm",
     "ov_chart_last": "ultimo: {{date}} · {{rate}} fpm",

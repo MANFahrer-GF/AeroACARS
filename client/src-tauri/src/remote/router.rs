@@ -208,6 +208,13 @@ fn api_kompression() -> CompressionLayer {
     CompressionLayer::new().gzip(true)
 }
 
+/// Setzt den Router zusammen: nur `api` wird gepackt, `rest` (`/ws`-Upgrade,
+/// SPA-Dateien) nicht. Eigene Funktion, damit der Test genau diese
+/// Zusammensetzung prüft — `build_router` selbst braucht eine laufende App.
+fn api_gepackt_rest_nicht<S: Clone + Send + Sync + 'static>(api: Router<S>, rest: Router<S>) -> Router<S> {
+    api.layer(api_kompression()).merge(rest)
+}
+
 pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
     // SPA fallback: in a PACKAGED build the frontend is EMBEDDED in the
     // binary (via `generate_context!`), NOT shipped as loose files, so
@@ -228,11 +235,9 @@ pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
     let api = Router::new()
         .route("/api/auth", post(auth_handler))
         .route("/api/cmd/{name}", post(cmd_handler))
-        .route("/api/cmd-batch", post(cmd_batch_handler))
-        .layer(api_kompression());
+        .route("/api/cmd-batch", post(cmd_batch_handler));
 
-    Router::new()
-        .merge(api)
+    let rest = Router::new()
         // SECURITY: the `/ws` route authenticates via the `?token=` query
         // parameter (a WebSocket upgrade can't carry a custom header from a
         // browser). That token therefore lives in the request URI. NO
@@ -245,7 +250,9 @@ pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
         // SPA + static assets (also the unmatched-route fallback). Served
         // from the EMBEDDED assets; a deep-link with no asset falls back to
         // index.html so the client router handles it.
-        .fallback(spa_fallback)
+        .fallback(spa_fallback);
+
+    api_gepackt_rest_nicht(api, rest)
         // CORS note: a default (deny-all-cross-origin) `CorsLayer` is
         // applied, but CORS is NOT the security boundary here. CORS only
         // governs whether a *browser* exposes a cross-origin response to
@@ -576,34 +583,46 @@ mod tests {
     use std::path::Path;
 
     /// Feldbefund 28.10.2026: die Landungsliste kam ungepackt (9,9 MB) zum
-    /// Tablet. Echter Server auf 127.0.0.1, Abruf mit `Accept-Encoding: gzip`
-    /// wie ein Browser; der Client entpackt bewusst NICHT, damit die
-    /// Kopfzeile und die echte Übertragungsgröße sichtbar bleiben.
+    /// Tablet. Echter Server auf 127.0.0.1 mit derselben Zusammensetzung wie
+    /// `build_router` (`api_gepackt_rest_nicht`); Abruf mit
+    /// `Accept-Encoding: gzip` wie ein Browser, der Client entpackt bewusst
+    /// NICHT. `/api` muss gepackt kommen, `/ws` und SPA-Rückfall nicht.
     #[tokio::test]
-    async fn api_antworten_kommen_gepackt() {
+    async fn nur_api_antworten_kommen_gepackt() {
         let gross: Vec<String> = (0..5000).map(|i| format!("landung-{i}-{}", "x".repeat(40))).collect();
         let roh = serde_json::to_vec(&gross).unwrap().len();
-        let app = Router::new()
-            .route("/api/probe", get(move || { let g = gross.clone(); async move { Json(g) } }))
-            .layer(api_kompression());
+        let g1 = gross.clone();
+        let g2 = gross.clone();
+        let g3 = gross;
+        let api = Router::new().route(
+            "/api/cmd/{name}",
+            post(move || { let g = g1.clone(); async move { Json(g) } }),
+        );
+        let rest = Router::new()
+            .route("/ws", get(move || { let g = g2.clone(); async move { Json(g) } }))
+            .fallback(move || { let g = g3.clone(); async move { Json(g) } });
+        let app = api_gepackt_rest_nicht(api, rest);
         let lauscher = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let adresse = lauscher.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(lauscher, app).await.unwrap() });
-        let antwort = reqwest::Client::builder()
-            .no_gzip()
-            .build()
-            .unwrap()
-            .get(format!("http://{adresse}/api/probe"))
-            .header("accept-encoding", "gzip")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(
-            antwort.headers().get("content-encoding").and_then(|v| v.to_str().ok()),
-            Some("gzip")
-        );
-        let uebertragen = antwort.bytes().await.unwrap().len();
-        assert!(uebertragen * 5 < roh, "gepackt {uebertragen} B, roh {roh} B");
+        let client = reqwest::Client::builder().no_gzip().build().unwrap();
+        let abruf = |anfrage: reqwest::RequestBuilder| async move {
+            let a = anfrage.header("accept-encoding", "gzip").send().await.unwrap();
+            let kodierung = a
+                .headers()
+                .get("content-encoding")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            (kodierung, a.bytes().await.unwrap().len())
+        };
+
+        let (k, n) = abruf(client.post(format!("http://{adresse}/api/cmd/landing_list"))).await;
+        assert_eq!(k.as_deref(), Some("gzip"), "/api gepackt");
+        assert!(n * 5 < roh, "gepackt {n} B, roh {roh} B");
+        let (k, _) = abruf(client.get(format!("http://{adresse}/ws"))).await;
+        assert_eq!(k, None, "/ws ungepackt");
+        let (k, _) = abruf(client.get(format!("http://{adresse}/index.html"))).await;
+        assert_eq!(k, None, "SPA ungepackt");
     }
 
     #[test]

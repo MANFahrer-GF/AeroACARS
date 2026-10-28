@@ -66359,20 +66359,33 @@ mod canonical_landing_rate_fpm_tests {
     }
 
     #[test]
-    fn schlanke_liste_laesst_nur_schwere_felder_weg() {
-        // Feldbefund 28.10.2026: landing_list ist schlank, die Übersicht
-        // braucht aber Sinkrate, G, Score und Note weiter.
-        let mut r = landing_record_fixture();
-        r.lateral_samples = vec![storage::LateralSample { laengs_m: 100.0, quer_m: 1.0 }];
-        r.vs_at_edge_fpm = Some(-140.0);
-        r.landing_scored_g_force = Some(1.31);
-        r.score_numeric = Some(88);
-        let s = ohne_schwere_felder(r);
-        assert!(s.lateral_samples.is_empty());
-        assert!(s.sprit.is_none() && s.anflug_gleitpfad.is_none() && s.runway_match.is_none());
-        assert_eq!(s.vs_at_edge_fpm, Some(-140.0));
-        assert_eq!(s.landing_scored_g_force, Some(1.31));
-        assert_eq!(s.score_numeric, Some(88));
+    fn schlanke_liste_laesst_genau_die_schweren_felder_weg() {
+        // Feldbefund 28.10.2026: landing_list ist schlank. Echte, voll
+        // befüllte Landung (dieselbe Datei nutzen die Frontend-Tests): genau
+        // diese zehn Felder werden leer, JEDES andere bleibt unverändert —
+        // sonst zeigt die Übersicht still einen falschen Wert (Codex-QS).
+        const SCHWER: [&str; 10] = [
+            "lateral_samples", "touchdown_profile", "approach_samples", "runway_exits", "sub_scores",
+            "sprit", "runway_match", "sampler_diagnose", "gate_window", "anflug_gleitpfad",
+        ];
+        let r: LandingRecord =
+            serde_json::from_str(include_str!("../../src/lib/landungsFaelle.thy39.json")).expect("Landung");
+        let vorher = serde_json::to_value(&r).unwrap();
+        let nachher = serde_json::to_value(ohne_schwere_felder(r)).unwrap();
+        let (vorher, nachher) = (vorher.as_object().unwrap(), nachher.as_object().unwrap());
+        assert_eq!(vorher.len(), nachher.len());
+        for (feld, wert) in vorher {
+            if SCHWER.contains(&feld.as_str()) {
+                assert!(
+                    !(wert.is_null() || wert.as_array().is_some_and(|a| a.is_empty())),
+                    "{feld}: Vorlage leer, Test sagt nichts"
+                );
+                let neu = &nachher[feld];
+                assert!(neu.is_null() || neu.as_array().is_some_and(|a| a.is_empty()), "{feld} nicht geleert");
+            } else {
+                assert_eq!(&nachher[feld], wert, "{feld} darf sich nicht ändern");
+            }
+        }
     }
 
     /// Minimal-Datensatz fuer die Normalisierungs-Tests. Wie im
