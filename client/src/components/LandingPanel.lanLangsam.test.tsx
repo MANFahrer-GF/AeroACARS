@@ -241,8 +241,10 @@ describe("LandingPanel — schlanke Liste, volle Landung beim Antippen", () => {
     const b = record({ pirep_id: "b", flight_number: "2002", vs_at_edge_fpm: -160, landing_scored_g_force: 1.21 } as Partial<LandingRecord>);
     // nicht bewertbar: darf den Schnitt nicht verschieben
     const c = record({ pirep_id: "c", flight_number: "2003", landung_nicht_bewertbar: true, landing_scored_g_force: 3.0 } as Partial<LandingRecord>);
+    // ohne Sinkrate (Spalte zeigt „nicht gemessen“), aber nicht als unbewertbar markiert
+    const d = record({ pirep_id: "d", flight_number: "2004", vs_at_edge_fpm: null, landing_rate_fpm: null, landing_scored_g_force: 3.0 } as Partial<LandingRecord>);
     invokeMock.mockImplementation((cmd: string) =>
-      Promise.resolve(cmd === "landing_list" ? [a, b, c] : null));
+      Promise.resolve(cmd === "landing_list" ? [a, b, c, d] : null));
     render(<LandingPanel />);
     await warten();
     const kachel = screen.getByText("Ø G-Kraft").closest(".landing-ov-stat")!;
@@ -267,6 +269,18 @@ describe("LandingPanel — schlanke Liste, volle Landung beim Antippen", () => {
     await warten();
     expect(versuche).toBe(2);
     expect(screen.queryAllByText(/LOWW/).length).toBeGreaterThan(0);
+  });
+
+  it("bietet bei einer nicht mehr vorhandenen Landung kein Wiederholen an", async () => {
+    const schlank = record({ pirep_id: "w-1", flight_number: "9999" });
+    invokeMock.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === "landing_list" ? [schlank] : null)); // landing_get -> null
+    render(<LandingPanel />);
+    await warten();
+    fireEvent.click(screen.getByText(/GS9999/).closest("tr")!);
+    await warten();
+    expect(screen.getByText("Diese Landung gibt es nicht mehr.")).toBeInTheDocument();
+    expect(screen.queryByText("Erneut versuchen")).not.toBeInTheDocument();
   });
 });
 

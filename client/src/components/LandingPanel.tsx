@@ -1065,7 +1065,8 @@ function useOverviewStats(records: LandingRecord[]) {
       : null;
     // Ø G-Kraft (Wunsch Michel 28.10.2026): dieselben gemessenen Landungen
     // wie die Ø Sinkrate, derselbe Wert wie Spalte und Detailansicht (scoreG).
-    const mitG = messbar.filter((r) => scoreG(r) != null);
+    // genau die Landungen, deren Spalte einen G-Wert zeigt (Codex-QS)
+    const mitG = messbar.filter((r) => scoreBasisVs(r) != null && scoreG(r) != null);
     const avgG: number | null = mitG.length
       ? mitG.reduce((s, r) => s + (scoreG(r) ?? 0), 0) / mitG.length
       : null;
@@ -1131,7 +1132,7 @@ export function LandingPanel() {
   // `landing_list` ist schlank (ohne Spuren, Sprit je Wegpunkt, Gleitpfad …,
   // Feldbefund 28.10.2026: 9,9 MB über die LAN-Brücke). Die Detailansicht
   // holt deshalb die eine Landung vollständig nach.
-  const [voll, setVoll] = useState<{ id: string; rec: LandingRecord | null } | null>(null);
+  const [voll, setVoll] = useState<{ id: string; rec: LandingRecord | null; fehler: boolean } | null>(null);
   // Codex-QS: scheitert das Nachladen (WLAN-Aussetzer), muss ein neuer
   // Versuch möglich sein — dieselbe Zeile erneut antippen änderte nichts.
   const [ladeVersuch, setLadeVersuch] = useState(0);
@@ -1142,10 +1143,10 @@ export function LandingPanel() {
     }
     let weg = false;
     invoke<LandingRecord | null>("landing_get", { pirepId: selectedId })
-      .then((rec) => { if (!weg) setVoll({ id: selectedId, rec: rec ?? null }); })
+      .then((rec) => { if (!weg) setVoll({ id: selectedId, rec: rec ?? null, fehler: false }); })
       .catch((e) => {
         console.warn("landing_get failed", e);
-        if (!weg) setVoll({ id: selectedId, rec: null });
+        if (!weg) setVoll({ id: selectedId, rec: null, fehler: true });
       });
     return () => { weg = true; };
   }, [selectedId, ladeVersuch]);
@@ -1315,14 +1316,21 @@ export function LandingPanel() {
           <button type="button" className="landing-back" onClick={() => setSelectedId(null)}>
             ← {t("landing.back_to_list")}
           </button>
-          <p>{t("landing.detail_fehler")}</p>
-          <button
-            type="button"
-            className="landing-export"
-            onClick={() => { setVoll(null); setLadeVersuch((n) => n + 1); }}
-          >
-            {t("landing.detail_erneut")}
-          </button>
+          {voll.fehler ? (
+            <>
+              <p>{t("landing.detail_fehler")}</p>
+              <button
+                type="button"
+                className="landing-export"
+                onClick={() => { setVoll(null); setLadeVersuch((n) => n + 1); }}
+              >
+                {t("landing.detail_erneut")}
+              </button>
+            </>
+          ) : (
+            // gibt es nicht mehr (etwa am PC gelöscht): kein Wiederholen
+            <p>{t("landing.detail_weg")}</p>
+          )}
         </section>
       );
     }

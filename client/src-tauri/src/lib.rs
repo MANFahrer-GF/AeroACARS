@@ -14332,11 +14332,16 @@ fn landing_list(app: AppHandle) -> Vec<LandingRecord> {
 
 /// Eine Landung vollständig, für die Detailansicht und den PDF-Bericht.
 /// v0.7.13 entfernt, 28.10.2026 zurück: seit `landing_list` schlank ist.
+/// `Ok(None)` = gibt es nicht (mehr), `Err` = Lesefehler (Codex-QS: die
+/// Oberfläche bietet nur beim Fehler „Erneut versuchen“ an).
 #[tauri::command(async)]
-fn landing_get(app: AppHandle, pirep_id: String) -> Option<LandingRecord> {
-    open_landing_store(&app)
-        .and_then(|s| s.get(&pirep_id).ok().flatten())
-        .map(normalize_derived_scores)
+fn landing_get(app: AppHandle, pirep_id: String) -> Result<Option<LandingRecord>, UiError> {
+    let store = open_landing_store(&app)
+        .ok_or_else(|| UiError::new("landing_get", "Landungsspeicher nicht erreichbar"))?;
+    let rec = store
+        .get(&pirep_id)
+        .map_err(|e| UiError::new("landing_get", e.to_string()))?;
+    Ok(rec.map(normalize_derived_scores))
 }
 
 /// Lässt die Felder weg, die nur die Detailansicht liest (Spuren, Sprit je
@@ -66360,8 +66365,10 @@ mod canonical_landing_rate_fpm_tests {
 
     #[test]
     fn schlanke_liste_laesst_genau_die_schweren_felder_weg() {
-        // Feldbefund 28.10.2026: landing_list ist schlank. Echte, voll
-        // befüllte Landung (dieselbe Datei nutzen die Frontend-Tests): genau
+        // Feldbefund 28.10.2026: landing_list ist schlank. Echte, vom
+        // LandingStore geschriebene Landung (große Listen auf drei Einträge
+        // gekürzt; touchdown_profile/approach_samples speichert der Client
+        // nicht, dort je ein vollständiger Punkt ergänzt): genau
         // diese zehn Felder werden leer, JEDES andere bleibt unverändert —
         // sonst zeigt die Übersicht still einen falschen Wert (Codex-QS).
         const SCHWER: [&str; 10] = [
@@ -66369,7 +66376,7 @@ mod canonical_landing_rate_fpm_tests {
             "sprit", "runway_match", "sampler_diagnose", "gate_window", "anflug_gleitpfad",
         ];
         let r: LandingRecord =
-            serde_json::from_str(include_str!("../../src/lib/landungsFaelle.thy39.json")).expect("Landung");
+            serde_json::from_str(include_str!("../tests/fixtures/landung_voll_schlank_test.json")).expect("Landung");
         let vorher = serde_json::to_value(&r).unwrap();
         let nachher = serde_json::to_value(ohne_schwere_felder(r)).unwrap();
         let (vorher, nachher) = (vorher.as_object().unwrap(), nachher.as_object().unwrap());

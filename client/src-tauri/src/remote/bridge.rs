@@ -215,7 +215,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 pirep_id: String,
             }
             match parse_args::<A>(body) {
-                Ok(a) => ok_json(crate::landing_get(app.clone(), a.pirep_id)),
+                Ok(a) => from_uierr(crate::landing_get(app.clone(), a.pirep_id)),
                 Err(e) => Err(e),
             }
         }
