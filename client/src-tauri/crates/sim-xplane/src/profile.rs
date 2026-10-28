@@ -1230,13 +1230,13 @@ mod tests {
         for n in ["DeltaWing ATR 72-600", "Felis 747-200", "FlyJSim Q4XP"] {
             assert_eq!(wahl(None, Some(idx(n))), Some(idx(n)), "{n}");
         }
-        // Die Proben gehoeren keinem anderen Profil.
+        // Jede Probe gehoert nur einem Profil (ausser FF757/767, die sich
+        // ueber den Titel trennen).
         for (i, p) in PROFILES.iter().enumerate() {
-            for (j, q) in PROFILES.iter().enumerate() {
-                if i < j && p.probe_dataref != q.probe_dataref {
-                    continue;
+            for q in &PROFILES[i + 1..] {
+                if p.probe_dataref == q.probe_dataref {
+                    assert!(p.titel_und_probe && q.titel_und_probe, "{} / {}", p.name, q.name);
                 }
-                assert!(i == j || p.name.starts_with("FlightFactor"), "{} / {}", p.name, q.name);
             }
         }
         // Bestehende Titel bleiben bei ihren Profilen.
