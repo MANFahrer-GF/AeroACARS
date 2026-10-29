@@ -206,7 +206,12 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
-    let antwort = client.get(format!("{basis}/api/bundle/current")).send().await.map_err(|e| e.to_string())?;
+    // Mit Pilot-Token: Vorab-Piloten bekommen den neueren Vorabstand (P-3.13).
+    let mut anfrage = client.get(format!("{basis}/api/bundle/current"));
+    if let Some(token) = crate::live_zugang::pilot_token() {
+        anfrage = anfrage.bearer_auth(token);
+    }
+    let antwort = anfrage.send().await.map_err(|e| e.to_string())?;
     if antwort.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }

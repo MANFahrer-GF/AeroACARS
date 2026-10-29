@@ -2,8 +2,9 @@
 # (Pflichtenheft P-3.10 bis P-3.14, P-9.41 bis P-9.43).
 #
 # Ablauf: Änderung unter bundle/ -> bauen + testen -> signieren (nur mit
-# Secret BUNDLE_MINISIGN_KEY) -> Freigabe durch Thomas im Environment
-# bundle-produktion -> auf live hochladen (nur mit Secret LIVE_BUNDLE_SSH_KEY).
+# Secret BUNDLE_MINISIGN_KEY) -> auf live als Vorabstand ablegen (nur
+# Vorab-Piloten, P-3.13; Secret LIVE_BUNDLE_SSH_KEY) -> Freigabe durch Thomas
+# im Environment bundle-produktion -> Zeiger fuer alle umschalten.
 # Ausnahme P-9.43: Laeufe vom OurAirports-Wochenlauf, die sich vom
 # veroeffentlichten Stand nur in ourairports/ unterscheiden, gehen ueber das
 # Environment bundle-ourairports (ohne Pflicht-Pruefer).
@@ -110,12 +111,11 @@ jobs:
           path: paket/
           retention-days: 30
 
-  veroeffentlichen:
-    name: Auf live veröffentlichen (Freigabe Thomas)
+  vorab:
+    name: Als Vorabstand auf live ablegen (nur Vorab-Piloten, P-3.13)
     needs: bauen
     if: needs.bauen.outputs.signiert == 'ja' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: ${{ needs.bauen.outputs.umgebung }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,7 +124,7 @@ jobs:
         with:
           name: laufzeit-paket-g${{ needs.bauen.outputs.generation }}
           path: paket
-      - name: Hochladen
+      - name: Hochladen und als Vorabstand ablegen
         env:
           SSH_KEY: ${{ secrets.LIVE_BUNDLE_SSH_KEY }}
           G: ${{ needs.bauen.outputs.generation }}
@@ -134,12 +134,27 @@ jobs:
           printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/id"
           SSH="ssh -i $RUNNER_TEMP/id -p 2222 -o StrictHostKeyChecking=accept-new"
           ZIEL=bundle@live.kant.ovh
-          # Erst Dateien in einen Zwischenordner; Generationspruefung, Anlegen von
-          # gen/<G> und Zeigerwechsel danach in EINEM Schritt unter flock auf
-          # live (scripts/bundle/veroeffentlichen.sh). --checksum ersetzt auch
-          # eine frueher halb hochgeladene Datei gleichen Namens.
+          # Erst Dateien, dann Manifest in einen Zwischenordner, dann unter
+          # flock ablegen (scripts/bundle/veroeffentlichen.sh). --checksum
+          # ersetzt auch eine frueher halb hochgeladene Datei gleichen Namens.
           rsync -a --checksum -e "$SSH" paket/blobs/ "$ZIEL:blobs/"
           rsync -a -e "$SSH" paket/manifest.json paket/manifest.json.minisig "$ZIEL:tmp-gen-$G/"
           rsync -a -e "$SSH" scripts/bundle/veroeffentlichen.sh "$ZIEL:"
-          $SSH "$ZIEL" sh veroeffentlichen.sh "$G"
+          $SSH "$ZIEL" sh veroeffentlichen.sh vorab "$G"
+          rm -f "$RUNNER_TEMP/id"
+
+  freigeben:
+    name: Für alle freigeben (Freigabe Thomas bzw. P-9.43)
+    needs: [bauen, vorab]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.bauen.outputs.umgebung }}
+    steps:
+      - name: Zeiger umschalten
+        env:
+          SSH_KEY: ${{ secrets.LIVE_BUNDLE_SSH_KEY }}
+          G: ${{ needs.bauen.outputs.generation }}
+        run: |
+          umask 077
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/id"
+          ssh -i "$RUNNER_TEMP/id" -p 2222 -o StrictHostKeyChecking=accept-new bundle@live.kant.ovh sh veroeffentlichen.sh freigeben "$G"
           rm -f "$RUNNER_TEMP/id"
