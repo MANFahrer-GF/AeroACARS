@@ -13,7 +13,7 @@
 
     #[test]
     fn bordbuch_beeinflusst_weder_pirep_noch_landung() {
-        let src = include_str!("../lib.rs");
+        let src = crate::quelle_gesamt::PRODUKTION;
         for kopf in [
             "\nfn build_pirep_payload(",
             "\nfn finalize_filed_pirep(",

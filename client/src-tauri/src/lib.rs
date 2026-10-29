@@ -566,6 +566,10 @@ fn moving_forward(velocity_body_z_fps: Option<f32>) -> bool {
 }
 
 #[cfg(test)]
+#[path = "tests_lib/quelle_gesamt.rs"]
+mod quelle_gesamt;
+
+#[cfg(test)]
 #[path = "tests_lib/v0_15_13_pushback_direction_tests.rs"]
 mod v0_15_13_pushback_direction_tests;
 

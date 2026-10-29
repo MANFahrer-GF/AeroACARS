@@ -24,7 +24,7 @@
     /// Quelltext — direkte Literale sind hier sicher (kein Selbst-Treffer).
     #[test]
     fn phpvms_load_session_haelt_lifecycle_lock_vor_get_profile() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn phpvms_load_session(");
         let lock_pos =
             koerper.find("FlightSetupGuard::try_acquire(&state.flight_setup_in_progress)");
@@ -50,7 +50,7 @@
     /// jetzt ueber `setze_session_atomar` schreiben.
     #[test]
     fn login_und_load_session_schreiben_ueber_setze_session_atomar() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let login_koerper = funktionskoerper(SRC, "async fn phpvms_login(");
         assert!(
             login_koerper
@@ -75,7 +75,7 @@
     /// haben. Nur `bid_id` beweist Eigentum.
     #[test]
     fn bid_reklamierung_beweist_eigentum_nur_ueber_bid_id() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let nadel = format!(
             "{}{}",
             "async fn drain_pending_bid_cleanup", "(app: &AppHandle"
@@ -101,7 +101,7 @@
     /// das nicht gestoppt.
     #[test]
     fn mqtt_provisionierung_prueft_epoche_vor_der_installation() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
         // Seit Runde 13: `epoche_bei_start` (Sitzungs-Epoche) statt
         // API-Key — siehe `mqtt_installations_pruefung_liegt_innerhalb_
@@ -133,7 +133,7 @@
     /// der Task tatsaechlich laeuft.
     #[test]
     fn flight_log_upload_prueft_identitaet_vor_dem_keyring_lesen() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         // Am Zeilenanfang verankert statt an der einzeiligen Signatur: Seit
         // dem Parameter `nur_diagnose` (23.09.2026) steht sie mehrzeilig, und
         // der Waechter fand sie nicht mehr. Der eigene Suchtext hier ist
@@ -163,7 +163,7 @@
     /// hinzugekommenen Eintrag wieder verloren.
     #[test]
     fn pending_bid_cleanup_datei_ist_gegen_verlorene_updates_gesperrt() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let enqueue_nadel = format!("{}{}", "fn enqueue_pending_bid_cleanup", "(\n    app");
         let enqueue_koerper = funktionskoerper(SRC, &enqueue_nadel);
         assert!(
@@ -197,7 +197,7 @@
     /// des vorigen Piloten angeboten bekommen.
     #[test]
     fn logout_leert_simbrief_settings() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn phpvms_logout(");
         assert!(
             koerper.contains("simbrief_settings")

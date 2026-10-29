@@ -16,7 +16,7 @@
     //! `display_and_filing_paths_never_read_raw_vs_fields`: the rule stood in a
     //! comment before and a comment enforces nothing.
 
-    const SRC: &str = include_str!("../lib.rs");
+    const SRC: &str = crate::quelle_gesamt::PRODUKTION;
 
     /// Body of one filing path, comment lines dropped — comments may well name
     /// the forbidden shapes, they are what explains them.

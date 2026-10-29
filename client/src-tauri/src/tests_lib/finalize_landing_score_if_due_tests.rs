@@ -339,7 +339,7 @@
     /// zu `beide_episoden_enden_raeumen_die_landung_ab`).
     #[test]
     fn early_climbout_dump_never_signals_score_data_ready() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let start = SRC
             .find("s.bounce_count = scored_bounce;")
             .unwrap_or_else(|| {

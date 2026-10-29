@@ -7,7 +7,7 @@
     /// Protokollaufruf darf an `aufgeschoben` vorbei direkt schreiben.
     #[test]
     fn die_schalter_auswertung_schreibt_nach_dem_freigeben() {
-        let src = include_str!("../lib.rs");
+        let src = crate::quelle_gesamt::PRODUKTION;
         let start = src
             .find("\nfn detect_telemetry_changes(")
             .expect("Funktion nicht gefunden — Test anpassen, nicht löschen");
@@ -54,7 +54,7 @@
     /// dann schreiben. Der Feldbeleg ist die verschwundene Wächter-Meldung.
     #[test]
     fn die_landungs_historie_wird_ohne_flugdaten_sperre_geschrieben() {
-        let src = include_str!("../lib.rs");
+        let src = crate::quelle_gesamt::PRODUKTION;
         let kopf = "\nfn record_landing_for_filed_flight(";
         let start = src.find(kopf).expect("Funktion nicht gefunden — Test anpassen, nicht löschen");
         let rumpf = &src[start..];

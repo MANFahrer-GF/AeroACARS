@@ -178,7 +178,7 @@
     /// Wiedereinfuehren.
     #[test]
     fn flugende_leert_die_outbox_nicht_mehr() {
-        let quelle: String = include_str!("../lib.rs")
+        let quelle: String = crate::quelle_gesamt::PRODUKTION
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();

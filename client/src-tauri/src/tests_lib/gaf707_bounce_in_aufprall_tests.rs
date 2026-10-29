@@ -200,7 +200,7 @@
     /// Quelltext-Waechter direkt auf die Aufrufreihenfolge im Sampler.
     #[test]
     fn peak_g_merge_laeuft_im_sampler_vor_dem_klassifikator_nicht_danach() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let start = SRC
             .find("stats.landing_analysis = Some(analysis.clone());")
             .expect("Ankerstelle im Sampler nicht mehr gefunden — Test anpassen, nicht loeschen");

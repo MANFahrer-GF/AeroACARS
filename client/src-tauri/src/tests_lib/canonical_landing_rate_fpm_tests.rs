@@ -1030,7 +1030,7 @@
     /// nur das LESEN in den unten gelisteten Ausgabe-Funktionen.
     #[test]
     fn display_and_filing_paths_never_read_raw_vs_fields() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
 
         /// Body einer Funktion, ohne Kommentarzeilen. Kommentare DUERFEN die
         /// Rohfelder benennen — sie erklaeren ja gerade, warum man sie nicht

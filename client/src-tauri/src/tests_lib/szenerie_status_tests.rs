@@ -91,7 +91,7 @@
     /// auf dem Mac nicht uebersetzt. Eine Gegenprobe, die dort ansetzt,
     /// bleibt gruen und sagt nichts. Diese Waechter lesen deshalb den
     /// Text.
-    const QUELLE: &str = include_str!("../lib.rs");
+    const QUELLE: &str = crate::quelle_gesamt::PRODUKTION;
 
     fn ohne_leerraum(s: &str) -> String {
         s.split_whitespace().collect()
@@ -923,7 +923,7 @@
     }
 
     fn ohne_leerraum_lib() -> String {
-        include_str!("../lib.rs")
+        crate::quelle_gesamt::PRODUKTION
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect()
@@ -952,7 +952,7 @@
         // die PIREP-Stelle `&stats`. Ein Waechter, der auf `&` besteht,
         // haette nach dem Zusammenlegen genau eine Stelle gefunden und
         // waere rot geworden, ohne dass etwas fehlt.
-        let q: String = include_str!("../lib.rs")
+        let q: String = crate::quelle_gesamt::PRODUKTION
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();

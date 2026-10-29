@@ -21,7 +21,7 @@
     /// als "schon da, nichts zu tun" durchgehen lassen.
     #[test]
     fn mqtt_idempotenz_guard_prueft_eigentuemer_nicht_nur_existenz() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
         assert!(
             koerper.contains("mqtt_owner_epoch"),
@@ -37,7 +37,7 @@
     /// einem Re-Login blind uebernommen worden.
     #[test]
     fn mqtt_cache_wird_gegen_aktuellen_piloten_gefiltert() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
         let filter_pos = koerper.find("cached.filter(");
         // Ohne die abschliessende Klammer suchen — ein einzelnes,
@@ -65,7 +65,7 @@
     /// laufen, nicht danach.
     #[test]
     fn logout_raeumt_vor_den_fehlschlagfaehigen_schritten_auf() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn phpvms_logout(");
         let mqtt_stop_pos = koerper.find("stoppe_mqtt_publisher(&state).await;");
         let simbrief_pos = koerper.find("SimBriefSettings::default();");
@@ -95,7 +95,7 @@
     /// werden, nicht mehr getrennt.
     #[test]
     fn try_resume_flight_liest_client_und_identitaet_gemeinsam() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let nadel = format!("{}{}", "async fn try_resume_fl", "ight(app: &AppHandle");
         let signatur_start = SRC
             .find(&nadel)
@@ -132,7 +132,7 @@
     /// benachbarte Status-Gate-Zweig, der das schon tut.
     #[test]
     fn load_session_stoppt_mqtt_auch_im_auth_fehler_zweig() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn phpvms_load_session(");
         // Seit Runde 13 DREI Stellen: Status-Gate, Auth-Fehler (beide
         // Runde 10/11) UND der neue synchrone Stopp direkt nach

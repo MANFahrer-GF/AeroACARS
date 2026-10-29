@@ -28,7 +28,7 @@
     /// unabhaengig davon wer ihn eingereiht hatte.
     #[test]
     fn pending_bid_cleanup_prueft_eigentuemer_vor_delete_bid() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let nadel = format!(
             "{}{}",
             "async fn drain_pending_bid_cleanup", "(app: &AppHandle"
@@ -71,7 +71,7 @@
     /// Cockpit-Tabelle blendet sich dann ganz aus (Thomas, 20.09.2026).
     #[test]
     fn ein_flug_ohne_sprit_planwerte_laedt_den_ofp_nach() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         // Der Name wird zusammengesetzt, damit dieser Test nicht selbst zum
         // Treffer wird: `vor_der_server_auskunft_wird_nichts_geloescht`
         // sucht dieselbe Zeichenkette in der Quelldatei und fand sonst
@@ -105,7 +105,7 @@
     /// und liess sich nicht mehr umdrehen (AAL 1331, 20.09.2026).
     #[test]
     fn die_landung_reist_in_der_warteschlange_mit_und_geht_zuerst_raus() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
         let koerper = funktionskoerper(SRC, &nadel);
         let landung = koerper
@@ -134,7 +134,7 @@
 
     #[test]
     fn queue_worker_prueft_identitaet_erneut_vor_mqtt_und_log_upload() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
         let koerper = funktionskoerper(SRC, &nadel);
         let pruefung_pos = koerper.find("identitaet_noch_aktuell");
@@ -162,7 +162,7 @@
     /// zum Zug kam.
     #[test]
     fn try_resume_flight_haelt_lifecycle_lock_vor_den_server_roundtrips() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         // Der Trennpunkt liegt bewusst MITTEN im Funktionsnamen (nicht an
         // der Wortgrenze wie sonst in dieser Datei ueblich): ein anderer,
         // bereits bestehender Waechter weiter unten sucht (nach Entfernen

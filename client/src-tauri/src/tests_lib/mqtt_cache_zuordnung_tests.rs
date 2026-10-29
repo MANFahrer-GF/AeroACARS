@@ -21,7 +21,7 @@
     /// gespeicherte Pilotennummer, nicht mehr ueber die Recorder-ID.
     #[test]
     fn beide_vergleiche_nutzen_die_pilotennummer() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         // Nadeln zusammengesetzt — als ganzes Literal staenden sie HIER vor
         // der echten `pirep_pruefstatus` und der Waechter faende sich selbst.
         for kopf in [

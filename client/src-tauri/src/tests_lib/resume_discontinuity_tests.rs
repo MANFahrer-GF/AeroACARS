@@ -448,7 +448,7 @@
         assert!(!fortsetzen_laeuft_schon(&flight));
 
         // Und der Befehl fragt das, bevor er ein Gate startet.
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let start = SRC
             .find(concat!("\nasync fn flight_resume_", "confirm("))
             .expect("flight_resume_confirm nicht gefunden");
@@ -483,7 +483,7 @@
         assert!(!flight.stats.lock().unwrap().resume_gate_laeuft);
 
         // Und das Gate setzt den Guard, bevor es irgendetwas anderes tut.
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let start = SRC
             .find(concat!("\nfn spawn_resume_", "sim_gate("))
             .expect("Resume-Gate nicht gefunden — Test anpassen, nicht loeschen");

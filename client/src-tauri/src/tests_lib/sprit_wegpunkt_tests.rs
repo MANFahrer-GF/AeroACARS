@@ -445,7 +445,7 @@
     fn der_takt_ruft_die_erfassung_auf() {
         // Verdrahtung, nicht die Funktion: Ohne den Aufruf im Takt bleibt
         // die Tabelle leer, und alle Tests oben wären grün.
-        let quelle = include_str!("../lib.rs");
+        let quelle = crate::quelle_gesamt::PRODUKTION;
         let takt = quelle
             .find("    sprit_tick(\n        &mut stats,")
             .expect("Aufruf von sprit_tick im Takt nicht gefunden");

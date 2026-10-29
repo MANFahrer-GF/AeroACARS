@@ -580,7 +580,7 @@
 
         // Und beide Einreich-Wege — Knopf und Formular — rufen es, BEVOR der
         // PIREP gebaut wird (QS Runde 3, F2: das Formular fehlte).
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         for (anfang, schluss) in [
             ("async fn flight_end(", "async fn flight_end_manual("),
             (

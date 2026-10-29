@@ -20,7 +20,7 @@
     /// committed war.
     #[test]
     fn mqtt_wird_erst_nach_dem_session_commit_gespawnt() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn phpvms_login(");
         let commit_pos =
             koerper.find("setze_session_atomar(&state, client.clone(), profile.pilot_id)");
@@ -47,7 +47,7 @@
     /// funken kann.
     #[test]
     fn mqtt_installations_pruefung_liegt_innerhalb_der_sperre() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn init_mqtt_publisher_via_provisioning(");
         let lock_pos = koerper.find("let mut mqtt_guard = state.mqtt.lock().await;");
         // rfind, nicht find: es gibt zwei Identitaets-Pruefungen in dieser
@@ -76,7 +76,7 @@
     /// `get_profile`-Roundtrips konnte sich ein anderer Pilot anmelden.
     #[test]
     fn refresh_profile_prueft_identitaet_nach_dem_roundtrip() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn phpvms_refresh_profile(");
         let erfassung_pos = koerper.find("aktuelle_session_atomar(&state)");
         let roundtrip_pos = koerper.find("client.get_profile().await");

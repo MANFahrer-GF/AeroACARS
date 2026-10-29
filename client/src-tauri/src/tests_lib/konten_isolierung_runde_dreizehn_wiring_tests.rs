@@ -19,7 +19,7 @@
     /// kein verlaessliches Signal mehr fuer "diese Sitzung ist neu".
     #[test]
     fn setze_session_atomar_erhoeht_die_epoche() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "fn setze_session_atomar(");
         assert!(
             koerper.contains("epoch_guard += 1"),
@@ -34,7 +34,7 @@
     /// Logout, nicht mehr ein Vergleich von API-Key oder Piloten-ID.
     #[test]
     fn leere_session_atomar_erhoeht_die_epoche() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "fn leere_session_atomar(");
         assert!(
             koerper.contains("epoch_guard += 1"),
@@ -57,7 +57,7 @@
     /// muss SYNCHRON passieren, nicht erst im gespawnten Task.
     #[test]
     fn login_stoppt_fremden_mqtt_handle_synchron_vor_dem_spawn() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn phpvms_login(");
         let stopp_pos = koerper.find("stoppe_mqtt_publisher(&state).await");
         // Ohne die abschliessende Klammer suchen — ein einzelnes,

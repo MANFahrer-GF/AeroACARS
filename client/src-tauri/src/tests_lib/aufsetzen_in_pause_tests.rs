@@ -119,7 +119,7 @@
     /// Plugin- und Flankenpfad nicht mehr nur die Phase fragen.
     #[test]
     fn sampler_benutzt_die_pausen_sperren() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let ohne_kommentare: String = SRC
             .lines()
             .filter(|l| !l.trim_start().starts_with("//"))

@@ -24,7 +24,7 @@
 
     #[test]
     fn logout_prueft_aktiven_flug_vor_dem_leeren_von_state_client() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper_ohne_leerraum(SRC, "async fn phpvms_logout(");
         let pruefung_pos = koerper.find(&ohne_leerraum("state.active_flight.lock()"));
         // Seit Runde 13: `leere_session_atomar` statt der direkten
@@ -48,7 +48,7 @@
 
     #[test]
     fn login_prueft_den_flug_eigentuemer_vor_dem_ueberschreiben_von_state_client() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper_ohne_leerraum(SRC, "async fn phpvms_login(");
         let pruefung_pos = koerper.find(&ohne_leerraum("active_flight_owner_identity"));
         let ueberschreiben_pos = koerper.find(&ohne_leerraum(
@@ -78,7 +78,7 @@
     /// naechsten Piloten ausgesperrt, obwohl gar kein Flug mehr aktiv ist.
     #[test]
     fn login_prueft_zusaetzlich_ob_ueberhaupt_ein_flug_aktiv_ist() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper_ohne_leerraum(SRC, "async fn phpvms_login(");
         assert!(
             koerper.contains(&ohne_leerraum("state.active_flight.lock()")),

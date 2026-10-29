@@ -33,7 +33,7 @@
     /// Epoche gepaart und den spaeteren Vergleich damit wertlos gemacht.
     #[test]
     fn get_bids_liest_client_und_epoche_gemeinsam() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn phpvms_get_bids(");
         assert!(
             koerper.contains("aktuelle_session_atomar(&state)"),
@@ -55,7 +55,7 @@
     /// Funktion den Restore bereits abgelehnt hat.
     #[test]
     fn load_session_erhoeht_epoche_in_beiden_ablehnungs_zweigen() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let koerper = funktionskoerper(SRC, "async fn phpvms_load_session(");
         assert_eq!(
             koerper.matches("leere_session_atomar(&state)").count(),

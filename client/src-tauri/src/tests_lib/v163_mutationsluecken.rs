@@ -41,7 +41,7 @@
         // Der Payload wird nur mit vorhandener Analyse gebaut; hier reicht
         // die Gegenprobe ueber den Quelltext, weil die Bau-Stelle tief im
         // Streamer sitzt.
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let ohne_kommentare: String = SRC
             .lines()
             .filter(|l| !l.trim_start().starts_with("//"))
@@ -81,7 +81,7 @@
     /// geht es.
     #[test]
     fn beide_episoden_enden_raeumen_die_landung_ab() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let ohne_kommentare: String = SRC
             .lines()
             .filter(|l| !l.trim_start().starts_with("//"))

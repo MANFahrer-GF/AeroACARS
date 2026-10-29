@@ -2,7 +2,7 @@
 
     /// Die Quelle von `try_resume_flight` — für die Wächter, die belegen,
     /// dass die alte Dauer-Grenze wirklich weg ist und nicht nur umbenannt.
-    const LIB_QUELLE: &str = include_str!("../lib.rs");
+    const LIB_QUELLE: &str = crate::quelle_gesamt::PRODUKTION;
 
     fn beispiel_flug() -> PersistedFlight {
         PersistedFlight {
@@ -515,7 +515,7 @@
     ///
     /// Ein Wächter, der die Quelle nach einem Text durchsucht, findet
     /// **sich selbst**, wenn dieser Text als ein Stück im Quelltext steht —
-    /// `include_str!("../lib.rs")` enthält ja auch den Wächter. Ein solcher
+    /// `crate::quelle_gesamt::PRODUKTION` enthält ja auch den Wächter. Ein solcher
     /// Wächter ist immer grün und beweist nichts. Beide Male ist es erst in
     /// der Gegenprobe aufgefallen: Ich habe die bewachte Zeile entfernt, und
     /// der Test blieb grün.

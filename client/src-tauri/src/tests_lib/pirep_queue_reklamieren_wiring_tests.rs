@@ -1,6 +1,6 @@
     #[test]
     fn worker_reklamiert_unbekannte_eintraege_serverseitig_statt_sie_endgueltig_aufzugeben() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         // Nadel aus zwei Teilen zusammengesetzt, NICHT als ein Literal: der
         // Test liegt VOR der echten Funktion im Quelltext, und
         // `include_str!` liest die GESAMTE Datei einschliesslich dieser
@@ -51,7 +51,7 @@
     /// jetzt diesen Aufruf statt der frueheren Einzel-Feld-Lesung.
     #[test]
     fn client_und_piloten_id_werden_vor_dem_ersten_await_gemeinsam_erfasst() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let nadel = format!("{}{}", "fn spawn_pirep_queue_worker", "(app: AppHandle)");
         let start = SRC
             .find(&nadel)

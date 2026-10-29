@@ -92,7 +92,7 @@
     /// Test seinen eigenen Suchtext (CI 23.09.2026).
     #[test]
     fn auto_file_setzt_bei_unmoeglichem_sprung_aus() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let start = SRC
             .find(concat!("\nfn auto_file_", "versuchen("))
             .expect("Auto-File-Funktion nicht mehr gefunden — Test anpassen, nicht loeschen");
@@ -154,7 +154,7 @@
     /// nennt nur den letzten (Cloud-QS 23.09.2026, dritte Runde).
     #[test]
     fn jede_erkennung_haengt_den_sprung_an_die_liste() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let nadel = concat!("stats.resume_discontinuity = ", "Some(");
         let stellen: Vec<usize> = SRC.match_indices(nadel).map(|(i, _)| i).collect();
         // Keine feste Zahl: Es kommen Erkennungsstellen dazu (23.09.2026
@@ -183,7 +183,7 @@
     /// (Cloud-QS 23.09.2026).
     #[test]
     fn die_echten_aufrufe_geben_ziel_und_luecke_mit() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         // v3 (Etappe 0): Die Tests (`resume_discontinuity_tests`) liegen in
         // `tests_lib/`, `lib.rs` enthaelt nur noch Produktion — das
         // Ausblenden des Testmoduls entfaellt.
@@ -296,7 +296,7 @@
     /// (Cloud-QS 23.09.2026, dritte Runde).
     #[test]
     fn auto_file_kette_takt_und_merker() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         // Suchtexte getrennt — sonst findet der Test sich selbst.
         let takt = concat!("auto_file_versuchen(&app, &flight, ", "false)");
         let wechsel = concat!("auto_file_versuchen(&app, &flight, ", "true)");
@@ -343,7 +343,7 @@
     /// waehrend phpVMS „Descent" bekam (Feldbefund 23.09.2026).
     #[test]
     fn aktivitaetsprotokoll_schreibt_die_gueltige_phase() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         // Suchtexte getrennt — sonst findet der Test sich selbst.
         let alt = concat!("format!(\"Phase: {:?}\", ", "new_phase)");
         let neu = concat!("format!(\"Phase: {:?}\", ", "effective_phase_this_tick)");
@@ -381,7 +381,7 @@
     /// anderer Ort. Daraus wurden drei „Spruenge" und ein falscher Durchstart.
     #[test]
     fn resume_gate_wartet_auf_ruhigen_simulator() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let start = SRC
             .find(concat!("\nfn spawn_resume_", "sim_gate("))
             .expect("Resume-Gate nicht gefunden — Test anpassen, nicht loeschen");
@@ -409,7 +409,7 @@
     /// unterbrochener Flug ohne Vermerk durchgeht (Cloud-QS 23.09.2026).
     #[test]
     fn manueller_weg_vermerkt_den_sprung_ebenfalls() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let start = SRC
             .find("\nasync fn flight_end_manual(")
             .expect("flight_end_manual nicht gefunden — Test anpassen, nicht loeschen");
@@ -498,7 +498,7 @@
     /// einen Flug an, den es in phpVMS nicht gibt.
     #[test]
     fn abbruch_laedt_nur_die_diagnose() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         // Am Zeilenanfang suchen: Dieser Test steht FRUEHER in der Datei als
         // die Funktion, und sein eigener Suchtext ist eingerueckt — ohne den
         // Zeilenumbruch fand der Waechter sich selbst (CI 23.09.2026).

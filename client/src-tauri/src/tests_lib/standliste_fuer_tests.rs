@@ -376,7 +376,7 @@
         // v3 (Etappe 0): Dieser Test liegt jetzt in `tests_lib/`, `lib.rs`
         // enthaelt ihn nicht mehr. Gezaehlt werden nur Code-Zeilen ohne
         // Kommentar — mindestens eine muss der echte Aufruf sein.
-        let quelle = include_str!("../lib.rs");
+        let quelle = crate::quelle_gesamt::PRODUKTION;
         let vorkommen: usize = quelle
             .lines()
             .filter(|z| !z.trim_start().starts_with("//"))
@@ -398,7 +398,7 @@
     #[test]
     fn ziel_ernte_ruft_die_geschuetzte_ausrichtung_auf() {
         // v3 (Etappe 0): nur Code-Zeilen ohne Kommentar zaehlen (siehe oben).
-        let quelle = include_str!("../lib.rs");
+        let quelle = crate::quelle_gesamt::PRODUKTION;
         let vorkommen: usize = quelle
             .lines()
             .filter(|z| !z.trim_start().starts_with("//"))
@@ -585,7 +585,7 @@
     #[test]
     fn resume_meldet_unklare_dep_gate_zustellung_sichtbar() {
         // v3 (Etappe 0): nur Code-Zeilen ohne Kommentar zaehlen (siehe oben).
-        let quelle = include_str!("../lib.rs");
+        let quelle = crate::quelle_gesamt::PRODUKTION;
         let vorkommen: usize = quelle
             .lines()
             .filter(|z| !z.trim_start().starts_with("//"))

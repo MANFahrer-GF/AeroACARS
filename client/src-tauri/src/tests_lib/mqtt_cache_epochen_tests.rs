@@ -50,7 +50,7 @@
     /// innerhalb des Helfers, nicht davor.
     #[test]
     fn provisionierung_schreibt_nur_ueber_den_epochen_helfer() {
-        const SRC: &str = include_str!("../lib.rs");
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let start = SRC
             .find("async fn init_mqtt_publisher_via_provisioning(")
             .expect("Funktion fehlt");

@@ -251,7 +251,7 @@
     /// Entfernen aus der Registrierung wuerde diesen Test brechen.
     #[test]
     fn command_is_registered_in_invoke_handler() {
-        let src = include_str!("../lib.rs");
+        let src = crate::quelle_gesamt::PRODUKTION;
         // Die Registrierungs-Zeile in der generate_handler!-Liste.
         assert!(
             src.contains("\n            flight_refresh_route_only,\n"),
@@ -265,7 +265,7 @@
     /// Laufzeit als kryptischer "command not found" auffallen.
     #[test]
     fn hoppie_connect_is_registered_in_invoke_handler() {
-        let src = include_str!("../lib.rs");
+        let src = crate::quelle_gesamt::PRODUKTION;
         assert!(
             src.contains("\n            hoppie::hoppie_connect,\n"),
             "hoppie::hoppie_connect muss in generate_handler! registriert sein"
@@ -326,7 +326,7 @@
         assert!(!allowed(FlightPhase::Approach));
         // Die Quelle haelt den Gate-Block weiterhin in
         // flight_refresh_simbrief.
-        let src = include_str!("../lib.rs");
+        let src = crate::quelle_gesamt::PRODUKTION;
         assert!(
             src.contains("OFP-Refresh ist nur bis vor Takeoff moeglich (Preflight bis TaxiOut)"),
             "flight_refresh_simbrief muss sein Phasen-Gate behalten"
