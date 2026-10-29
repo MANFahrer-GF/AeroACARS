@@ -17,6 +17,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -136,12 +137,46 @@ fn fenster_zeigen(app: &AppHandle) -> Result<(), UiError> {
         .center()
         .build()
         .map_err(|e| UiError::new("window_failed", format!("Fenster ließ sich nicht öffnen: {e}")))?;
-    w.on_window_event(|e| {
+    let app = app.clone();
+    w.on_window_event(move |e| {
         if let tauri::WindowEvent::Destroyed = e {
-            alle_ablehnen();
+            match nach_dem_schliessen(SELBST_GESCHLOSSEN.swap(false, Ordering::SeqCst), !offene().is_empty()) {
+                Nachher::Ablehnen => alle_ablehnen(),
+                Nachher::NeuOeffnen => {
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if fenster_zeigen(&app).is_err() {
+                            alle_ablehnen();
+                        }
+                    });
+                }
+                Nachher::Nichts => {}
+            }
         }
     });
     Ok(())
+}
+
+/// Die Huelle hat sich selbst geschlossen (nichts mehr offen) — nicht der Pilot.
+static SELBST_GESCHLOSSEN: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, PartialEq)]
+enum Nachher {
+    Ablehnen,
+    NeuOeffnen,
+    Nichts,
+}
+
+/// Fenster zu: hat der Pilot es geschlossen, gilt alles Offene als abgelehnt.
+/// Hat die Huelle sich selbst geschlossen und kam inzwischen ein neuer Auftrag
+/// (Codex 30.10.: Wettlauf zwischen Leer-Pruefung und Schliessen), geht sie
+/// wieder auf, statt einen Auftrag abzulehnen, den niemand gesehen hat.
+fn nach_dem_schliessen(selbst: bool, offen: bool) -> Nachher {
+    match (selbst, offen) {
+        (false, _) => Nachher::Ablehnen,
+        (true, true) => Nachher::NeuOeffnen,
+        (true, false) => Nachher::Nichts,
+    }
 }
 
 /// Systembefehl aus der Oberflaeche anstossen (P-8.10): Bestaetigung in der
@@ -177,6 +212,7 @@ pub(crate) fn shell_auftrag_beantworten(
     // Nichts mehr offen: Huelle schliessen.
     if offene().is_empty() {
         if let Some(w) = app.get_webview_window(FENSTER) {
+            SELBST_GESCHLOSSEN.store(true, Ordering::SeqCst);
             let _ = w.close();
         }
     }
@@ -258,7 +294,25 @@ pub(crate) fn einstellungen(app: &AppHandle) -> Einstellungen {
     pfad(app)
         .and_then(|p| std::fs::read(p).ok())
         .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+        .unwrap_or_else(|| erste_einstellungen(hat_flugprotokolle(app)))
+}
+
+/// Ohne Datei (erster Start mit Huelle): Die alten Schalter lagen im
+/// localStorage der Oberflaeche, den `aeroui://` nicht mehr sieht. Die
+/// Loeschautomatik ist darum nur auf einer frischen Installation an (wie 2.x);
+/// liegen schon Flugprotokolle da, bleibt sie aus, bis der Pilot sie
+/// bestaetigt — sonst loeschte das Update Protokolle eines Piloten, der sie
+/// abgeschaltet hatte (Codex 30.10.).
+fn erste_einstellungen(hat_flugprotokolle: bool) -> Einstellungen {
+    Einstellungen { flugprotokolle_auto_loeschen: !hat_flugprotokolle, ..Einstellungen::default() }
+}
+
+fn hat_flugprotokolle(app: &AppHandle) -> bool {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .and_then(|d| std::fs::read_dir(d.join("flight_logs")).ok())
+        .is_some_and(|mut e| e.next().is_some())
 }
 
 /// Aendert eine Einstellung und schreibt die Datei (aus dem jeweiligen
@@ -305,6 +359,11 @@ fn alte_flugprotokolle_loeschen(app: &AppHandle) {
 /// ohne dass die Oberflaeche etwas hochschieben muss.
 pub(crate) fn beim_start_anwenden(app: &AppHandle) {
     let e = einstellungen(app);
+    // Erster Start: die eben bestimmten Werte festhalten, damit sie nicht mit
+    // den ersten eigenen Protokollen kippen.
+    if pfad(app).is_some_and(|p| !p.exists()) {
+        einstellung_setzen(app, |x| *x = e.clone());
+    }
     crate::sentry_init::set_consent(e.fehlerberichte);
     app.state::<crate::AppState>()
         .minimize_to_tray_enabled
@@ -366,6 +425,21 @@ mod tests {
         let (_, rx) = ablegen("remote_server_stop", serde_json::json!({})).unwrap();
         alle_ablehnen();
         assert_eq!(rt.block_on(rx).unwrap().unwrap_err().code, "huelle_abgelehnt");
+    }
+
+    #[test]
+    fn huelle_geht_wieder_auf_statt_ungesehen_abzulehnen() {
+        assert_eq!(nach_dem_schliessen(false, true), Nachher::Ablehnen);
+        assert_eq!(nach_dem_schliessen(false, false), Nachher::Ablehnen);
+        assert_eq!(nach_dem_schliessen(true, true), Nachher::NeuOeffnen);
+        assert_eq!(nach_dem_schliessen(true, false), Nachher::Nichts);
+    }
+
+    #[test]
+    fn loeschautomatik_beim_ersten_start_nur_ohne_protokolle() {
+        assert!(erste_einstellungen(false).flugprotokolle_auto_loeschen);
+        assert!(!erste_einstellungen(true).flugprotokolle_auto_loeschen);
+        assert!(!erste_einstellungen(true).fehlerberichte);
     }
 
     #[test]

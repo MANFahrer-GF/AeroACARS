@@ -30,7 +30,7 @@ use std::sync::Arc;
 use axum::{
     body::Bytes,
     extract::{ws::WebSocketUpgrade, ConnectInfo, Path as AxumPath, Query, Request, State},
-    http::{header, HeaderMap, StatusCode, Uri},
+    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -120,7 +120,7 @@ pub fn resolve_spa_dir(app: &AppHandle) -> PathBuf {
 /// `devUrl` set and no embedded assets, where the resolver may not find
 /// the file), read from the on-disk `spa_dir` so `cargo run` still serves
 /// a UI after `npm run build`.
-async fn serve_spa(app: &AppHandle, spa_dir: &std::path::Path, uri: Uri) -> Response {
+async fn serve_spa(app: &AppHandle, spa_dir: &std::path::Path, uri: Uri, host: Option<&str>) -> Response {
     let path = uri.path();
 
     // 1) v3 (Etappe 5, P-8.20): derselbe Lader wie Haupt- und
@@ -134,7 +134,15 @@ async fn serve_spa(app: &AppHandle, spa_dir: &std::path::Path, uri: Uri) -> Resp
         }
     });
     if let Ok(d) = datei {
-        return (StatusCode::OK, [(header::CONTENT_TYPE, d.mime)], d.bytes).into_response();
+        let mut antwort = (StatusCode::OK, [(header::CONTENT_TYPE, d.mime.clone())], d.bytes).into_response();
+        // Dieselbe CSP wie im Hauptfenster (P-8.12: eine Paketoberflaeche darf
+        // den LAN-Schluessel im localStorage nicht an fremde Hosts schicken).
+        if d.mime.starts_with("text/html") {
+            if let Some(wert) = d.csp.and_then(|c| HeaderValue::from_str(&lan_csp(&c, host)).ok()) {
+                antwort.headers_mut().insert("content-security-policy", wert);
+            }
+        }
+        return antwort;
     }
 
     // 2) Dev / `cargo run` FS fallback. Resolve the on-disk file; for an
@@ -146,6 +154,17 @@ async fn serve_spa(app: &AppHandle, spa_dir: &std::path::Path, uri: Uri) -> Resp
 
     // 3) Nothing embedded and nothing on disk — genuine miss.
     (StatusCode::NOT_FOUND, "not found").into_response()
+}
+
+/// Die CSP der Oberflaeche fuer das Tablet: zusaetzlich der eigene WebSocket
+/// (`ws://<host>/ws`), weil aeltere Browser `'self'` nicht auf ws:// beziehen.
+/// Ein ungueltiger Host-Kopf fuegt nichts hinzu.
+fn lan_csp(csp: &str, host: Option<&str>) -> String {
+    let host = host.filter(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_alphanumeric() || b".-:[]".contains(&b)));
+    match host {
+        Some(h) => csp.replacen("connect-src ", &format!("connect-src ws://{h} "), 1),
+        None => csp.to_string(),
+    }
 }
 
 /// Read the requested file from the on-disk `spa_dir` (dev fallback only).
@@ -227,9 +246,10 @@ pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
     // captures `spa_dir` and reads the `AppHandle` from the shared
     // `RemoteContext` router state.
     let dev_spa_dir = spa_dir;
-    let spa_fallback = move |state: State<RemoteContext>, uri: Uri| {
+    let spa_fallback = move |state: State<RemoteContext>, headers: HeaderMap, uri: Uri| {
         let dev_spa_dir = dev_spa_dir.clone();
-        async move { serve_spa(&state.0.app, &dev_spa_dir, uri).await }
+        let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).map(str::to_string);
+        async move { serve_spa(&state.0.app, &dev_spa_dir, uri, host.as_deref()).await }
     };
 
     // Feldbefund 28.10.2026: Antworten der Befehle gepackt (gzip; der
@@ -626,6 +646,17 @@ mod tests {
         assert_eq!(k, None, "/ws ungepackt");
         let (k, _) = abruf(client.get(format!("http://{adresse}/index.html"))).await;
         assert_eq!(k, None, "SPA ungepackt");
+    }
+
+    #[test]
+    fn lan_csp_erlaubt_nur_den_eigenen_websocket() {
+        let csp = "default-src 'self'; connect-src 'self' https://live.kant.ovh; img-src 'self'";
+        assert_eq!(
+            lan_csp(csp, Some("192.168.1.5:8765")),
+            "default-src 'self'; connect-src ws://192.168.1.5:8765 'self' https://live.kant.ovh; img-src 'self'"
+        );
+        assert_eq!(lan_csp(csp, Some("evil.example; connect-src *")), csp);
+        assert_eq!(lan_csp(csp, None), csp);
     }
 
     #[test]
