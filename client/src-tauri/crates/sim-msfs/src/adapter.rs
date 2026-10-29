@@ -44,6 +44,10 @@ const INSPECTOR_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 3;
 /// Inspector — eine abgelehnte SimVar trifft nur diese Definition.
 const ZUSATZ_DEFINITION_ID: sys::SIMCONNECT_DATA_DEFINITION_ID = 4;
 const ZUSATZ_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 4;
+/// v3 Etappe 2: LVars des aktiven Paketprofils (`crate::paketprofil`), gleiche
+/// Mechanik wie die Zusatzwerte, eigene Definition.
+const PAKET_DEFINITION_ID: sys::SIMCONNECT_DATA_DEFINITION_ID = 5;
+const PAKET_REQUEST_ID: sys::SIMCONNECT_DATA_REQUEST_ID = 5;
 /// Definitionen #20..: je EINE SimVar aus `telemetry::OPTIONALE_FELDER`
 /// (z. B. EX1, das MSFS 2020 nicht kennt). Eine Ablehnung laesst nur
 /// diesen Wert None — die Hauptdefinition kann nicht verrutschen.
@@ -224,6 +228,9 @@ struct Shared {
     inspector: Mutex<InspectorState>,
     /// Zusatzwerte des Telemetrie-Monitors (Definition #4).
     zusatz: Mutex<crate::zusatz::ZusatzState>,
+    /// v3 Etappe 2: LVars und Laufzustand des aktiven Paketprofils.
+    paket_zusatz: Mutex<crate::zusatz::ZusatzState>,
+    paket_anbindung: Mutex<crate::paketprofil::PaketAnbindung>,
     /// PMDG SDK live data, available only when a PMDG aircraft is
     /// loaded AND the user has set `EnableDataBroadcast=1` in the
     /// aircraft's options ini. Variant tells which PMDG family
@@ -259,6 +266,8 @@ impl Shared {
             optionale: Mutex::new(telemetry::OptionaleWerte::default()),
             inspector: Mutex::new(InspectorState::default()),
             zusatz: Mutex::new(crate::zusatz::ZusatzState::default()),
+            paket_zusatz: Mutex::new(crate::zusatz::ZusatzState::default()),
+            paket_anbindung: Mutex::new(crate::paketprofil::PaketAnbindung::default()),
             pmdg: Mutex::new(PmdgSharedState::default()),
             eingaben: Mutex::new(crate::eingabe_events::EingabeState::default()),
             messung: Mutex::new(crate::vermessung::MessState::default()),
@@ -1442,6 +1451,7 @@ fn run_dispatch(
     }
     // Dasselbe fuer die Zusatzwerte des Telemetrie-Monitors.
     shared.zusatz.lock().neue_verbindung();
+    shared.paket_zusatz.lock().neue_verbindung();
     shared.messung.lock().neue_verbindung();
     // MSFS-2024-Input-Events: frischer Zustand je Verbindung. MSFS 2020 kennt
     // keine — dort wird gar nicht erst gefragt, alles bleibt wie bisher.
@@ -1460,6 +1470,8 @@ fn run_dispatch(
     // Bremse kam bei jedem Tick eine Warnung (Log-Flut im Health-Report).
     let mut zusatz_naechster_versuch = Instant::now();
     let mut zusatz_fehler_gemeldet = false;
+    let mut paket_naechster_versuch = Instant::now();
+    let mut paket_fehler_gemeldet = false;
     // Dieselbe Bremse fuer Inspector, Messung und PMDG: Die Schleife laeuft
     // seit dem ereignisgesteuerten Warten im Frametakt, ein dauerhaft
     // scheiternder Versuch kaeme sonst bei jedem Frame (Codex-Abnahme
@@ -1534,7 +1546,7 @@ fn run_dispatch(
         let zusatz_offen = shared.zusatz.lock().dirty;
         if zusatz_offen && Instant::now() >= zusatz_naechster_versuch {
             let felder = shared.zusatz.lock().zu_registrieren();
-            match conn.register_zusatz(&felder) {
+            match conn.register_zusatz(false, &felder) {
                 Ok(kennungen) => {
                     let reihenfolge = felder.iter().map(|(i, _)| *i).collect();
                     shared
@@ -1548,6 +1560,29 @@ fn run_dispatch(
                     if !zusatz_fehler_gemeldet {
                         zusatz_fehler_gemeldet = true;
                         tracing::warn!(error = %e, "Zusatzwerte fuer den Telemetrie-Monitor nicht angelegt");
+                    }
+                }
+            }
+        }
+
+        // v3 Etappe 2: LVars des Paketprofils anlegen, neu anlegen, abbauen.
+        let paket_offen = shared.paket_zusatz.lock().dirty;
+        if paket_offen && Instant::now() >= paket_naechster_versuch {
+            let felder = shared.paket_zusatz.lock().zu_registrieren();
+            match conn.register_zusatz(true, &felder) {
+                Ok(kennungen) => {
+                    let reihenfolge = felder.iter().map(|(i, _)| *i).collect();
+                    shared
+                        .paket_zusatz
+                        .lock()
+                        .registriert(reihenfolge, kennungen, Instant::now());
+                    paket_fehler_gemeldet = false;
+                }
+                Err(e) => {
+                    paket_naechster_versuch = Instant::now() + Duration::from_secs(5);
+                    if !paket_fehler_gemeldet {
+                        paket_fehler_gemeldet = true;
+                        tracing::warn!(error = %e, "LVars des Paketprofils nicht angelegt");
                     }
                 }
             }
@@ -2110,6 +2145,9 @@ fn run_dispatch(
                     if let Some(simvar) = shared.messung.lock().ausnahme(send_id) {
                         tracing::debug!(exception, %simvar, "Messvariable vom Simulator abgelehnt");
                     }
+                    if let Some(simvar) = shared.paket_zusatz.lock().ausnahme(send_id) {
+                        tracing::warn!(exception, %simvar, "LVar des Paketprofils vom Simulator abgelehnt");
+                    }
                     if let Some(simvar) = shared.zusatz.lock().ausnahme(send_id) {
                         tracing::info!(
                             exception,
@@ -2275,6 +2313,17 @@ fn run_dispatch(
                                     *s = ConnectionState::Connected;
                                 }
                             }
+                            // v3 Etappe 2: Paketprofil fuer ein neues Add-on —
+                            // nach der eingebauten Logik (`crate::paketprofil`).
+                            {
+                                let mut z = shared.paket_zusatz.lock();
+                                shared.paket_anbindung.lock().schritt(
+                                    sim_core::msfs_paketprofil::profile(),
+                                    &mut snap,
+                                    air_path.as_deref(),
+                                    &mut z,
+                                );
+                            }
                             *shared.snapshot.lock() = Some(snap);
                         }
                         TOUCHDOWN_REQUEST_ID => {
@@ -2295,6 +2344,9 @@ fn run_dispatch(
                         }
                         ZUSATZ_REQUEST_ID => {
                             shared.zusatz.lock().einlesen(&bytes, Instant::now());
+                        }
+                        PAKET_REQUEST_ID => {
+                            shared.paket_zusatz.lock().einlesen(&bytes, Instant::now());
                         }
                         other if crate::vermessung::MessState::ist_mess_anfrage(other) => {
                             shared
@@ -2715,6 +2767,8 @@ struct Connection {
     /// `UNRECOGNIZED_ID` ab — das Paar im Health-Report (69× bei fuenf
     /// Piloten, auch mit 1.9.14; Befund 30.09.2026).
     zusatz_angelegt: bool,
+    /// Wie `zusatz_angelegt`, fuer die Paketprofil-Definition #5.
+    paket_angelegt: bool,
     /// Dasselbe fuer die Inspektor-Definition (Debug-Modus).
     inspektor_angelegt: bool,
     /// Hoechste Zahl Messbloecke, die auf dieser Verbindung angefasst
@@ -2771,6 +2825,7 @@ impl Connection {
             inspector_send_ids: Vec::new(),
             abmelde_pakete: Default::default(),
             zusatz_angelegt: false,
+            paket_angelegt: false,
             inspektor_angelegt: false,
             mess_bloecke_beruehrt: 0,
             blockwaechter: telemetry::Blockwaechter::default(),
@@ -3197,17 +3252,25 @@ impl Connection {
     /// eine spaetere Ausnahme dem Feld zugeordnet werden kann.
     fn register_zusatz(
         &mut self,
+        paket: bool,
         felder: &[(usize, crate::zusatz::ZusatzFeld)],
     ) -> Result<Vec<(u32, usize)>, String> {
+        // v3: dieselbe Mechanik fuer die Paketprofil-LVars (#5).
+        let (definition, anfrage) = if paket {
+            (PAKET_DEFINITION_ID, PAKET_REQUEST_ID)
+        } else {
+            (ZUSATZ_DEFINITION_ID, ZUSATZ_REQUEST_ID)
+        };
         // Laufende Anfrage zuerst stoppen, sonst liefert SimConnect waehrend
         // des Umbaus Bloecke im alten Raster. Nur wenn es sie gibt — siehe
         // `zusatz_angelegt`.
-        if self.zusatz_angelegt {
+        let angelegt = if paket { self.paket_angelegt } else { self.zusatz_angelegt };
+        if angelegt {
             let hr = unsafe {
                 sys::SimConnect_RequestDataOnSimObject(
                     self.handle,
-                    ZUSATZ_REQUEST_ID,
-                    ZUSATZ_DEFINITION_ID,
+                    anfrage,
+                    definition,
                     sys::SIMCONNECT_OBJECT_ID_USER,
                     sys::SIMCONNECT_PERIOD_NEVER,
                     0,
@@ -3220,14 +3283,18 @@ impl Connection {
                 tracing::debug!("Zusatzanfrage stoppen: 0x{hr:08X}");
             }
             let hr =
-                unsafe { sys::SimConnect_ClearDataDefinition(self.handle, ZUSATZ_DEFINITION_ID) };
+                unsafe { sys::SimConnect_ClearDataDefinition(self.handle, definition) };
             // Eine Ablehnung ist KEIN Grund abzubrechen: ohne Abbruch lief die
             // Schleife 11 min lang im Takt von ~20/s auf denselben Fehler
             // (13240 Warnungen, 30.09.2026). `register_messung` macht es so.
             if hr != 0 {
                 tracing::debug!("Zusatzdefinition leeren: 0x{hr:08X}");
             }
-            self.zusatz_angelegt = false;
+            if paket {
+                self.paket_angelegt = false;
+            } else {
+                self.zusatz_angelegt = false;
+            }
         }
         let mut kennungen = Vec::with_capacity(felder.len());
         if felder.is_empty() {
@@ -3241,7 +3308,7 @@ impl Connection {
             let hr = unsafe {
                 sys::SimConnect_AddToDataDefinition(
                     self.handle,
-                    ZUSATZ_DEFINITION_ID,
+                    definition,
                     cname.as_ptr(),
                     cunit.as_ptr(),
                     sys::SIMCONNECT_DATATYPE_FLOAT64,
@@ -3258,7 +3325,11 @@ impl Connection {
             // Ab dem ersten Feld gibt es die Definition — auch wenn ein
             // spaeteres Feld scheitert, muss der naechste Versuch sie leeren,
             // sonst wuerde sie doppelt befuellt (QS 01.10.2026).
-            self.zusatz_angelegt = true;
+            if paket {
+                self.paket_angelegt = true;
+            } else {
+                self.zusatz_angelegt = true;
+            }
             let mut send_id: sys::DWORD = 0;
             let hr = unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut send_id) };
             if hr == 0 {
@@ -3268,8 +3339,8 @@ impl Connection {
         let hr = unsafe {
             sys::SimConnect_RequestDataOnSimObject(
                 self.handle,
-                ZUSATZ_REQUEST_ID,
-                ZUSATZ_DEFINITION_ID,
+                anfrage,
+                definition,
                 sys::SIMCONNECT_OBJECT_ID_USER,
                 sys::SIMCONNECT_PERIOD_VISUAL_FRAME,
                 0,

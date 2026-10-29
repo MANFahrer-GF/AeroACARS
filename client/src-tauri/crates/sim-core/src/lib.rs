@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod lampen;
+pub mod msfs_paketprofil;
 pub mod pause;
 pub mod process_probe;
 /// v0.20 (Process-Integrity): cross-platform "is the sim's OS process

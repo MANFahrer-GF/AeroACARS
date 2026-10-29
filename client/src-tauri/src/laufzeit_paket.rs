@@ -23,7 +23,7 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -36,6 +36,7 @@ const HOEHENGRUPPEN: &str = "tabellen/hoehengruppen.json";
 const KLAPPEN: &str = "tabellen/klappen.json";
 const KABINE: &str = "tabellen/kabine.json";
 const ENDPUNKTE: &str = "endpunkte.json";
+const MSFS_PROFILE: &str = "profile/msfs.json";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
@@ -72,6 +73,8 @@ pub(crate) struct AktiverStand {
     /// Adressen der Gegenstellen, nur innerhalb der festen Hostliste von
     /// `paket-endpunkte` (P-3.60).
     pub endpunkte: paket_endpunkte::Endpunkte,
+    /// MSFS-Paketprofile fuer neue Add-ons (Etappe 2, P-3.52).
+    pub msfs_profile: sim_core::msfs_paketprofil::Datei,
     /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
     pub ui: Vec<(&'static str, &'static str)>,
 }
@@ -106,6 +109,7 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         klappen: klappen_lesen(text(KLAPPEN)?)?,
         kabine: cabin_announcements::lesen(text(KABINE)?)?,
         endpunkte: paket_endpunkte::lesen(text(ENDPUNKTE)?)?,
+        msfs_profile: sim_core::msfs_paketprofil::lesen(text(MSFS_PROFILE)?)?,
         vref: landing_scoring::vref::lesen(text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -126,6 +130,7 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         klappen: klappen_lesen(eingebauter_text(KLAPPEN)?)?,
         kabine: cabin_announcements::lesen(eingebauter_text(KABINE)?)?,
         endpunkte: paket_endpunkte::lesen(eingebauter_text(ENDPUNKTE)?)?,
+        msfs_profile: sim_core::msfs_paketprofil::lesen(eingebauter_text(MSFS_PROFILE)?)?,
         vref: landing_scoring::vref::lesen(eingebauter_text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -289,6 +294,7 @@ fn starten_einmal(app_daten: &Path) {
     landing_scoring::vref::quelle_setzen(|| stand().vref);
     cabin_announcements::quelle_setzen(|| &stand().kabine);
     paket_endpunkte::quelle_setzen(|| &stand().endpunkte);
+    sim_core::msfs_paketprofil::quelle_setzen(|| &stand().msfs_profile);
     let pin = pin_des_offenen_flugs(app_daten);
     let eingebaut = eingebaut();
     let ergebnis = Ablage::oeffnen(app_daten.join("laufzeit-paket"))
@@ -499,6 +505,7 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
         (KLAPPEN, |t| klappen_lesen(t).map(|_| ())),
         (KABINE, |t| cabin_announcements::lesen(t).map(|_| ())),
         (ENDPUNKTE, |t| paket_endpunkte::lesen(t).map(|_| ())),
+        (MSFS_PROFILE, |t| sim_core::msfs_paketprofil::lesen(t).map(|_| ())),
     ] {
         let roh = p.datei(pfad).map_err(|e| e.to_string())?;
         pruefen(std::str::from_utf8(&roh).map_err(|e| format!("{pfad}: {e}"))?)?;
@@ -618,6 +625,12 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         // 29.10. nachgezogen: nur `quelle` korrigiert (Zeilen gegen v2.1.24,
         // phase_sinkflug_hoechstens_rest_min stammt aus e073b562), Werte gleich.
         assert_eq!(abdruck(&t), (13780505455500687198, 8453));
+    }
+
+    #[test]
+    fn eingebaute_msfs_profile_sind_die_des_crates() {
+        assert_eq!(eingebaute_datei(MSFS_PROFILE).unwrap(), sim_core::msfs_paketprofil::EINGEBAUT.as_bytes());
+        assert_eq!(stand().msfs_profile, sim_core::msfs_paketprofil::lesen(sim_core::msfs_paketprofil::EINGEBAUT).unwrap());
     }
 
     #[test]

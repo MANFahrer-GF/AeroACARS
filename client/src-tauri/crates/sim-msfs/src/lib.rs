@@ -46,6 +46,8 @@ pub(crate) mod handle_frist;
 pub mod vermessung;
 /// Zusatzwerte fuer den Telemetrie-Monitor — Logik plattformunabhaengig.
 pub mod zusatz;
+/// v3 Etappe 2: Paketprofile fuer neue Add-ons — plattformunabhaengig.
+pub mod paketprofil;
 
 #[cfg(target_os = "windows")]
 pub use adapter::*;

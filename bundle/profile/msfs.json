@@ -1,0 +1,8 @@
+{
+ "format": 1,
+ "notiz": [
+  "MSFS-Add-ons aus dem Laufzeit-Paket (P-3.52, Etappe 2). Ein Profil greift nur, wenn die eingebaute Erkennung nichts findet (Default) - neue Add-ons ohne Release.",
+  "Felder und Abbildungsarten sind im Code festgelegt (sim-core msfs_paketprofil: Feld, Art). Nur L:-Variablen. Eine Regel greift erst, wenn eine ihrer Variablen in der Sitzung einmal ungleich 0 war (Schutz gegen Tippfehler)."
+ ],
+ "profile": []
+}
