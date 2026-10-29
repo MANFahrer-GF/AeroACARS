@@ -2456,6 +2456,11 @@ fn run_dispatch(
                             anschnall_sperre = telemetry::StandardAnschnallSperre::default();
                         }
                         g.air_path = neuer_pfad;
+                        // v3 Etappe 2: Paketprofil des vorigen Flugzeugs vergessen.
+                        {
+                            let mut z = shared.paket_zusatz.lock();
+                            shared.paket_anbindung.lock().zuruecksetzen(&mut z);
+                        }
                         if g.variant != detected {
                             tracing::info!(
                                 ?detected,

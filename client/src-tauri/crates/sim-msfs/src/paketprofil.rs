@@ -32,6 +32,14 @@ impl PaketAnbindung {
         self.aktiv.as_ref().map(|(n, _)| n.as_str())
     }
 
+    /// Neues Flugzeug geladen (`AircraftLoaded`): alles vergessen, auch bei
+    /// gleichem Profil — Werte und „belebt“ gehoeren zum vorigen Flugzeug
+    /// (Codex 29.10.). Der naechste Snapshot erkennt und meldet neu an.
+    pub fn zuruecksetzen(&mut self, zusatz: &mut ZusatzState) {
+        self.aktiv = None;
+        zusatz.setzen(Vec::new());
+    }
+
     /// Ein Snapshot: Profil bestimmen, bei Wechsel `zusatz` neu setzen, Werte
     /// anwenden. `profile` sind die geltenden Paketprofile.
     pub fn schritt(&mut self, profile: &[Profil], snap: &mut SimSnapshot, pfad: Option<&str>, zusatz: &mut ZusatzState) {
@@ -46,6 +54,10 @@ impl PaketAnbindung {
             None
         };
         if gefunden.map(|p| p.name.as_str()) != self.aktiv() {
+            // Erst leeren: Bei gleicher LVar-Liste waere `setzen` sonst
+            // wirkungslos und die Werte des vorigen Profils galten weiter
+            // (Codex 29.10.).
+            zusatz.setzen(Vec::new());
             zusatz.setzen(gefunden.map(felder).unwrap_or_default());
             self.aktiv = gefunden.map(|p| (p.name.clone(), Lauf::default()));
             if let Some(p) = gefunden {
@@ -114,6 +126,41 @@ mod tests {
         a.schritt(&d.profile, &mut s, None, &mut z);
         assert_eq!(a.aktiv(), None);
         assert!(!z.dirty);
+    }
+
+    const ZWEI: &str = r#"{"format":1,"profile":[
+        {"name":"A","erkennung":{"titel_enthaelt_alle":["jet a"]},"regeln":[{"feld":"licht_beacon","quellen":["L:X"],"abbildung":{"art":"ungleich_null"}}]},
+        {"name":"B","erkennung":{"titel_enthaelt_alle":["jet b"]},"regeln":[{"feld":"licht_beacon","quellen":["L:X"],"abbildung":{"art":"ungleich_null"}}]}
+    ]}"#;
+
+    /// Codex 29.10.: gleiche LVar-Liste, anderes Profil → keine alten Werte.
+    #[test]
+    fn profilwechsel_mit_gleichen_lvars_beginnt_neu() {
+        let d = msfs_paketprofil::lesen(ZWEI).unwrap();
+        let mut a = PaketAnbindung::default();
+        let mut z = ZusatzState::default();
+        a.schritt(&d.profile, &mut snap("Jet A", AircraftProfile::Default), None, &mut z);
+        block_liefern(&mut z, &[1.0]);
+        let mut s = snap("Jet B", AircraftProfile::Default);
+        a.schritt(&d.profile, &mut s, None, &mut z);
+        assert_eq!(a.aktiv(), Some("B"));
+        assert_eq!(s.light_beacon, None, "Wert von Jet A gilt nicht fuer Jet B");
+        assert!(z.werte().is_empty() && z.dirty);
+    }
+
+    /// Codex 29.10.: dasselbe Profil neu geladen → Zustand vergessen.
+    #[test]
+    fn neu_geladenes_flugzeug_vergisst_werte() {
+        let d = msfs_paketprofil::lesen(PROFIL).unwrap();
+        let mut a = PaketAnbindung::default();
+        let mut z = ZusatzState::default();
+        a.schritt(&d.profile, &mut snap("ProbeJet 100", AircraftProfile::Default), None, &mut z);
+        block_liefern(&mut z, &[1.0, 1.0]);
+        a.zuruecksetzen(&mut z);
+        let mut s = snap("ProbeJet 100", AircraftProfile::Default);
+        a.schritt(&d.profile, &mut s, None, &mut z);
+        assert_eq!((s.light_beacon, s.autopilot_master), (None, None));
+        assert!(z.dirty, "neu anmelden");
     }
 
     #[test]
