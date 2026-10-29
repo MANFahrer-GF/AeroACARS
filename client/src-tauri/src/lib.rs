@@ -35,6 +35,7 @@ mod navdata_cache;
 mod replay_erkennung;
 mod grenzwerte;
 mod laufzeit_paket;
+mod datenuebernahme;
 mod runway;
 mod runway_assessment;
 mod stands;
@@ -54295,7 +54296,7 @@ fn spawn_tray_updater(app: AppHandle) {
 /// Der Test `log_dir_identifier_matches_tauri_conf` unten hält beide
 /// Stellen zusammen, damit ein Umbenennen nicht stillschweigend das
 /// Log-Verzeichnis vom Rest der App abkoppelt.
-const BUNDLE_IDENTIFIER: &str = "com.aeroacars.app";
+const BUNDLE_IDENTIFIER: &str = "com.aeroacars.app3";
 
 /// Unterverzeichnis der Logdateien unterhalb des App-Konfigverzeichnisses
 /// — dort, wo auch `activity_log.json` und `run_active.lock` liegen.
@@ -54568,7 +54569,16 @@ pub fn run() {
     sentry_init::init();
     // 03.10.2026: eine Zeile zur Anzeigekomponente, im eigenen Faden — der Start
     // wartet nicht darauf (Anlass: Max G., Fenster nicht anlegbar).
-    webview_diagnose::protokollieren("com.aeroacars.app");
+    webview_diagnose::protokollieren(BUNDLE_IDENTIFIER);
+    // 3.0 (P-14.04, P-14.08): eigener Ordner neben 2.x; beim ersten Start die
+    // 2.x-Daten kopieren, bevor irgendetwas den Ordner liest.
+    for (von, nach) in datenuebernahme::ordnerpaare(BUNDLE_IDENTIFIER) {
+        match datenuebernahme::uebernehmen(&von, &nach) {
+            Ok(k) if !k.is_empty() => tracing::info!(von = %von.display(), eintraege = ?k, "Daten von 2.x uebernommen"),
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, von = %von.display(), "Uebernahme von 2.x fehlgeschlagen"),
+        }
+    }
     // Die Startzeile schreibt init_tracing() selbst, mit PID und
     // Log-Verzeichnis — und vor allem, bevor irgendetwas anderes laufen
     // und abstürzen kann.

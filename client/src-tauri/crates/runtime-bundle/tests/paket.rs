@@ -615,3 +615,20 @@ fn fehlender_stand_eines_offenen_flugs_wird_genau_nachgeholt() {
     // Zeiger unberuehrt.
     assert_eq!((a.aktuell(), a.vorher()), (Some(6), Some(5)));
 }
+
+/// Beta 1 heisst `3.0.0-beta.N` (Tag `v3.0.0-beta.N`). Diese Vorabversion
+/// muss in den Bereich des eingebauten Stands (0.0.0..=999.0.0,
+/// `laufzeit_paket.rs`) UND in den der CI-Pakete (3.0.0-0..=3.99.99,
+/// `paket-bauen`) fallen — sonst lehnt `passt()` den eingebauten Stand ab
+/// und der Client kaeme nicht hoch (Advisor 29.10.). 2.x faellt nicht in
+/// den CI-Bereich.
+#[test]
+fn vorabversion_3_0_liegt_in_beiden_bereichen() {
+    use runtime_bundle::manifest::version;
+    for v in ["3.0.0-beta.1", "3.0.0-beta.12", "3.0.0-rc.1", "3.0.0", "3.4.2"] {
+        let v = version(v).unwrap();
+        assert!(v >= version("0.0.0").unwrap() && v <= version("999.0.0").unwrap(), "{v} eingebaut");
+        assert!(v >= version("3.0.0-0").unwrap() && v <= version("3.99.99").unwrap(), "{v} CI");
+    }
+    assert!(version("2.1.24").unwrap() < version("3.0.0-0").unwrap());
+}

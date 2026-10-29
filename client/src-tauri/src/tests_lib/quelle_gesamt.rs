@@ -44,6 +44,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// — plus Etappe 1b (Endpunkte, P-3.60): die VDGS-Adresse `https://vats.im/vdgs`
 /// kommt aus `paket_endpunkte::endpunkte().vatsim_vdgs` (gleicher Wert, Test
 /// `eingebaute_adressen_wie_2_1_24`; Host nur aus der festen Liste).
+/// — plus P-14.08 (eigene App neben 2.x): `mod datenuebernahme`,
+/// `BUNDLE_IDENTIFIER` = `com.aeroacars.app3` (Test
+/// `log_dir_identifier_matches_tauri_conf`), Webview-Diagnose ueber die
+/// Konstante, und in `run` die einmalige Kopie der 2.x-Daten (Tests
+/// `datenuebernahme::tests`).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -54,4 +59,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "a3afd07b705a5a236d6278facc223bee3664c1e6d2b42e568ee950d6897fe718";
+const HASH_VOR_DER_ZERLEGUNG: &str = "62510c6e4d62d1d3dcbc091f003bab5de12209d833f00e6d4bfb2ac20eef1ad4";
