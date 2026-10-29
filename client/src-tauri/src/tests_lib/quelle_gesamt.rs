@@ -77,6 +77,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `landing_scoring::wasm::gesamt_buchstabe`/`gesamt_wort` (eine Quelle,
 /// Test `wort_und_buchstabe_an_den_grenzen`); die PIREP-Nutzlast nimmt Wort
 /// und Buchstabe aus der Modul-Ausgabe.
+/// — plus P-4.40 (Kap. 4.5): `canonical_landing_bewertung` traegt Urteil,
+/// `bewertung_status` und Fassung zu allen Abnehmern (Touchdown-Payload mit
+/// `touchdown_note_felder`, Landungsmeldung `touchdown_meldungen`, Notiz
+/// `bewertung_vermerk`); die Kabine schweigt bei `modulfehler`; Tests
+/// `sofortnote_abnehmer_tests` (Abgabe-Sperre unveraendert).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -87,4 +92,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "36876ee7a8ec7e0a1b6084af55c58ab396d5b5e7f5e7fd712b4fd6cc671481c9";
+const HASH_VOR_DER_ZERLEGUNG: &str = "688d67e0e0fc0a7a3758e72fad97f2e760a999f4d73d95ae6b9a8f4c718813ff";

@@ -24018,13 +24018,25 @@ fn compute_aggregate_master_score(
     stats: &FlightStats,
     aircraft_icao: Option<&str>,
     arr_airport: &str,
+    geplantes_ziel: &str,
+    plan_strecke_nm: Option<f64>,
+) -> Option<u8> {
+    compute_bewertung(stats, aircraft_icao, arr_airport, geplantes_ziel, plan_strecke_nm)
+        .and_then(|(a, _)| a.gesamt)
+}
+
+/// Die Bewertung mit Herkunft (P-4.33): `None` = `modulfehler`.
+fn compute_bewertung(
+    stats: &FlightStats,
+    aircraft_icao: Option<&str>,
+    arr_airport: &str,
     // ⚠ Das GEPLANTE Ziel — nur im Vergleich mit `arr_airport`
     // (dem eingereichten) entsteht die Aussage „Ausweichflug".
     geplantes_ziel: &str,
     // v1.7.32: geplante Streckenlaenge (NM) fuer die Mehrweg-Gutschrift
     // der OFP-Achse. `None` = keine Gutschrift.
     plan_strecke_nm: Option<f64>,
-) -> Option<u8> {
+) -> Option<(landing_scoring::wasm::Ausgabe, crate::bewertung::Status)> {
     let mut scoring_input = scoring_eingang(
         stats,
         aircraft_icao,
@@ -24039,7 +24051,7 @@ fn compute_aggregate_master_score(
     // utilization-score.md).
     fill_v2_rollout_fields(&mut scoring_input, stats, arr_airport);
     // v3 (P-4.31): Bewertung nur im WASM-Modul.
-    crate::bewertung::bewerten(&scoring_input).and_then(|(a, _)| a.gesamt)
+    crate::bewertung::bewerten(&scoring_input)
 }
 
 /// v0.7.1 Round-2: Aggregate-Score → Label-Mapping. Damit
@@ -24157,22 +24169,76 @@ fn canonical_landing_verdict(
     stats: &FlightStats,
     effective_arr_icao: &str,
 ) -> Option<LandingVerdict> {
+    canonical_landing_bewertung(flight, stats, effective_arr_icao)?.verdict
+}
+
+/// Die Bewertung einer Landung samt Herkunft (Kap. 4.5, P-4.40): Urteil,
+/// `bewertung_status` und Fassung — fuer alle Abnehmer, die den Vermerk
+/// „vorlaeufig“ oder den Modulfehler zeigen muessen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LandungsBewertung {
+    /// `None` bei `modulfehler` und ohne Sinkrate (keine Gesamtnote).
+    pub verdict: Option<LandingVerdict>,
+    /// `endgueltig`, `vorlaeufig` oder `modulfehler`.
+    pub status: &'static str,
+    /// Fassung des rechnenden Moduls; `None` bei `modulfehler`.
+    pub fassung: Option<u32>,
+}
+
+/// `None`, solange es keinen Aufsetzer gibt.
+fn canonical_landing_bewertung(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    effective_arr_icao: &str,
+) -> Option<LandungsBewertung> {
     stats.landing_score?;
     // Score-Version 19: ohne Gesamtnote kein Urteil — die Touchdown-Klasse
     // als Rueckfall kannte keinen Deckel (Vorlage Punktesystem, Punkt 7).
-    let m = compute_aggregate_master_score(
+    let bewertet = compute_bewertung(
         stats,
         muster_fuer_landung(stats, &flight.aircraft_icao),
         effective_arr_icao,
         &flight.arr_airport,
         flight.plan_strecke_nm,
-    )?;
-    let (label, numeric) = (aggregate_score_label(m), m as i32);
-    Some(LandingVerdict {
-        numeric,
-        label,
-        grade: letter_grade(numeric),
-    })
+    );
+    let status = crate::bewertung::status_text(&bewertet);
+    let fassung = bewertet.as_ref().map(|(a, _)| a.fassung);
+    let verdict = bewertet.and_then(|(a, _)| a.gesamt).map(|m| {
+        let (label, numeric) = (aggregate_score_label(m), m as i32);
+        LandingVerdict {
+            numeric,
+            label,
+            grade: letter_grade(numeric),
+        }
+    });
+    Some(LandungsBewertung { verdict, status, fassung })
+}
+
+/// Note, Buchstabe und Herkunft fuer den Touchdown-Payload (live/Discord):
+/// `vorlaeufig` reist als Vermerk mit; bei `modulfehler` gibt es keine Note
+/// (P-4.40, Kap. 4.5). `None` = noch kein Aufsetzer.
+fn touchdown_note_felder(
+    bewertung: Option<&LandungsBewertung>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let v = bewertung.and_then(|b| b.verdict);
+    (
+        v.map(|v| v.label.to_string()),
+        v.map(|v| v.grade.to_string()),
+        bewertung.map(|b| b.status.to_string()),
+    )
+}
+
+/// Vermerk fuer Notiz und Meldung, wenn die Note nicht „endgueltig“ ist.
+/// `None` im Normalfall (Modul des Pakets rechnet).
+fn bewertung_vermerk(b: &LandungsBewertung) -> Option<String> {
+    match b.status {
+        "vorlaeufig" => Some(match b.fassung {
+            Some(n) => format!("vorläufig, Fassung {n}"),
+            None => "vorläufig".to_string(),
+        }),
+        "modulfehler" => Some("nicht bewertet (Modulfehler)".to_string()),
+        _ => None,
+    }
 }
 
 /// v0.7.1 Round-2: leitet GateWindow-Werte aus den ApproachSamples ab.
@@ -38691,11 +38757,13 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 };
                             // v0.20.0: EIN Verdict — Punkte, Klasse und Note stammen
                             // aus demselben Aufruf. Die Webapp leitet nichts mehr ab.
-                            let payload_verdict = canonical_landing_verdict(
+                            let payload_bewertung = canonical_landing_bewertung(
                                 flight.as_ref(),
                                 &stats,
                                 td_actual_icao.as_deref().unwrap_or(&flight.arr_airport),
                             );
+                            let (payload_score_label, payload_score_grade, payload_bewertung_status) =
+                                touchdown_note_felder(payload_bewertung.as_ref());
                             aeroacars_mqtt::TouchdownPayload {
                                 landung_nicht_bewertbar: landung_nicht_bewertbar_json(&stats),
                                 // v1.7.15: die Bahn-Herkunft — EINE
@@ -38767,8 +38835,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // unserer (88/75/50). Zwei Kopien derselben Regel
                                 // driften — genau die PIA3452-Krankheit. Jetzt
                                 // klassifiziert der Client, die Webapp zeigt an.
-                                score_label: payload_verdict.as_ref().map(|v| v.label.to_string()),
-                                score_grade: payload_verdict.as_ref().map(|v| v.grade.to_string()),
+                                score_label: payload_score_label,
+                                score_grade: payload_score_grade,
                                 bounce: hopser_aus_dem_fenster(&stats).map(|n| n > 0),
                                 bounce_count: hopser_aus_dem_fenster(&stats).map(|n| n as _),
                                 // v0.16.6 (Daten-Audit 2026-06-11): `approach_runway`
@@ -39097,7 +39165,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // voll bepunktet; Bahn-Auslastung auf die echte
                                 // genutzte Strecke umgestellt.
                                 score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
-                                bewertung_status: None,
+                                // P-4.40 (Kap. 4.5): Herkunft der Note, siehe `score_grade`.
+                                bewertung_status: payload_bewertung_status,
                                 // ── v1.7.0 Bahndisziplin ─────────────────
                                 //
                                 // Dieselbe Ableitung wie fuer die Anzeige im
@@ -48261,7 +48330,8 @@ fn build_pirep_notes(
         // Touchdown-KLASSE (numeric ∈ {100,80,60,30,0}) → auf derselben
         // phpVMS-Seite stand "A+ (SMOOTH, 100/100)" neben
         // "A (smooth) — 92/100".
-        if let Some(verdict) = canonical_landing_verdict(flight, stats, effective_arr_icao) {
+        let bewertung = canonical_landing_bewertung(flight, stats, effective_arr_icao);
+        if let Some(verdict) = bewertung.as_ref().and_then(|b| b.verdict) {
             let _ = writeln!(
                 s,
                 "  Grade         {} ({}, {}/100)",
@@ -48269,6 +48339,11 @@ fn build_pirep_notes(
                 verdict.label.to_uppercase(),
                 verdict.numeric
             );
+        }
+        // P-4.40 (Kap. 4.5): Herkunft der Note, wenn nicht das Paketmodul
+        // gerechnet hat. Beim Modulfehler steht das Feld „Landing Score“ leer.
+        if let Some(v) = bewertung.as_ref().and_then(bewertung_vermerk) {
+            let _ = writeln!(s, "  Bewertung     {v}");
         }
     }
 
@@ -49120,6 +49195,32 @@ fn g_protokolltext(scored_g: Option<f32>, fenster_gemessen: bool) -> String {
     }
 }
 
+/// Die zwei Meldungszeilen zum Touchdown (Aktivitaetslog, ACARS-Spiegel) samt
+/// Herkunft der Note (P-4.40, Kap. 4.5): endgueltig = wie bisher (nur
+/// Messdaten); `vorlaeufig` = Note mit Vermerk; `modulfehler` = „Bewertung
+/// nicht moeglich, wird auf dem Server nachgeholt“.
+fn touchdown_meldungen(
+    peak_vs: f32,
+    g_text: &str,
+    bounce_part: &str,
+    bewertung: Option<&LandungsBewertung>,
+) -> (String, String) {
+    let zusatz = match bewertung {
+        Some(b) if b.status == "vorlaeufig" => match b.verdict {
+            Some(v) => format!(" — Note {} (vorläufig)", v.grade),
+            None => " — Bewertung vorläufig".to_string(),
+        },
+        Some(b) if b.status == "modulfehler" => {
+            " — Bewertung nicht möglich, wird auf dem Server nachgeholt".to_string()
+        }
+        _ => String::new(),
+    };
+    (
+        format!("Touchdown: V/S {peak_vs:.0} fpm, {g_text}{bounce_part}{zusatz}"),
+        format!("Touchdown — V/S {peak_vs:.0} fpm, {g_text}{bounce_part}{zusatz}"),
+    )
+}
+
 fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<String> {
     let mut stats = flight.stats.lock().expect("flight stats");
     if stats.landing_score_announced {
@@ -49185,6 +49286,11 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     } else {
         String::new()
     };
+    // P-4.40: Herkunft der Note fuer die Meldung (der Touchdown-Payload folgt
+    // im selben Takt mit demselben Status).
+    let bewertung = canonical_landing_bewertung(flight, &stats, &flight.arr_airport);
+    let g_text = g_protokolltext(sg.as_ref().map(|s| s.scored_g), fenster_gemessen);
+    let (meldung_log, meldung_acars) = touchdown_meldungen(peak_vs, &g_text, &bounce_part, bewertung.as_ref());
     // v0.16.27: Das Aktivitäts-/ACARS-Log zeigt beim Touchdown nur noch die
     // MESSDATEN (V/S, G, Bounces) — KEINE Einstufung. Darum brauchen wir hier
     // weder die Aufprall-Note (`letter_grade`) noch den Aggregate-Master-Score:
@@ -49242,15 +49348,9 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
         app,
         level,
         // nur Messdaten — keine Note/Einstufung (siehe Kommentar oben)
-        format!(
-            "Touchdown: V/S {:.0} fpm, {}{}",
-            peak_vs, // signed: negative = descent, matches the PIREP
-            // v0.12.3 (LE7): scored (EMA) G, not the raw peak. Ohne gemessenes
-            // Fenster steht hier ausdrücklich "G nicht gemessen" statt einer
-            // erfundenen 0.00 (13.09.2026).
-            g_protokolltext(sg.as_ref().map(|s| s.scored_g), fenster_gemessen),
-            bounce_part,
-        ),
+        // (V/S signed: negative = descent, matches the PIREP; G = scored EMA,
+        // ohne gemessenes Fenster "G nicht gemessen" statt 0.00, 13.09.2026)
+        meldung_log,
         None,
     );
     // v0.8.0: zusätzlich die Runway-Match-Source mitloggen damit der
@@ -49286,14 +49386,7 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     stats.landing_score_announced = true;
     // acars/logs-Spiegelung (phpVMS-Serverlog): ebenfalls nur Messdaten, keine
     // Einstufung — der bewertete Score steht im phpVMS-Feld „Landing Score".
-    Some(format!(
-        "Touchdown — V/S {:.0} fpm, {}{}",
-        peak_vs,
-        // v0.12.3 (LE7): scored (EMA) G, not the raw peak — und ohne
-        // gemessenes Fenster keine erfundene 0.00 (siehe oben).
-        g_protokolltext(sg.as_ref().map(|s| s.scored_g), fenster_gemessen),
-        bounce_part,
-    ))
+    Some(meldung_acars)
 }
 
 /// Protokollzeilen, die erst geschrieben werden, wenn der Wert aufgeräumt
@@ -55801,3 +55894,8 @@ mod phasen_korpus_replay;
 #[cfg(test)]
 #[path = "tests_lib/landung_episoden_tests.rs"]
 mod landung_episoden_tests;
+
+/// P-4.40 (Kap. 4.5): fuenf Abnehmer der Sofortnote × drei Faelle.
+#[cfg(test)]
+#[path = "tests_lib/sofortnote_abnehmer_tests.rs"]
+mod sofortnote_abnehmer_tests;

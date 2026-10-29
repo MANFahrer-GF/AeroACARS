@@ -25,7 +25,50 @@ pub(crate) enum Status {
     Vorlaeufig,
 }
 
+/// Nur fuer Tests (P-4.40): erzwingt die Faelle der Tabelle in Kap. 4.5.
+/// Gilt je Thread; die Wache stellt beim Verlassen den Normalfall wieder her.
+/// Im Produktionscode gibt es das nicht.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Erzwungen {
+    /// Paketmodul faellt aus: `vorlaeufig`.
+    PaketKaputt,
+    /// Beide fallen aus: `modulfehler`.
+    BeideKaputt,
+}
+
+#[cfg(test)]
+thread_local! {
+    static ERZWUNGEN: std::cell::Cell<Option<Erzwungen>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) struct ErzwungenWache;
+
+#[cfg(test)]
+impl Drop for ErzwungenWache {
+    fn drop(&mut self) {
+        ERZWUNGEN.with(|c| c.set(None));
+    }
+}
+
+/// Erzwingt `fall`, bis die Wache faellt.
+#[cfg(test)]
+pub(crate) fn erzwingen(fall: Erzwungen) -> ErzwungenWache {
+    ERZWUNGEN.with(|c| c.set(Some(fall)));
+    ErzwungenWache
+}
+
+#[cfg(test)]
+fn erzwungen() -> Option<Erzwungen> {
+    ERZWUNGEN.with(std::cell::Cell::get)
+}
+
 fn paket_host() -> Option<&'static Host> {
+    #[cfg(test)]
+    if erzwungen().is_some() {
+        return None;
+    }
     static H: OnceLock<Option<Host>> = OnceLock::new();
     H.get_or_init(|| match Host::neu(crate::laufzeit_paket::stand().bewertung) {
         Ok(h) => Some(h),
@@ -38,6 +81,10 @@ fn paket_host() -> Option<&'static Host> {
 }
 
 fn eingebauter_host() -> Option<&'static Host> {
+    #[cfg(test)]
+    if erzwungen() == Some(Erzwungen::BeideKaputt) {
+        return None;
+    }
     static H: OnceLock<Option<Host>> = OnceLock::new();
     H.get_or_init(|| match crate::laufzeit_paket::eingebautes_bewertungsmodul().map(Host::neu) {
         Some(Ok(h)) => Some(h),

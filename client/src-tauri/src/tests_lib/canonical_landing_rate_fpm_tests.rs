@@ -1115,6 +1115,7 @@
             let body = body_of(SRC, needle);
             assert!(
                 body.contains("canonical_landing_verdict(")
+                    || body.contains("canonical_landing_bewertung(")
                     || body.contains("compute_aggregate_master_score("),
                 "{needle} gibt eine Note oder Klasse aus, ohne sie ueber die \
                  EINE Bewertung zu holen (`canonical_landing_verdict()`). \

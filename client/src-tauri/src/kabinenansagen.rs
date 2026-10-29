@@ -1903,6 +1903,14 @@ fn reaktion_schritt(
         if sperre.is_some() || !flugart::eingeordnet(stats.flight_type.as_deref(), pax) {
             return ReaktionTun::Nichts;
         }
+        // P-4.40 (Kap. 4.5): Ohne Bewertung (beide Module gescheitert) klatscht
+        // und raunt die Kabine nicht — Stille statt falscher Applaus, auch nicht
+        // beim Hopser.
+        if p.bewertung_status.as_deref() == Some("modulfehler") {
+            stats.kabinen_lauf.reaktion.entschieden = true;
+            notiz(&mut stats.kabinen_lauf, "reaktion", None, None, serde_json::json!({ "grund": "modulfehler", "art": serde_json::Value::Null }));
+            return ReaktionTun::Nichts;
+        }
         let note = p.score_grade.clone().unwrap_or_default();
         let hopser = p.bounce_count.unwrap_or(0) > 0;
         let ziel = p.airport.clone().filter(|z| !z.is_empty()).unwrap_or_else(|| e.ziel_geplant.to_string());
@@ -7938,6 +7946,43 @@ mod reaktion_tests {
         let arten: Vec<_> = notizen(&st).iter().map(|(a, _)| *a).collect();
         assert_eq!(arten, ["reaktion", "reaktion_start", "reaktion_ende"]);
         assert_eq!(notizen(&st)[2].1["grund"], "ansage");
+    }
+
+    /// P-4.40 (Kap. 4.5), Zeile Kabinen-Reaktion: Landung mit Note und der
+    /// Herkunft, die der Touchdown-Payload traegt.
+    fn stats_mit_herkunft(note: &str, hopser: u8, status: &str) -> FlightStats {
+        let mut st = stats("J", Some(150), Some(note), hopser);
+        st.landung_payload.as_mut().unwrap().bewertung_status = Some(status.into());
+        st
+    }
+
+    #[test]
+    fn kabine_modul_rechnet() {
+        let mut st = stats_mit_herkunft("F", 0, "endgueltig");
+        let mut z = Vec::new();
+        assert_eq!(schritt(&mut st, eingang(AUFSETZEN_MS + 9_000, "DLH", [0.0; 3]), &mut z), ReaktionTun::Spielen(PathBuf::from("raunen-hart-1.mp3")));
+    }
+
+    #[test]
+    fn kabine_paket_modul_faellt_aus() {
+        // „wie heute“: die vorlaeufige Note loest die Reaktion genauso aus.
+        let mut st = stats_mit_herkunft("F", 0, "vorlaeufig");
+        let mut z = Vec::new();
+        assert_eq!(schritt(&mut st, eingang(AUFSETZEN_MS + 9_000, "DLH", [0.0; 3]), &mut z), ReaktionTun::Spielen(PathBuf::from("raunen-hart-1.mp3")));
+    }
+
+    #[test]
+    fn kabine_beide_fallen_aus() {
+        // Stille statt falscher Applaus — auch ein Hopser raunt dann nicht.
+        for (note, hopser) in [("", 0), ("", 1), ("A+", 0)] {
+            let mut st = stats_mit_herkunft(note, hopser, "modulfehler");
+            let mut z = Vec::new();
+            for s in 0..30 {
+                assert_eq!(schritt(&mut st, eingang(AUFSETZEN_MS + 9_000 + s * 1000, "CFG", [0.0; 3]), &mut z), ReaktionTun::Nichts);
+            }
+            assert!(st.kabinen_lauf.reaktion.einsatz.is_none());
+            assert_eq!(notizen(&st)[0].1["grund"], "modulfehler");
+        }
     }
 
     #[test]
