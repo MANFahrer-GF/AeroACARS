@@ -40,6 +40,21 @@ pub(crate) enum Erzwungen {
 #[cfg(test)]
 thread_local! {
     static ERZWUNGEN: std::cell::Cell<Option<Erzwungen>> = const { std::cell::Cell::new(None) };
+    /// Wie oft [`bewerten`] auf diesem Thread lief — fuer die Tests „eine
+    /// Bewertung je Landung bzw. je PIREP-Aufbau“.
+    static AUFRUFE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Nur fuer Tests: Aufrufe von [`bewerten`] auf diesem Thread seit dem
+/// letzten [`aufrufe_zuruecksetzen`].
+#[cfg(test)]
+pub(crate) fn aufrufe() -> u32 {
+    AUFRUFE.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn aufrufe_zuruecksetzen() {
+    AUFRUFE.with(|c| c.set(0));
 }
 
 #[cfg(test)]
@@ -115,6 +130,8 @@ pub(crate) fn status_text(b: &Option<(Ausgabe, Status)>) -> &'static str {
 /// Bewertet eine Landung im Modul. `None` = `modulfehler` (beide Module
 /// gescheitert) — dann gibt es keine Note.
 pub(crate) fn bewerten(landung: &LandingScoringInput) -> Option<(Ausgabe, Status)> {
+    #[cfg(test)]
+    AUFRUFE.with(|c| c.set(c.get() + 1));
     let json = serde_json::to_string(&Eingabe { landung: landung.clone() }).ok()?;
     match paket_host().map(|h| rechnen(h, &json)) {
         Some(Ok(a)) => return Some((a, Status::Endgueltig)),

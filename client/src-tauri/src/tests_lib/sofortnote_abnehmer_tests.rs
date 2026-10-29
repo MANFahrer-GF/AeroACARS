@@ -3,7 +3,7 @@
     //! Die Kabinen-Zellen stehen in `kabinenansagen::reaktion_tests`, weil dort
     //! die Reaktion gebaut wird.
     use super::*;
-    use crate::bewertung::{erzwingen, Erzwungen};
+    use crate::bewertung::{aufrufe, aufrufe_zuruecksetzen, erzwingen, Erzwungen};
 
     fn fixture() -> ActiveFlight {
         ActiveFlight {
@@ -99,11 +99,39 @@
 
     // ── MQTT-Touchdown → live → Discord ─────────────────────────────────
 
+    /// Der Leseweg des Touchdown-Payloads: festgehalten von der Meldung
+    /// (`announce_landing_score`), gelesen vom Payload.
+    fn payload_felder(f: &ActiveFlight) -> (Option<String>, Option<String>, Option<String>) {
+        let mut st = f.stats.lock().unwrap();
+        touchdown_bewertung_festhalten(f, &mut st);
+        touchdown_payload_note(&st)
+    }
+
+    /// Codex-Befund zu P-4.40: Meldung und Payload lesen EINE Bewertung. Vorher
+    /// rechnete der Payload neu — bei einem Modulausfall zwischen beiden
+    /// Rechnungen trug die Meldung „vorlaeufig“, der Payload „endgueltig“.
+    #[test]
+    fn touchdown_meldung_und_payload_eine_bewertung() {
+        let f = fixture();
+        mit_landung(&f);
+        aufrufe_zuruecksetzen();
+        let mut st = f.stats.lock().unwrap();
+        let gemeldet = {
+            let _w = erzwingen(Erzwungen::PaketKaputt);
+            touchdown_bewertung_festhalten(&f, &mut st)
+        };
+        // Das Paketmodul ist wieder da, wenn der Payload gebaut wird.
+        let (_, _, status) = touchdown_payload_note(&st);
+        assert_eq!(gemeldet.map(|b| b.status), Some("vorlaeufig"));
+        assert_eq!(status.as_deref(), Some("vorlaeufig"), "Payload = Meldung");
+        assert_eq!(aufrufe(), 1, "eine Bewertung je Landung");
+    }
+
     #[test]
     fn mqtt_touchdown_modul_rechnet() {
         let f = fixture();
         mit_landung(&f);
-        let (label, grade, status) = touchdown_note_felder(bewertung(&f).as_ref());
+        let (label, grade, status) = payload_felder(&f);
         assert!(label.is_some() && grade.is_some());
         assert_eq!(status.as_deref(), Some("endgueltig"));
     }
@@ -114,7 +142,7 @@
         mit_landung(&f);
         let (label, grade, status) = {
             let _w = erzwingen(Erzwungen::PaketKaputt);
-            touchdown_note_felder(bewertung(&f).as_ref())
+            payload_felder(&f)
         };
         assert!(label.is_some() && grade.is_some(), "die Note reist mit");
         assert_eq!(status.as_deref(), Some("vorlaeufig"), "und der Vermerk");
@@ -126,7 +154,7 @@
         mit_landung(&f);
         let (label, grade, status) = {
             let _w = erzwingen(Erzwungen::BeideKaputt);
-            touchdown_note_felder(bewertung(&f).as_ref())
+            payload_felder(&f)
         };
         assert_eq!((label, grade), (None, None), "ohne Note");
         assert_eq!(status.as_deref(), Some("modulfehler"));
@@ -134,9 +162,26 @@
 
     // ── phpVMS-Feld „Landing Score“ + Notiz ─────────────────────────────
 
+    /// Derselbe Aufbau wie beim Einreichen (`pirep_bewertete_teile`).
     fn feld_und_notiz(f: &ActiveFlight) -> (Option<String>, String) {
         let st = f.stats.lock().unwrap();
-        (build_pirep_fields(f, &st, "YYYY").get("Landing Score").cloned(), build_pirep_notes(f, &st, "YYYY"))
+        let (_, felder, notiz) = pirep_bewertete_teile(f, &st, "YYYY");
+        (felder.get("Landing Score").cloned(), notiz)
+    }
+
+    /// Codex-Befund zu P-4.40: Score, Feld und Notiz eines PIREP aus EINER
+    /// Bewertung. Vorher drei Rechnungen unter derselben Sperre.
+    #[test]
+    fn pirep_aufbau_eine_bewertung() {
+        let f = fixture();
+        mit_landung(&f);
+        let st = f.stats.lock().unwrap();
+        aufrufe_zuruecksetzen();
+        let (score, felder, notiz) = pirep_bewertete_teile(&f, &st, "YYYY");
+        assert_eq!(aufrufe(), 1, "eine Bewertung je PIREP-Aufbau");
+        let score = score.expect("Note");
+        assert!(felder["Landing Score"].contains(&format!("{score}/100")), "{felder:?}");
+        assert!(notiz.contains(&format!("{score}/100")), "{notiz}");
     }
 
     #[test]
@@ -175,7 +220,13 @@
 
     /// Mit gemessener Landung keine Rueckfrage, ohne sie nach langer
     /// Unterbrechung `LandungFehlt` — in jedem Fall dasselbe.
+    ///
+    /// Codex-Befund zu P-4.40: Gleichheit allein war eine Tautologie — der
+    /// Weg rief die Bewertung nie, also kam immer dasselbe heraus. Der Zaehler
+    /// belegt, dass die Sperre die Bewertung gar nicht beruehrt: Haengt sie je
+    /// davon ab, wird er ungleich null und der Test rot.
     fn sperre_unveraendert() -> Vec<&'static str> {
+        aufrufe_zuruecksetzen();
         let f = fixture();
         mit_landung(&f);
         let pflicht = {
@@ -192,6 +243,7 @@
             assert!(!landung_wurde_gemessen(&st));
             assert_eq!(abgabe_sperre(&st), Some(AbgabeSperre::LandungFehlt));
         }
+        assert_eq!(aufrufe(), 0, "die Abgabe-Sperre darf die Bewertung nicht rufen");
         pflicht
     }
 

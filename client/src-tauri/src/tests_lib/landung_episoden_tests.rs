@@ -227,6 +227,22 @@
         assert!(st.landung_abgebrochen_phase_offen);
     }
 
+    /// Die festgehaltene Touchdown-Bewertung (Meldung + Payload) gehoert zum
+    /// Aufsetzer: Ein Touch-and-Go raeumt sie ab, sonst truege die naechste
+    /// Landung die Note der vorigen.
+    #[test]
+    fn touch_and_go_raeumt_die_festgehaltene_bewertung_ab() {
+        let flight = fixture();
+        let td = t0();
+        gerade_aufgesetzt(&flight, td);
+        let mut st = flight.stats.lock().unwrap();
+        st.landung_bewertung = Some(LandungsBewertung { verdict: None, status: "endgueltig", fassung: None });
+        let s = snap(2_000.0, 400.0, 900.0, 140.0, false, 2);
+        landung_beim_wegsteigen_abschliessen(&mut st, &s, td + chrono::Duration::seconds(40));
+        assert_eq!(st.touchdown_events.len(), 1);
+        assert_eq!(st.landung_bewertung, None);
+    }
+
     /// Eine abgeschlossene Landung bleibt abgeschlossen: Nach dem Abrollen
     /// (TaxiIn/BlocksOn) setzt ein Slew oder Neuladen das Flugzeug in die
     /// Hoehe — das ist kein Touch-and-Go. Der Sampler ruft den Abschluss

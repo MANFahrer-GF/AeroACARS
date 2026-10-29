@@ -82,6 +82,15 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `touchdown_note_felder`, Landungsmeldung `touchdown_meldungen`, Notiz
 /// `bewertung_vermerk`); die Kabine schweigt bei `modulfehler`; Tests
 /// `sofortnote_abnehmer_tests` (Abgabe-Sperre unveraendert).
+/// — plus Codex 29.10. zu P-4.40: je PIREP-Aufbau EINE Bewertung
+/// (`pirep_bewertete_teile` fuer Score, `build_pirep_fields_mit`,
+/// `build_pirep_notes_mit`; die Schatten-Rechnung der Notiz protokolliert
+/// sie nur noch; `canonical_landing_verdict` entfaellt,
+/// `compute_aggregate_master_score` nur noch in Tests); je Landung EINE
+/// Touchdown-Bewertung am Aufsetz-Flughafen (`touchdown_bewertung_festhalten`
+/// → Feld `landung_bewertung`, gelesen von Meldung und
+/// `touchdown_payload_note`, abgeraeumt mit Touch-and-Go und verworfenem
+/// Score); Tests mit Aufrufzaehler in `sofortnote_abnehmer_tests`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -92,4 +101,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "688d67e0e0fc0a7a3758e72fad97f2e760a999f4d73d95ae6b9a8f4c718813ff";
+const HASH_VOR_DER_ZERLEGUNG: &str = "143e9a62a611ad73ad7092d6af57770e8ede57f5bb0178e96427e5df051a0be1";

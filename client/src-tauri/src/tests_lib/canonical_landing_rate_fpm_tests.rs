@@ -1083,8 +1083,8 @@
         // dass ein Test umfiel. Eine Schranke, die nur die halbe Formel schuetzt,
         // schuetzt die Formel nicht.
         for needle in [
-            "fn build_pirep_fields(",
-            "fn build_pirep_notes(",
+            "fn build_pirep_fields_mit(",
+            "fn build_pirep_notes_mit(",
             "fn build_pirep_payload(",
             "fn compute_aggregate_master_score(",
         ] {
@@ -1111,17 +1111,32 @@
         // NICHT die Bewertung — sie ist ein Teil davon. Wer sie direkt ausgibt,
         // schreibt "A+ (SMOOTH, 100/100)" neben ein Feld, in dem "A (smooth) —
         // 92/100" steht. Genau das stand auf Thomas' phpVMS-Seite.
-        for needle in ["fn build_pirep_notes(", "fn build_pirep_fields("] {
+        // Codex-Befund zu P-4.40: Feld und Notiz rechnen NICHT selbst — sie
+        // lesen die Bewertung, die `pirep_bewertete_teile` einmal holt.
+        for needle in ["fn build_pirep_notes_mit(", "fn build_pirep_fields_mit("] {
             let body = body_of(SRC, needle);
             assert!(
-                body.contains("canonical_landing_verdict(")
-                    || body.contains("canonical_landing_bewertung(")
-                    || body.contains("compute_aggregate_master_score("),
-                "{needle} gibt eine Note oder Klasse aus, ohne sie ueber die \
-                 EINE Bewertung zu holen (`canonical_landing_verdict()`). \
-                 Die Touchdown-Klasse allein ist nicht das Urteil.",
+                body.contains("bewertung.and_then("),
+                "{needle} gibt eine Note oder Klasse aus, ohne sie aus der \
+                 uebergebenen EINEN Bewertung zu lesen. Die Touchdown-Klasse \
+                 allein ist nicht das Urteil.",
             );
+            for eigene in [
+                "canonical_landing_bewertung(",
+                "compute_bewertung(",
+                "compute_aggregate_master_score(",
+            ] {
+                assert!(
+                    !body.contains(eigene),
+                    "{needle} rechnet selbst (`{eigene}`) — dann tragen Score, \
+                     Feld und Notiz bei einem Modulausfall verschiedene Zustaende.",
+                );
+            }
         }
+        assert!(
+            body_of(SRC, "fn pirep_bewertete_teile(").contains("canonical_landing_bewertung("),
+            "der PIREP-Aufbau holt seine Bewertung ueber die Kanonik",
+        );
     }
 
     #[test]

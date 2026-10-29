@@ -7016,6 +7016,13 @@ struct FlightStats {
     /// beim Einreichen vergleicht [`landung_widerspricht_meldung`] den PIREP
     /// damit (20.10.2026, EWG 1599: live −667, phpVMS −55). Nicht persistiert.
     gemeldete_landung: Option<(i64, i32)>,
+    /// Die Bewertung der Landung, einmal gerechnet in
+    /// [`announce_landing_score`] und von der Meldung und dem
+    /// Touchdown-Payload gelesen (Codex-Befund zu P-4.40: vorher rechneten
+    /// beide getrennt, mit verschiedenem Ankunftsflughafen). Der PIREP rechnet
+    /// beim Einreichen selbst — mit Ausrollen und bestaetigtem Ausweichziel.
+    /// Nicht persistiert.
+    landung_bewertung: Option<LandungsBewertung>,
     /// Laeuft die Spuraufzeichnung gerade?
     ///
     /// Steuert den Aufzeichnungstakt (`adaptive_tick_interval_v2`). Ohne
@@ -24014,6 +24021,10 @@ fn fill_v2_rollout_fields(
 /// Returns None wenn keine Sub-Scores berechnet werden konnten
 /// (= Touchdown-Daten fehlen voellig). Caller sollte dann auf
 /// stats.landing_score.numeric() fallback'en.
+///
+/// Seit dem Codex-Befund zu P-4.40 nur noch in Tests: Der PIREP holt seinen
+/// Score aus [`pirep_bewertete_teile`].
+#[cfg(test)]
 fn compute_aggregate_master_score(
     stats: &FlightStats,
     aircraft_icao: Option<&str>,
@@ -24164,14 +24175,6 @@ fn anflug_stabil_am_gate(stats: &FlightStats) -> Option<bool> {
         .map(|u| u == landing_scoring::anflug_urteil::AnflugUrteil::Stable)
 }
 
-fn canonical_landing_verdict(
-    flight: &ActiveFlight,
-    stats: &FlightStats,
-    effective_arr_icao: &str,
-) -> Option<LandingVerdict> {
-    canonical_landing_bewertung(flight, stats, effective_arr_icao)?.verdict
-}
-
 /// Die Bewertung einer Landung samt Herkunft (Kap. 4.5, P-4.40): Urteil,
 /// `bewertung_status` und Fassung — fuer alle Abnehmer, die den Vermerk
 /// „vorlaeufig“ oder den Modulfehler zeigen muessen.
@@ -24226,6 +24229,41 @@ fn touchdown_note_felder(
         v.map(|v| v.grade.to_string()),
         bewertung.map(|b| b.status.to_string()),
     )
+}
+
+/// Der Flughafen, auf dem aufgesetzt wurde: das Ausweichfeld, wenn die
+/// Aufsetzkoordinaten dort liegen, sonst das geplante Ziel. Eingabe der
+/// Touchdown-Bewertung (Meldung und Payload) — beim Divert gibt es den
+/// bestaetigten Hinweis erst im Stillstand.
+fn aufsetz_flughafen(flight: &ActiveFlight, stats: &FlightStats) -> String {
+    match (stats.landing_lat, stats.landing_lon) {
+        (Some(la), Some(lo)) => {
+            match arrival::locate(&flight.arr_airport, la, lo, stats.planned_arr_ref_pos) {
+                arrival::ArrivalSite::AtOtherAirport { icao, .. } => icao,
+                _ => flight.arr_airport.clone(),
+            }
+        }
+        _ => flight.arr_airport.clone(),
+    }
+}
+
+/// Rechnet die Bewertung der Landung EINMAL (am Aufsetz-Flughafen) und haelt
+/// sie in `stats.landung_bewertung` fest — fuer Meldung und Payload.
+fn touchdown_bewertung_festhalten(
+    flight: &ActiveFlight,
+    stats: &mut FlightStats,
+) -> Option<LandungsBewertung> {
+    let b = canonical_landing_bewertung(flight, stats, &aufsetz_flughafen(flight, stats));
+    stats.landung_bewertung = b;
+    b
+}
+
+/// Note, Buchstabe und Status des Touchdown-Payloads aus der in
+/// [`announce_landing_score`] festgehaltenen Bewertung — der Payload wird nur
+/// im selben Takt nach einer Meldung gebaut. Leer ist sie nur, wenn auch
+/// `landing_score` geloescht wurde; dann haette die Kanonik ebenfalls `None`.
+fn touchdown_payload_note(stats: &FlightStats) -> (Option<String>, Option<String>, Option<String>) {
+    touchdown_note_felder(stats.landung_bewertung.as_ref())
 }
 
 /// Vermerk fuer Notiz und Meldung, wenn die Note nicht „endgueltig“ ist.
@@ -28916,17 +28954,10 @@ async fn flight_end(
         // autoritative PIREP-Score wich vom Record ab. On-Plan: `divert_to`=None
         // → effective_arr == arr_airport → BYTE-IDENTISCH.
         let effective_arr = divert_to.as_deref().unwrap_or(&flight.arr_airport);
-        let score = compute_aggregate_master_score(
-            &stats,
-            muster_fuer_landung(&stats, &flight.aircraft_icao),
-            effective_arr,
-            &flight.arr_airport,
-            flight.plan_strecke_nm,
-        )
         // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse.
-        .map(|m| m as i32);
+        // Codex-Befund P-4.40: Score, Feld und Notiz aus EINER Bewertung.
+        let (score, mut fields, mut notes) = pirep_bewertete_teile(&flight, &stats, effective_arr);
         let distance_nm = stats.distance_nm;
-        let mut fields = build_pirep_fields(&flight, &stats, effective_arr);
         // phpVMS does its own divert bookkeeping — but only if the PIREP carries
         // this custom field. `PirepService::handleDiversion()` looks it up by the
         // slug `diversion-airport`, which phpVMS derives from the field NAME via
@@ -28938,7 +28969,6 @@ async fn flight_end(
         if let Some(actual) = divert_to.as_deref() {
             fields.insert("Diversion Airport".to_string(), actual.to_string());
         }
-        let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         // v0.19.3: the pilot told us he ended up at the planned field although
         // the FSM did not place him there. That statement is why this PIREP is
         // being filed normally instead of being blocked — so it goes into the
@@ -29969,8 +29999,8 @@ async fn flight_end_manual(
         // mehr die Touchdown-Klasse (nur 100/80/60/30/0). Vorher stand beim
         // manuellen Filen `100` in der Spalte, waehrend Custom-Field und
         // Landungs-Tab "B (acceptable) — 78/100" zeigten.
-        let score = canonical_landing_verdict(&flight, &stats, effective_arr).map(|v| v.numeric);
-        let mut fields = build_pirep_fields(&flight, &stats, effective_arr);
+        // Codex-Befund P-4.40: Score, Feld und Notiz aus EINER Bewertung.
+        let (score, mut fields, mut notes) = pirep_bewertete_teile(&flight, &stats, effective_arr);
         // Same rule as the regular path: the divert airport travels in the
         // custom field phpVMS keys on (slug `diversion-airport`), never in
         // `arr_airport_id`. One semantic for both filing paths.
@@ -29980,7 +30010,6 @@ async fn flight_end_manual(
                 actual.trim().to_uppercase(),
             );
         }
-        let mut notes = build_pirep_notes(&flight, &stats, effective_arr);
         notes.push_str("\n\n[MANUAL FILE — auto-validation bypassed by pilot.]");
         // Der Sprung gehoert auch hier in die Notiz: Sonst waere der
         // manuelle Weg genau die Tuer, durch die ein unterbrochener Flug
@@ -35374,6 +35403,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                             // Der Finalisierer selbst kommt nicht noch einmal
                             // vorbei, er beendet sich bei vorhandenem Score.
                             stats.landing_score = None;
+                            stats.landung_bewertung = None;
                             Some(fehlt)
                         }
                     };
@@ -38740,30 +38770,15 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             // `arrival::locate` an den Touchdown-Koordinaten liefert
                             // dieselbe Antwort, die der Divert-Hint später liefert —
                             // nur eben schon jetzt.
-                            let td_actual_icao: Option<String> =
-                                match (stats.landing_lat, stats.landing_lon) {
-                                    (Some(la), Some(lo)) => match arrival::locate(
-                                        &flight.arr_airport,
-                                        la,
-                                        lo,
-                                        stats.planned_arr_ref_pos,
-                                    ) {
-                                        arrival::ArrivalSite::AtOtherAirport { icao, .. } => {
-                                            Some(icao)
-                                        }
-                                        _ => None,
-                                    },
-                                    _ => None,
-                                };
+                            //
+                            // Codex-Befund zu P-4.40: Gerechnet wird das jetzt
+                            // EINMAL in `announce_landing_score` (mit diesem
+                            // Aufsetz-Flughafen, siehe `aufsetz_flughafen`); der
+                            // Payload liest die festgehaltene Bewertung.
                             // v0.20.0: EIN Verdict — Punkte, Klasse und Note stammen
                             // aus demselben Aufruf. Die Webapp leitet nichts mehr ab.
-                            let payload_bewertung = canonical_landing_bewertung(
-                                flight.as_ref(),
-                                &stats,
-                                td_actual_icao.as_deref().unwrap_or(&flight.arr_airport),
-                            );
                             let (payload_score_label, payload_score_grade, payload_bewertung_status) =
-                                touchdown_note_felder(payload_bewertung.as_ref());
+                                touchdown_payload_note(&stats);
                             aeroacars_mqtt::TouchdownPayload {
                                 landung_nicht_bewertbar: landung_nicht_bewertbar_json(&stats),
                                 // v1.7.15: die Bahn-Herkunft — EINE
@@ -44123,6 +44138,7 @@ fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnaps
     stats.landung_payload = None;
     stats.landung_live_bestaetigt = false;
     stats.gemeldete_landung = None;
+    stats.landung_bewertung = None;
 
     // ── Die Landung des Aufsetz-Samplers ──────────────────────────────
     // Re-armiert den Sampler fuer den naechsten Aufsetzer (sein
@@ -47634,10 +47650,53 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
         ));
 }
 
+/// Score, Custom-Felder und Notiz eines PIREP aus EINER Bewertung.
+///
+/// Codex-Befund zu P-4.40: Score, Feld „Landing Score“ und Notiz rechneten
+/// unter derselben Stats-Sperre je fuer sich. Faellt das Paketmodul dabei nur
+/// kurz aus, tragen sie widerspruechliche Zustaende (Score endgueltig, Notiz
+/// „vorlaeufig“). Beide Einreichwege bauen deshalb hier.
+fn pirep_bewertete_teile(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    effective_arr_icao: &str,
+) -> (Option<i32>, HashMap<String, String>, String) {
+    let bewertung = canonical_landing_bewertung(flight, stats, effective_arr_icao);
+    (
+        bewertung.and_then(|b| b.verdict).map(|v| v.numeric),
+        build_pirep_fields_mit(flight, stats, effective_arr_icao, bewertung.as_ref()),
+        build_pirep_notes_mit(flight, stats, effective_arr_icao, bewertung.as_ref()),
+    )
+}
+
+/// Wie [`build_pirep_fields_mit`], rechnet die Bewertung selbst — nur fuer
+/// Tests, die die Felder allein pruefen.
+#[cfg(test)]
+fn build_pirep_fields(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    effective_arr_icao: &str,
+) -> HashMap<String, String> {
+    let b = canonical_landing_bewertung(flight, stats, effective_arr_icao);
+    build_pirep_fields_mit(flight, stats, effective_arr_icao, b.as_ref())
+}
+
+/// Wie [`build_pirep_notes_mit`], rechnet die Bewertung selbst — nur fuer
+/// Tests, die die Notiz allein pruefen.
+#[cfg(test)]
+fn build_pirep_notes(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    effective_arr_icao: &str,
+) -> String {
+    let b = canonical_landing_bewertung(flight, stats, effective_arr_icao);
+    build_pirep_notes_mit(flight, stats, effective_arr_icao, b.as_ref())
+}
+
 /// Build the custom-fields map sent in `POST /api/pireps/{id}/file`. Field
 /// names follow the de-facto vmsACARS convention so VAs that already configured
 /// fields for vmsACARS see them populate without any work.
-fn build_pirep_fields(
+fn build_pirep_fields_mit(
     flight: &ActiveFlight,
     stats: &FlightStats,
     // v0.16.24 (QS-2 FIX A): the EFFECTIVE arrival airport (the
@@ -47650,6 +47709,8 @@ fn build_pirep_fields(
     // divert and disagree with the native `score` + the local record. On-plan
     // this equals `flight.arr_airport` → byte-identical.
     effective_arr_icao: &str,
+    // Die EINE Bewertung dieses PIREP-Aufbaus (siehe [`pirep_bewertete_teile`]).
+    bewertung: Option<&LandungsBewertung>,
 ) -> HashMap<String, String> {
     // Single-form custom-fields set: human-readable Title Case with
     // units. Earlier versions emitted EVERY field twice (Title Case +
@@ -47823,7 +47884,7 @@ fn build_pirep_fields(
     // Zahlen ("Score: 77/100" oben, "Landing Score: A+ (smooth) —
     // 100/100" unten). Fallback auf Touchdown-Klassifikation wenn
     // Crate keinen Aggregate liefert.
-    if let Some(verdict) = canonical_landing_verdict(flight, stats, effective_arr_icao) {
+    if let Some(verdict) = bewertung.and_then(|b| b.verdict) {
         f.insert("Landing Score".into(), verdict.headline());
     }
     // v0.7.21 (MS713-QS): canonical_landing_rate_fpm() — sonst zeigt
@@ -48177,10 +48238,12 @@ fn humanize_duration_minutes(minutes: i64) -> String {
 /// Build the human-readable summary that goes into the PIREP `notes` field —
 /// a concise multi-line text that's always visible regardless of how the VA
 /// configured custom fields.
-fn build_pirep_notes(
+fn build_pirep_notes_mit(
     flight: &ActiveFlight,
     stats: &FlightStats,
     effective_arr_icao: &str,
+    // Die EINE Bewertung dieses PIREP-Aufbaus (siehe [`pirep_bewertete_teile`]).
+    bewertung: Option<&LandungsBewertung>,
 ) -> String {
     use std::fmt::Write;
     let mut s = String::new();
@@ -48330,8 +48393,7 @@ fn build_pirep_notes(
         // Touchdown-KLASSE (numeric ∈ {100,80,60,30,0}) → auf derselben
         // phpVMS-Seite stand "A+ (SMOOTH, 100/100)" neben
         // "A (smooth) — 92/100".
-        let bewertung = canonical_landing_bewertung(flight, stats, effective_arr_icao);
-        if let Some(verdict) = bewertung.as_ref().and_then(|b| b.verdict) {
+        if let Some(verdict) = bewertung.and_then(|b| b.verdict) {
             let _ = writeln!(
                 s,
                 "  Grade         {} ({}, {}/100)",
@@ -48342,7 +48404,7 @@ fn build_pirep_notes(
         }
         // P-4.40 (Kap. 4.5): Herkunft der Note, wenn nicht das Paketmodul
         // gerechnet hat. Beim Modulfehler steht das Feld „Landing Score“ leer.
-        if let Some(v) = bewertung.as_ref().and_then(bewertung_vermerk) {
+        if let Some(v) = bewertung.and_then(bewertung_vermerk) {
             let _ = writeln!(s, "  Bewertung     {v}");
         }
     }
@@ -48568,10 +48630,11 @@ fn build_pirep_notes(
     // uebergaben schon immer das effektive Ziel; dieser eine ist beim
     // Herausloesen der Funktion (24.08.2026) uebersehen worden.
     fill_v2_rollout_fields(&mut crate_input, stats, effective_arr_icao);
-    // v3 (P-4.31): Bewertung nur im WASM-Modul.
-    let bewertet = crate::bewertung::bewerten(&crate_input);
-    let crate_subs = bewertet.as_ref().map(|(a, _)| a.teilnoten.clone()).unwrap_or_default();
-    if let Some(crate_master) = bewertet.as_ref().and_then(|(a, _)| a.gesamt) {
+    // Codex-Befund zu P-4.40: keine eigene Rechnung mehr — protokolliert wird
+    // die EINE Bewertung dieses PIREP-Aufbaus, also genau der Wert, der in
+    // Score, Feld und Notiz steht. (Hier lief bis dahin eine vierte Rechnung
+    // unter derselben Sperre, mit Teilnoten-Zaehlern im Log.)
+    if let Some(crate_master) = bewertung.and_then(|b| b.verdict).map(|v| v.numeric) {
         // v0.7.1 P2.6-Fix: Drift-Vergleich gegen den ECHTEN
         // Touchdown-Klassifikator-Score (LandingScore::numeric) ist
         // unsinnig — das ist eine andere Score-Definition (vs/g/bounce-
@@ -48587,8 +48650,7 @@ fn build_pirep_notes(
             crate_input_vs_fpm = ?crate_input.vs_fpm,
             crate_input_peak_g = ?crate_input.peak_g_load,
             crate_input_bounces = ?crate_input.bounce_count,
-            crate_sub_count = crate_subs.len(),
-            crate_skipped_count = crate_subs.iter().filter(|s| s.skipped).count(),
+            bewertung_status = bewertung.map(|b| b.status),
             "v0.7.1 Master-Score-Aggregate (Crate-SSoT)"
         );
     }
@@ -49288,7 +49350,9 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     };
     // P-4.40: Herkunft der Note fuer die Meldung (der Touchdown-Payload folgt
     // im selben Takt mit demselben Status).
-    let bewertung = canonical_landing_bewertung(flight, &stats, &flight.arr_airport);
+    // Codex-Befund: EINMAL rechnen und festhalten — der Touchdown-Payload im
+    // selben Takt liest sie (`touchdown_payload_note`), statt neu zu rechnen.
+    let bewertung = touchdown_bewertung_festhalten(flight, &mut stats);
     let g_text = g_protokolltext(sg.as_ref().map(|s| s.scored_g), fenster_gemessen);
     let (meldung_log, meldung_acars) = touchdown_meldungen(peak_vs, &g_text, &bounce_part, bewertung.as_ref());
     // v0.16.27: Das Aktivitäts-/ACARS-Log zeigt beim Touchdown nur noch die
