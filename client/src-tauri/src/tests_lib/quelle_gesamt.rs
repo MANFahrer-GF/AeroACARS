@@ -22,7 +22,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `aktualisieren_im_hintergrund`) — nur Zusaetze, keine Zeile entfernt —
 /// plus Etappe 1b (Grenzwerte): `mod grenzwerte` und EINE geaenderte Zeile,
 /// `stands::ROLLWEG_MITTELLINIE_M` -> `grenzwerte().staende.rollweg_mittellinie_m.wert`
-/// (Wert gleich, Test `grenzwerte_staende_wie_2_1_24`).
+/// (Wert gleich, Test `grenzwerte_staende_wie_2_1_24`) — plus Bereich
+/// Aufsetzen: vier Stellen `touchdown_v2::<KONST>` -> `grenzwerte().aufsetzen.*`
+/// (VS_FLOOR_FPM, BOUNCE_FORENSIC/SCORED_MIN_AGL_FT, BEWERTUNGS_FENSTER_VOR/NACH_MS;
+/// Werte gleich, Test `grenzwerte_aufsetzen_wie_2_1_24`).
 #[test]
 fn zerlegung_ist_nur_verschoben() {
     use sha2::{Digest, Sha256};
@@ -33,4 +36,4 @@ fn zerlegung_ist_nur_verschoben() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs-Zerlegung hat Programmtext veraendert");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "8590c61dde14bd924ee47a4a7a76a640230b2cf7733d28a988583dad5ae7d18e";
+const HASH_VOR_DER_ZERLEGUNG: &str = "f46bee92e41f3ccbea726c3fbbf9440a2dba422b69777ad8d896f23e38346b05";

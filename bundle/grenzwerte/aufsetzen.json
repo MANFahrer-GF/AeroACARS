@@ -1,0 +1,23 @@
+{
+  "bounce_forensic_min_agl_ft": {"wert": 5.0, "einheit": "ft", "quelle": "client/src-tauri/src/touchdown_v2.rs:45 (v2.1.24)"},
+  "bounce_scored_min_agl_ft": {"wert": 5.0, "einheit": "ft", "quelle": "client/src-tauri/src/touchdown_v2.rs:62 (v2.1.24)"},
+  "water_touchdown_min_descent_fpm": {"wert": -50.0, "einheit": "fpm", "quelle": "client/src-tauri/src/touchdown_v2.rs:73 (v2.1.24)"},
+  "tiefflug_spielraum_ft": {"wert": 5.0, "einheit": "ft", "quelle": "client/src-tauri/src/touchdown_v2.rs:99 (v2.1.24)"},
+  "bodenhoehe_max_ft": {"wert": 22.0, "einheit": "ft", "quelle": "client/src-tauri/src/touchdown_v2.rs:110 (v2.1.24)"},
+  "bodenhoehe_min_proben": {"wert": 250, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:113 (v2.1.24)"},
+  "bodenhoehe_max_gs_kt": {"wert": 40.0, "einheit": "kt", "quelle": "client/src-tauri/src/touchdown_v2.rs:117 (v2.1.24)"},
+  "bodenhoehe_untergrenze_ft": {"wert": -5.0, "einheit": "ft", "quelle": "client/src-tauri/src/touchdown_v2.rs:119 (v2.1.24)"},
+  "bodenhoehe_klasse_ft": {"wert": 0.25, "einheit": "ft", "quelle": "client/src-tauri/src/touchdown_v2.rs:120 (v2.1.24)"},
+  "gear_force_epsilon_n": {"wert": 1.0, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:255 (v2.1.24)"},
+  "abs_floor": {"wert": 1000.0, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:376 (v2.1.24)"},
+  "mass_ratio": {"wert": 0.03, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:377 (v2.1.24)"},
+  "max_bewertungs_luecke_ms": {"wert": 200, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:463 (v2.1.24)"},
+  "min_bewertungs_proben": {"wert": 12, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:472 (v2.1.24)"},
+  "bewertungs_fenster_vor_ms": {"wert": 1000, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:482 (v2.1.24)"},
+  "bewertungs_fenster_nach_ms": {"wert": 100, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:483 (v2.1.24)"},
+  "min_gear_force_samples_in_window": {"wert": 2, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:704 (v2.1.24)"},
+  "min_ground_truth_samples": {"wert": 2, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:787 (v2.1.24)"},
+  "min_settle_g_force_peak": {"wert": 1.02, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:820 (v2.1.24)"},
+  "max_coverage_gap_ms": {"wert": 200, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:847 (v2.1.24)"},
+  "vs_floor_fpm": {"wert": -3000.0, "einheit": "fpm", "quelle": "client/src-tauri/src/touchdown_v2.rs:1154 (v2.1.24)"}
+}

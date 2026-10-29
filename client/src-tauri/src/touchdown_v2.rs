@@ -38,39 +38,39 @@ pub const FORENSICS_VERSION: u8 = 2;
 // Hoehen kennt. Die landing-scoring-Crate vertraut dem Caller und bekommt
 // nur den finalen scored_bounce_count als Input.
 
-/// Mindestens 5 ft AGL-Excursion damit ein Wiederabheben **forensisch**
-/// gezaehlt wird. Filtert Sim-Float-Noise (typisch 1-2 ft) und sanftes
-/// Federwerk-Oszillieren raus, laesst aber sichtbare Hopser im Replay-
-/// Tab durch. Erscheint im PIREP als `forensic_bounce_count`.
-pub const BOUNCE_FORENSIC_MIN_AGL_FT: f32 = 5.0;
+// Mindestens 5 ft AGL-Excursion damit ein Wiederabheben **forensisch**
+// gezaehlt wird. Filtert Sim-Float-Noise (typisch 1-2 ft) und sanftes
+// Federwerk-Oszillieren raus, laesst aber sichtbare Hopser im Replay-
+// Tab durch. Erscheint im PIREP als `forensic_bounce_count`.
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> bounce_forensic_min_agl_ft (v2.1.24: 5.0)
 
-/// Mindestens 5 ft AGL-Excursion (relativ zur Bodenhoehe beim Aufsetzen)
-/// damit ein Wiederabheben im Sub-Score **bestraft** wird. Erscheint im
-/// PIREP als `scored_bounce_count` und landet im
-/// `landing-scoring::sub_bounces`-Sub-Score.
-///
-/// Lernpaket AP3 (29.09.2026): von 15 auf 5 ft gesenkt, gleich der
-/// Forensik-Schwelle. Gemessen an 1344 Landungen des Live-Recorders: alle
-/// Luftphasen ab 5 ft waren echte Hopser (td 1403: +384 fpm, 12,6 ft,
-/// 3,6 s), das Bodenflag-Flackern blieb durchweg darunter. 5 ft ist auch
-/// die Grenze der Airline-SOPs zwischen „light bounce" (Landung fortsetzen)
-/// und „high bounce" (Durchstart, Airbus FCTM). Die alte Begruendung
-/// (SAS9987, 13,6 ft als „Federwerk-Hopser") traegt nicht: So weit federt
-/// kein Fahrwerk. Die Dauer-Bedingung (`BOUNCE_MIN_DAUER_MS`) bleibt; eine
-/// reine Zeitregel waere am Flackern gescheitert (td 1492: 7,1 s bei 0,1 ft).
-/// Wirkung: +9 von 1344 Landungen bekommen einen Hopser in die Note.
-pub const BOUNCE_SCORED_MIN_AGL_FT: f32 = 5.0;
+// Mindestens 5 ft AGL-Excursion (relativ zur Bodenhoehe beim Aufsetzen)
+// damit ein Wiederabheben im Sub-Score **bestraft** wird. Erscheint im
+// PIREP als `scored_bounce_count` und landet im
+// `landing-scoring::sub_bounces`-Sub-Score.
+//
+// Lernpaket AP3 (29.09.2026): von 15 auf 5 ft gesenkt, gleich der
+// Forensik-Schwelle. Gemessen an 1344 Landungen des Live-Recorders: alle
+// Luftphasen ab 5 ft waren echte Hopser (td 1403: +384 fpm, 12,6 ft,
+// 3,6 s), das Bodenflag-Flackern blieb durchweg darunter. 5 ft ist auch
+// die Grenze der Airline-SOPs zwischen „light bounce" (Landung fortsetzen)
+// und „high bounce" (Durchstart, Airbus FCTM). Die alte Begruendung
+// (SAS9987, 13,6 ft als „Federwerk-Hopser") traegt nicht: So weit federt
+// kein Fahrwerk. Die Dauer-Bedingung (`BOUNCE_MIN_DAUER_MS`) bleibt; eine
+// reine Zeitregel waere am Flackern gescheitert (td 1492: 7,1 s bei 0,1 ft).
+// Wirkung: +9 von 1344 Landungen bekommen einen Hopser in die Note.
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> bounce_scored_min_agl_ft (v2.1.24: 5.0)
 
-/// Seaplane / amphibian water-touchdown descent gate (fpm). A water touchdown
-/// is the floats / hull SETTLING onto the water — the impact V/S must be a
-/// genuine sink below this. This is what separates a landing from a level low
-/// pass, a step-taxi skim, or a glassy go-around that merely lingers in the
-/// water-contact band: those have V/S ≈ 0 and are rejected even though they
-/// sustain low-AGL. A real glassy-water landing descends ~100-200 fpm (well
-/// past this), so it is unaffected. Deliberately larger in magnitude than the
-/// fixed-wing −10 fpm floor so no phantom-validation window is left open for
-/// non-landing low flight over water (review finding, v0.15.21).
-pub const WATER_TOUCHDOWN_MIN_DESCENT_FPM: f32 = -50.0;
+// Seaplane / amphibian water-touchdown descent gate (fpm). A water touchdown
+// is the floats / hull SETTLING onto the water — the impact V/S must be a
+// genuine sink below this. This is what separates a landing from a level low
+// pass, a step-taxi skim, or a glassy go-around that merely lingers in the
+// water-contact band: those have V/S ≈ 0 and are rejected even though they
+// sustain low-AGL. A real glassy-water landing descends ~100-200 fpm (well
+// past this), so it is unaffected. Deliberately larger in magnitude than the
+// fixed-wing −10 fpm floor so no phantom-validation window is left open for
+// non-landing low flight over water (review finding, v0.15.21).
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> water_touchdown_min_descent_fpm (v2.1.24: -50.0)
 
 // ─── Bodenhöhe des Flugzeugs (Referenz für die Tiefflug-Prüfung) ─────────
 //
@@ -94,32 +94,36 @@ pub const WATER_TOUCHDOWN_MIN_DESCENT_FPM: f32 = -50.0;
 // und bestünde die Prüfung immer. Die Rollmessung ist vom Kandidaten
 // unabhängig — ein Flackern in 50 ft bleibt weit über der Grenze.
 
-/// Spielraum über der gemessenen Bodenhöhe. Entspricht der bisherigen
-/// absoluten 5-ft-Grenze bei Flugzeugen, deren Bezugspunkt am Boden liegt.
-pub const TIEFFLUG_SPIELRAUM_FT: f32 = 5.0;
+// Spielraum über der gemessenen Bodenhöhe. Entspricht der bisherigen
+// absoluten 5-ft-Grenze bei Flugzeugen, deren Bezugspunkt am Boden liegt.
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> tiefflug_spielraum_ft (v2.1.24: 5.0)
 
-/// Obergrenze der anerkannten Bodenhöhe. Proben darüber zählen gar nicht
-/// (kein Kappen) — ein Flugzeug jenseits davon behält die alte absolute
-/// Grenze, nie eine weichere.
-///
-/// Korpus 15.09.2026 (1203 Server-Flüge): höchster Musterwert 17,4 ft
-/// (ToLiss A346), A350 15,1, MD-11F 16,4, 777F 13,5; Streuung je Muster
-/// über alle Flüge unter 2 ft. Die erste Fassung erlaubte 30 ft — Codex
-/// wies zu Recht darauf hin, dass das eine Tiefflug-Grenze bis 35 ft
-/// zuliess, ohne dass ein reales Muster das braucht.
-pub const BODENHOEHE_MAX_FT: f32 = 22.0;
+// Obergrenze der anerkannten Bodenhöhe. Proben darüber zählen gar nicht
+// (kein Kappen) — ein Flugzeug jenseits davon behält die alte absolute
+// Grenze, nie eine weichere.
+//
+// Korpus 15.09.2026 (1203 Server-Flüge): höchster Musterwert 17,4 ft
+// (ToLiss A346), A350 15,1, MD-11F 16,4, 777F 13,5; Streuung je Muster
+// über alle Flüge unter 2 ft. Die erste Fassung erlaubte 30 ft — Codex
+// wies zu Recht darauf hin, dass das eine Tiefflug-Grenze bis 35 ft
+// zuliess, ohne dass ein reales Muster das braucht.
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> bodenhoehe_max_ft (v2.1.24: 22.0)
 
-/// Mindestzahl Rollproben, bevor die Bodenhöhe gilt (bei 50 Hz etwa 5 s).
-pub const BODENHOEHE_MIN_PROBEN: u32 = 250;
+// Mindestzahl Rollproben, bevor die Bodenhöhe gilt (bei 50 Hz etwa 5 s).
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> bodenhoehe_min_proben (v2.1.24: 250)
 
-/// Proben oberhalb dieser Rollgeschwindigkeit zählen nicht (Startlauf,
-/// Ausrollen — die Federung arbeitet, der Wert ist unruhig).
-pub const BODENHOEHE_MAX_GS_KT: f32 = 40.0;
+// Proben oberhalb dieser Rollgeschwindigkeit zählen nicht (Startlauf,
+// Ausrollen — die Federung arbeitet, der Wert ist unruhig).
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> bodenhoehe_max_gs_kt (v2.1.24: 40.0)
 
-const BODENHOEHE_UNTERGRENZE_FT: f32 = -5.0;
-const BODENHOEHE_KLASSE_FT: f32 = 0.25;
-const BODENHOEHE_KLASSEN: usize =
-    ((BODENHOEHE_MAX_FT - BODENHOEHE_UNTERGRENZE_FT) / BODENHOEHE_KLASSE_FT) as usize;
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> bodenhoehe_untergrenze_ft (v2.1.24: -5.0)
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> bodenhoehe_klasse_ft (v2.1.24: 0.25)
+// v3: aus den Grenzwerten berechnet, deshalb Funktion statt Konstante
+// (gleicher Rechenweg wie v2.1.24: (22 − (−5)) / 0,25 = 108).
+fn bodenhoehe_klassen() -> usize {
+    let g = &crate::grenzwerte::grenzwerte().aufsetzen;
+    ((g.bodenhoehe_max_ft.wert - g.bodenhoehe_untergrenze_ft.wert) / g.bodenhoehe_klasse_ft.wert) as usize
+}
 
 /// Robuste Bodenhöhe aus den Rollproben: Median über ein Häufigkeitsraster.
 ///
@@ -139,15 +143,15 @@ impl BodenhoehenReferenz {
     /// Eine Probe aufnehmen. Der Aufrufer entscheidet, ob das Flugzeug
     /// gerade ruhig am Boden steht oder rollt (siehe `ist_rollprobe`).
     pub fn beobachte(&mut self, agl_ft: f32) {
-        if !agl_ft.is_finite() || agl_ft < BODENHOEHE_UNTERGRENZE_FT || agl_ft >= BODENHOEHE_MAX_FT
+        if !agl_ft.is_finite() || agl_ft < crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_untergrenze_ft.wert || agl_ft >= crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_max_ft.wert
         {
             return;
         }
-        if self.klassen.len() != BODENHOEHE_KLASSEN {
-            self.klassen = vec![0; BODENHOEHE_KLASSEN];
+        if self.klassen.len() != bodenhoehe_klassen() {
+            self.klassen = vec![0; bodenhoehe_klassen()];
         }
-        let idx = ((agl_ft - BODENHOEHE_UNTERGRENZE_FT) / BODENHOEHE_KLASSE_FT) as usize;
-        let idx = idx.min(BODENHOEHE_KLASSEN - 1);
+        let idx = ((agl_ft - crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_untergrenze_ft.wert) / crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_klasse_ft.wert) as usize;
+        let idx = idx.min(bodenhoehe_klassen() - 1);
         self.klassen[idx] = self.klassen[idx].saturating_add(1);
         self.anzahl = self.anzahl.saturating_add(1);
     }
@@ -158,7 +162,7 @@ impl BodenhoehenReferenz {
 
     /// Median der Rollproben — `None`, solange zu wenige vorliegen.
     pub fn bodenhoehe_ft(&self) -> Option<f32> {
-        if self.anzahl < BODENHOEHE_MIN_PROBEN || self.klassen.len() != BODENHOEHE_KLASSEN {
+        if self.anzahl < crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_min_proben.wert || self.klassen.len() != bodenhoehe_klassen() {
             return None;
         }
         let haelfte = self.anzahl.div_ceil(2);
@@ -166,7 +170,7 @@ impl BodenhoehenReferenz {
         for (i, n) in self.klassen.iter().enumerate() {
             summe = summe.saturating_add(*n);
             if summe >= haelfte {
-                return Some(BODENHOEHE_UNTERGRENZE_FT + (i as f32 + 0.5) * BODENHOEHE_KLASSE_FT);
+                return Some(crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_untergrenze_ft.wert + (i as f32 + 0.5) * crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_klasse_ft.wert);
             }
         }
         None
@@ -180,7 +184,7 @@ pub fn ist_rollprobe(on_ground: bool, groundspeed_kt: f32, paused: bool, slew: b
         && !paused
         && !slew
         && groundspeed_kt.is_finite()
-        && groundspeed_kt < BODENHOEHE_MAX_GS_KT
+        && groundspeed_kt < crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_max_gs_kt.wert
 }
 
 /// Grenze der Tiefflug-Prüfung für dieses Flugzeug. Ohne gültige Messung
@@ -189,9 +193,9 @@ pub fn ist_rollprobe(on_ground: bool, groundspeed_kt: f32, paused: bool, slew: b
 pub fn tiefflug_grenze_ft(bodenhoehe_ft: Option<f32>) -> f32 {
     let boden = bodenhoehe_ft
         .filter(|b| b.is_finite())
-        .map(|b| b.clamp(0.0, BODENHOEHE_MAX_FT))
+        .map(|b| b.clamp(0.0, crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_max_ft.wert))
         .unwrap_or(0.0);
-    boden + TIEFFLUG_SPIELRAUM_FT
+    boden + crate::grenzwerte::grenzwerte().aufsetzen.tiefflug_spielraum_ft.wert
 }
 
 /// MSFS bestätigt den Radkontakt selbst — dann zählt das als Aufsetzen,
@@ -252,13 +256,13 @@ pub fn detect_td_candidate(
     current_idx: usize,
     sim: SimKind,
 ) -> Option<TdCandidate> {
-    const GEAR_FORCE_EPSILON_N: f32 = 1.0;
+    // Wert seit v3: bundle/grenzwerte/aufsetzen.json -> gear_force_epsilon_n (v2.1.24: 1.0)
 
     let prev = prev?;
     let prev_in_air = !prev.on_ground
         && prev
             .gear_normal_force_n
-            .map(|f| f <= GEAR_FORCE_EPSILON_N)
+            .map(|f| f <= crate::grenzwerte::grenzwerte().aufsetzen.gear_force_epsilon_n.wert)
             .unwrap_or(true);
     if !prev_in_air {
         return None;
@@ -268,7 +272,7 @@ pub fn detect_td_candidate(
         current.on_ground
             || current
                 .gear_normal_force_n
-                .map(|f| f > GEAR_FORCE_EPSILON_N)
+                .map(|f| f > crate::grenzwerte::grenzwerte().aufsetzen.gear_force_epsilon_n.wert)
                 .unwrap_or(false)
     } else {
         // MSFS / Off — only on_ground edge (kein gear_normal_force_n verfuegbar)
@@ -373,15 +377,15 @@ pub enum FalseEdgeReason {
 /// 3% × static weight skaliert mit Aircraft-Mass — A330 (250t) ergibt ~73.5 kN,
 /// Cessna 152 (757kg) ergibt ~222 N → floor wins → 1000 N.
 pub fn gear_force_threshold_n(total_weight_kg: Option<f32>) -> f32 {
-    const ABS_FLOOR: f32 = 1000.0;
-    const MASS_RATIO: f32 = 0.03;
+    // Wert seit v3: bundle/grenzwerte/aufsetzen.json -> abs_floor (v2.1.24: 1000.0)
+    // Wert seit v3: bundle/grenzwerte/aufsetzen.json -> mass_ratio (v2.1.24: 0.03)
     const G: f32 = 9.80665;
 
     let dynamic = total_weight_kg
         .filter(|w| *w > 100.0)
-        .map(|w| w * G * MASS_RATIO)
-        .unwrap_or(ABS_FLOOR);
-    dynamic.max(ABS_FLOOR)
+        .map(|w| w * G * crate::grenzwerte::grenzwerte().aufsetzen.mass_ratio.wert)
+        .unwrap_or(crate::grenzwerte::grenzwerte().aufsetzen.abs_floor.wert);
+    dynamic.max(crate::grenzwerte::grenzwerte().aufsetzen.abs_floor.wert)
 }
 
 /// Prueft, ob `samples` das Fenster `[fenster_start, fenster_ende]` LUECKENLOS
@@ -432,55 +436,55 @@ fn deckt_fenster_durchgehend_ab(
     endluecke <= max_gap_ms
 }
 
-/// Grösste zulässige Lücke zwischen zwei Proben im Bewertungsfenster.
-///
-/// # Wie die Zahl zustande kommt (Untersuchung 12.09.2026)
-///
-/// Die Landerate wird in Stufen bewertet; die schmalste ist 90 fpm breit
-/// (`sub_landing_rate.rs`: unter 90 → 85 Punkte, 90–250 → 100, 250–400 → 80,
-/// 400–600 → 45, 600–1000 → 20, darüber 0). Eine Lücke ist dann zu gross,
-/// wenn sich die Sinkrate darin um mehr als eine solche Stufe ändern kann —
-/// denn dann ist unbekannt, in welcher Stufe die Landung wirklich lag.
-///
-/// Über 1119 Landungen des Bestands gemessen (stärkste Änderung je Landung
-/// in der letzten Sekunde vor dem Aufsetzen, nur aus Probenpaaren mit
-/// 20–200 ms Abstand): Median 188 fpm/s, bei den dynamischsten zehn Prozent
-/// 663 fpm/s. Eine Stufe ist damit im Mittel nach 479 ms durchlaufen, bei
-/// den dynamischen Landungen aber schon nach 136 ms.
-///
-/// 200 ms ist eine **empirische Ausschlussgrenze** deutlich oberhalb der
-/// beobachteten normalen Probenabstände (Median 33 ms, 99. Perzentil 112 ms)
-/// und deutlich unterhalb der gefundenen Ausfälle (229 ms bis 921 ms).
-///
-/// Sie garantiert KEINE unveränderte Score-Stufe — bei 663 fpm/s sind
-/// innerhalb von 200 ms schon 133 fpm Änderung möglich, und nahe einer
-/// Stufengrenze genügt weniger (Codex-Abnahme 12.09.2026: die erste Fassung
-/// dieses Kommentars behauptete das Gegenteil). Die Grenze trennt
-/// „aufgezeichnet" von „nicht aufgezeichnet", nicht „genau" von „ungenau".
-///
-/// Dass `MAX_COVERAGE_GAP_MS` in der Kontaktvalidierung denselben Wert nutzt,
-/// ist ein Hinweis auf dieselbe Grössenordnung, kein unabhängiger Nachweis.
-pub const MAX_BEWERTUNGS_LUECKE_MS: i64 = 200;
+// Grösste zulässige Lücke zwischen zwei Proben im Bewertungsfenster.
+//
+// # Wie die Zahl zustande kommt (Untersuchung 12.09.2026)
+//
+// Die Landerate wird in Stufen bewertet; die schmalste ist 90 fpm breit
+// (`sub_landing_rate.rs`: unter 90 → 85 Punkte, 90–250 → 100, 250–400 → 80,
+// 400–600 → 45, 600–1000 → 20, darüber 0). Eine Lücke ist dann zu gross,
+// wenn sich die Sinkrate darin um mehr als eine solche Stufe ändern kann —
+// denn dann ist unbekannt, in welcher Stufe die Landung wirklich lag.
+//
+// Über 1119 Landungen des Bestands gemessen (stärkste Änderung je Landung
+// in der letzten Sekunde vor dem Aufsetzen, nur aus Probenpaaren mit
+// 20–200 ms Abstand): Median 188 fpm/s, bei den dynamischsten zehn Prozent
+// 663 fpm/s. Eine Stufe ist damit im Mittel nach 479 ms durchlaufen, bei
+// den dynamischen Landungen aber schon nach 136 ms.
+//
+// 200 ms ist eine **empirische Ausschlussgrenze** deutlich oberhalb der
+// beobachteten normalen Probenabstände (Median 33 ms, 99. Perzentil 112 ms)
+// und deutlich unterhalb der gefundenen Ausfälle (229 ms bis 921 ms).
+//
+// Sie garantiert KEINE unveränderte Score-Stufe — bei 663 fpm/s sind
+// innerhalb von 200 ms schon 133 fpm Änderung möglich, und nahe einer
+// Stufengrenze genügt weniger (Codex-Abnahme 12.09.2026: die erste Fassung
+// dieses Kommentars behauptete das Gegenteil). Die Grenze trennt
+// „aufgezeichnet" von „nicht aufgezeichnet", nicht „genau" von „ungenau".
+//
+// Dass `MAX_COVERAGE_GAP_MS` in der Kontaktvalidierung denselben Wert nutzt,
+// ist ein Hinweis auf dieselbe Grössenordnung, kein unabhängiger Nachweis.
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> max_bewertungs_luecke_ms (v2.1.24: 200)
 
-/// Mindestzahl verwertbarer Proben im Bewertungsfenster.
-///
-/// Fängt den Fall, den eine reine Lückenprüfung übersieht: gleichmässig,
-/// aber viel zu grob abgetastet. Bei Soll-Takt (50 Hz) liegen im Fenster
-/// rund 55 Proben, im Bestand sind es im Mittel 35. Unter 12 ist die
-/// Aufzeichnung in keinem Fall mehr belastbar — die beiden schlechtesten
-/// Landungen des Bestands hatten 5 und 8.
-pub const MIN_BEWERTUNGS_PROBEN: usize = 12;
+// Mindestzahl verwertbarer Proben im Bewertungsfenster.
+//
+// Fängt den Fall, den eine reine Lückenprüfung übersieht: gleichmässig,
+// aber viel zu grob abgetastet. Bei Soll-Takt (50 Hz) liegen im Fenster
+// rund 55 Proben, im Bestand sind es im Mittel 35. Unter 12 ist die
+// Aufzeichnung in keinem Fall mehr belastbar — die beiden schlechtesten
+// Landungen des Bestands hatten 5 und 8.
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> min_bewertungs_proben (v2.1.24: 12)
 
-/// Das Fenster, in dem die Aufzeichnung sitzen muss: eine Sekunde vor dem
-/// Bodenkontakt bis kurz danach.
-///
-/// Fest am Kontakt, NICHT am gewählten Impact-Frame: Sonst schwankte die
-/// Fensterlänge zwischen 850 und 1200 ms, und `MIN_BEWERTUNGS_PROBEN`
-/// bedeutete bei jeder Landung etwas anderes. Die Sekunde davor deckt die
-/// Flare ab, in der sich die Sinkrate entscheidet; die 100 ms danach
-/// enthalten das gesamte Auswahlfenster des Impact-Frames.
-pub const BEWERTUNGS_FENSTER_VOR_MS: i64 = 1000;
-pub const BEWERTUNGS_FENSTER_NACH_MS: i64 = 100;
+// Das Fenster, in dem die Aufzeichnung sitzen muss: eine Sekunde vor dem
+// Bodenkontakt bis kurz danach.
+//
+// Fest am Kontakt, NICHT am gewählten Impact-Frame: Sonst schwankte die
+// Fensterlänge zwischen 850 und 1200 ms, und `MIN_BEWERTUNGS_PROBEN`
+// bedeutete bei jeder Landung etwas anderes. Die Sekunde davor deckt die
+// Flare ab, in der sich die Sinkrate entscheidet; die 100 ms danach
+// enthalten das gesamte Auswahlfenster des Impact-Frames.
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> bewertungs_fenster_vor_ms (v2.1.24: 1000)
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> bewertungs_fenster_nach_ms (v2.1.24: 100)
 
 /// Der Teil vor dem Kontakt, in dem eine Lücke die Bewertung sperrt: genau
 /// der Bereich, aus dem die gewertete Sinkrate gemessen wird (Höhenkurve,
@@ -529,8 +533,8 @@ pub fn pruefe_bewertbarkeit(
     samples: &[TouchdownWindowSample],
     contact_at: DateTime<Utc>,
 ) -> Result<(), FehlendeAbdeckung> {
-    let start = contact_at - chrono::Duration::milliseconds(BEWERTUNGS_FENSTER_VOR_MS);
-    let ende = contact_at + chrono::Duration::milliseconds(BEWERTUNGS_FENSTER_NACH_MS);
+    let start = contact_at - chrono::Duration::milliseconds(crate::grenzwerte::grenzwerte().aufsetzen.bewertungs_fenster_vor_ms.wert);
+    let ende = contact_at + chrono::Duration::milliseconds(crate::grenzwerte::grenzwerte().aufsetzen.bewertungs_fenster_nach_ms.wert);
     let luecken_start = contact_at - chrono::Duration::milliseconds(LUECKEN_FENSTER_VOR_MS);
 
     // Verwertbar heisst: im Fenster, mit endlichen Werten. Eine Probe mit
@@ -566,7 +570,7 @@ pub fn pruefe_bewertbarkeit(
         _ => (ende - luecken_start).num_milliseconds(),
     };
 
-    if groesste > MAX_BEWERTUNGS_LUECKE_MS || proben < MIN_BEWERTUNGS_PROBEN {
+    if groesste > crate::grenzwerte::grenzwerte().aufsetzen.max_bewertungs_luecke_ms.wert || proben < crate::grenzwerte::grenzwerte().aufsetzen.min_bewertungs_proben.wert {
         return Err(FehlendeAbdeckung {
             groesste_luecke_ms: groesste,
             proben,
@@ -668,7 +672,7 @@ pub fn validate_candidate(
             // two together separate a settling water touchdown from non-landing
             // low flight — without the descent gate any sustained <5 ft water
             // flight would phantom-validate as a touchdown (review finding).
-            low_agl_pass && impact_frame_vs < WATER_TOUCHDOWN_MIN_DESCENT_FPM
+            low_agl_pass && impact_frame_vs < crate::grenzwerte::grenzwerte().aufsetzen.water_touchdown_min_descent_fpm.wert
         } else {
             // Rotorcraft: skids/wheels assert `on_ground`, so require BOTH the
             // sustained ground contact and the sustained low-AGL window.
@@ -701,10 +705,10 @@ pub fn validate_candidate(
         // it) are the same kind of unknown, so both now fall through to
         // the SAME 4-of-4 voting fallback below instead of discarding
         // the candidate outright.
-        const MIN_GEAR_FORCE_SAMPLES_IN_WINDOW: usize = 2;
+        // Wert seit v3: bundle/grenzwerte/aufsetzen.json -> min_gear_force_samples_in_window (v2.1.24: 2)
         let any_gear_force_data = samples.iter().any(|s| s.gear_normal_force_n.is_some());
         let gear_force_data_sufficient =
-            any_gear_force_data && gear_force_sample_count >= MIN_GEAR_FORCE_SAMPLES_IN_WINDOW;
+            any_gear_force_data && gear_force_sample_count >= crate::grenzwerte::grenzwerte().aufsetzen.min_gear_force_samples_in_window.wert;
 
         if gear_force_data_sufficient {
             // Echte X-Plane-Validation mit gear_force als MUST-PASS
@@ -784,15 +788,15 @@ pub fn validate_candidate(
         // Telemetrie in BEIDEN Boden-Wahrheits-Fenstern fuehrt zu einem
         // eigenen, ehrlich benannten Grund (`InsufficientTelemetry`) statt
         // stillschweigend als gescheiterte Abstimmung durchzulaufen.
-        const MIN_GROUND_TRUTH_SAMPLES: usize = 2;
+        // Wert seit v3: bundle/grenzwerte/aufsetzen.json -> min_ground_truth_samples (v2.1.24: 2)
         let low_agl_window_end = edge_at + Duration::milliseconds(1000);
         let low_agl_sample_count = samples
             .iter()
             .filter(|s| s.at >= edge_at && s.at <= low_agl_window_end)
             .count();
         let sustained_ground_sample_count = samples.iter().filter(|s| s.at >= edge_at).count();
-        if low_agl_sample_count < MIN_GROUND_TRUTH_SAMPLES
-            && sustained_ground_sample_count < MIN_GROUND_TRUTH_SAMPLES
+        if low_agl_sample_count < crate::grenzwerte::grenzwerte().aufsetzen.min_ground_truth_samples.wert
+            && sustained_ground_sample_count < crate::grenzwerte::grenzwerte().aufsetzen.min_ground_truth_samples.wert
         {
             return ValidationResult::FalseEdge {
                 reason: FalseEdgeReason::InsufficientTelemetry,
@@ -817,7 +821,7 @@ pub fn validate_candidate(
         // laesst echtes Sensor-Rauschen um 1.0G nicht durchrutschen, faengt
         // aber jeden Aufprall auf, der ueberhaupt eine spuerbare
         // Gewichtsuebertragung zeigt.
-        const MIN_SETTLE_G_FORCE_PEAK: f32 = 1.02;
+        // Wert seit v3: bundle/grenzwerte/aufsetzen.json -> min_settle_g_force_peak (v2.1.24: 1.02)
         //
         // Codex-QS-Fund (Vereinheitlichung 09/2026): `evaluate_low_agl_persistence`
         // und `evaluate_sustained_ground` melden PASS schon, wenn im (ggf.
@@ -844,19 +848,19 @@ pub fn validate_candidate(
         // JEDEN Abstand — vom Rand-Zeitpunkt zum ersten Sample, zwischen
         // allen aufeinanderfolgenden Samples, und vom letzten Sample zum
         // Fensterende.
-        const MAX_COVERAGE_GAP_MS: i64 = 200;
+        // Wert seit v3: bundle/grenzwerte/aufsetzen.json -> max_coverage_gap_ms (v2.1.24: 200)
         let low_agl_covers_window =
-            deckt_fenster_durchgehend_ab(samples, edge_at, low_agl_window_end, MAX_COVERAGE_GAP_MS);
+            deckt_fenster_durchgehend_ab(samples, edge_at, low_agl_window_end, crate::grenzwerte::grenzwerte().aufsetzen.max_coverage_gap_ms.wert);
         let sustained_window_end = edge_at + Duration::milliseconds(500);
         let sustained_covers_window = deckt_fenster_durchgehend_ab(
             samples,
             edge_at,
             sustained_window_end,
-            MAX_COVERAGE_GAP_MS,
+            crate::grenzwerte::grenzwerte().aufsetzen.max_coverage_gap_ms.wert,
         );
         if low_agl_pass
             && sustained_pass
-            && g_force_peak > MIN_SETTLE_G_FORCE_PEAK
+            && g_force_peak > crate::grenzwerte::grenzwerte().aufsetzen.min_settle_g_force_peak.wert
             && low_agl_covers_window
             && sustained_covers_window
         {
@@ -1145,13 +1149,13 @@ pub enum RejectionReason {
     ImplausiblyHigh,
 }
 
-/// Untergrenze einer physikalisch moeglichen Landerate.
-///
-/// v0.20.2: exportiert, damit die Kanonik in `lib.rs` DIESELBE Grenze nutzt.
-/// Sie stand vorher nur hier drin — und die Kanonik (die den ungeguardeten
-/// Edge-Wert ausliefert) kannte sie nicht. Zwei Definitionen von "plausibel"
-/// waeren genau der Riss, den wir gerade ausraeumen.
-pub const VS_FLOOR_FPM: f32 = -3000.0;
+// Untergrenze einer physikalisch moeglichen Landerate.
+//
+// v0.20.2: exportiert, damit die Kanonik in `lib.rs` DIESELBE Grenze nutzt.
+// Sie stand vorher nur hier drin — und die Kanonik (die den ungeguardeten
+// Edge-Wert ausliefert) kannte sie nicht. Zwei Definitionen von "plausibel"
+// waeren genau der Riss, den wir gerade ausraeumen.
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> vs_floor_fpm (v2.1.24: -3000.0)
 
 /// HARD GUARD: niemals positiv, niemals unter `VS_FLOOR_FPM`
 fn finalize_vs(candidate_fpm: f32) -> Result<f32, RejectionReason> {
@@ -1161,7 +1165,7 @@ fn finalize_vs(candidate_fpm: f32) -> Result<f32, RejectionReason> {
     if candidate_fpm > 0.0 {
         return Err(RejectionReason::PositiveVs);
     }
-    if candidate_fpm < VS_FLOOR_FPM {
+    if candidate_fpm < crate::grenzwerte::grenzwerte().aufsetzen.vs_floor_fpm.wert {
         return Err(RejectionReason::ImplausiblyHigh);
     }
     Ok(candidate_fpm)
@@ -2074,7 +2078,7 @@ mod tests {
     #[test]
     fn low_agl_persistence_fails_on_a_totally_empty_window() {
         let edge_at = DateTime::<Utc>::from_timestamp_millis(1000).unwrap();
-        let (pass, ms) = evaluate_low_agl_persistence(&[], edge_at, TIEFFLUG_SPIELRAUM_FT);
+        let (pass, ms) = evaluate_low_agl_persistence(&[], edge_at, crate::grenzwerte::grenzwerte().aufsetzen.tiefflug_spielraum_ft.wert);
         assert!(
             !pass,
             "zero samples must not confirm 1000ms of low-AGL persistence"
@@ -2089,7 +2093,7 @@ mod tests {
         let samples: Vec<TouchdownWindowSample> =
             (0..5).map(|i| make_sample(1000 + i * 100, None)).collect();
         let edge_at = samples[0].at;
-        let (pass, ms) = evaluate_low_agl_persistence(&samples, edge_at, TIEFFLUG_SPIELRAUM_FT);
+        let (pass, ms) = evaluate_low_agl_persistence(&samples, edge_at, crate::grenzwerte::grenzwerte().aufsetzen.tiefflug_spielraum_ft.wert);
         assert!(pass, "real samples with no violation must still pass");
         assert_eq!(ms, 1000);
     }
@@ -2520,7 +2524,7 @@ mod tests {
             "die Lücke vor dem Kontakt muss gefunden werden, gemessen: {} ms",
             fehlt.groesste_luecke_ms
         );
-        assert!(fehlt.proben < MIN_BEWERTUNGS_PROBEN);
+        assert!(fehlt.proben < crate::grenzwerte::grenzwerte().aufsetzen.min_bewertungs_proben.wert);
     }
 
     #[test]
@@ -2541,7 +2545,7 @@ mod tests {
                 .map(|ms| bp(ms, 2.0, ms >= 0, -140.0)),
         );
         assert!(
-            mit_luecke.len() > MIN_BEWERTUNGS_PROBEN,
+            mit_luecke.len() > crate::grenzwerte::grenzwerte().aufsetzen.min_bewertungs_proben.wert,
             "Probenzahl ist erfüllt"
         );
         let fehlt = pruefe_bewertbarkeit(&mit_luecke, kontakt()).unwrap_err();
@@ -2555,10 +2559,10 @@ mod tests {
             .step_by(200)
             .map(|ms| bp(ms, 4.0, ms >= 0, -180.0))
             .collect();
-        assert!(zu_wenige.len() < MIN_BEWERTUNGS_PROBEN);
+        assert!(zu_wenige.len() < crate::grenzwerte::grenzwerte().aufsetzen.min_bewertungs_proben.wert);
         let fehlt = pruefe_bewertbarkeit(&zu_wenige, kontakt()).unwrap_err();
         assert!(
-            fehlt.groesste_luecke_ms <= MAX_BEWERTUNGS_LUECKE_MS,
+            fehlt.groesste_luecke_ms <= crate::grenzwerte::grenzwerte().aufsetzen.max_bewertungs_luecke_ms.wert,
             "die Lücke allein wäre in Ordnung: {} ms",
             fehlt.groesste_luecke_ms
         );
@@ -2574,17 +2578,17 @@ mod tests {
         // 200 ms Abstand ist erlaubt, 201 ms nicht — beide Zweige getrennt
         // geprüft, damit eine Verschiebung der Konstante auffällt.
         let gerade_noch: Vec<_> = (-1000..=100)
-            .step_by(MAX_BEWERTUNGS_LUECKE_MS as usize)
+            .step_by(crate::grenzwerte::grenzwerte().aufsetzen.max_bewertungs_luecke_ms.wert as usize)
             .map(|ms| bp(ms, 3.0, ms >= 0, -140.0))
             .collect();
         assert_eq!(
             pruefe_bewertbarkeit(&gerade_noch, kontakt()).is_ok(),
-            gerade_noch.len() >= MIN_BEWERTUNGS_PROBEN,
+            gerade_noch.len() >= crate::grenzwerte::grenzwerte().aufsetzen.min_bewertungs_proben.wert,
             "bei 200 ms darf nur noch die Probenzahl den Ausschlag geben"
         );
 
         let zu_grob: Vec<_> = (-1000..=100)
-            .step_by(MAX_BEWERTUNGS_LUECKE_MS as usize + 1)
+            .step_by(crate::grenzwerte::grenzwerte().aufsetzen.max_bewertungs_luecke_ms.wert as usize + 1)
             .map(|ms| bp(ms, 3.0, ms >= 0, -140.0))
             .collect();
         assert!(pruefe_bewertbarkeit(&zu_grob, kontakt()).is_err());
@@ -2599,9 +2603,9 @@ mod tests {
             .step_by(150)
             .map(|ms| bp(ms, 4.0, ms >= 0, -200.0))
             .collect();
-        assert!(proben.len() < MIN_BEWERTUNGS_PROBEN);
+        assert!(proben.len() < crate::grenzwerte::grenzwerte().aufsetzen.min_bewertungs_proben.wert);
         let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
-        assert!(fehlt.groesste_luecke_ms <= MAX_BEWERTUNGS_LUECKE_MS);
+        assert!(fehlt.groesste_luecke_ms <= crate::grenzwerte::grenzwerte().aufsetzen.max_bewertungs_luecke_ms.wert);
         assert_eq!(fehlt.proben, proben.len());
     }
 
@@ -2614,7 +2618,7 @@ mod tests {
             .map(|ms| bp(ms, 4.0, ms >= 0, -200.0))
             .collect();
         assert!(
-            proben.len() >= MIN_BEWERTUNGS_PROBEN,
+            proben.len() >= crate::grenzwerte::grenzwerte().aufsetzen.min_bewertungs_proben.wert,
             "Probenzahl ist erfüllt"
         );
         let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
@@ -2654,7 +2658,7 @@ mod tests {
                 .map(|ms| bp(ms, if ms < 0 { 2.0 } else { 0.3 }, ms >= 0, -400.0)),
         );
         let fehlt = pruefe_bewertbarkeit(&verschoben, kontakt()).unwrap_err();
-        assert!(fehlt.groesste_luecke_ms > MAX_BEWERTUNGS_LUECKE_MS);
+        assert!(fehlt.groesste_luecke_ms > crate::grenzwerte::grenzwerte().aufsetzen.max_bewertungs_luecke_ms.wert);
     }
 
     #[test]
@@ -2714,7 +2718,7 @@ mod tests {
         assert_eq!(fehlt.proben, 0);
         assert_eq!(
             fehlt.groesste_luecke_ms,
-            LUECKEN_FENSTER_VOR_MS + BEWERTUNGS_FENSTER_NACH_MS
+            LUECKEN_FENSTER_VOR_MS + crate::grenzwerte::grenzwerte().aufsetzen.bewertungs_fenster_nach_ms.wert
         );
     }
 
@@ -2770,7 +2774,7 @@ mod tests {
     #[test]
     fn dlh880_mit_gemessener_bodenhoehe_wird_erkannt() {
         let (cand, samples) = dlh880_fenster();
-        let boden = referenz_mit(9.1, BODENHOEHE_MIN_PROBEN).bodenhoehe_ft();
+        let boden = referenz_mit(9.1, crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_min_proben.wert).bodenhoehe_ft();
         let r = validate_candidate(
             &cand,
             &samples,
@@ -2813,7 +2817,7 @@ mod tests {
             t += 20;
         }
         let cand = msfs_candidate(edge, 50.0, -5.0, 1.0);
-        let boden = referenz_mit(9.0, BODENHOEHE_MIN_PROBEN).bodenhoehe_ft();
+        let boden = referenz_mit(9.0, crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_min_proben.wert).bodenhoehe_ft();
         let r = validate_candidate(
             &cand,
             &samples,
@@ -2830,7 +2834,7 @@ mod tests {
 
     #[test]
     fn bodenhoehe_gilt_erst_ab_genug_proben_und_ist_robust_gegen_ausreisser() {
-        let mut r = referenz_mit(9.0, BODENHOEHE_MIN_PROBEN - 1);
+        let mut r = referenz_mit(9.0, crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_min_proben.wert - 1);
         assert_eq!(r.bodenhoehe_ft(), None, "zu wenige Proben");
         r.beobachte(9.0);
         let b = r.bodenhoehe_ft().unwrap();
@@ -2845,7 +2849,7 @@ mod tests {
         let vorher = r.anzahl();
         r.beobachte(-148.0);
         r.beobachte(f32::NAN);
-        r.beobachte(BODENHOEHE_MAX_FT + 1.0);
+        r.beobachte(crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_max_ft.wert + 1.0);
         assert_eq!(r.anzahl(), vorher);
         for _ in 0..50 {
             r.beobachte(25.0);
@@ -2869,7 +2873,7 @@ mod tests {
         assert_eq!(tiefflug_grenze_ft(Some(9.0)), 14.0);
         assert_eq!(
             tiefflug_grenze_ft(Some(500.0)),
-            BODENHOEHE_MAX_FT + TIEFFLUG_SPIELRAUM_FT
+            crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_max_ft.wert + crate::grenzwerte::grenzwerte().aufsetzen.tiefflug_spielraum_ft.wert
         );
     }
 
@@ -2886,13 +2890,13 @@ mod tests {
             t += 20;
         }
         let cand = msfs_candidate(edge, 12.0, -3.0, 1.0);
-        let boden = referenz_mit(9.0, BODENHOEHE_MIN_PROBEN).bodenhoehe_ft();
+        let boden = referenz_mit(9.0, crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_min_proben.wert).bodenhoehe_ft();
         for kat in [AircraftCategory::Helicopter, AircraftCategory::Seaplane] {
             match validate_candidate(&cand, &samples, SimKind::Msfs2024, -3.0, kat, boden) {
                 ValidationResult::FalseEdge { result, .. } => {
                     assert_eq!(
                         result.low_agl_grenze_ft,
-                        Some(TIEFFLUG_SPIELRAUM_FT),
+                        Some(crate::grenzwerte::grenzwerte().aufsetzen.tiefflug_spielraum_ft.wert),
                         "{kat:?}"
                     );
                 }
@@ -2907,9 +2911,9 @@ mod tests {
     fn proben_ueber_der_obergrenze_zaehlen_nicht() {
         // Kein Kappen auf 22 ft: Ein Flugzeug (oder eine Fehlmessung) jenseits
         // der Obergrenze bekommt gar keine Bodenhöhe und damit die alte Grenze.
-        let r = referenz_mit(BODENHOEHE_MAX_FT + 3.0, BODENHOEHE_MIN_PROBEN * 2);
+        let r = referenz_mit(crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_max_ft.wert + 3.0, crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_min_proben.wert * 2);
         assert_eq!(r.bodenhoehe_ft(), None);
-        assert_eq!(tiefflug_grenze_ft(r.bodenhoehe_ft()), TIEFFLUG_SPIELRAUM_FT);
+        assert_eq!(tiefflug_grenze_ft(r.bodenhoehe_ft()), crate::grenzwerte::grenzwerte().aufsetzen.tiefflug_spielraum_ft.wert);
     }
 
     #[test]
@@ -2921,7 +2925,7 @@ mod tests {
         );
         assert!(!ist_rollprobe(false, 12.0, false, false), "in der Luft nie");
         assert!(
-            !ist_rollprobe(true, BODENHOEHE_MAX_GS_KT, false, false),
+            !ist_rollprobe(true, crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_max_gs_kt.wert, false, false),
             "Startlauf/Ausrollen nicht"
         );
         assert!(!ist_rollprobe(true, 5.0, true, false), "Pause nicht");
@@ -2931,7 +2935,7 @@ mod tests {
 
     #[test]
     fn bodenhoehe_ueberlebt_speichern_und_laden() {
-        let r = referenz_mit(9.1, BODENHOEHE_MIN_PROBEN);
+        let r = referenz_mit(9.1, crate::grenzwerte::grenzwerte().aufsetzen.bodenhoehe_min_proben.wert);
         let json = serde_json::to_string(&r).unwrap();
         let zurueck: BodenhoehenReferenz = serde_json::from_str(&json).unwrap();
         assert_eq!(zurueck, r);

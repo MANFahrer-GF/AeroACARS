@@ -235,8 +235,8 @@
         // Messung am Live-Bestand siehe `BOUNCE_SCORED_MIN_AGL_FT`.
         // Aenderung der Werte ist eine Spec-Aenderung — dieser Test schlaegt
         // fehl wenn jemand die Werte still-und-leise verschiebt.
-        assert_eq!(touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT, 5.0);
-        assert_eq!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT, 5.0);
+        assert_eq!(crate::grenzwerte::grenzwerte().aufsetzen.bounce_forensic_min_agl_ft.wert, 5.0);
+        assert_eq!(crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert, 5.0);
     }
 
     #[test]
@@ -244,7 +244,7 @@
         // Sanity: was benotet wird, muss auch forensisch sichtbar sein.
         // Seit Lernpaket AP3 sind beide Schwellen gleich (5 ft) — jeder
         // sichtbare Hopser ab 5 ft ist ein „high bounce" und zaehlt.
-        assert!(touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT >= touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT);
+        assert!(crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert >= crate::grenzwerte::grenzwerte().aufsetzen.bounce_forensic_min_agl_ft.wert);
     }
 
     #[test]
@@ -254,10 +254,10 @@
         // 13,6 ft sind aber ein echtes Wiederabheben und zaehlen jetzt.
         // Das Bodenflag-Flackern (Live-Bestand: bis 4,8 ft) bleibt draussen.
         let bounce_height = 13.57_f32;
-        assert!(bounce_height >= touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT);
-        assert!(bounce_height >= touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
+        assert!(bounce_height >= crate::grenzwerte::grenzwerte().aufsetzen.bounce_forensic_min_agl_ft.wert);
+        assert!(bounce_height >= crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert);
         let flackern_max = 4.8_f32; // td 1474, 3,1 s „in der Luft"
-        assert!(flackern_max < touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
+        assert!(flackern_max < crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert);
     }
 
     #[test]
@@ -274,10 +274,10 @@
         // anpassen — KEINE der beiden Konstanten in Isolation aendern.
         assert_eq!(
             BOUNCE_AGL_THRESHOLD_FT as f32,
-            touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT,
+            crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert,
             "Streamer-Threshold ({} ft) muss gleich v2-SCORED-Threshold ({} ft) sein",
             BOUNCE_AGL_THRESHOLD_FT,
-            touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT,
+            crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert,
         );
     }
 

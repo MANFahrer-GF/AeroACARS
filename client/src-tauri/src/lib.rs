@@ -21095,7 +21095,7 @@ pub fn ofp_matches_active_flight(
 /// touchdown_v2 je gefragt wurde. Bei 0.0 faellt sie auf den naechsten Kandidaten
 /// — und der laeuft durch touchdown_v2s eigenen Guard.
 fn landing_rate_is_plausible(fpm: f32) -> bool {
-    fpm.is_finite() && fpm < 0.0 && fpm >= touchdown_v2::VS_FLOOR_FPM
+    fpm.is_finite() && fpm < 0.0 && fpm >= crate::grenzwerte::grenzwerte().aufsetzen.vs_floor_fpm.wert
 }
 
 impl FlightStats {
@@ -33579,13 +33579,13 @@ fn compute_landing_analysis(
             // vorbei. Bei THY42 waren es 40 und 160 ms.
             let dauer_ms = ts - bounce_start_ms;
             if dauer_ms >= BOUNCE_MIN_DAUER_MS {
-                if current_bounce_max >= touchdown_v2::BOUNCE_FORENSIC_MIN_AGL_FT {
+                if current_bounce_max >= crate::grenzwerte::grenzwerte().aufsetzen.bounce_forensic_min_agl_ft.wert {
                     forensic_bounces += 1;
                     if current_bounce_max > bounce_max_agl {
                         bounce_max_agl = current_bounce_max;
                     }
                 }
-                if current_bounce_max >= touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT {
+                if current_bounce_max >= crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert {
                     scored_bounces += 1;
                 } else if dauer_ms >= BOUNCE_LIGHT_MIN_DAUER_MS
                     && current_bounce_max >= BOUNCE_LIGHT_MIN_AGL_FT
@@ -44661,8 +44661,8 @@ fn finalize_landing_score_if_due(
             "kein ausgewertetes Aufsetzfenster — Landung gilt als nicht messbar"
         );
         stats.landung_abdeckung_fehlt = Some(touchdown_v2::FehlendeAbdeckung {
-            groesste_luecke_ms: touchdown_v2::BEWERTUNGS_FENSTER_VOR_MS
-                + touchdown_v2::BEWERTUNGS_FENSTER_NACH_MS,
+            groesste_luecke_ms: crate::grenzwerte::grenzwerte().aufsetzen.bewertungs_fenster_vor_ms.wert
+                + crate::grenzwerte::grenzwerte().aufsetzen.bewertungs_fenster_nach_ms.wert,
             proben: 0,
         });
         plugin_sinkrate_uebernehmen(stats);

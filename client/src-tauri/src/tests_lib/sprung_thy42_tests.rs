@@ -301,5 +301,5 @@
         assert!(!leichter_hopser_im_streamer(2000, 5.0), "5 ft gehört nicht mehr zum leichten Hopser");
         assert_eq!(BOUNCE_LIGHT_MIN_AGL_FT, 2.0);
         assert_eq!(BOUNCE_LIGHT_MIN_DAUER_MS, 1000);
-        assert_eq!(BOUNCE_AGL_THRESHOLD_FT as f32, touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT);
+        assert_eq!(BOUNCE_AGL_THRESHOLD_FT as f32, crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert);
     }

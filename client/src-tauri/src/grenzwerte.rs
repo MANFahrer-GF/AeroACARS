@@ -69,14 +69,42 @@ pub(crate) struct Phasen {
     pub climb_schnellsink_fruehestens_secs: Grenzwert<i64>,
 }
 
+/// `touchdown_v2.rs`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Aufsetzen {
+    pub bounce_forensic_min_agl_ft: Grenzwert<f32>,
+    pub bounce_scored_min_agl_ft: Grenzwert<f32>,
+    pub water_touchdown_min_descent_fpm: Grenzwert<f32>,
+    pub tiefflug_spielraum_ft: Grenzwert<f32>,
+    pub bodenhoehe_max_ft: Grenzwert<f32>,
+    pub bodenhoehe_min_proben: Grenzwert<u32>,
+    pub bodenhoehe_max_gs_kt: Grenzwert<f32>,
+    pub bodenhoehe_untergrenze_ft: Grenzwert<f32>,
+    pub bodenhoehe_klasse_ft: Grenzwert<f32>,
+    pub gear_force_epsilon_n: Grenzwert<f32>,
+    pub abs_floor: Grenzwert<f32>,
+    pub mass_ratio: Grenzwert<f32>,
+    pub max_bewertungs_luecke_ms: Grenzwert<i64>,
+    pub min_bewertungs_proben: Grenzwert<usize>,
+    pub bewertungs_fenster_vor_ms: Grenzwert<i64>,
+    pub bewertungs_fenster_nach_ms: Grenzwert<i64>,
+    pub min_gear_force_samples_in_window: Grenzwert<usize>,
+    pub min_ground_truth_samples: Grenzwert<usize>,
+    pub min_settle_g_force_peak: Grenzwert<f32>,
+    pub max_coverage_gap_ms: Grenzwert<i64>,
+    pub vs_floor_fpm: Grenzwert<f32>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Grenzwerte {
     pub staende: Staende,
     pub phasen: Phasen,
+    pub aufsetzen: Aufsetzen,
 }
 
 /// Bereich -> Datei im Paket.
-pub(crate) const DATEIEN: &[&str] = &["grenzwerte/staende.json", "grenzwerte/phasen.json"];
+pub(crate) const DATEIEN: &[&str] = &["grenzwerte/staende.json", "grenzwerte/phasen.json", "grenzwerte/aufsetzen.json"];
 
 static GRENZWERTE: OnceLock<Grenzwerte> = OnceLock::new();
 
@@ -107,6 +135,7 @@ pub(crate) fn lesen(datei: impl Fn(&str) -> Option<Vec<u8>>) -> Result<Grenzwert
     Ok(Grenzwerte {
         staende: bereich(&datei, "grenzwerte/staende.json")?,
         phasen: bereich(&datei, "grenzwerte/phasen.json")?,
+        aufsetzen: bereich(&datei, "grenzwerte/aufsetzen.json")?,
     })
 }
 
@@ -162,6 +191,32 @@ mod tests {
         assert_eq!(g.climb_schnellsink_vs_fpm.wert, -500.0); // phase_v2.rs:191
         assert_eq!(g.climb_schnellsink_secs.wert, 10); // phase_v2.rs:192
         assert_eq!(g.climb_schnellsink_fruehestens_secs.wert, 120); // phase_v2.rs:197
+    }
+
+    #[test]
+    fn grenzwerte_aufsetzen_wie_2_1_24() {
+        let g = &grenzwerte().aufsetzen;
+        assert_eq!(g.bounce_forensic_min_agl_ft.wert, 5.0); // touchdown_v2.rs:45
+        assert_eq!(g.bounce_scored_min_agl_ft.wert, 5.0); // touchdown_v2.rs:62
+        assert_eq!(g.water_touchdown_min_descent_fpm.wert, -50.0); // touchdown_v2.rs:73
+        assert_eq!(g.tiefflug_spielraum_ft.wert, 5.0); // touchdown_v2.rs:99
+        assert_eq!(g.bodenhoehe_max_ft.wert, 22.0); // touchdown_v2.rs:110
+        assert_eq!(g.bodenhoehe_min_proben.wert, 250); // touchdown_v2.rs:113
+        assert_eq!(g.bodenhoehe_max_gs_kt.wert, 40.0); // touchdown_v2.rs:117
+        assert_eq!(g.bodenhoehe_untergrenze_ft.wert, -5.0); // touchdown_v2.rs:119
+        assert_eq!(g.bodenhoehe_klasse_ft.wert, 0.25); // touchdown_v2.rs:120
+        assert_eq!(g.gear_force_epsilon_n.wert, 1.0); // touchdown_v2.rs:255
+        assert_eq!(g.abs_floor.wert, 1000.0); // touchdown_v2.rs:376
+        assert_eq!(g.mass_ratio.wert, 0.03); // touchdown_v2.rs:377
+        assert_eq!(g.max_bewertungs_luecke_ms.wert, 200); // touchdown_v2.rs:463
+        assert_eq!(g.min_bewertungs_proben.wert, 12); // touchdown_v2.rs:472
+        assert_eq!(g.bewertungs_fenster_vor_ms.wert, 1000); // touchdown_v2.rs:482
+        assert_eq!(g.bewertungs_fenster_nach_ms.wert, 100); // touchdown_v2.rs:483
+        assert_eq!(g.min_gear_force_samples_in_window.wert, 2); // touchdown_v2.rs:704
+        assert_eq!(g.min_ground_truth_samples.wert, 2); // touchdown_v2.rs:787
+        assert_eq!(g.min_settle_g_force_peak.wert, 1.02); // touchdown_v2.rs:820
+        assert_eq!(g.max_coverage_gap_ms.wert, 200); // touchdown_v2.rs:847
+        assert_eq!(g.vs_floor_fpm.wert, -3000.0); // touchdown_v2.rs:1154
     }
 
     #[test]
