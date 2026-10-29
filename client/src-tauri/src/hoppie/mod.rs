@@ -59,7 +59,10 @@ pub use settings::HoppieSettings;
 /// as a credential, same as the existing MQTT/phpVMS API keys.
 const HOPPIE_LOGON_CODE_ACCOUNT: &str = "hoppie_logon_code";
 
-const BASE_URL: &str = "https://www.hoppie.nl/acars/system/connect.html";
+/// Hoppie `connect.html` aus dem Laufzeit-Paket (P-3.60).
+fn base_url() -> &'static str {
+    &paket_endpunkte::endpunkte().hoppie
+}
 
 /// Shared HTTP client — built ONCE and reused, mirroring
 /// `crates/api-client`'s `Client::new` (which explicitly warns against
@@ -70,7 +73,7 @@ const BASE_URL: &str = "https://www.hoppie.nl/acars/system/connect.html";
 /// one client is still the right call for connection pooling.
 pub struct HoppieHttp {
     http: reqwest::Client,
-    /// Always [`BASE_URL`] in the app; the replay tests point it at a
+    /// Always [`base_url()`] in the app; the replay tests point it at a
     /// local stand-in (see `HoppieHttp::for_test`).
     base_url: String,
 }
@@ -87,7 +90,7 @@ impl HoppieHttp {
             .map_err(|e| UiError::new("hoppie_http_init", e.to_string()))?;
         Ok(Self {
             http,
-            base_url: BASE_URL.to_string(),
+            base_url: base_url().to_string(),
         })
     }
 

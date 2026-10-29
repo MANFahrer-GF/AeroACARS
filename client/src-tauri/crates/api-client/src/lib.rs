@@ -2111,7 +2111,8 @@ impl Client {
     /// rather than refusing to start.
     pub async fn fetch_simbrief_ofp(&self, ofp_id: &str) -> Result<Option<SimBriefOfp>, ApiError> {
         let url = format!(
-            "https://www.simbrief.com/ofp/flightplans/xml/{}.xml",
+            "{}/ofp/flightplans/xml/{}.xml",
+            paket_endpunkte::endpunkte().simbrief,
             urlencoding_escape(ofp_id)
         );
         let response = match self.http.get(&url).send().await {
@@ -2208,12 +2209,14 @@ impl Client {
         // user_id > username Prioritaet (Spec §4.1 — robuster, unveraenderlich)
         let url = if let Some(uid) = user_id.filter(|s| !s.is_empty()) {
             format!(
-                "https://www.simbrief.com/api/xml.fetcher.php?userid={}",
+                "{}/api/xml.fetcher.php?userid={}",
+                paket_endpunkte::endpunkte().simbrief,
                 urlencoding_escape(uid),
             )
         } else if let Some(un) = username.filter(|s| !s.is_empty()) {
             format!(
-                "https://www.simbrief.com/api/xml.fetcher.php?username={}",
+                "{}/api/xml.fetcher.php?username={}",
+                paket_endpunkte::endpunkte().simbrief,
                 urlencoding_escape(un),
             )
         } else {

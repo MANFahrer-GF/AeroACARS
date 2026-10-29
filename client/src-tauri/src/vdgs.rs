@@ -295,7 +295,7 @@ fn sauberes_rufzeichen(roh: &str) -> String {
 
 /// Einen Abruf gegen die Gegenseite. `Ok(None)` = Flug dort nicht gefuehrt.
 async fn abrufen(callsign: &str) -> Result<Option<VdgsStand>, String> {
-    let url = format!("https://api.viffsys.com/ifps/callsign?callsign={callsign}&profile=false");
+    let url = format!("{}/ifps/callsign?callsign={callsign}&profile=false", paket_endpunkte::endpunkte().viffsys);
     match rumpf_holen(&url, MAX_RUMPF_BYTES).await? {
         Some(rumpf) => aus_rumpf(&rumpf),
         None => Ok(None),
@@ -419,7 +419,7 @@ async fn ist_cdm_platz(abflug: &str) -> Option<bool> {
     if let Ok(mut g) = cdm_liste().lock() {
         g.letzter_versuch = Some(Instant::now());
     }
-    let geholt = rumpf_holen("https://api.viffsys.com/etfms/getCadAirports", MAX_LISTE_BYTES)
+    let geholt = rumpf_holen(&format!("{}/etfms/getCadAirports", paket_endpunkte::endpunkte().viffsys), MAX_LISTE_BYTES)
         .await
         .and_then(|r| r.ok_or_else(|| "HTTP 404".to_string()))
         .and_then(|r| liste_lesen(&r));

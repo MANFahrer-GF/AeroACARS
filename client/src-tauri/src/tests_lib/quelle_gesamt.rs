@@ -41,6 +41,9 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `tabellen/klappen.json` statt aus vier lokalen `const`; `ist_airbus_mit_1f`
 /// entfaellt (Liste dort als `nur_muster`). Abdruck `hoehengruppen_und_klappen_wie_2_1_24`,
 /// Verhalten `raster_flap_label_tests` unveraendert gruen.
+/// — plus Etappe 1b (Endpunkte, P-3.60): die VDGS-Adresse `https://vats.im/vdgs`
+/// kommt aus `paket_endpunkte::endpunkte().vatsim_vdgs` (gleicher Wert, Test
+/// `eingebaute_adressen_wie_2_1_24`; Host nur aus der festen Liste).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -51,4 +54,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "9fb00daeb52944f17cb682edd8f2d04a2d16c4e07a1a49f3505b5ea60a6b16f5";
+const HASH_VOR_DER_ZERLEGUNG: &str = "a3afd07b705a5a236d6278facc223bee3664c1e6d2b42e568ee950d6897fe718";

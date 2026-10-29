@@ -7,6 +7,7 @@ license.workspace = true
 description = "METAR fetch + parse — used to snapshot weather at takeoff and touchdown"
 
 [dependencies]
+paket-endpunkte.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

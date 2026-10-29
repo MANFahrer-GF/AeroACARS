@@ -2012,7 +2012,7 @@ async fn lied_vom_server(app: &AppHandle, flight: &ActiveFlight, lied: &api_clie
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| (e.to_string(), 60))?
-        .post(format!("{}/api/kabine/lied", crate::live_zugang::LIVE_BASIS))
+        .post(format!("{}/api/kabine/lied", crate::live_zugang::live_basis()))
         .bearer_auth(token)
         .header("User-Agent", format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")))
         .json(&koerper)
@@ -5065,7 +5065,7 @@ pub(crate) mod piper {
             .timeout(std::time::Duration::from_secs(300))
             .build()
             .map_err(|e| F::spaeter(e.to_string(), None))?
-            .post(format!("{}/api/kabine/ton", crate::live_zugang::LIVE_BASIS))
+            .post(format!("{}/api/kabine/ton", crate::live_zugang::live_basis()))
             .bearer_auth(token)
             .header("User-Agent", format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")))
             .json(&koerper)

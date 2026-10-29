@@ -12,6 +12,8 @@ members = [
     "crates/metar",
     "crates/aeroacars-mqtt",
     "crates/landing-scoring",
+    # v3 (P-3.60): Adressen der Gegenstellen aus dem Laufzeit-Paket
+    "crates/paket-endpunkte",
     # v0.9.0 (#Discord-RPC) — Pilot-Flugstatus im Discord-Profil
     "crates/discord-presence",
     # v1.3.0 (#Hoppie-PDC-CPDLC) — Hoppie-ACARS-Netzwerk-Protokoll +
@@ -108,6 +110,7 @@ landing-scoring = { path = "crates/landing-scoring" }
 hoppie-protocol = { path = "crates/hoppie-protocol" }
 cabin-announcements = { path = "crates/cabin-announcements" }
 runtime-bundle = { path = "crates/runtime-bundle" }
+paket-endpunkte = { path = "crates/paket-endpunkte" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
@@ -138,6 +141,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+paket-endpunkte.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"

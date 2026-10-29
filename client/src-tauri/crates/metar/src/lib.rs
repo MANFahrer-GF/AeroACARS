@@ -190,7 +190,7 @@ pub async fn fetch_metar(icao: &str) -> Result<MetarSnapshot, MetarError> {
 
 async fn fetch_metar_once(icao: &str) -> Result<MetarSnapshot, MetarError> {
     let icao = icao.trim().to_uppercase();
-    let url = format!("https://aviationweather.gov/api/data/metar?ids={icao}&format=json&hours=2");
+    let url = format!("{}/api/data/metar?ids={icao}&format=json&hours=2", paket_endpunkte::endpunkte().metar);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))

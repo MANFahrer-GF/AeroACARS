@@ -6,10 +6,10 @@
 
 use serde::Deserialize;
 
-use crate::navdata::{build_client, NavdataError, DEFAULT_NAVDATA_BASE};
+use crate::navdata::{build_client, NavdataError, default_navdata_base};
 
 fn url(base: Option<&str>, pfad: &str) -> String {
-    let base = base.unwrap_or(DEFAULT_NAVDATA_BASE);
+    let base = base.unwrap_or(default_navdata_base());
     format!("{}/api/ascan{pfad}", base.trim_end_matches('/'))
 }
 

@@ -25,7 +25,10 @@ use crate::UiError;
 use std::time::Duration;
 
 /// Unser Server. Dieselbe Adresse wie Provisioning und Navdaten.
-pub(crate) const LIVE_BASIS: &str = "https://live.kant.ovh";
+/// Basis von AeroACARS-Live = Adresse `live` aus dem Laufzeit-Paket (P-3.60).
+pub(crate) fn live_basis() -> &'static str {
+    &paket_endpunkte::endpunkte().live
+}
 
 /// Das Token der laufenden MQTT-Verbindung. Gesetzt nach erfolgreicher
 /// Provisionierung, geleert beim Abmelden.
@@ -96,7 +99,7 @@ pub(crate) fn inhalt_pfad_pruefen(pfad: &str) -> Option<String> {
 ///   * `live_fehler` — alles andere
 #[tauri::command]
 pub async fn live_inhalt(pfad: String) -> Result<serde_json::Value, UiError> {
-    hole_inhalt(LIVE_BASIS, pilot_token(), &pfad).await
+    hole_inhalt(live_basis(), pilot_token(), &pfad).await
 }
 
 /// Der eigentliche Abruf. Adresse und Token kommen von aussen, damit der

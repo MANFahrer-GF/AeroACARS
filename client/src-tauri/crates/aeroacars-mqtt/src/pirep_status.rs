@@ -18,13 +18,13 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::provision::DEFAULT_PROVISION_URL;
+use crate::provision::default_provision_url;
 
 /// Höchstzahl IDs je Anfrage — muss zum Server passen (`PIREP_STATUS_MAX`).
 pub const MAX_IDS_JE_ANFRAGE: usize = 50;
 
 fn default_status_url() -> String {
-    DEFAULT_PROVISION_URL.replace("/api/provision", "/api/flight-logs/pirep-status")
+    default_provision_url().replace("/api/provision", "/api/flight-logs/pirep-status")
 }
 
 /// Stand eines PIREPs aus Sicht des Live-Servers.

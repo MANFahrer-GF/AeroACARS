@@ -34,7 +34,10 @@ const MAX_FILES: usize = 3000;
 /// lehnt der Server mit 413 ab, bevor ein Byte ankommt; wir sagen es vorher.
 const ASCAN_MAX_ZIP_BYTES: u64 = 250 * 1024 * 1024;
 
-const DEFAULT_ENDPOINT: &str = "https://live.kant.ovh/api/ascan/submissions";
+/// Standard-Ziel: `live` aus dem Laufzeit-Paket (P-3.60).
+fn default_endpoint() -> String {
+    format!("{}/api/ascan/submissions", paket_endpunkte::endpunkte().live)
+}
 
 /// Vom letzten `ascan_list_aircraft` gefundene Paket-Wurzeln. Die UI
 /// referenziert Pakete ausschliesslich per Index in diese Liste.
@@ -723,7 +726,7 @@ pub async fn ascan_submit(
     .await
     .map_err(|e| format!("Zip-Task abgebrochen: {e}"))??;
 
-    let url = endpoint.unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
+    let url = endpoint.unwrap_or_else(default_endpoint);
     let zip_len = zip_bytes.len() as u64;
     zip_groesse_pruefen(zip_len)?;
     let client = reqwest::Client::builder()

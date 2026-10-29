@@ -17318,7 +17318,8 @@ async fn vdgs_fenster_oeffnen(app: AppHandle) -> Result<(), UiError> {
         return Ok(());
     }
 
-    let url: tauri::Url = "https://vats.im/vdgs"
+    let url: tauri::Url = paket_endpunkte::endpunkte()
+        .vatsim_vdgs
         .parse()
         .map_err(|e| UiError::new("bad_url", format!("VDGS-Adresse ungültig: {e}")))?;
 

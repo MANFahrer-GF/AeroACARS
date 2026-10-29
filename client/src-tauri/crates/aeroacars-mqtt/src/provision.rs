@@ -9,7 +9,10 @@ use std::time::Duration;
 
 /// Default-URL — kann via Override-Parameter überschrieben werden für
 /// Test-VPS / Dev-Setups.
-pub const DEFAULT_PROVISION_URL: &str = "https://live.kant.ovh/api/provision";
+/// Standard-Adresse = `live` aus dem Laufzeit-Paket + `/api/provision` (P-3.60).
+pub fn default_provision_url() -> String {
+    format!("{}/api/provision", paket_endpunkte::endpunkte().live)
+}
 
 #[derive(Serialize)]
 struct ProvisionRequest<'a> {
@@ -85,7 +88,8 @@ pub fn naechster_versuch(fehler: &anyhow::Error, versuch: u32) -> Option<Duratio
 /// Ruft den Provision-Endpoint mit dem phpVMS-API-Key auf.
 /// Kehrt mit MQTT-Credentials zurück oder Fehler (z.B. 401 wenn Key invalid).
 pub async fn provision(api_key: &str, endpoint: Option<&str>) -> Result<ProvisionResponse> {
-    let url = endpoint.unwrap_or(DEFAULT_PROVISION_URL);
+    let standard = default_provision_url();
+    let url = endpoint.unwrap_or(&standard);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))

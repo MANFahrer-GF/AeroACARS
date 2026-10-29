@@ -32,7 +32,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::navdata::{build_client, NavdataError, DEFAULT_NAVDATA_BASE};
+use crate::navdata::{build_client, NavdataError, default_navdata_base};
 
 /// Antwort auf einen erfolgreichen Upload.
 #[derive(Debug, Clone, Deserialize)]
@@ -56,7 +56,7 @@ struct BackupBody<'a> {
 }
 
 fn url(base: Option<&str>, suffix: &str) -> String {
-    let base = base.unwrap_or(DEFAULT_NAVDATA_BASE);
+    let base = base.unwrap_or(default_navdata_base());
     format!("{}/api/backup/landings{suffix}", base.trim_end_matches('/'))
 }
 

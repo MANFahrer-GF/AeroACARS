@@ -7,6 +7,7 @@ license.workspace = true
 description = "phpVMS 7 HTTP API client (auth, users, bids, flights, fleet, PIREP, ACARS positions, AeroACARS module)"
 
 [dependencies]
+paket-endpunkte.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

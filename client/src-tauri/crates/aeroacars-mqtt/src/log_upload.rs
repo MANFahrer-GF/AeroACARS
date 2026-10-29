@@ -22,12 +22,12 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::provision::DEFAULT_PROVISION_URL;
+use crate::provision::default_provision_url;
 
-/// Default-Endpoint — abgeleitet aus DEFAULT_PROVISION_URL damit beide
+/// Default-Endpoint — abgeleitet aus default_provision_url() damit beide
 /// gegen denselben aeroacars-live Host gehen.
 fn default_upload_url() -> String {
-    DEFAULT_PROVISION_URL.replace("/api/provision", "/api/flight-logs/upload")
+    default_provision_url().replace("/api/provision", "/api/flight-logs/upload")
 }
 
 /// Lade JSONL-Datei, komprimiere mit gzip, POSTe an aeroacars-live.
@@ -113,7 +113,7 @@ pub async fn upload_flight_log(
 const DIAGNOSE_MAX_ROH: usize = 8 * 1024 * 1024;
 
 fn default_diagnose_url() -> String {
-    DEFAULT_PROVISION_URL.replace("/api/provision", "/api/flight-logs/diagnose")
+    default_provision_url().replace("/api/provision", "/api/flight-logs/diagnose")
 }
 
 /// Laedt das DIAGNOSE-Log des Clients hoch (die taegliche tracing-Datei).
@@ -293,7 +293,7 @@ pub async fn fremde_route(
     }
     let basis = endpoint
         .map(String::from)
-        .unwrap_or_else(|| DEFAULT_PROVISION_URL.replace("/api/provision", "/api/flight-route"));
+        .unwrap_or_else(|| default_provision_url().replace("/api/provision", "/api/flight-route"));
     let url = format!("{}/{}", basis.trim_end_matches('/'), pirep_id);
     let auth_b64 =
         base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));

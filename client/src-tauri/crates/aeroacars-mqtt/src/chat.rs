@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::navdata::DEFAULT_NAVDATA_BASE;
+use crate::navdata::default_navdata_base;
 
 /// Eine Zeile aus dem Verlauf. Deckungsgleich mit dem, was der Server auf
 /// `chat_in` zustellt — dieselbe Form, damit die Oberfläche nicht zwei
@@ -112,7 +112,7 @@ async fn hole<T: for<'de> Deserialize<'de>>(
     base: Option<&str>,
     token: Option<&str>,
 ) -> Result<T, ChatFehler> {
-    let base = base.unwrap_or(DEFAULT_NAVDATA_BASE);
+    let base = base.unwrap_or(default_navdata_base());
     let url = format!("{}{}", base.trim_end_matches('/'), pfad);
     let mut req = client()?.get(&url);
     if let Some(t) = token {

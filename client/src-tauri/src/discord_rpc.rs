@@ -98,7 +98,7 @@ async fn refresh_app_id(manager: &Arc<DiscordPresenceManager>) -> Result<(), ()>
     // gibt es daher keine ID; `nach_anmeldung` holt sie dann nach.
     let url = format!(
         "{}/api/public/discord-rpc-config",
-        crate::live_zugang::LIVE_BASIS
+        crate::live_zugang::live_basis()
     );
     let mut anfrage = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))

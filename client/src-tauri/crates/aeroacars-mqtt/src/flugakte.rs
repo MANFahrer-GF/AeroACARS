@@ -15,10 +15,10 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use std::time::Duration;
 
-use crate::provision::DEFAULT_PROVISION_URL;
+use crate::provision::default_provision_url;
 
 fn default_basis_url() -> String {
-    DEFAULT_PROVISION_URL.replace("/api/provision", "/api/flight-logs/flugakte")
+    default_provision_url().replace("/api/provision", "/api/flight-logs/flugakte")
 }
 
 /// Nur Kennungen, die der Server annimmt ([A-Za-z0-9_-]{1,128}) — alles

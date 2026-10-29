@@ -22,7 +22,10 @@ use serde::{Deserialize, Serialize};
 
 /// Default-Host für den Navdata-Endpoint. Override via Test-Setup
 /// oder Webapp-Admin-Setting (analog provision.rs).
-pub const DEFAULT_NAVDATA_BASE: &str = "https://live.kant.ovh";
+/// Standard-Basis = Adresse `live` aus dem Laufzeit-Paket (P-3.60).
+pub fn default_navdata_base() -> &'static str {
+    &paket_endpunkte::endpunkte().live
+}
 
 /// Per-call Timeout. Größer als provision (15s) weil die VPS-Side bei
 /// kaltem DB-Cache evtl. erst eine SQLite-Page faulten muss.
@@ -173,7 +176,7 @@ pub async fn get_airport(
     base: Option<&str>,
     auth_token: Option<&str>,
 ) -> std::result::Result<NavAirport, NavdataError> {
-    let base = base.unwrap_or(DEFAULT_NAVDATA_BASE);
+    let base = base.unwrap_or(default_navdata_base());
     let url = airport_url(base, icao);
     let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
 
@@ -235,7 +238,7 @@ pub async fn get_ground_index(
     base: Option<&str>,
     auth_token: Option<&str>,
 ) -> std::result::Result<Vec<GroundIndexEntry>, NavdataError> {
-    let base = base.unwrap_or(DEFAULT_NAVDATA_BASE);
+    let base = base.unwrap_or(default_navdata_base());
     let url = format!("{}/api/airports/ground/index", base.trim_end_matches('/'));
     let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
 
@@ -283,7 +286,7 @@ pub async fn get_airport_ground(
     auth_token: Option<&str>,
     known_etag: Option<&str>,
 ) -> std::result::Result<Option<AirportGround>, NavdataError> {
-    let base = base.unwrap_or(DEFAULT_NAVDATA_BASE);
+    let base = base.unwrap_or(default_navdata_base());
     let url = ground_url(base, icao);
     let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
 
@@ -383,7 +386,7 @@ pub async fn get_aircraft_aliases(
     base: Option<&str>,
     auth_token: Option<&str>,
 ) -> std::result::Result<Vec<AircraftAliasEntry>, NavdataError> {
-    let base = base.unwrap_or(DEFAULT_NAVDATA_BASE);
+    let base = base.unwrap_or(default_navdata_base());
     let url = format!("{}/api/aircraft-aliases", base.trim_end_matches('/'));
     let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
 
@@ -419,7 +422,7 @@ pub async fn get_cycle(
     base: Option<&str>,
     auth_token: Option<&str>,
 ) -> std::result::Result<NavCycle, NavdataError> {
-    let base = base.unwrap_or(DEFAULT_NAVDATA_BASE);
+    let base = base.unwrap_or(default_navdata_base());
     let url = format!("{}/api/navdata/cycle", base.trim_end_matches('/'));
     let client = build_client().map_err(|e| NavdataError::Network(e.to_string()))?;
 

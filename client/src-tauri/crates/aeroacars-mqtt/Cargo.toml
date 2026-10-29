@@ -10,6 +10,7 @@ description = "MQTT publisher for AeroACARS — feeds aeroacars-live monitor rel
 workspace = true
 
 [dependencies]
+paket-endpunkte.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

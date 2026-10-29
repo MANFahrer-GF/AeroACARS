@@ -1,0 +1,13 @@
+{
+ "format": 1,
+ "notiz": [
+  "Adressen der Gegenstellen (P-3.60). Der Host jedes Feldes ist im Crate paket-endpunkte fest gebunden (HOSTS); nur der Pfad darf sich aendern, ein anderer Host braucht ein Release.",
+  "Form: https://<host>[/pfad], ohne Port, Zugangsdaten, Abfrage oder abschliessenden Schraegstrich."
+ ],
+ "live": "https://live.kant.ovh",
+ "hoppie": "https://www.hoppie.nl/acars/system/connect.html",
+ "viffsys": "https://api.viffsys.com",
+ "simbrief": "https://www.simbrief.com",
+ "metar": "https://aviationweather.gov",
+ "vatsim_vdgs": "https://vats.im/vdgs"
+}

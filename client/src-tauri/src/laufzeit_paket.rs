@@ -23,7 +23,7 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -35,6 +35,7 @@ const VREF: &str = "tabellen/vref.json";
 const HOEHENGRUPPEN: &str = "tabellen/hoehengruppen.json";
 const KLAPPEN: &str = "tabellen/klappen.json";
 const KABINE: &str = "tabellen/kabine.json";
+const ENDPUNKTE: &str = "endpunkte.json";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
@@ -68,6 +69,9 @@ pub(crate) struct AktiverStand {
     /// Kabinenansagen: Listen und Zeiten (`cabin-announcements`, ueber eine
     /// angemeldete Quelle).
     pub kabine: cabin_announcements::Tabelle,
+    /// Adressen der Gegenstellen, nur innerhalb der festen Hostliste von
+    /// `paket-endpunkte` (P-3.60).
+    pub endpunkte: paket_endpunkte::Endpunkte,
     /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
     pub ui: Vec<(&'static str, &'static str)>,
 }
@@ -101,6 +105,7 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         hoehengruppen: crate::runway_assessment::hoehengruppen_lesen(text(HOEHENGRUPPEN)?)?,
         klappen: klappen_lesen(text(KLAPPEN)?)?,
         kabine: cabin_announcements::lesen(text(KABINE)?)?,
+        endpunkte: paket_endpunkte::lesen(text(ENDPUNKTE)?)?,
         vref: landing_scoring::vref::lesen(text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -120,6 +125,7 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         hoehengruppen: crate::runway_assessment::hoehengruppen_lesen(eingebauter_text(HOEHENGRUPPEN)?)?,
         klappen: klappen_lesen(eingebauter_text(KLAPPEN)?)?,
         kabine: cabin_announcements::lesen(eingebauter_text(KABINE)?)?,
+        endpunkte: paket_endpunkte::lesen(eingebauter_text(ENDPUNKTE)?)?,
         vref: landing_scoring::vref::lesen(eingebauter_text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -282,6 +288,7 @@ fn starten_einmal(app_daten: &Path) {
     landing_scoring::spurweite::quelle_setzen(|| stand().spurweiten);
     landing_scoring::vref::quelle_setzen(|| stand().vref);
     cabin_announcements::quelle_setzen(|| &stand().kabine);
+    paket_endpunkte::quelle_setzen(|| &stand().endpunkte);
     let pin = pin_des_offenen_flugs(app_daten);
     let eingebaut = eingebaut();
     let ergebnis = Ablage::oeffnen(app_daten.join("laufzeit-paket"))
@@ -365,7 +372,7 @@ struct AktuellAntwort {
 }
 
 async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, String> {
-    let basis = crate::live_zugang::LIVE_BASIS;
+    let basis = crate::live_zugang::live_basis();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -433,7 +440,7 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
 }
 
 async fn pin_nachholen(app_daten: &Path, pin: &RuntimeBundleId) -> Result<(), String> {
-    let basis = crate::live_zugang::LIVE_BASIS;
+    let basis = crate::live_zugang::live_basis();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -491,6 +498,7 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
         (HOEHENGRUPPEN, |t| crate::runway_assessment::hoehengruppen_lesen(t).map(|_| ())),
         (KLAPPEN, |t| klappen_lesen(t).map(|_| ())),
         (KABINE, |t| cabin_announcements::lesen(t).map(|_| ())),
+        (ENDPUNKTE, |t| paket_endpunkte::lesen(t).map(|_| ())),
     ] {
         let roh = p.datei(pfad).map_err(|e| e.to_string())?;
         pruefen(std::str::from_utf8(&roh).map_err(|e| format!("{pfad}: {e}"))?)?;
@@ -608,6 +616,12 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert_eq!(eingebaute_datei(KABINE).unwrap(), cabin_announcements::EINGEBAUT.as_bytes());
         let t = format!("{:?}", cabin_announcements::lesen(eingebauter_text(KABINE).unwrap()).unwrap());
         assert_eq!(abdruck(&t), (12188610868671356069, 8442));
+    }
+
+    #[test]
+    fn eingebaute_endpunkte_sind_die_des_crates() {
+        assert_eq!(eingebaute_datei(ENDPUNKTE).unwrap(), paket_endpunkte::EINGEBAUT.as_bytes());
+        assert_eq!(stand().endpunkte.live, "https://live.kant.ovh");
     }
 
     #[test]
