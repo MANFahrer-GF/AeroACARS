@@ -15,16 +15,9 @@ struct Eintrag {
     trotz_ruhephase: bool,
 }
 
-/// Ruhe nach einer gesprochenen Ansage, bevor die nächste reguläre kommt.
-/// Kommandos, Gong, Turbulenz und Durchstarten warten nicht ([`Slot::wartet_pause`]).
-pub const PAUSE_NACH_ANSAGE_S: i64 = 90;
-/// Ausnahme: Die Sicherheitshinweise folgen der Begrüßung „Türen zu“ nach
-/// höchstens so vielen Sekunden (Thomas 18.10.2026); alles andere wartet 90 s.
-pub const PAUSE_BEGRUESSUNG_SICHERHEIT_S: i64 = 10;
-/// Am Boden folgt die Kapitän-Begrüßung den Sicherheitshinweisen nach
-/// höchstens so vielen Sekunden — sonst rutscht sie bei kurzem Rollweg hinter
-/// den Start (v2.0.28, QAF446). Reicht es nicht, spricht er nach dem Start.
-pub const PAUSE_SICHERHEIT_KAPITAEN_S: i64 = 30;
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.pause_nach_ansage_s (v2.1.24: 90)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.pause_begruessung_sicherheit_s (v2.1.24: 10)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.pause_sicherheit_kapitaen_s (v2.1.24: 30)
 
 #[derive(Debug, Default)]
 pub struct Warteschlange {
@@ -32,7 +25,7 @@ pub struct Warteschlange {
     zaehler: u64,
     /// Bis wann die laufende Ansage spielt (UTC-Epoch-Sekunden).
     belegt_bis: Option<i64>,
-    /// Bis wann nach einer gesprochenen Ansage Ruhe ist ([`PAUSE_NACH_ANSAGE_S`]).
+    /// Bis wann nach einer gesprochenen Ansage Ruhe ist (`werte.pause_nach_ansage_s`).
     pause_bis: Option<i64>,
     /// Ein Slot, der die Pause schon ab diesem Zeitpunkt nicht mehr abwartet.
     pause_ausnahme: Option<(Slot, i64)>,
@@ -48,9 +41,7 @@ pub struct Warteschlange {
     nachfrist: Option<(Slot, Option<i64>)>,
 }
 
-/// Nachfrist nach dem Zurückhalten (s): Spielt der Slot darin nicht (etwa
-/// wegen der Ruhephase), verfällt er wie gewohnt.
-pub const NACHFRIST_S: i64 = 15;
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.nachfrist_s (v2.1.24: 15)
 
 impl Warteschlange {
     pub fn aufnehmen(&mut self, faellig: impl IntoIterator<Item = Faellig>) {
@@ -116,7 +107,7 @@ impl Warteschlange {
     /// Vorhören gilt weiter [`Self::spielt_bis`] (ohne Pause).
     pub fn ansage_spielt_bis(&mut self, bis: i64) {
         self.belegt_bis = Some(bis);
-        self.pause_bis = Some(bis + PAUSE_NACH_ANSAGE_S);
+        self.pause_bis = Some(bis + crate::tabelle().werte.pause_nach_ansage_s.wert);
         self.pause_ausnahme = None;
     }
 
@@ -124,24 +115,24 @@ impl Warteschlange {
     /// frei, aber die Pause läuft ab jetzt.
     pub fn ansage_zu_ende(&mut self, jetzt: i64) {
         self.belegt_bis = None;
-        self.pause_bis = Some(jetzt + PAUSE_NACH_ANSAGE_S);
+        self.pause_bis = Some(jetzt + crate::tabelle().werte.pause_nach_ansage_s.wert);
         self.pause_ausnahme = None;
     }
 
     /// Wie [`Self::ansage_zu_ende`], mit dem Slot, der gerade lief: Nach der
     /// Begrüßung „Türen zu“ dürfen die Sicherheitshinweise schon nach
-    /// [`PAUSE_BEGRUESSUNG_SICHERHEIT_S`] kommen, alles andere nach 90 s.
+    /// `werte.pause_begruessung_sicherheit_s` kommen, alles andere nach 90 s.
     pub fn ansage_zu_ende_nach(&mut self, jetzt: i64, slot: Slot) {
         self.ansage_zu_ende(jetzt);
         // 2.1.1 (Entscheidung 1): Begrüßung → „Türen zu“ → Sicherheit mit je
         // 10 s Pause, sonst hielte die 90-s-Pause sie beim Beacon bis zum
         // Startlauf auf.
         if slot == Slot::Boarding {
-            self.pause_ausnahme = Some((Slot::BegruessungTuerenZu, jetzt + PAUSE_BEGRUESSUNG_SICHERHEIT_S));
+            self.pause_ausnahme = Some((Slot::BegruessungTuerenZu, jetzt + crate::tabelle().werte.pause_begruessung_sicherheit_s.wert));
         } else if slot == Slot::BegruessungTuerenZu {
-            self.pause_ausnahme = Some((Slot::Sicherheit, jetzt + PAUSE_BEGRUESSUNG_SICHERHEIT_S));
+            self.pause_ausnahme = Some((Slot::Sicherheit, jetzt + crate::tabelle().werte.pause_begruessung_sicherheit_s.wert));
         } else if slot == Slot::Sicherheit {
-            self.pause_ausnahme = Some((Slot::KapitaenBegruessung, jetzt + PAUSE_SICHERHEIT_KAPITAEN_S));
+            self.pause_ausnahme = Some((Slot::KapitaenBegruessung, jetzt + crate::tabelle().werte.pause_sicherheit_kapitaen_s.wert));
         }
     }
 
@@ -196,10 +187,10 @@ impl Warteschlange {
         // Frist von selbst abgelaufen: wie freigegeben, Nachfrist ab ihrem Ende.
         if let Some((s, bis)) = self.zurueckgehalten.filter(|(_, bis)| jetzt >= *bis) {
             self.zurueckgehalten = None;
-            self.nachfrist = Some((s, Some(bis + NACHFRIST_S)));
+            self.nachfrist = Some((s, Some(bis + crate::tabelle().werte.nachfrist_s.wert)));
         }
         if let Some((s, None)) = self.nachfrist {
-            self.nachfrist = Some((s, Some(jetzt + NACHFRIST_S)));
+            self.nachfrist = Some((s, Some(jetzt + crate::tabelle().werte.nachfrist_s.wert)));
         }
         let gehalten = self.zurueckgehalten.map(|(s, _)| s);
         let nachfrist = self.nachfrist.filter(|(_, bis)| bis.is_some_and(|b| jetzt < b)).map(|(s, _)| s);
@@ -317,7 +308,7 @@ mod tests {
         w.zurueckhalten(Slot::KapitaenSinkflug, None);
         assert_eq!(w.naechstes(155, Final, true), None, "Ruhephase");
         assert!(w.verfallene_abholen().is_empty(), "in der Nachfrist nicht verfallen");
-        assert_eq!(w.naechstes(155 + NACHFRIST_S, Final, true), None);
+        assert_eq!(w.naechstes(155 + crate::tabelle().werte.nachfrist_s.wert, Final, true), None);
         assert_eq!(w.verfallene_abholen(), vec![Slot::KapitaenSinkflug], "nach der Nachfrist normal");
         // Vorzeitig freigegeben: sofort spielbar.
         let mut w = Warteschlange::default();
@@ -394,7 +385,7 @@ mod tests {
         // Kommando darf sofort, die Kabine wartet die Pause ab.
         assert_eq!(w.naechstes(150, Descent, false), Some(Slot::KommandoPlaetzeLandung));
         assert_eq!(w.naechstes(150, Descent, false), None, "Kabine wartet");
-        assert_eq!(w.naechstes(100 + PAUSE_NACH_ANSAGE_S, Descent, false), Some(Slot::KabineSinkflug));
+        assert_eq!(w.naechstes(100 + crate::tabelle().werte.pause_nach_ansage_s.wert, Descent, false), Some(Slot::KabineSinkflug));
     }
 
     /// Thomas 20.10.2026, Variante A: „Prepare for landing“ überholt die
@@ -429,7 +420,7 @@ mod tests {
         p.ansage_spielt_bis(100);
         p.ansage_zu_ende(100);
         assert_eq!(p.naechstes(150, Descent, false), None);
-        assert_eq!(p.naechstes(100 + PAUSE_NACH_ANSAGE_S, Descent, false), Some(Slot::KabineSinkflug));
+        assert_eq!(p.naechstes(100 + crate::tabelle().werte.pause_nach_ansage_s.wert, Descent, false), Some(Slot::KabineSinkflug));
     }
 
     #[test]
@@ -481,7 +472,7 @@ mod tests {
         w.ansage_zu_ende_nach(300, Slot::Sicherheit);
         // v2.0.28: Nach der Sicherheit wartet der Kapitän nur 30 s (QAF446).
         assert_eq!(w.naechstes(329, TaxiOut, false), None, "noch keine 30 s");
-        assert_eq!(w.naechstes(300 + PAUSE_SICHERHEIT_KAPITAEN_S, TaxiOut, false), Some(Slot::KapitaenBegruessung));
+        assert_eq!(w.naechstes(300 + crate::tabelle().werte.pause_sicherheit_kapitaen_s.wert, TaxiOut, false), Some(Slot::KapitaenBegruessung));
     }
 
     #[test]
@@ -491,7 +482,7 @@ mod tests {
         w.ansage_zu_ende_nach(100, Slot::KapitaenBegruessung);
         w.aufnehmen([f(Slot::AnschnallzeichenAus, Verfall::AbPhase(Descent))]);
         assert_eq!(w.naechstes(130, Climb, false), None, "die 30-s-Ausnahme gilt nur für den Kapitän nach der Sicherheit");
-        assert_eq!(w.naechstes(100 + PAUSE_NACH_ANSAGE_S, Climb, false), Some(Slot::AnschnallzeichenAus));
+        assert_eq!(w.naechstes(100 + crate::tabelle().werte.pause_nach_ansage_s.wert, Climb, false), Some(Slot::AnschnallzeichenAus));
     }
 
     #[test]
@@ -503,8 +494,8 @@ mod tests {
         assert_eq!(w.naechstes(0, Takeoff, true), None, "beim Abheben gesperrt");
         assert_eq!(w.naechstes(1, Climb, true), Some(Slot::AnschnallzeichenAus));
         w.ansage_zu_ende(2);
-        assert_eq!(w.naechstes(2 + PAUSE_NACH_ANSAGE_S, Climb, true), None, "der Service wartet weiter auf FL100");
-        assert_eq!(w.naechstes(2 + PAUSE_NACH_ANSAGE_S, Climb, false), Some(Slot::Reiseflug25));
+        assert_eq!(w.naechstes(2 + crate::tabelle().werte.pause_nach_ansage_s.wert, Climb, true), None, "der Service wartet weiter auf FL100");
+        assert_eq!(w.naechstes(2 + crate::tabelle().werte.pause_nach_ansage_s.wert, Climb, false), Some(Slot::Reiseflug25));
     }
 
     #[test]

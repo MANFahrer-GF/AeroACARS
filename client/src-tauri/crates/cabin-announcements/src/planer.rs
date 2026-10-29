@@ -221,94 +221,34 @@ enum Service {
     KommtNicht,
 }
 
-/// Grenze für „Kurzstrecke“: darunter nur die Service-Ansage (Reiseflug 25),
-/// keine Zwischenstände (Thomas 18.10.2026).
-pub const KURZSTRECKE_MIN: u32 = 60;
-/// Kurzstrecke: Die Service-Ansage braucht so viel Restflugzeit, sonst
-/// entfällt sie. Der Kapitän sagt den Sinkflug bei 25 min Rest an; dazu kommen
-/// die Ansage selbst und die Pause zwischen zwei Ansagen.
-pub const KURZSTRECKE_SERVICE_REST_MIN: f64 = 28.0;
-/// Angenommene Dauer von Sinkflug und Anflug ohne TOD aus dem OFP.
-pub const SINKFLUG_MIN: f64 = 30.0;
-/// Mindestabstand zwischen zwei Reiseflug-Ansagen.
-pub const REISEFLUG_ABSTAND_S: i64 = 15 * 60;
-/// Mindestabstand zwischen zwei Turbulenz-Ansagen.
-pub const TURBULENZ_ABSTAND_S: i64 = 10 * 60;
-/// Verspätungsansage ab so vielen Minuten …
-pub const VERSPAETUNG_AB_MIN: i32 = 15;
-/// … aber nicht darüber: das ist Fliegen außerhalb des Plans.
-pub const VERSPAETUNG_BIS_MIN: i32 = 180;
-/// Durchstart-Erklärung erst so viele Sekunden nach dem Durchstarten.
-pub const DURCHSTART_VERZOEGERUNG_S: i64 = 150;
-/// Warteschleifen-Ansage, sobald die Schleife so lange läuft.
-pub const WARTESCHLEIFE_NACH_S: i64 = 120;
-/// Die Kabine bereitet die Landung frühestens so lange nach der Sinkflug-
-/// Ansage des Kapitäns vor (Thomas 18.10.2026: „sofort danach die Kabine,
-/// das geht nicht“) …
-pub const KABINE_NACH_KAPITAEN_MIN_S: i64 = 120;
-/// Die Kabine bereitet die Landung erst unter dieser Höhe im Sinkflug vor
-/// (Thomas 22.10.2026: kam bei 6 von 15 Flügen über 28.000 ft, weil sie
-/// „spätestens 5 min nach dem Kapitän“ auch auf Reiseflughöhe fällig wurde).
-pub const KABINE_SINKFLUG_UNTER_FT: f64 = 20_000.0;
-/// Der Kapitän kündigt den Sinkflug so lange vor dem Top of Descent an
-/// (Thomas 22.10.2026: bis zu 5,7 min davor war zu früh; „lieber später als
-/// zu früh“) …
-pub const KAPITAEN_VOR_TOD_S: i64 = 90;
-/// … bzw. so viele Minuten vor der erwarteten Landung (vorher 25).
-pub const KAPITAEN_VOR_LANDUNG_MIN: f64 = 20.0;
-/// Die Phase „Sinkflug“ allein löst die Ansage nur aus, solange die Restzeit
-/// höchstens so lang ist (GAF278 OMDB–LOWW 24.10.2026: Ein Stufen-Sinkflug von
-/// 2,5 min mitten im Reiseflug spielte sie 259 min vor dem Endanflug, „noch
-/// 265 min“). Gemessen über 90 Flüge: gespielt 10–52 min vor dem Endanflug,
-/// Restzeit beim Abspielen höchstens 40 min (eine Umleitung 60). Nach einer
-/// Umleitung gilt die Grenze nicht (die Restzeit meint das alte Ziel).
-pub const PHASE_SINKFLUG_HOECHSTENS_REST_MIN: f64 = 75.0;
-/// Ende des Bordverkaufs bzw. zweiter Service so lange vor dem Top of Descent
-/// (Thomas 18.10.2026: „10, 15 Minuten vor Top of Descent“).
-pub const REISEFLUG80_VOR_TOD_S: i64 = 12 * 60;
-/// Der zweite Service (Modul-Art `zweiter_service`) beginnt so lange vor dem
-/// Top of Descent (Thomas 19.10.2026: „so anderthalb Stunden, bevor wir mit
-/// dem Sinkflug sind“) — das Ende des Bordverkaufs bleibt bei
-/// [`REISEFLUG80_VOR_TOD_S`].
-pub const ZWEITER_SERVICE_VOR_TOD_S: i64 = 90 * 60;
-/// Zweiter Service nur, wenn danach noch so viel Restflugzeit bleibt (min):
-/// 30 min Service vor dem Sinkflug plus Sinkflug und Anflug.
-pub const ZWEITER_SERVICE_REST_MIN: f64 = 60.0;
-/// „Plätze für die Landung“ im Anflug spätestens unter dieser Höhe über Grund,
-/// wenn das Fahrwerk nicht vorher ausfährt.
-pub const PLAETZE_LANDUNG_AGL_FT: f64 = 2_000.0;
-/// Boarding-Begrüßung, sobald die Zuladung so weit über dem Bezugswert liegt
-/// (erster ZFW-Wert der Phase Boarding) … (Thomas 19.10.2026: „Gewicht steigt
-/// → 30 s warten → abspielen“; jeder Anstieg zählt, auch Fracht zuerst)
-pub const BOARDING_ZULADUNG_KG: f64 = 200.0;
-/// … und das ununterbrochen so lange (Sekunden).
-pub const BOARDING_ZULADUNG_S: i64 = 30;
-/// Boarding-Begrüßung auch, wenn der ZFW so nah am geplanten ZFW des OFP
-/// liegt (der größere der beiden Werte) … (20.10.2026, Peter SVA 179: „Load
-/// instant“ von der Standardladung des Add-ons herunter auf den Plan; an 430
-/// Flügen gemessen: ohne Boarding-Musik 16 % statt 42 %, siehe
-/// handoff/2026-10-20-boarding-erkennung.md)
-pub const BOARDING_OFP_KG: f64 = 300.0;
-pub const BOARDING_OFP_ANTEIL: f64 = 0.01;
-/// … und das ununterbrochen so lange (Sekunden).
-pub const BOARDING_OFP_S: i64 = 60;
-/// „Rollt“ für „Plätze für den Start“ ab dieser Geschwindigkeit über Grund
-/// (Thomas 19.10.2026, Entscheidung 3).
-pub const ROLLT_AB_KT: f64 = 3.0;
-/// Erste Service-Ansage außerhalb der Kurzstrecke so lange nach Erreichen der
-/// Reiseflughöhe (v2.0.28, Peter: „Service auf Langstrecke zu spät“).
-pub const SERVICE_NACH_REISEFLUG_S: i64 = 10 * 60;
-/// So lange gilt der zuletzt aus der Route bekannte TOD ohne neuen Wert.
-pub const TOD_FRISCH_S: i64 = 10 * 60;
-/// Schalter AUS zählt für „Anschnallzeichen aus“ erst, wenn er so lange
-/// ununterbrochen aus steht. BTI 252 (A220, 27.10.2026): 6 s AUS beim
-/// Sinkflugbeginn (ON → OFF → ON) meldete die Ansage; nur die Pause
-/// verhinderte sie. Auch der Weg über AUTO dauerte beim Boarding 6 s.
-pub const ANSCHNALL_AUS_STABIL_S: i64 = 10;
-/// Ab diesem Sinken (fpm) wird „Anschnallzeichen aus“ nicht mehr gemeldet:
-/// Abschnallen ansagen, während das Flugzeug sinkt, ist falsch (BTI 252:
-/// −3.160 fpm, Phase stand noch auf Reiseflug).
-pub const ANSCHNALL_AUS_SINKEN_FPM: f64 = -1_000.0;
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.kurzstrecke_min (v2.1.24: 60)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.kurzstrecke_service_rest_min (v2.1.24: 28.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.sinkflug_min (v2.1.24: 30.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.reiseflug_abstand_s (v2.1.24: 15 * 60)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.turbulenz_abstand_s (v2.1.24: 10 * 60)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.verspaetung_ab_min (v2.1.24: 15)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.verspaetung_bis_min (v2.1.24: 180)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.durchstart_verzoegerung_s (v2.1.24: 150)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.warteschleife_nach_s (v2.1.24: 120)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.kabine_nach_kapitaen_min_s (v2.1.24: 120)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.kabine_sinkflug_unter_ft (v2.1.24: 20_000.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.kapitaen_vor_tod_s (v2.1.24: 90)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.kapitaen_vor_landung_min (v2.1.24: 20.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.phase_sinkflug_hoechstens_rest_min (v2.1.24: 75.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.reiseflug80_vor_tod_s (v2.1.24: 12 * 60)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.zweiter_service_vor_tod_s (v2.1.24: 90 * 60)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.zweiter_service_rest_min (v2.1.24: 60.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.plaetze_landung_agl_ft (v2.1.24: 2_000.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_zuladung_kg (v2.1.24: 200.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_zuladung_s (v2.1.24: 30)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_ofp_kg (v2.1.24: 300.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_ofp_anteil (v2.1.24: 0.01)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_ofp_s (v2.1.24: 60)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.rollt_ab_kt (v2.1.24: 3.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.service_nach_reiseflug_s (v2.1.24: 10 * 60)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.tod_frisch_s (v2.1.24: 10 * 60)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.anschnall_aus_stabil_s (v2.1.24: 10)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.anschnall_aus_sinken_fpm (v2.1.24: -1_000.0)
 
 #[derive(Debug, Default)]
 pub struct Planer {
@@ -337,7 +277,7 @@ pub struct Planer {
     /// bleiben an der echten Phase Cruise.
     steigflug_vorbei: bool,
     /// Zuletzt bekannter TOD aus der Route ([`Tick::tod_erwartet`]) und wann
-    /// er kam. Er bleibt höchstens [`TOD_FRISCH_S`] stehen, wenn die Route
+    /// er kam. Er bleibt höchstens `werte.tod_frisch_s` stehen, wenn die Route
     /// verlassen wird (Direct), und wird mit einer Umleitung gelöscht.
     /// Die starre OFP-Uhrzeit (Abheben + TOD-Abstand) löst den Kapitän nicht
     /// mehr aus: Sie kam bis zu 35 min vor dem echten Sinkflug (20.10.2026,
@@ -352,7 +292,7 @@ pub struct Planer {
     tod_aktuell: Option<i64>,
     /// Höchste Höhe in der Luft (ft), für den nachgeholten Gong.
     hoechste_hoehe_ft: Option<f64>,
-    /// Die Kabine folgt dem Kapitän erst später ([`KABINE_NACH_KAPITAEN_MIN_S`]).
+    /// Die Kabine folgt dem Kapitän erst später (`werte.kabine_nach_kapitaen_min_s`).
     kapitaen_sinkflug: KapitaenSinkflug,
     /// Lief der Service? Daran hängt „Ende des Service“.
     service: Service,
@@ -383,18 +323,18 @@ pub struct Planer {
     /// nach einem Neustart im Boarding neu genommen).
     zfw_start_kg: Option<f64>,
     /// Seit wann die Zuladung ununterbrochen über Bezug +
-    /// [`BOARDING_ZULADUNG_KG`] liegt; fällt sie darunter, wieder `None`.
+    /// `werte.boarding_zuladung_kg` liegt; fällt sie darunter, wieder `None`.
     zuladung_steigt_seit: Option<i64>,
     /// Seit wann der ZFW ununterbrochen am geplanten ZFW liegt
-    /// ([`BOARDING_OFP_KG`], [`BOARDING_OFP_ANTEIL`]).
+    /// (`werte.boarding_ofp_kg`, `werte.boarding_ofp_anteil`).
     am_ofp_seit: Option<i64>,
     /// Höchster ZFW seit dem Bezug; daran wird Entladen gemessen.
     zfw_hoch_kg: Option<f64>,
-    /// Seit wann der ZFW ununterbrochen [`BOARDING_ZULADUNG_KG`] unter dem
-    /// Höchstwert liegt (Entladen, erst nach [`BOARDING_ZULADUNG_S`] gültig).
+    /// Seit wann der ZFW ununterbrochen `werte.boarding_zuladung_kg` unter dem
+    /// Höchstwert liegt (Entladen, erst nach `werte.boarding_zuladung_s` gültig).
     zuladung_sinkt_seit: Option<i64>,
     /// Seit wann der Schalter ununterbrochen auf AUS steht
-    /// ([`ANSCHNALL_AUS_STABIL_S`]).
+    /// (`werte.anschnall_aus_stabil_s`).
     zeichen_aus_seit: Option<i64>,
     /// Letzter Takt, der AUS sah: Eine Lücke über der Frist (Hänger,
     /// Pause) zählt nicht als „durchgehend aus“ (Codex 27.10.2026).
@@ -453,7 +393,7 @@ impl Planer {
     fn kurzstrecke(&self) -> bool {
         self.flug
             .geplante_flugzeit_min
-            .is_none_or(|m| m < KURZSTRECKE_MIN)
+            .is_none_or(|m| m < crate::tabelle().werte.kurzstrecke_min.wert)
     }
 
     /// Kommt dieser Reiseflug-Slot nach der Flugdauer überhaupt? Kurzstrecke
@@ -498,15 +438,15 @@ impl Planer {
 
     /// Wann nach dem Abheben die Reiseflug-Ansagen dran sind (s), in
     /// Flugreihenfolge: 25 % und 50 % der Zeit bis zum Sinkflug, die dritte
-    /// fest vor dem Top of Descent ([`REISEFLUG80_VOR_TOD_S`]). Bezugsgröße
+    /// fest vor dem Top of Descent (`werte.reiseflug80_vor_tod_s`). Bezugsgröße
     /// ist der TOD aus dem OFP, sonst Planzeit minus 30 min Sinkflug.
     /// Zeit vom Abheben bis zum Sinkflug (s): TOD aus dem OFP, sonst
-    /// Planzeit minus [`SINKFLUG_MIN`].
+    /// Planzeit minus `werte.sinkflug_min`.
     fn bis_sinkflug_s(&self) -> Option<f64> {
         let plan = self.flug.geplante_flugzeit_min?;
         Some(match self.flug.tod_nach_abheben_s {
             Some(tod) if tod > 0 => tod as f64,
-            _ => (f64::from(plan) - SINKFLUG_MIN).max(1.0) * 60.0,
+            _ => (f64::from(plan) - crate::tabelle().werte.sinkflug_min.wert).max(1.0) * 60.0,
         })
     }
 
@@ -519,9 +459,9 @@ impl Planer {
             // Abstand nach Reiseflug 50 (sonst gälte Reiseflug 50 als
             // übersprungen). Reicht die Zeit nicht, entfällt er (Reserve in
             // `melde_reiseflug`).
-            (bis_sinkflug_s.round() as i64 - ZWEITER_SERVICE_VOR_TOD_S).max(r50 + REISEFLUG_ABSTAND_S)
+            (bis_sinkflug_s.round() as i64 - crate::tabelle().werte.zweiter_service_vor_tod_s.wert).max(r50 + crate::tabelle().werte.reiseflug_abstand_s.wert)
         } else {
-            (bis_sinkflug_s.round() as i64 - REISEFLUG80_VOR_TOD_S).max(r50)
+            (bis_sinkflug_s.round() as i64 - crate::tabelle().werte.reiseflug80_vor_tod_s.wert).max(r50)
         };
         Some([(r25, Slot::Reiseflug25), (r50, Slot::Reiseflug50), (r80, Slot::Reiseflug80)])
     }
@@ -600,7 +540,7 @@ impl Planer {
     }
 
     /// Im Sinkflug noch über 10.000 ft, aber mit der aktuellen Sinkrate in
-    /// höchstens [`crate::warteschlange::PAUSE_NACH_ANSAGE_S`] darunter — nur
+    /// höchstens `werte.pause_nach_ansage_s` darunter — nur
     /// bei Flügen mit Ruhephase (Reiseflug ab 12.000 ft, wie [`Self::ruhephase`]).
     fn kurz_vor_ruhephase(&self, t: &Tick) -> bool {
         let hoch = self.flug.reiseflughoehe_ft.is_none_or(|h| h >= 12_000);
@@ -608,7 +548,7 @@ impl Planer {
             && rang(t.phase) >= rang(FlightPhase::Descent)
             && t.hoehe_ft >= 10_000.0
             && t.vs_fpm < 0.0
-            && (t.hoehe_ft - 10_000.0) / -t.vs_fpm * 60.0 <= crate::warteschlange::PAUSE_NACH_ANSAGE_S as f64
+            && (t.hoehe_ft - 10_000.0) / -t.vs_fpm * 60.0 <= crate::tabelle().werte.pause_nach_ansage_s.wert as f64
     }
 
     fn melde(&mut self, aus: &mut Vec<Faellig>, slot: Slot, verfall: Verfall) {
@@ -712,11 +652,11 @@ impl Planer {
                     let mut t = ab + nach_s;
                     if s == Slot::Reiseflug25 && self.schon(Slot::AnschnallzeichenAus) {
                         if let Some(rs) = self.reiseflug_seit {
-                            t = t.min(rs + SERVICE_NACH_REISEFLUG_S);
+                            t = t.min(rs + crate::tabelle().werte.service_nach_reiseflug_s.wert);
                         }
                     }
                     if let Some(v) = vorige {
-                        t = t.max(v + REISEFLUG_ABSTAND_S);
+                        t = t.max(v + crate::tabelle().werte.reiseflug_abstand_s.wert);
                     }
                     if s == slot {
                         return Some(t);
@@ -732,13 +672,13 @@ impl Planer {
                     return None;
                 }
                 let b = self.bis_sinkflug_s()?;
-                Some(self.abheben_epoch? + b.round() as i64 - REISEFLUG80_VOR_TOD_S)
+                Some(self.abheben_epoch? + b.round() as i64 - crate::tabelle().werte.reiseflug80_vor_tod_s.wert)
             }
             // Kabine: nach dem Ende der Kapitänsansage (frühestens 2 min);
             // vorher keine eigene Uhrzeit — die Seite sagt „nach dem Kapitän“
             // (Thomas AIB437: beide zeigten dieselbe Zeit, die Kabine kam später).
             Slot::KabineSinkflug => match self.kapitaen_sinkflug {
-                KapitaenSinkflug::Gespielt(k) => Some(k + KABINE_NACH_KAPITAEN_MIN_S),
+                KapitaenSinkflug::Gespielt(k) => Some(k + crate::tabelle().werte.kabine_nach_kapitaen_min_s.wert),
                 _ => None,
             },
             // Vor dem Ende des Steigflugs keine Uhrzeit: Die Ansage wartet
@@ -752,8 +692,8 @@ impl Planer {
 
     /// Voraussichtlicher Abspielzeitpunkt der Sinkflug-Ansage des Kapitäns
     /// (UTC-Epoch-Sekunden) aus denselben Quellen wie der Auslöser in
-    /// [`Self::tick`]: TOD − [`KAPITAEN_VOR_TOD_S`] bzw. Landung −
-    /// [`KAPITAEN_VOR_LANDUNG_MIN`], das frühere; nach einer Umleitung zählt
+    /// [`Self::tick`]: TOD − `werte.kapitaen_vor_tod_s` bzw. Landung −
+    /// `werte.kapitaen_vor_landung_min`, das frühere; nach einer Umleitung zählt
     /// die Landezeit des Hosts nicht. Anders als [`Self::zeitpunkt`] auch im
     /// Steigflug: Auf der Kurzstrecke wird der Ankunftstext gleich nach dem
     /// Abheben bestellt, und seine Restzeit soll zum Abspielen stimmen
@@ -763,8 +703,8 @@ impl Planer {
         if self.schon(Slot::KapitaenSinkflug) {
             return None;
         }
-        let aus_tod = self.tod().map(|t| t - KAPITAEN_VOR_TOD_S);
-        let aus_landung = landung_erwartet.filter(|_| !self.umgeleitet).map(|l| l - (KAPITAEN_VOR_LANDUNG_MIN * 60.0) as i64);
+        let aus_tod = self.tod().map(|t| t - crate::tabelle().werte.kapitaen_vor_tod_s.wert);
+        let aus_landung = landung_erwartet.filter(|_| !self.umgeleitet).map(|l| l - (crate::tabelle().werte.kapitaen_vor_landung_min.wert * 60.0) as i64);
         match (aus_tod, aus_landung) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -792,7 +732,7 @@ impl Planer {
             self.tod_live = Some(tod);
             self.tod_live_um = t.jetzt;
         }
-        self.tod_aktuell = self.tod_live.filter(|_| t.jetzt - self.tod_live_um <= TOD_FRISCH_S);
+        self.tod_aktuell = self.tod_live.filter(|_| t.jetzt - self.tod_live_um <= crate::tabelle().werte.tod_frisch_s.wert);
         let in_luft = !t.am_boden;
 
         // ---- Boden vor dem Start ----
@@ -814,10 +754,10 @@ impl Planer {
             if let (Some(z), Some(s)) = (t.zfw_kg, self.zfw_start_kg) {
                 let hoch = self.zfw_hoch_kg.map_or(s.max(z), |h| h.max(z));
                 self.zfw_hoch_kg = Some(hoch);
-                if z <= hoch - BOARDING_ZULADUNG_KG {
+                if z <= hoch - crate::tabelle().werte.boarding_zuladung_kg.wert {
                     entlaedt = true;
                     let ab = *self.zuladung_sinkt_seit.get_or_insert(t.jetzt);
-                    if t.jetzt - ab >= BOARDING_ZULADUNG_S {
+                    if t.jetzt - ab >= crate::tabelle().werte.boarding_zuladung_s.wert {
                         self.zfw_start_kg = Some(z);
                         self.zfw_hoch_kg = Some(z);
                         self.zuladung_sinkt_seit = None;
@@ -826,10 +766,10 @@ impl Planer {
                     self.zuladung_sinkt_seit = None;
                 }
             }
-            let ueber = !entlaedt && t.zfw_kg.zip(self.zfw_start_kg).is_some_and(|(z, s)| z >= s + BOARDING_ZULADUNG_KG);
+            let ueber = !entlaedt && t.zfw_kg.zip(self.zfw_start_kg).is_some_and(|(z, s)| z >= s + crate::tabelle().werte.boarding_zuladung_kg.wert);
             if ueber {
                 let ab = *self.zuladung_steigt_seit.get_or_insert(t.jetzt);
-                if t.jetzt - ab >= BOARDING_ZULADUNG_S {
+                if t.jetzt - ab >= crate::tabelle().werte.boarding_zuladung_s.wert {
                     self.melde(&mut aus, Slot::Boarding, Verfall::AbPhase(TakeoffRoll));
                 }
             } else {
@@ -842,10 +782,10 @@ impl Planer {
             let am_ofp = t
                 .zfw_kg
                 .zip(t.planned_zfw_kg)
-                .is_some_and(|(z, p)| p > 0.0 && (z - p).abs() <= (p * BOARDING_OFP_ANTEIL).max(BOARDING_OFP_KG));
+                .is_some_and(|(z, p)| p > 0.0 && (z - p).abs() <= (p * crate::tabelle().werte.boarding_ofp_anteil.wert).max(crate::tabelle().werte.boarding_ofp_kg.wert));
             if am_ofp {
                 let ab = *self.am_ofp_seit.get_or_insert(t.jetzt);
-                if t.jetzt - ab >= BOARDING_OFP_S {
+                if t.jetzt - ab >= crate::tabelle().werte.boarding_ofp_s.wert {
                     self.melde(&mut aus, Slot::Boarding, Verfall::AbPhase(TakeoffRoll));
                 }
             } else {
@@ -858,7 +798,7 @@ impl Planer {
             if t.am_boden
                 && r < rang(Pushback)
                 && !t.pushback_aktiv
-                && (VERSPAETUNG_AB_MIN..=VERSPAETUNG_BIS_MIN).contains(&abw)
+                && (crate::tabelle().werte.verspaetung_ab_min.wert..=crate::tabelle().werte.verspaetung_bis_min.wert).contains(&abw)
             {
                 self.melde(&mut aus, Slot::VerspaetungGate, Verfall::AbPhase(TakeoffRoll));
             }
@@ -905,7 +845,7 @@ impl Planer {
         let rollt = t
             .bodengeschwindigkeit_kt
             .filter(|v| v.is_finite() && *v >= 0.0)
-            .is_none_or(|v| v >= ROLLT_AB_KT);
+            .is_none_or(|v| v >= crate::tabelle().werte.rollt_ab_kt.wert);
         if (t.phase == TaxiOut && rollt && landelicht_an) || (rang(TakeoffRoll)..=rang(Climb)).contains(&r) {
             self.melde(&mut aus, Slot::KommandoStart, Verfall::AbPhase(Climb));
         }
@@ -944,12 +884,12 @@ impl Planer {
             }
         }
         let zeichen_aus = t.anschnallzeichen == Some(0);
-        let luecke = self.zeichen_aus_zuletzt.is_none_or(|z| t.jetzt - z > ANSCHNALL_AUS_STABIL_S);
+        let luecke = self.zeichen_aus_zuletzt.is_none_or(|z| t.jetzt - z > crate::tabelle().werte.anschnall_aus_stabil_s.wert);
         self.zeichen_aus_seit = zeichen_aus.then(|| if luecke { t.jetzt } else { self.zeichen_aus_seit.unwrap_or(t.jetzt) });
         self.zeichen_aus_zuletzt = zeichen_aus.then_some(t.jetzt);
-        if in_luft && (rang(Climb)..=rang(Cruise)).contains(&r) && t.vs_fpm > ANSCHNALL_AUS_SINKEN_FPM {
+        if in_luft && (rang(Climb)..=rang(Cruise)).contains(&r) && t.vs_fpm > crate::tabelle().werte.anschnall_aus_sinken_fpm.wert {
             let aus_signal = match t.anschnallzeichen {
-                Some(0) => self.zeichen_aus_seit.is_some_and(|s| t.jetzt - s >= ANSCHNALL_AUS_STABIL_S),
+                Some(0) => self.zeichen_aus_seit.is_some_and(|s| t.jetzt - s >= crate::tabelle().werte.anschnall_aus_stabil_s.wert),
                 // AUTO wechselt nie auf 0: über 10.000 ft im Steigflug gilt
                 // es als erloschen (⚠️ je Profil prüfen).
                 Some(1) | None => t.hoehe_ft >= 10_000.0,
@@ -981,7 +921,7 @@ impl Planer {
             if !self.kurzstrecke()
                 && !self.schon(Slot::Reiseflug25)
                 && self.schon(Slot::AnschnallzeichenAus)
-                && self.reiseflug_seit.is_some_and(|rs| t.jetzt - rs >= SERVICE_NACH_REISEFLUG_S)
+                && self.reiseflug_seit.is_some_and(|rs| t.jetzt - rs >= crate::tabelle().werte.service_nach_reiseflug_s.wert)
             {
                 self.melde_reiseflug(&mut aus, t, Slot::Reiseflug25);
             }
@@ -1022,7 +962,7 @@ impl Planer {
             && self.schon(Slot::AnschnallzeichenAus)
             && !self.schon(Slot::Reiseflug25)
         {
-            if self.restflug_min(t.jetzt, t.rest_min).is_some_and(|m| m <= KURZSTRECKE_SERVICE_REST_MIN) {
+            if self.restflug_min(t.jetzt, t.rest_min).is_some_and(|m| m <= crate::tabelle().werte.kurzstrecke_service_rest_min.wert) {
                 self.entfaellt(Slot::Reiseflug25, Entfall::ZuWenigZeit);
             } else {
                 self.melde(&mut aus, Slot::Reiseflug25, Verfall::AbPhase(Descent));
@@ -1050,7 +990,7 @@ impl Planer {
             let geplant = self
                 .abheben_epoch
                 .zip(self.bis_sinkflug_s())
-                .is_some_and(|(ab, b)| t.jetzt >= ab + b.round() as i64 - REISEFLUG80_VOR_TOD_S);
+                .is_some_and(|(ab, b)| t.jetzt >= ab + b.round() as i64 - crate::tabelle().werte.reiseflug80_vor_tod_s.wert);
             let im_fenster = in_luft && (rang(Climb)..=rang(Descent)).contains(&r);
             match self.service {
                 _ if self.service_gelaufen() => {
@@ -1083,7 +1023,7 @@ impl Planer {
             if an && !war_an && !self.turbulenz_aktiv {
                 let frei = self
                     .letzte_turbulenz
-                    .is_none_or(|l| t.jetzt - l >= TURBULENZ_ABSTAND_S);
+                    .is_none_or(|l| t.jetzt - l >= crate::tabelle().werte.turbulenz_abstand_s.wert);
                 if frei {
                     self.letzte_turbulenz = Some(t.jetzt);
                     self.turbulenz_aktiv = true;
@@ -1099,7 +1039,7 @@ impl Planer {
         // ---- Warteschleife ----
         if t.phase == Holding {
             let seit = *self.warteschleife_seit.get_or_insert(t.jetzt);
-            if !self.warteschleife_gemeldet && t.jetzt - seit >= WARTESCHLEIFE_NACH_S {
+            if !self.warteschleife_gemeldet && t.jetzt - seit >= crate::tabelle().werte.warteschleife_nach_s.wert {
                 self.warteschleife_gemeldet = true;
                 self.melde(&mut aus, Slot::Warteschleife, Verfall::AbPhase(Final));
             }
@@ -1110,10 +1050,10 @@ impl Planer {
 
         // ---- Sinkflug und Landung ----
         if in_luft && self.steigflug_vorbei && r < rang(Final) {
-            let nach_rest = !self.umgeleitet && t.rest_min.is_some_and(|m| m <= KAPITAEN_VOR_LANDUNG_MIN);
-            let nach_tod = self.tod().is_some_and(|tod| t.jetzt >= tod - KAPITAEN_VOR_TOD_S);
+            let nach_rest = !self.umgeleitet && t.rest_min.is_some_and(|m| m <= crate::tabelle().werte.kapitaen_vor_landung_min.wert);
+            let nach_tod = self.tod().is_some_and(|tod| t.jetzt >= tod - crate::tabelle().werte.kapitaen_vor_tod_s.wert);
             let nach_phase = r >= rang(Descent)
-                && (self.umgeleitet || t.rest_min.is_none_or(|m| m <= PHASE_SINKFLUG_HOECHSTENS_REST_MIN));
+                && (self.umgeleitet || t.rest_min.is_none_or(|m| m <= crate::tabelle().werte.phase_sinkflug_hoechstens_rest_min.wert));
             if nach_rest || nach_tod || nach_phase {
                 self.melde(&mut aus, Slot::KapitaenSinkflug, Verfall::AbPhase(Final));
                 if self.schon(Slot::KapitaenSinkflug) && self.kapitaen_sinkflug == KapitaenSinkflug::Offen && !self.abgewaehlt.contains(&Slot::KapitaenSinkflug) {
@@ -1122,27 +1062,27 @@ impl Planer {
             }
         }
         // Kabine: frühestens zwei Minuten nach dem ENDE der Kapitänsansage,
-        // dann unter [`KABINE_SINKFLUG_UNTER_FT`] im Sinkflug bzw. im Anflug
+        // dann unter `werte.kabine_sinkflug_unter_ft` im Sinkflug bzw. im Anflug
         // (die frühere Regel „spätestens nach fünf Minuten, auch hoch“ ist
         // weg, Thomas 22.10.2026). Wartet der Kapitän noch (Ton, Pause), wartet die
         // Kabine mit — außer im Anflug. Kommt keine Kapitänsansage (stumm,
         // Fehler, Wiedereinstieg im Sinkflug), zählen Anflug bzw. Höhe allein.
         if in_luft && self.steigflug_vorbei && r < rang(Final) && !self.schon(Slot::KabineSinkflug) {
-            let tief = t.phase == Approach || (r >= rang(Descent) && t.hoehe_ft < KABINE_SINKFLUG_UNTER_FT && t.vs_fpm < 0.0);
+            let tief = t.phase == Approach || (r >= rang(Descent) && t.hoehe_ft < crate::tabelle().werte.kabine_sinkflug_unter_ft.wert && t.vs_fpm < 0.0);
             let reif = match self.kapitaen_sinkflug {
                 // Im Anflug sofort, sonst ginge sie bei einem kurzen Sinkflug
                 // verloren; die Pause der Warteschlange trennt sie trotzdem.
                 // Mindestens 2 min nach dem Ende, auch im Anflug (Codex 2.0.27).
                 KapitaenSinkflug::Gespielt(k) => {
                     let seit = t.jetzt - k;
-                    seit >= KABINE_NACH_KAPITAEN_MIN_S && (t.phase == Approach || tief)
+                    seit >= crate::tabelle().werte.kabine_nach_kapitaen_min_s.wert && (t.phase == Approach || tief)
                 }
                 KapitaenSinkflug::Gemeldet => t.phase == Approach,
                 KapitaenSinkflug::Offen | KapitaenSinkflug::KommtNicht => tief,
             };
             // 1c (Rundumschlag 22.10.2026, ANZ 438): spätestens so früh vor der
             // Ruhephase unter 10.000 ft, dass die Ansage nach der Pause hinter
-            // der vorigen ([`crate::warteschlange::PAUSE_NACH_ANSAGE_S`]) noch
+            // der vorigen (`werte.pause_nach_ansage_s`) noch
             // darüber beginnt — sonst wartete sie in der Ruhephase und verfiel
             // bei Final. Das schlägt die 2-min-Frist nach dem Kapitän und gilt
             // auch, wenn der Kapitän selbst noch wartet.
@@ -1167,7 +1107,7 @@ impl Planer {
         // Anflug, sonst im Endanflug (Michael BER181: Final erst bei 645 ft).
         let fahrwerk_raus = t.fahrwerk_unten == Some(true) && self.letztes_fahrwerk == Some(false);
         let tief_im_anflug =
-            t.phase == Approach && t.hoehe_agl_ft.is_some_and(|h| h < PLAETZE_LANDUNG_AGL_FT) && t.platznah != Some(false);
+            t.phase == Approach && t.hoehe_agl_ft.is_some_and(|h| h < crate::tabelle().werte.plaetze_landung_agl_ft.wert) && t.platznah != Some(false);
         if in_luft && r >= rang(Descent) && r < rang(Landing) && (fahrwerk_raus || tief_im_anflug) {
             self.melde(&mut aus, Slot::KommandoPlaetzeLandung, Verfall::AbPhase(Landing));
         }
@@ -1196,7 +1136,7 @@ impl Planer {
         let erkannt = t.durchgestartet && self.durchstart_faellig_um.is_none() && !self.durchstart_laeuft;
         if in_luft && erkannt {
             self.durchstart_laeuft = true;
-            self.durchstart_faellig_um = Some(t.jetzt + DURCHSTART_VERZOEGERUNG_S);
+            self.durchstart_faellig_um = Some(t.jetzt + crate::tabelle().werte.durchstart_verzoegerung_s.wert);
             self.gemeldet.remove(&Slot::KommandoPlaetzeLandung);
         }
         if let Some(um) = self.durchstart_faellig_um {
@@ -1254,8 +1194,8 @@ impl Planer {
         // TOD (Thomas: 10–15 min) und braucht nur die Reserve vor der
         // Sinkflug-Ansage des Kapitäns, nicht die 35 min (Codex 2.0.27).
         let reserve = match slot {
-            Slot::Reiseflug80 if self.zweiter_service == Some(true) => ZWEITER_SERVICE_REST_MIN,
-            Slot::Reiseflug80 => KURZSTRECKE_SERVICE_REST_MIN,
+            Slot::Reiseflug80 if self.zweiter_service == Some(true) => crate::tabelle().werte.zweiter_service_rest_min.wert,
+            Slot::Reiseflug80 => crate::tabelle().werte.kurzstrecke_service_rest_min.wert,
             _ => 35.0,
         };
         if self.restflug_min(t.jetzt, t.rest_min).is_some_and(|m| m <= reserve) {
@@ -1264,7 +1204,7 @@ impl Planer {
         }
         let frei = self
             .letzte_reiseflug_ansage
-            .is_none_or(|l| t.jetzt - l >= REISEFLUG_ABSTAND_S);
+            .is_none_or(|l| t.jetzt - l >= crate::tabelle().werte.reiseflug_abstand_s.wert);
         if !frei {
             return; // später nochmal versuchen
         }
@@ -1366,7 +1306,7 @@ mod tests {
         let mut tk = tick(60, Cruise, 37_000.0, 0.0);
         tk.tod_erwartet = Some(90 * 60);
         p.tick(&tk);
-        assert_eq!(p.zeitpunkt(Slot::KapitaenSinkflug, None), Some(90 * 60 - KAPITAEN_VOR_TOD_S));
+        assert_eq!(p.zeitpunkt(Slot::KapitaenSinkflug, None), Some(90 * 60 - crate::tabelle().werte.kapitaen_vor_tod_s.wert));
         assert_eq!(p.zeitpunkt(Slot::KapitaenSinkflug, Some(100 * 60)), Some(80 * 60));
         // Boden und Landung: keine erfundene Uhrzeit.
         assert_eq!(p.zeitpunkt(Slot::NachDerLandung, Some(100 * 60)), None);
@@ -1540,13 +1480,13 @@ mod tests {
                 }
             }
             let s = service.unwrap_or_else(|| panic!("{min} min: kein Service"));
-            assert!(f64::from(min) - s as f64 / 60.0 > KURZSTRECKE_SERVICE_REST_MIN, "{min} min: Service bei {s} s zu spät");
+            assert!(f64::from(min) - s as f64 / 60.0 > crate::tabelle().werte.kurzstrecke_service_rest_min.wert, "{min} min: Service bei {s} s zu spät");
             assert!(p.entfallene_abholen().is_empty());
         }
         // Gegenprobe: 30-min-Flug, beim Anschnallzeichen sind nur 25 min übrig.
         let mut p = Planer::neu(flug(30));
         p.tick(&tick(0, TakeoffRoll, 0.0, 0.0));
-        let mut tk = tick(300 - ANSCHNALL_AUS_STABIL_S, Climb, 11_000.0, 2_000.0);
+        let mut tk = tick(300 - crate::tabelle().werte.anschnall_aus_stabil_s.wert, Climb, 11_000.0, 2_000.0);
         tk.anschnallzeichen = Some(0);
         tk.rest_min = Some(25.0);
         p.tick(&tk);
@@ -1572,7 +1512,7 @@ mod tests {
             }
         }
         for paar in zeiten.windows(2) {
-            assert!(paar[1] - paar[0] >= REISEFLUG_ABSTAND_S, "{zeiten:?}");
+            assert!(paar[1] - paar[0] >= crate::tabelle().werte.reiseflug_abstand_s.wert, "{zeiten:?}");
         }
     }
 
@@ -1655,7 +1595,7 @@ mod tests {
         let bei = |x: Slot| wann.iter().find(|(y, _)| *y == x).map(|(_, t)| *t);
         assert_eq!(bei(Slot::KapitaenSinkflug), Some(1_210), "mit dem Wechsel in den Sinkflug");
         let kabine = bei(Slot::KabineSinkflug).expect("Kabine kommt");
-        assert!(kabine >= 1_250 + KABINE_NACH_KAPITAEN_MIN_S, "nach dem Kapitän: {kabine}");
+        assert!(kabine >= 1_250 + crate::tabelle().werte.kabine_nach_kapitaen_min_s.wert, "nach dem Kapitän: {kabine}");
         let gong = bei(Slot::Chime10000Sinkflug).expect("Gong kommt");
         assert!((1_530..=1_540).contains(&gong), "bei 10.000 ft: {gong}");
         assert_eq!(wann.iter().filter(|(x, _)| *x == Slot::Chime10000Sinkflug).count(), 1);
@@ -2001,7 +1941,7 @@ mod tests {
             takte.push(gate(s, Some(46_000.0), 2, false));
         }
         let z = melde_zeiten(&mut p, takte);
-        assert_eq!(z, vec![(8 * 60 + 10 + BOARDING_ZULADUNG_S, Slot::Boarding)], "nur die Begrüßung, 30 s nach dem Anstieg");
+        assert_eq!(z, vec![(8 * 60 + 10 + crate::tabelle().werte.boarding_zuladung_s.wert, Slot::Boarding)], "nur die Begrüßung, 30 s nach dem Anstieg");
     }
 
     /// 2.1.1 A: schon voll geladen, nichts steigt → keine Begrüßung bis zum
@@ -2043,7 +1983,7 @@ mod tests {
         let mut takte: Vec<Tick> = (0..750).step_by(10).map(|s| mit_ofp(gate(s, Some(237_682.0), 2, false), plan)).collect();
         takte.extend((750..1390).step_by(10).map(|s| mit_ofp(gate(s, Some(plan), 2, false), plan)));
         let z = melde_zeiten(&mut p, takte);
-        assert_eq!(z, vec![(750 + BOARDING_OFP_S, Slot::Boarding)], "60 s nach der Sofortladung, nicht erst am Beacon");
+        assert_eq!(z, vec![(750 + crate::tabelle().werte.boarding_ofp_s.wert, Slot::Boarding)], "60 s nach der Sofortladung, nicht erst am Beacon");
         let f = slots(p.tick(&mit_ofp(gate(1390, Some(plan), 2, true), plan)));
         assert!(!f.contains(&Slot::Boarding) && f.contains(&Slot::BegruessungTuerenZu), "{f:?}");
     }
@@ -2061,7 +2001,7 @@ mod tests {
         // GSX: alle 60 s 500 kg mehr.
         takte.extend((1260..1500).step_by(10).map(|s| mit_ofp(gate(s, Some(27_600.0 + 500.0 * f64::from(((s - 1200) / 60) as i32)), 2, false), plan)));
         let z = melde_zeiten(&mut p, takte);
-        assert_eq!(z, vec![(1260 + BOARDING_ZULADUNG_S, Slot::Boarding)]);
+        assert_eq!(z, vec![(1260 + crate::tabelle().werte.boarding_zuladung_s.wert, Slot::Boarding)]);
     }
 
     /// Codex 20.10.2026: Entladen zählt vom Höchstwert, nicht vom Start
@@ -2257,7 +2197,7 @@ mod tests {
         let mut p = Planer::fortsetzen(f, Cruise);
         p.gemeldet.insert(Slot::Reiseflug25);
         p.gemeldet.insert(Slot::Reiseflug50);
-        let t = 100 * 60 - REISEFLUG80_VOR_TOD_S;
+        let t = 100 * 60 - crate::tabelle().werte.reiseflug80_vor_tod_s.wert;
         let mut tk = tick(t, Cruise, 37_000.0, 0.0);
         tk.anschnallzeichen = Some(0);
         tk.rest_min = Some(32.0);
@@ -2277,8 +2217,8 @@ mod tests {
         let mut f = flug(166);
         f.abheben_epoch = Some(0);
         let p = Planer::fortsetzen(f, Cruise);
-        let tod = (166.0 - SINKFLUG_MIN) as i64 * 60;
-        assert_eq!(p.zeitpunkt(Slot::Reiseflug80, None), Some(tod - REISEFLUG80_VOR_TOD_S));
+        let tod = (166.0 - crate::tabelle().werte.sinkflug_min.wert) as i64 * 60;
+        assert_eq!(p.zeitpunkt(Slot::Reiseflug80, None), Some(tod - crate::tabelle().werte.reiseflug80_vor_tod_s.wert));
     }
 
     /// Kapitänsbegrüßung verfällt nicht mehr beim Startlauf (Host spielt sie
@@ -2308,7 +2248,7 @@ mod tests {
         c.jetzt = 120;
         c.anschnallzeichen = Some(0);
         assert!(slots(p.tick(&c)).is_empty(), "Zeichen erst kurz aus");
-        c.jetzt = 120 + ANSCHNALL_AUS_STABIL_S;
+        c.jetzt = 120 + crate::tabelle().werte.anschnall_aus_stabil_s.wert;
         assert_eq!(slots(p.tick(&c)), vec![Slot::Reiseflug25], "Service ohne die abgewählte Ansage");
         // Kapitän-Sinkflug abgewählt: Die Kabine richtet sich nach der Höhe.
         let mut q = Planer::fortsetzen(flug(120), Cruise);
@@ -2362,8 +2302,8 @@ mod tests {
         assert!(!aus(&mut q, 0, 0, 0.0));
         assert!(!aus(&mut q, 5, 2, 0.0));
         assert!(!aus(&mut q, 6, 0, 0.0));
-        assert!(!aus(&mut q, 6 + ANSCHNALL_AUS_STABIL_S - 1, 0, 0.0));
-        assert!(aus(&mut q, 6 + ANSCHNALL_AUS_STABIL_S, 0, 0.0));
+        assert!(!aus(&mut q, 6 + crate::tabelle().werte.anschnall_aus_stabil_s.wert - 1, 0, 0.0));
+        assert!(aus(&mut q, 6 + crate::tabelle().werte.anschnall_aus_stabil_s.wert, 0, 0.0));
         // Stabil AUS, aber das Flugzeug sinkt: nicht gemeldet; ebenso AUTO.
         let mut r = gestartet();
         assert!(!aus(&mut r, 0, 0, -1_500.0));
@@ -2373,12 +2313,12 @@ mod tests {
         // war, ist unbekannt — die Frist beginnt neu (Codex 27.10.2026).
         let mut g = gestartet();
         assert!(!aus(&mut g, 0, 0, 0.0));
-        assert!(!aus(&mut g, ANSCHNALL_AUS_STABIL_S + 1, 0, 0.0), "Lücke zählt nicht");
-        assert!(aus(&mut g, 2 * ANSCHNALL_AUS_STABIL_S + 1, 0, 0.0));
+        assert!(!aus(&mut g, crate::tabelle().werte.anschnall_aus_stabil_s.wert + 1, 0, 0.0), "Lücke zählt nicht");
+        assert!(aus(&mut g, 2 * crate::tabelle().werte.anschnall_aus_stabil_s.wert + 1, 0, 0.0));
         // Wieder im Geradeausflug (Stufensinkflug vorbei) und stabil AUS:
         // jetzt schon (AUTO bei 61 s hat die Uhr neu gestartet).
         assert!(!aus(&mut r, 62, 0, -200.0));
-        assert!(aus(&mut r, 62 + ANSCHNALL_AUS_STABIL_S, 0, -200.0));
+        assert!(aus(&mut r, 62 + crate::tabelle().werte.anschnall_aus_stabil_s.wert, 0, -200.0));
     }
 
     #[test]
@@ -2525,7 +2465,7 @@ mod tests {
     fn kabine_wartet_im_reiseflug_auf_den_sinkflug() {
         let mut p = Planer::fortsetzen(flug(120), Cruise);
         let mut tk = tick(0, Cruise, 35_000.0, 0.0);
-        tk.rest_min = Some(KAPITAEN_VOR_LANDUNG_MIN);
+        tk.rest_min = Some(crate::tabelle().werte.kapitaen_vor_landung_min.wert);
         assert!(slots(p.tick(&tk)).contains(&Slot::KapitaenSinkflug));
         p.kapitaen_sinkflug_ende(true, 40);
         for s in (50..900).step_by(10) {
@@ -2568,14 +2508,14 @@ mod tests {
         f.tod_nach_abheben_s = Some(3_000);
         let mut p = Planer::fortsetzen(f.clone(), Cruise);
         // OFP-Uhrzeit sagt TOD 3000 (Kapitän ab 2700), die Route sagt 4000.
-        for s in (2_600..4_000 - KAPITAEN_VOR_TOD_S).step_by(10) {
+        for s in (2_600..4_000 - crate::tabelle().werte.kapitaen_vor_tod_s.wert).step_by(10) {
             let mut tk = tick(s, Cruise, 35_000.0, 0.0);
             // Zwischen 3000 und 3200 neben der Route (Direct): kein Wert.
             tk.tod_erwartet = (!(3_000..3_200).contains(&s)).then_some(4_000);
             assert!(!slots(p.tick(&tk)).contains(&Slot::KapitaenSinkflug), "nicht vor TOD − 90 s der Route ({s})");
-            assert_eq!(p.zeitpunkt(Slot::KapitaenSinkflug, None), Some(4_000 - KAPITAEN_VOR_TOD_S), "Anzeige wie Auslöser ({s})");
+            assert_eq!(p.zeitpunkt(Slot::KapitaenSinkflug, None), Some(4_000 - crate::tabelle().werte.kapitaen_vor_tod_s.wert), "Anzeige wie Auslöser ({s})");
         }
-        let mut tk = tick(4_000 - KAPITAEN_VOR_TOD_S, Cruise, 35_000.0, 0.0);
+        let mut tk = tick(4_000 - crate::tabelle().werte.kapitaen_vor_tod_s.wert, Cruise, 35_000.0, 0.0);
         tk.tod_erwartet = Some(4_000);
         assert!(slots(p.tick(&tk)).contains(&Slot::KapitaenSinkflug));
         // Ohne Route löst die starre OFP-Uhrzeit nicht mehr aus; es bleiben
@@ -2588,7 +2528,7 @@ mod tests {
         let mut tk = tick(1_000, Cruise, 35_000.0, 0.0);
         tk.tod_erwartet = Some(2_000);
         r.tick(&tk);
-        assert!(!slots(r.tick(&tick(1_000 + TOD_FRISCH_S + 10, Cruise, 35_000.0, 0.0))).contains(&Slot::KapitaenSinkflug), "veralteter TOD löst nicht aus");
+        assert!(!slots(r.tick(&tick(1_000 + crate::tabelle().werte.tod_frisch_s.wert + 10, Cruise, 35_000.0, 0.0))).contains(&Slot::KapitaenSinkflug), "veralteter TOD löst nicht aus");
         // Umleitung: TOD und Landezeit des Hosts gelten der alten Route –
         // auch nicht im selben Takt, in dem der alte TOD fällig würde.
         let mut u = Planer::fortsetzen(f, Cruise);
@@ -2761,7 +2701,7 @@ mod tests {
         let mut tk = tick(0, Climb, 6_000.0, 2_000.0);
         tk.anschnallzeichen = Some(0);
         p.tick(&tk);
-        tk.jetzt = ANSCHNALL_AUS_STABIL_S;
+        tk.jetzt = crate::tabelle().werte.anschnall_aus_stabil_s.wert;
         let f = p.tick(&tk);
         let aus = f.iter().find(|x| x.slot == Slot::AnschnallzeichenAus).expect("gemeldet");
         assert!(aus.trotz_ruhephase);
@@ -2783,18 +2723,18 @@ mod tests {
         p.gemeldet.insert(Slot::AnschnallzeichenAus);
         p.tick(&tick(1_400, Climb, 35_000.0, 1_000.0));
         assert!(slots(p.tick(&tick(1_500, Cruise, 37_000.0, 0.0))).is_empty());
-        assert_eq!(p.zeitpunkt(Slot::Reiseflug25, None), Some(1_500 + SERVICE_NACH_REISEFLUG_S));
-        assert!(slots(p.tick(&tick(1_500 + SERVICE_NACH_REISEFLUG_S - 10, Cruise, 37_000.0, 0.0))).is_empty());
-        assert_eq!(slots(p.tick(&tick(1_500 + SERVICE_NACH_REISEFLUG_S, Cruise, 37_000.0, 0.0))), vec![Slot::Reiseflug25]);
+        assert_eq!(p.zeitpunkt(Slot::Reiseflug25, None), Some(1_500 + crate::tabelle().werte.service_nach_reiseflug_s.wert));
+        assert!(slots(p.tick(&tick(1_500 + crate::tabelle().werte.service_nach_reiseflug_s.wert - 10, Cruise, 37_000.0, 0.0))).is_empty());
+        assert_eq!(slots(p.tick(&tick(1_500 + crate::tabelle().werte.service_nach_reiseflug_s.wert, Cruise, 37_000.0, 0.0))), vec![Slot::Reiseflug25]);
         // Reiseflug 50 bleibt bei 50 %, ohne Reiseflug 25 als übersprungen zu melden.
-        let bis_tod = (480.0 - SINKFLUG_MIN) * 60.0;
+        let bis_tod = (480.0 - crate::tabelle().werte.sinkflug_min.wert) * 60.0;
         let r50 = (0.5 * bis_tod) as i64;
         assert_eq!(slots(p.tick(&tick(r50, Cruise, 37_000.0, 0.0))), vec![Slot::Reiseflug50]);
         assert!(p.entfallene_abholen().is_empty());
         // Kurzstrecke unverändert: Service am Anschnallzeichen, nicht an der Höhe.
         let mut k = Planer::neu(flug(40));
         k.tick(&tick(0, Climb, 20_000.0, 1_000.0));
-        assert!(!k.tick(&tick(SERVICE_NACH_REISEFLUG_S + 100, Cruise, 29_000.0, 0.0)).iter().any(|x| x.slot == Slot::Reiseflug25));
+        assert!(!k.tick(&tick(crate::tabelle().werte.service_nach_reiseflug_s.wert + 100, Cruise, 29_000.0, 0.0)).iter().any(|x| x.slot == Slot::Reiseflug25));
     }
 
     /// v2.0.28, Peter DLH454: Licht ging an, bevor AeroACARS „Rollen“
@@ -2817,7 +2757,7 @@ mod tests {
         licht.bodengeschwindigkeit_kt = Some(2.9);
         assert!(!p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "unter 3 kt rollt es nicht");
         licht.jetzt = 30;
-        licht.bodengeschwindigkeit_kt = Some(ROLLT_AB_KT);
+        licht.bodengeschwindigkeit_kt = Some(crate::tabelle().werte.rollt_ab_kt.wert);
         assert!(p.tick(&licht).iter().any(|f| f.slot == Slot::KommandoStart), "Rollen und rollt (ab 3 kt)");
         // Rollen ohne Geschwindigkeitssignal (oder unbrauchbar): die Phase zählt allein.
         for gs in [None, Some(f64::NAN), Some(-1.0)] {
@@ -2887,10 +2827,10 @@ mod tests {
         // Bordverkauf: 12 min vor dem Sinkflug wie bisher.
         let mut b = Planer::fortsetzen(f.clone(), Cruise);
         b.reiseflug80_art(Some(false));
-        assert_eq!(b.zeitpunkt(Slot::Reiseflug80, None), Some(450 * 60 - REISEFLUG80_VOR_TOD_S));
+        assert_eq!(b.zeitpunkt(Slot::Reiseflug80, None), Some(450 * 60 - crate::tabelle().werte.reiseflug80_vor_tod_s.wert));
         // Art unbekannt: wie bisher; ein späteres `None` löscht die Art nicht.
         let mut u = Planer::fortsetzen(f, Cruise);
-        assert_eq!(u.zeitpunkt(Slot::Reiseflug80, None), Some(450 * 60 - REISEFLUG80_VOR_TOD_S));
+        assert_eq!(u.zeitpunkt(Slot::Reiseflug80, None), Some(450 * 60 - crate::tabelle().werte.reiseflug80_vor_tod_s.wert));
         u.reiseflug80_art(Some(true));
         u.reiseflug80_art(None);
         assert_eq!(u.zeitpunkt(Slot::Reiseflug80, None), Some((450 - 90) * 60));
@@ -2945,13 +2885,13 @@ mod tests {
         let mut f = flug(120);
         f.abheben_epoch = Some(0);
         let mut p = Planer::fortsetzen(f.clone(), Cruise);
-        let bis = (120.0 - SINKFLUG_MIN) as i64 * 60;
+        let bis = (120.0 - crate::tabelle().werte.sinkflug_min.wert) as i64 * 60;
         assert_eq!(p.zeitpunkt(Slot::EndeService, None), None, "2.1.1 C: hängt am Service");
         p.schon_gespielt([Slot::Reiseflug25]);
         p.service_ende(true);
-        assert_eq!(p.zeitpunkt(Slot::EndeService, None), Some(bis - REISEFLUG80_VOR_TOD_S));
-        assert!(!p.tick(&tick(bis - REISEFLUG80_VOR_TOD_S - 10, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
-        assert!(p.tick(&tick(bis - REISEFLUG80_VOR_TOD_S, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
+        assert_eq!(p.zeitpunkt(Slot::EndeService, None), Some(bis - crate::tabelle().werte.reiseflug80_vor_tod_s.wert));
+        assert!(!p.tick(&tick(bis - crate::tabelle().werte.reiseflug80_vor_tod_s.wert - 10, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
+        assert!(p.tick(&tick(bis - crate::tabelle().werte.reiseflug80_vor_tod_s.wert, Cruise, 37_000.0, 0.0)).iter().any(|x| x.slot == Slot::EndeService));
         // Früher Sinkflug (DLH454, Service gespielt): kommt beim Sinkflugbeginn.
         let mut q = Planer::fortsetzen(f.clone(), Cruise);
         q.tick(&tick(30 * 60, Cruise, 37_000.0, 0.0));
@@ -3026,7 +2966,7 @@ mod tests {
     fn ende_service_nur_nach_gespieltem_service() {
         let mut f = flug(120);
         f.abheben_epoch = Some(0);
-        let bis = (120.0 - SINKFLUG_MIN) as i64 * 60;
+        let bis = (120.0 - crate::tabelle().werte.sinkflug_min.wert) as i64 * 60;
         let ende = |p: &mut Planer, s: i64, ph: FlightPhase| p.tick(&tick(s, ph, 30_000.0, if ph == Cruise { 0.0 } else { -2_000.0 })).iter().any(|x| x.slot == Slot::EndeService);
         let uebersprungen = |p: &mut Planer| p.entfallene_abholen().contains(&(Slot::EndeService, Entfall::Uebersprungen));
         let mit_service = || {
@@ -3042,7 +2982,7 @@ mod tests {
         };
         // Gemeldet, Ende steht aus: hält beim Sinkflug zurück …
         let mut p = mit_service();
-        assert!(!ende(&mut p, bis - REISEFLUG80_VOR_TOD_S, Cruise), "nicht zur geplanten Zeit");
+        assert!(!ende(&mut p, bis - crate::tabelle().werte.reiseflug80_vor_tod_s.wert, Cruise), "nicht zur geplanten Zeit");
         assert!(!ende(&mut p, bis, Descent), "nicht beim Sinkflug");
         assert!(!uebersprungen(&mut p), "noch nicht übersprungen");
         // … und kommt, wenn der Service noch im Sinkflug zu Ende spielt.
@@ -3056,7 +2996,7 @@ mod tests {
         // Verfallen/stumm/Fehler: beim Sinkflug übersprungen.
         let mut r = mit_service();
         r.service_ende(false);
-        assert!(!ende(&mut r, bis - REISEFLUG80_VOR_TOD_S, Cruise));
+        assert!(!ende(&mut r, bis - crate::tabelle().werte.reiseflug80_vor_tod_s.wert, Cruise));
         assert!(!ende(&mut r, bis, Descent));
         assert!(uebersprungen(&mut r));
         // Ein spätes „gespielt“ nach dem Aus ändert nichts mehr.
@@ -3104,7 +3044,7 @@ mod tests {
         // Gespielt: zur geplanten Zeit, wie bisher.
         let mut g = mit_service();
         g.service_ende(true);
-        assert!(ende(&mut g, bis - REISEFLUG80_VOR_TOD_S, Cruise));
+        assert!(ende(&mut g, bis - crate::tabelle().werte.reiseflug80_vor_tod_s.wert, Cruise));
         // Neustart nach gespieltem Service (Host meldet es laut Verlauf).
         let mut n = Planer::fortsetzen(f.clone(), Descent);
         n.schon_gespielt([Slot::Reiseflug25]);
@@ -3223,7 +3163,7 @@ mod tests {
         p.tick(&tk);
         let landung = 5_600;
         let um = p.kapitaen_sinkflug_prognose(Some(landung)).expect("Prognose");
-        assert_eq!(um, landung - (KAPITAEN_VOR_LANDUNG_MIN * 60.0) as i64);
+        assert_eq!(um, landung - (crate::tabelle().werte.kapitaen_vor_landung_min.wert * 60.0) as i64);
         assert_eq!(Some(um), p.zeitpunkt(Slot::KapitaenSinkflug, Some(landung)), "Anzeige wie Prognose");
         // Der Auslöser kommt genau dort (Restzeit 20 min), nicht früher.
         let mut tk = tick(um - 10, Cruise, 37_000.0, 0.0);
@@ -3240,7 +3180,7 @@ mod tests {
         let mut tk = tick(1_000, Cruise, 37_000.0, 0.0);
         tk.tod_erwartet = Some(4_000);
         q.tick(&tk);
-        assert_eq!(q.kapitaen_sinkflug_prognose(Some(6_000)), Some(4_000 - KAPITAEN_VOR_TOD_S));
+        assert_eq!(q.kapitaen_sinkflug_prognose(Some(6_000)), Some(4_000 - crate::tabelle().werte.kapitaen_vor_tod_s.wert));
 
         // Kurzstrecke direkt nach dem Abheben: Der Steigflug ist nicht vorbei,
         // die Anzeige hat keine Uhrzeit — die Prognose aber schon.
@@ -3251,7 +3191,7 @@ mod tests {
         k.tick(&tk);
         assert!(!k.steigflug_vorbei);
         assert_eq!(k.zeitpunkt(Slot::KapitaenSinkflug, Some(2_800)), None);
-        assert_eq!(k.kapitaen_sinkflug_prognose(Some(2_800)), Some(1_400 - KAPITAEN_VOR_TOD_S));
+        assert_eq!(k.kapitaen_sinkflug_prognose(Some(2_800)), Some(1_400 - crate::tabelle().werte.kapitaen_vor_tod_s.wert));
         assert_eq!(k.kapitaen_sinkflug_prognose(Some(2_400)), Some(2_400 - 20 * 60));
 
         // Umleitung: TOD und ETA der alten Route fließen nicht ein.

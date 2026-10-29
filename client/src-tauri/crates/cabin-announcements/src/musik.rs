@@ -51,10 +51,8 @@ pub enum Abschnitt {
     Ankunft,
 }
 
-/// Musik nach der Landung endet spätestens so lange nach „Aussteigen“ …
-pub const ANKUNFT_NACH_AUSSTEIGEN_S: i64 = 15 * 60;
-/// … ohne Aussteigen-Ansage so lange nach „Triebwerke aus“.
-pub const ANKUNFT_NACH_TRIEBWERKE_AUS_S: i64 = 20 * 60;
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.ankunft_nach_aussteigen_s (v2.1.24: 15 * 60)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.ankunft_nach_triebwerke_aus_s (v2.1.24: 20 * 60)
 
 /// Das Zeitfenster der Musik auf einem Flug. „Türen zu“ wie im Planer:
 /// Beacon geht am Boden an, sonst Pushback oder eine spätere Phase. Danach
@@ -102,8 +100,8 @@ impl MusikFenster {
             self.ankunft_seit = Some(t.jetzt);
         }
         let ende = match t.aussteigen_um {
-            Some(a) => t.jetzt >= a + ANKUNFT_NACH_AUSSTEIGEN_S,
-            None => self.triebwerke_aus_seit.is_some_and(|aus| t.jetzt >= aus + ANKUNFT_NACH_TRIEBWERKE_AUS_S),
+            Some(a) => t.jetzt >= a + crate::tabelle().werte.ankunft_nach_aussteigen_s.wert,
+            None => self.triebwerke_aus_seit.is_some_and(|aus| t.jetzt >= aus + crate::tabelle().werte.ankunft_nach_triebwerke_aus_s.wert),
         };
         if ende {
             self.ankunft_vorbei = true;
@@ -228,9 +226,9 @@ mod tests {
         assert_eq!(f.tick(Flugart::Linie, &ankunft(10, TaxiIn, false, None, true)), None, "die Ansage nach der Landung läuft noch");
         assert_eq!(f.tick(Flugart::Linie, &ankunft(60, TaxiIn, true, None, true)), A, "nach der Ansage");
         assert_eq!(f.tick(Flugart::Linie, &ankunft(400, Arrived, true, Some(300), false)), A);
-        assert_eq!(f.tick(Flugart::Linie, &ankunft(300 + ANKUNFT_NACH_AUSSTEIGEN_S - 1, Arrived, true, Some(300), false)), A);
-        assert_eq!(f.tick(Flugart::Linie, &ankunft(300 + ANKUNFT_NACH_AUSSTEIGEN_S, Arrived, true, Some(300), false)), None, "15 min nach Aussteigen");
-        assert_eq!(f.tick(Flugart::Linie, &ankunft(300 + ANKUNFT_NACH_AUSSTEIGEN_S + 10, Arrived, true, Some(300), false)), None, "danach nicht wieder");
+        assert_eq!(f.tick(Flugart::Linie, &ankunft(300 + crate::tabelle().werte.ankunft_nach_aussteigen_s.wert - 1, Arrived, true, Some(300), false)), A);
+        assert_eq!(f.tick(Flugart::Linie, &ankunft(300 + crate::tabelle().werte.ankunft_nach_aussteigen_s.wert, Arrived, true, Some(300), false)), None, "15 min nach Aussteigen");
+        assert_eq!(f.tick(Flugart::Linie, &ankunft(300 + crate::tabelle().werte.ankunft_nach_aussteigen_s.wert + 10, Arrived, true, Some(300), false)), None, "danach nicht wieder");
     }
 
     /// Zusatz I: ohne Aussteigen-Ansage 20 min nach „Triebwerke aus“;
@@ -241,8 +239,8 @@ mod tests {
             let mut f = MusikFenster::default();
             assert_eq!(f.tick(art, &ankunft(0, TaxiIn, false, None, true)), A, "{art:?} mit dem Rollen");
             assert_eq!(f.tick(art, &ankunft(100, BlocksOn, false, None, false)), A);
-            assert_eq!(f.tick(art, &ankunft(100 + ANKUNFT_NACH_TRIEBWERKE_AUS_S - 1, Arrived, false, None, false)), A);
-            assert_eq!(f.tick(art, &ankunft(100 + ANKUNFT_NACH_TRIEBWERKE_AUS_S, Arrived, false, None, false)), None);
+            assert_eq!(f.tick(art, &ankunft(100 + crate::tabelle().werte.ankunft_nach_triebwerke_aus_s.wert - 1, Arrived, false, None, false)), A);
+            assert_eq!(f.tick(art, &ankunft(100 + crate::tabelle().werte.ankunft_nach_triebwerke_aus_s.wert, Arrived, false, None, false)), None);
         }
     }
 

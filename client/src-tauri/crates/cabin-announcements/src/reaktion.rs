@@ -46,23 +46,13 @@ impl Art {
     }
 }
 
-/// A+ auf einem Ferienflieger: so oft Applaus.
-pub const APPLAUS_FERIEN: f64 = 0.85;
-/// A+ sonst: etwa jedes zweite Mal.
-pub const APPLAUS_SONST: f64 = 0.50;
-/// A: so oft zufriedenes Murmeln.
-pub const MURMELN_BEI_A: f64 = 0.30;
-/// Pause zwischen fester Note und Applaus/Murmeln (s), zufällig dazwischen —
-/// es soll überraschen, nicht wie ein Taster wirken.
-pub const PAUSE_MIN_S: f64 = 1.0;
-pub const PAUSE_MAX_S: f64 = 4.0;
-/// Raunen kommt sofort nach der Note.
-pub const PAUSE_RAUNEN_S: f64 = 0.0;
-/// Nach dem Aufsetzen so lange darf die Reaktion noch beginnen; später
-/// (Neustart, lange Ansage davor) entfällt sie — sie gehört zum Aufsetzen.
-/// Die Note steht nach ~9 s fest, „nach der Landung“ kam gemessen nach
-/// 35–52 s.
-pub const SPAETESTENS_NACH_AUFSETZEN_S: i64 = 45;
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.applaus_ferien (v2.1.24: 0.85)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.applaus_sonst (v2.1.24: 0.50)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.murmeln_bei_a (v2.1.24: 0.30)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.pause_min_s (v2.1.24: 1.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.pause_max_s (v2.1.24: 4.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.pause_raunen_s (v2.1.24: 0.0)
+// Wert seit v3: bundle/tabellen/kabine.json -> werte.spaetestens_nach_aufsetzen_s (v2.1.24: 45)
 
 /// Was der Host über die Landung weiß.
 #[derive(Debug, Clone, Copy)]
@@ -81,7 +71,7 @@ pub fn waehlen(l: Landung<'_>, wurf: f64) -> Option<Art> {
     }
     match l.note {
         "A+" => {
-            let schwelle = if l.ferienflieger { APPLAUS_FERIEN } else { APPLAUS_SONST };
+            let schwelle = if l.ferienflieger { crate::tabelle().werte.applaus_ferien.wert } else { crate::tabelle().werte.applaus_sonst.wert };
             if wurf >= schwelle {
                 return Some(Art::Murmeln);
             }
@@ -93,7 +83,7 @@ pub fn waehlen(l: Landung<'_>, wurf: f64) -> Option<Art> {
                 (false, false) => Art::ApplausHoeflich,
             })
         }
-        "A" => (wurf < MURMELN_BEI_A).then_some(Art::Murmeln),
+        "A" => (wurf < crate::tabelle().werte.murmeln_bei_a.wert).then_some(Art::Murmeln),
         "D" | "F" => Some(Art::RaunenHart),
         _ => None,
     }
@@ -102,9 +92,9 @@ pub fn waehlen(l: Landung<'_>, wurf: f64) -> Option<Art> {
 /// Pause vor dem Einsatz (s). `wurf` liegt in `[0, 1)`.
 pub fn pause_s(art: Art, wurf: f64) -> f64 {
     if art.ist_raunen() {
-        PAUSE_RAUNEN_S
+        crate::tabelle().werte.pause_raunen_s.wert
     } else {
-        PAUSE_MIN_S + (PAUSE_MAX_S - PAUSE_MIN_S) * wurf.clamp(0.0, 1.0)
+        crate::tabelle().werte.pause_min_s.wert + (crate::tabelle().werte.pause_max_s.wert - crate::tabelle().werte.pause_min_s.wert) * wurf.clamp(0.0, 1.0)
     }
 }
 
@@ -121,57 +111,14 @@ pub fn aufnahme(anzahl: usize, zuletzt: Option<usize>, wurf: f64) -> Option<usiz
     }
 }
 
-/// Ferienairlines (ICAO, aus der GSG-Datenbank; abgenommen 23.10.2026).
-pub const FERIENAIRLINES: [&str; 21] = [
-    "CFG", "OCN", "MBU", "TUI", "TOM", "TFL", "JAF", "SXS", "CAI", "CXI", "EDW", "EXS", "FHY", "ENT", "NOS", "VKG", "EVE",
-    "WFL", "BGH", "TVS", "LTU",
-];
-
-/// Urlaubsziele (ICAO; abgenommen 23.10.2026). Großstädte bewusst nicht.
-pub const URLAUBSZIELE: [&str; 85] = [
-    // Balearen, Spanien
-    "LEPA", "LEIB", "LEMH", "LEMG", "LEAL", "LERS", "LEGE", "LEAM",
-    // Kanaren
-    "GCLP", "GCTS", "GCRR", "GCFV", "GCLA", "GCHI",
-    // Portugal
-    "LPFR", "LPMA", "LPPS",
-    // Griechenland
-    "LGIR", "LGSA", "LGRP", "LGKO", "LGKR", "LGZA", "LGSR", "LGMK", "LGKF", "LGSM", "LGPZ", "LGKL",
-    // Türkei
-    "LTAI", "LTBS", "LTFE", "LTBJ",
-    // Kroatien
-    "LDSP", "LDDU", "LDPL", "LDZD",
-    // Italien
-    "LICC", "LICJ", "LIEO", "LIEE", "LIEA",
-    // Zypern, Malta
-    "LCLK", "LCPH", "LMML",
-    // Bulgarien
-    "LBBG", "LBWN",
-    // Ägypten
-    "HEGN", "HESH", "HEMA",
-    // Marokko, Tunesien
-    "GMMX", "GMAD", "DTTJ", "DTNH", "DTMB",
-    // Kapverden
-    "GVAC", "GVBA",
-    // Karibik, Mexiko
-    "MDPC", "MDPP", "MMUN", "MUVR", "TNCA", "TNCC", "MKJS", "TBPB", "TFFR", "TFFF",
-    // Indischer Ozean
-    "VRMM", "FIMP", "FSIA", "FMEE",
-    // Asien
-    "WADD", "VTSP", "VTSM", "VTBU",
-    // USA
-    "KMCO", "KLAS", "PHOG", "PHNL", "PHKO",
-    // Nordsee-Inseln
-    "EDXW", "EDWY",
-    // Afrika Süd/Ost
-    "FAKN", "HKMO", "HTZA",
-];
+// Ferienairlines und Urlaubsziele: seit v3 bundle/tabellen/kabine.json ->
+// listen.ferienairlines / listen.urlaubsziele
 
 /// Urlaubsziel ODER Ferienairline (Entscheidung 3).
 pub fn ferienflieger(airline_icao: &str, ziel_icao: &str) -> bool {
     let a = airline_icao.trim().to_ascii_uppercase();
     let z = ziel_icao.trim().to_ascii_uppercase();
-    FERIENAIRLINES.contains(&a.as_str()) || URLAUBSZIELE.contains(&z.as_str())
+    crate::tabelle().listen.ferienairlines.contains(&a) || crate::tabelle().listen.urlaubsziele.contains(&z)
 }
 
 #[cfg(test)]
@@ -212,8 +159,8 @@ mod tests {
     #[test]
     fn a_murmelt_manchmal() {
         assert_eq!(waehlen(l("A", false, false), 0.0), Some(Art::Murmeln));
-        assert_eq!(waehlen(l("A", false, false), MURMELN_BEI_A - 0.001), Some(Art::Murmeln));
-        assert_eq!(waehlen(l("A", false, false), MURMELN_BEI_A), None);
+        assert_eq!(waehlen(l("A", false, false), crate::tabelle().werte.murmeln_bei_a.wert - 0.001), Some(Art::Murmeln));
+        assert_eq!(waehlen(l("A", false, false), crate::tabelle().werte.murmeln_bei_a.wert), None);
         assert_eq!(waehlen(l("A", false, true), 0.9), None);
     }
 
@@ -224,7 +171,7 @@ mod tests {
         assert!(matches!(waehlen(l("A+", false, true), w), Some(Art::ApplausFerien | Art::ApplausBegeistert)));
         assert_eq!(waehlen(l("A+", false, false), w), Some(Art::Murmeln));
         // Über dem Ferien-Anteil murmelt auch der Ferienflieger.
-        assert_eq!(waehlen(l("A+", false, true), APPLAUS_FERIEN), Some(Art::Murmeln));
+        assert_eq!(waehlen(l("A+", false, true), crate::tabelle().werte.applaus_ferien.wert), Some(Art::Murmeln));
     }
 
     #[test]
@@ -251,8 +198,8 @@ mod tests {
     fn raunen_sofort_applaus_mit_pause() {
         assert_eq!(pause_s(Art::RaunenHart, 0.9), 0.0);
         assert_eq!(pause_s(Art::RaunenHopser, 0.1), 0.0);
-        assert_eq!(pause_s(Art::ApplausFerien, 0.0), PAUSE_MIN_S);
-        assert!((pause_s(Art::Murmeln, 1.0) - PAUSE_MAX_S).abs() < 1e-9);
+        assert_eq!(pause_s(Art::ApplausFerien, 0.0), crate::tabelle().werte.pause_min_s.wert);
+        assert!((pause_s(Art::Murmeln, 1.0) - crate::tabelle().werte.pause_max_s.wert).abs() < 1e-9);
     }
 
     #[test]
@@ -278,15 +225,15 @@ mod tests {
 
     #[test]
     fn listen_ohne_doppelte_und_wohlgeformt() {
-        let mut z = URLAUBSZIELE.to_vec();
+        let mut z = crate::tabelle().listen.urlaubsziele.to_vec();
         z.sort_unstable();
         z.dedup();
-        assert_eq!(z.len(), URLAUBSZIELE.len());
-        assert!(URLAUBSZIELE.iter().all(|c| c.len() == 4 && c.chars().all(|x| x.is_ascii_uppercase())));
-        let mut a = FERIENAIRLINES.to_vec();
+        assert_eq!(z.len(), crate::tabelle().listen.urlaubsziele.len());
+        assert!(crate::tabelle().listen.urlaubsziele.iter().all(|c| c.len() == 4 && c.chars().all(|x| x.is_ascii_uppercase())));
+        let mut a = crate::tabelle().listen.ferienairlines.to_vec();
         a.sort_unstable();
         a.dedup();
-        assert_eq!(a.len(), FERIENAIRLINES.len());
-        assert!(FERIENAIRLINES.iter().all(|c| c.len() == 3));
+        assert_eq!(a.len(), crate::tabelle().listen.ferienairlines.len());
+        assert!(crate::tabelle().listen.ferienairlines.iter().all(|c| c.len() == 3));
     }
 }

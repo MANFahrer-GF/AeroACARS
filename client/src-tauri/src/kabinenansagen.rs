@@ -748,11 +748,11 @@ pub(crate) fn service_ausgefallen(lauf: &Lauf) -> bool {
 }
 
 /// Wartet Reiseflug 80 als zweiter Service, obwohl weniger als
-/// [`cabin_announcements::planer::ZWEITER_SERVICE_REST_MIN`] Restflug bleiben?
+/// `werte.zweiter_service_rest_min` (Paket, `tabellen/kabine.json`) Restflug bleiben?
 fn zweiter_service_zu_spaet(lauf: &Lauf, rest_min: Option<f64>) -> bool {
     zweiter_service(lauf) == Some(true)
         && lauf.warteschlange.wartend().contains(&Slot::Reiseflug80)
-        && rest_min.is_some_and(|m| m <= cabin_announcements::planer::ZWEITER_SERVICE_REST_MIN)
+        && rest_min.is_some_and(|m| m <= cabin_announcements::tabelle().werte.zweiter_service_rest_min.wert)
 }
 
 /// Art von „Reiseflug 80“ laut Drehbuch: `Some(true)` = zweiter Service,
@@ -1916,7 +1916,7 @@ fn reaktion_schritt(
         let gewaehlt = if !art.erlaubt(Slot::NachDerLandung) {
             details["grund"] = "flugart".into();
             None
-        } else if e.jetzt_ms > aufsetzen_ms + reaktion::SPAETESTENS_NACH_AUFSETZEN_S * 1000 {
+        } else if e.jetzt_ms > aufsetzen_ms + cabin_announcements::tabelle().werte.spaetestens_nach_aufsetzen_s.wert * 1000 {
             details["grund"] = "zu_spaet".into();
             None
         } else {
@@ -1947,7 +1947,7 @@ fn reaktion_schritt(
     if e.jetzt_ms < ab {
         return ReaktionTun::Nichts;
     }
-    let frist = stats.kabinen_lauf.reaktion.aufsetzen_ms + cabin_announcements::reaktion::SPAETESTENS_NACH_AUFSETZEN_S * 1000;
+    let frist = stats.kabinen_lauf.reaktion.aufsetzen_ms + cabin_announcements::tabelle().werte.spaetestens_nach_aufsetzen_s.wert * 1000;
     let grund = if e.jetzt_ms > frist {
         Some("zu_spaet")
     } else if sperre.is_some() {
@@ -2528,9 +2528,9 @@ fn takt_schritt(
 /// allein zählt nur mit plausibler Restzeit (GAF278 24.10.2026: Stufen-
 /// Sinkflug im Reiseflug, siehe Planer), nach einer Umleitung immer.
 fn ankunft_bestellen(phase: FlightPhase, kurz: bool, rest_min: Option<f64>, umgeleitet: bool) -> bool {
-    use cabin_announcements::planer::{rang, PHASE_SINKFLUG_HOECHSTENS_REST_MIN};
+    use cabin_announcements::planer::{rang};
     let r = rang(phase);
-    let sinkflug = r >= rang(FlightPhase::Descent) && (umgeleitet || rest_min.is_none_or(|m| m <= PHASE_SINKFLUG_HOECHSTENS_REST_MIN));
+    let sinkflug = r >= rang(FlightPhase::Descent) && (umgeleitet || rest_min.is_none_or(|m| m <= cabin_announcements::tabelle().werte.phase_sinkflug_hoechstens_rest_min.wert));
     r >= rang(FlightPhase::Takeoff) && (kurz || rest_min.is_some_and(|m| m <= ANKUNFT_TEXT_VOR_LANDUNG_MIN as f64) || sinkflug)
 }
 
@@ -5796,12 +5796,12 @@ mod tests {
         for paar in regulaer.windows(2) {
             // Ausnahmen: Sicherheit folgt der Begrüßung nach 10 s (Thomas 18.10.2026) …
             let mindestens = if (paar[0].1, paar[1].1) == (Slot::BegruessungTuerenZu, Slot::Sicherheit) {
-                cabin_announcements::warteschlange::PAUSE_BEGRUESSUNG_SICHERHEIT_S
+                cabin_announcements::tabelle().werte.pause_begruessung_sicherheit_s.wert
             } else if (paar[0].1, paar[1].1) == (Slot::Sicherheit, Slot::KapitaenBegruessung) {
                 // Und der Kapitän der Sicherheit nach 30 s (v2.0.28, QAF446).
-                cabin_announcements::warteschlange::PAUSE_SICHERHEIT_KAPITAEN_S
+                cabin_announcements::tabelle().werte.pause_sicherheit_kapitaen_s.wert
             } else {
-                cabin_announcements::warteschlange::PAUSE_NACH_ANSAGE_S
+                cabin_announcements::tabelle().werte.pause_nach_ansage_s.wert
             };
             assert!(paar[1].0 - paar[0].3 >= mindestens, "{name}: {:?} zu dicht nach {:?}", paar[1].1, paar[0].1);
         }
@@ -5812,7 +5812,7 @@ mod tests {
         let ende_kapitaen = d.gespielt.iter().find(|x| x.1 == Slot::KapitaenSinkflug).map(|x| x.3);
         let start_kabine = d.gespielt.iter().find(|x| x.1 == Slot::KabineSinkflug).map(|x| x.0);
         if let (Some(k), Some(c)) = (ende_kapitaen, start_kabine) {
-            assert!(c - k >= cabin_announcements::planer::KABINE_NACH_KAPITAEN_MIN_S, "{name}: Kabine {}s nach dem Kapitän", c - k);
+            assert!(c - k >= cabin_announcements::tabelle().werte.kabine_nach_kapitaen_min_s.wert, "{name}: Kabine {}s nach dem Kapitän", c - k);
         }
         // Nichts überlappt.
         for paar in d.gespielt.windows(2) {
@@ -6013,7 +6013,7 @@ mod tests {
         // Musik nach der Landung vorbei: 15 min nach „Aussteigen“ (echter Ablauf ueber tick).
         let ende = cabin_announcements::musik::MusikTakt {
             phase: crate::FlightPhase::TaxiIn, am_boden: true, nach_landung_vorbei: true,
-            aussteigen_um: Some(0), jetzt: cabin_announcements::musik::ANKUNFT_NACH_AUSSTEIGEN_S + 1, ..Default::default()
+            aussteigen_um: Some(0), jetzt: cabin_announcements::tabelle().werte.ankunft_nach_aussteigen_s.wert + 1, ..Default::default()
         };
         assert_eq!(l.kabinen_lauf.musik_fenster.tick(cabin_announcements::flugart::Flugart::Linie, &ende), None);
         assert!(l.kabinen_lauf.musik_fenster.ankunft_vorbei());
@@ -7371,7 +7371,7 @@ mod rundumschlag_p1_tests {
         let (sperre, ergebnis, _, _) = backend_spielt(st, g.id, 1_001, 1_046, None);
         assert_eq!(ergebnis, Some("gespielt"));
         let st = sperre.lock().unwrap();
-        assert_eq!(st.kabinen_planer.as_ref().unwrap().zeitpunkt(Slot::KabineSinkflug, None), Some(1_046 + cabin_announcements::planer::KABINE_NACH_KAPITAEN_MIN_S));
+        assert_eq!(st.kabinen_planer.as_ref().unwrap().zeitpunkt(Slot::KabineSinkflug, None), Some(1_046 + cabin_announcements::tabelle().werte.kabine_nach_kapitaen_min_s.wert));
     }
 
     // ---- 1a ----
@@ -7986,7 +7986,7 @@ mod reaktion_tests {
     fn nach_neustart_zu_spaet_kein_applaus() {
         let mut st = stats("J", Some(150), Some("A+"), 0);
         let mut z = Vec::new();
-        let spaet = AUFSETZEN_MS + (cabin_announcements::reaktion::SPAETESTENS_NACH_AUFSETZEN_S + 1) * 1000;
+        let spaet = AUFSETZEN_MS + (cabin_announcements::tabelle().werte.spaetestens_nach_aufsetzen_s.wert + 1) * 1000;
         assert_eq!(schritt(&mut st, eingang(spaet, "CFG", [0.0; 3]), &mut z), ReaktionTun::Nichts);
         assert_eq!(notizen(&st)[0].1["grund"], "zu_spaet");
         assert!(st.kabinen_lauf.reaktion.einsatz.is_none());
@@ -8086,7 +8086,7 @@ mod auffrischung_tests {
     fn peter_restzeit_ab_dem_tod_nicht_ab_der_bestellung() {
         let landung = 100_000;
         let jetzt = landung - 44 * 60;
-        let tod = landung - 20 * 60 + cabin_announcements::planer::KAPITAEN_VOR_TOD_S;
+        let tod = landung - 20 * 60 + cabin_announcements::tabelle().werte.kapitaen_vor_tod_s.wert;
         let mut p = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
         p.tick(&reise(jetzt, landung, Some(tod)));
         assert_eq!(p.kapitaen_sinkflug_prognose(Some(landung)), Some(landung - 20 * 60));
@@ -8097,7 +8097,7 @@ mod auffrischung_tests {
         // Der TOD liegt später als „Landung − 20“: Die ETA-Regel gewinnt.
         let mut q = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
         q.tick(&reise(jetzt, landung, Some(landung - 5 * 60)));
-        assert_eq!(rest_min_ab(Some(landung), rest_bezug("ankunft", Some(&q), Some(landung), jetzt)), Some(cabin_announcements::planer::KAPITAEN_VOR_LANDUNG_MIN as i64));
+        assert_eq!(rest_min_ab(Some(landung), rest_bezug("ankunft", Some(&q), Some(landung), jetzt)), Some(cabin_announcements::tabelle().werte.kapitaen_vor_landung_min.wert as i64));
         // TOD früher (30 min vor der Landung): 30 min + 90 s → 31 → 30.
         let mut r = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
         r.tick(&reise(jetzt, landung, Some(landung - 30 * 60)));
@@ -8176,7 +8176,14 @@ mod auffrischung_tests {
     const LANDUNG: i64 = 100_000;
     /// TOD 25 min vor der Landung: Der Kapitän spricht bei TOD − 90 s.
     const TOD: i64 = LANDUNG - 25 * 60;
-    const UM: i64 = TOD - cabin_announcements::planer::KAPITAEN_VOR_TOD_S;
+    /// TOD − `kapitaen_vor_tod_s` (90 s laut Paket; `const` braucht die Zahl,
+    /// der Test `um_passt_zur_tabelle` haelt beide zusammen).
+    const UM: i64 = TOD - 90;
+
+    #[test]
+    fn um_passt_zur_tabelle() {
+        assert_eq!(UM, TOD - cabin_announcements::tabelle().werte.kapitaen_vor_tod_s.wert);
+    }
     /// Landezeit als Epoch-Minute (unverändert seit der Bestellung).
     const ANKUNFT_MIN: i64 = LANDUNG / 60;
 
@@ -8409,7 +8416,7 @@ mod auffrischung_tests {
         }
         takt(&mut st, &tk(UM + AUFFRISCHEN_WARTEN_S, Final, 900.0, -700.0));
         assert!(st.kabinen_lauf.warteschlange.wartend().contains(&Slot::KapitaenSinkflug), "Nachfrist");
-        takt(&mut st, &tk(UM + AUFFRISCHEN_WARTEN_S + cabin_announcements::warteschlange::NACHFRIST_S, Final, 800.0, -700.0));
+        takt(&mut st, &tk(UM + AUFFRISCHEN_WARTEN_S + cabin_announcements::tabelle().werte.nachfrist_s.wert, Final, 800.0, -700.0));
         assert!(!st.kabinen_lauf.warteschlange.wartend().contains(&Slot::KapitaenSinkflug));
         let g = st.kabinen_lauf.verlauf.iter().find(|g| g.slot == Slot::KapitaenSinkflug).expect("in „Bisher“");
         assert_eq!(g.ergebnis.as_deref(), Some("entfallen"));
@@ -8461,7 +8468,7 @@ mod auffrischung_tests {
         let kap = gespielt.iter().find(|x| x.1 == Slot::KapitaenSinkflug).expect("Kapitän");
         let kab = gespielt.iter().find(|x| x.1 == Slot::KabineSinkflug).expect("Kabine");
         assert_eq!(kap.0, UM + 25, "frisch, sobald beide Sprachen Ton haben");
-        assert!(kab.0 >= kap.2 + cabin_announcements::planer::KABINE_NACH_KAPITAEN_MIN_S, "{gespielt:?}");
+        assert!(kab.0 >= kap.2 + cabin_announcements::tabelle().werte.kabine_nach_kapitaen_min_s.wert, "{gespielt:?}");
         assert!(st.kabinen_lauf.auffrischung.frisch);
     }
 }

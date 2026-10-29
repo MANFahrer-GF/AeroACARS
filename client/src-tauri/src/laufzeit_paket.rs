@@ -23,7 +23,7 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -34,6 +34,7 @@ const SPURWEITEN: &str = "tabellen/spurweiten.json";
 const VREF: &str = "tabellen/vref.json";
 const HOEHENGRUPPEN: &str = "tabellen/hoehengruppen.json";
 const KLAPPEN: &str = "tabellen/klappen.json";
+const KABINE: &str = "tabellen/kabine.json";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
@@ -64,6 +65,9 @@ pub(crate) struct AktiverStand {
     pub hoehengruppen: crate::runway_assessment::Hoehengruppen,
     /// Klappen-Beschriftung je Rastenzahl (`raster_flap_label`).
     pub klappen: Vec<KlappenRaster>,
+    /// Kabinenansagen: Listen und Zeiten (`cabin-announcements`, ueber eine
+    /// angemeldete Quelle).
+    pub kabine: cabin_announcements::Tabelle,
     /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
     pub ui: Vec<(&'static str, &'static str)>,
 }
@@ -96,6 +100,7 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         spurweiten: landing_scoring::spurweite::lesen(text(SPURWEITEN)?)?,
         hoehengruppen: crate::runway_assessment::hoehengruppen_lesen(text(HOEHENGRUPPEN)?)?,
         klappen: klappen_lesen(text(KLAPPEN)?)?,
+        kabine: cabin_announcements::lesen(text(KABINE)?)?,
         vref: landing_scoring::vref::lesen(text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -114,6 +119,7 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         spurweiten: landing_scoring::spurweite::lesen(eingebauter_text(SPURWEITEN)?)?,
         hoehengruppen: crate::runway_assessment::hoehengruppen_lesen(eingebauter_text(HOEHENGRUPPEN)?)?,
         klappen: klappen_lesen(eingebauter_text(KLAPPEN)?)?,
+        kabine: cabin_announcements::lesen(eingebauter_text(KABINE)?)?,
         vref: landing_scoring::vref::lesen(eingebauter_text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -275,6 +281,7 @@ fn starten_einmal(app_daten: &Path) {
     hoppie_protocol::elements_data::tabelle_quelle_setzen(|| stand().cpdlc);
     landing_scoring::spurweite::quelle_setzen(|| stand().spurweiten);
     landing_scoring::vref::quelle_setzen(|| stand().vref);
+    cabin_announcements::quelle_setzen(|| &stand().kabine);
     let pin = pin_des_offenen_flugs(app_daten);
     let eingebaut = eingebaut();
     let ergebnis = Ablage::oeffnen(app_daten.join("laufzeit-paket"))
@@ -483,6 +490,7 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
         (VREF, landing_scoring::vref::pruefen),
         (HOEHENGRUPPEN, |t| crate::runway_assessment::hoehengruppen_lesen(t).map(|_| ())),
         (KLAPPEN, |t| klappen_lesen(t).map(|_| ())),
+        (KABINE, |t| cabin_announcements::lesen(t).map(|_| ())),
     ] {
         let roh = p.datei(pfad).map_err(|e| e.to_string())?;
         pruefen(std::str::from_utf8(&roh).map_err(|e| format!("{pfad}: {e}"))?)?;
@@ -590,6 +598,16 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         let mut fallend = h;
         fallend["gleitpfad_zu_rad_ft"]["G4"] = 5.0.into();
         assert!(crate::runway_assessment::hoehengruppen_lesen(&fallend.to_string()).is_err());
+    }
+
+    /// Kabinen-Tabelle wie 2.1.24: alle 41 Werte und 4 Listen vor dem
+    /// Entfernen der Konstanten per Skript gegen `git show` verglichen (0
+    /// Abweichungen). Abdruck der gelesenen Tabelle; Datei = die des Crates.
+    #[test]
+    fn kabine_wie_2_1_24() {
+        assert_eq!(eingebaute_datei(KABINE).unwrap(), cabin_announcements::EINGEBAUT.as_bytes());
+        let t = format!("{:?}", cabin_announcements::lesen(eingebauter_text(KABINE).unwrap()).unwrap());
+        assert_eq!(abdruck(&t), (12188610868671356069, 8442));
     }
 
     #[test]
