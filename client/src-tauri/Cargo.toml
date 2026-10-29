@@ -147,6 +147,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# v3 (Etappe 5): build.rs liest befehle.json fuer das App-Manifest.
+serde_json.workspace = true
 
 [dependencies]
 paket-endpunkte.workspace = true

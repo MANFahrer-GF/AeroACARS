@@ -55,3 +55,28 @@ fn systembefehle_bleiben_in_der_huelle() {
         assert_eq!(liste.get(b).map(String::as_str), Some("system"), "{b}");
     }
 }
+
+/// Die Capabilities der App-Befehle sind aus `befehle.json` erzeugt
+/// (`scripts/rechte-erzeugen.mjs`). Weicht eine Datei von der Liste ab —
+/// Stufe geaendert und nicht neu erzeugt, Recht von Hand ergaenzt —, wird
+/// das hier rot statt still ein Systembefehl in der Oberflaeche zu landen.
+#[test]
+fn rechte_dateien_passen_zur_liste() {
+    let liste = liste();
+    let recht = |b: &str| format!("allow-{}", b.replace('_', "-"));
+    let datei = |name: &str| -> serde_json::Value {
+        let pfad = format!("{}/capabilities/{name}.json", env!("CARGO_MANIFEST_DIR"));
+        serde_json::from_str(&std::fs::read_to_string(&pfad).unwrap()).unwrap()
+    };
+    let rechte = |v: &serde_json::Value| -> BTreeSet<String> {
+        v["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()).collect()
+    };
+    let ui: BTreeSet<String> = liste.iter().filter(|(_, s)| *s != "system").map(|(b, _)| recht(b)).collect();
+    let alle: BTreeSet<String> = liste.keys().map(|b| recht(b)).collect();
+    assert_eq!(rechte(&datei("ui")), ui, "capabilities/ui.json veraltet: node scripts/rechte-erzeugen.mjs");
+    assert_eq!(rechte(&datei("huelle")), alle, "capabilities/huelle.json veraltet: node scripts/rechte-erzeugen.mjs");
+    // App-Befehle nur ueber diese beiden Dateien; default.json traegt nur Plugin-Rechte.
+    for p in rechte(&datei("default")) {
+        assert!(p.contains(':'), "default.json: App-Recht {p} gehoert in ui.json/huelle.json");
+    }
+}

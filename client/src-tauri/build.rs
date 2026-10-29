@@ -9,7 +9,28 @@ fn main() {
     // fuer AEROACARS_DISCORD_APP_ID. Bewusst.
     produktion_zusammensetzen();
     eingebautes_paket_auflisten();
-    tauri_build::build()
+    // v3 (Etappe 5, P-8.02/P-8.10): Mit App-Manifest prueft Tauri JEDEN
+    // App-Befehl gegen die Capability des Fensters (ohne Manifest gar keinen,
+    // tauri-2.11.0 webview/mod.rs:1817). Die Liste kommt aus befehle.json —
+    // eine Quelle fuer Stufen, Manifest und erzeugte Capabilities.
+    let attribute = tauri_build::Attributes::new()
+        .app_manifest(tauri_build::AppManifest::new().commands(befehle_aus_liste()));
+    tauri_build::try_build(attribute).expect("tauri_build");
+}
+
+/// Alle Befehlsnamen aus `befehle.json` (sortiert, fuer das App-Manifest).
+fn befehle_aus_liste() -> &'static [&'static str] {
+    let pfad = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("befehle.json");
+    println!("cargo:rerun-if-changed={}", pfad.display());
+    let roh = std::fs::read_to_string(&pfad).expect("befehle.json");
+    let v: serde_json::Value = serde_json::from_str(&roh).expect("befehle.json ist JSON");
+    let namen: Vec<&'static str> = v["befehle"]
+        .as_object()
+        .expect("befehle.json: Objekt befehle")
+        .keys()
+        .map(|k| &*Box::leak(k.clone().into_boxed_str()))
+        .collect();
+    Box::leak(namen.into_boxed_slice())
 }
 
 /// v3 (Etappe 1b): Der eingebaute Stand des Laufzeit-Pakets ist genau der
