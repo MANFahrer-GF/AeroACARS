@@ -27,18 +27,24 @@ const AIRPORTS: &str = "ourairports/airports.csv";
 
 struct Geladen {
     id: RuntimeBundleId,
-    /// Bei `EingebautStattPin`: der Stand, auf den der offene Flug verweist.
-    pin: Option<RuntimeBundleId>,
+    /// Bei `EingebautStattPin`: PIREP und Stand des offenen Flugs, dessen
+    /// Stand lokal fehlte. Gilt nur fuer genau diesen Flug.
+    pin: Option<(String, RuntimeBundleId)>,
 }
 
 static GELADEN: OnceLock<Geladen> = OnceLock::new();
 
-/// Die Kennung, die ein Flug dieses Programmlaufs traegt. Fehlte der Stand
-/// eines wiederaufgenommenen Flugs, bleibt dessen Kennung erhalten, damit er
-/// spaeter mit dem richtigen Stand bewertet werden kann (P-3.31).
-pub(crate) fn flug_pin() -> Option<RuntimeBundleId> {
+/// Die Kennung, die der Flug `pirep_id` traegt: der Stand dieses Laufs.
+/// Ausnahme: Fehlte beim Start der Stand des wiederaufgenommenen Flugs, behaelt
+/// GENAU dieser Flug seine Kennung, damit er spaeter mit dem richtigen Stand
+/// bewertet werden kann (P-3.31); jeder spaetere Flug im selben Lauf traegt
+/// den tatsaechlich geladenen Stand.
+pub(crate) fn flug_pin(pirep_id: &str) -> Option<RuntimeBundleId> {
     let g = GELADEN.get()?;
-    Some(g.pin.clone().unwrap_or_else(|| g.id.clone()))
+    match &g.pin {
+        Some((pirep, pin)) if pirep == pirep_id => Some(pin.clone()),
+        _ => Some(g.id.clone()),
+    }
 }
 
 fn kontext() -> Kontext {
@@ -86,12 +92,13 @@ fn eingebaut() -> Eingebaut {
     Eingebaut { manifest: serde_json::to_vec(&manifest).expect("Manifest"), dateien }
 }
 
-/// Liest den Pin des offenen Flugs direkt aus der Flugdatei, bevor irgendein
-/// anderer Teil des Programms startet (P-3.20 Schritt 1).
-fn pin_des_offenen_flugs(app_daten: &Path) -> Option<RuntimeBundleId> {
+/// Liest PIREP und Pin des offenen Flugs direkt aus der Flugdatei, bevor
+/// irgendein anderer Teil des Programms startet (P-3.20 Schritt 1).
+fn pin_des_offenen_flugs(app_daten: &Path) -> Option<(String, RuntimeBundleId)> {
     let bytes = std::fs::read(app_daten.join(crate::ACTIVE_FLIGHT_FILE)).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    serde_json::from_value(v.get("runtime_bundle_id")?.clone()).ok()
+    let pirep = v.get("pirep_id")?.as_str()?.to_string();
+    Some((pirep, serde_json::from_value(v.get("runtime_bundle_id")?.clone()).ok()?))
 }
 
 /// Laedt den Stand fuer diesen Lauf und gibt OurAirports an `runway.rs`.
@@ -104,7 +111,7 @@ pub(crate) fn starten(app_daten: &Path) {
     let pin = pin_des_offenen_flugs(app_daten);
     let eingebaut = eingebaut();
     let ergebnis = Ablage::oeffnen(app_daten.join("laufzeit-paket"))
-        .and_then(|a| a.laden(pin.as_ref(), &kontext(), &eingebaut));
+        .and_then(|a| a.laden(pin.as_ref().map(|(_, id)| id), &kontext(), &eingebaut));
     let (paket, herkunft) = match ergebnis {
         Ok(l) => {
             for h in &l.hinweise {
@@ -191,7 +198,7 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
     for d in ablage.fehlende(&m) {
         geholt.insert(d.sha256.clone(), holen(format!("{}{}", a.blobs, d.sha256)).await?.to_vec());
     }
-    let pins: Vec<u64> = [GELADEN.get().map(|g| g.id.generation), GELADEN.get().and_then(|g| g.pin.as_ref()).map(|p| p.generation)]
+    let pins: Vec<u64> = [GELADEN.get().map(|g| g.id.generation), GELADEN.get().and_then(|g| g.pin.as_ref()).map(|(_, p)| p.generation)]
         .into_iter()
         .flatten()
         .collect();
@@ -261,7 +268,11 @@ mod tests {
         )
         .unwrap();
         starten(&dir);
-        assert_eq!(flug_pin(), Some(pin));
+        assert_eq!(flug_pin("x"), Some(pin.clone()));
+        // Ein spaeterer Flug im selben Lauf flog mit dem eingebauten Stand.
+        let anderer = flug_pin("y").unwrap();
+        assert_eq!(anderer.generation, 0);
+        assert_ne!(anderer, pin);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

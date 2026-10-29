@@ -63,6 +63,7 @@ jobs:
           fi
           sudo apt-get install -y -qq minisign
           umask 077
+          # Schluessel ohne Passwort (minisign -G -W), sonst wartet -S auf Eingabe.
           printf '%s\n' "$SCHLUESSEL" > "$RUNNER_TEMP/paket.key"
           minisign -S -s "$RUNNER_TEMP/paket.key" -m paket/manifest.json -t "AeroACARS Laufzeit-Paket g${{ steps.gen.outputs.generation }}" < /dev/null
           rm -f "$RUNNER_TEMP/paket.key"
@@ -94,9 +95,14 @@ jobs:
           printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/id"
           SSH="ssh -i $RUNNER_TEMP/id -p 2222 -o StrictHostKeyChecking=accept-new"
           ZIEL=bundle@live.kant.ovh
+          # Nur steigende Generation: springt die Laufnummer zurueck (Workflow
+          # umbenannt/neu), wuerden alle Clients den Stand ablehnen.
+          AKTIV=$($SSH "$ZIEL" "cat aktuell.json 2>/dev/null || echo '{}'" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("generation",0))')
+          if [ "$G" -le "$AKTIV" ]; then echo "Generation $G <= aktiv $AKTIV — Abbruch"; exit 1; fi
           # Erst Dateien und Stand, ganz zuletzt der Zeiger: Ein Abbruch
-          # dazwischen laesst den alten Stand aktiv.
-          rsync -a --ignore-existing -e "$SSH" paket/blobs/ "$ZIEL:blobs/"
+          # dazwischen laesst den alten Stand aktiv. --checksum ersetzt auch
+          # eine frueher halb hochgeladene Datei gleichen Namens.
+          rsync -a --checksum -e "$SSH" paket/blobs/ "$ZIEL:blobs/"
           rsync -a -e "$SSH" paket/manifest.json paket/manifest.json.minisig "$ZIEL:tmp-gen-$G/"
-          $SSH "$ZIEL" "mv tmp-gen-$G gen/$G && printf '{\"generation\":%s}' $G > aktuell.json.neu && mv aktuell.json.neu aktuell.json"
+          $SSH "$ZIEL" "test ! -e gen/$G && mv tmp-gen-$G gen/$G && printf '{\"generation\":%s}' $G > aktuell.json.neu && mv aktuell.json.neu aktuell.json"
           rm -f "$RUNNER_TEMP/id"

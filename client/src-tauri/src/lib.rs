@@ -16382,7 +16382,7 @@ fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) -> bool {
             plan_strecke_nm: flight.plan_strecke_nm,
             bid_callsign: flight.bid_callsign.clone(),
             pilot_callsign: flight.pilot_callsign.clone(),
-            runtime_bundle_id: laufzeit_paket::flug_pin(),
+            runtime_bundle_id: laufzeit_paket::flug_pin(&flight.pirep_id),
             started_at: flight.started_at,
             // Wird von `write_persisted_flight` gesetzt — hier bewusst None.
             zuletzt_geschrieben: None,
