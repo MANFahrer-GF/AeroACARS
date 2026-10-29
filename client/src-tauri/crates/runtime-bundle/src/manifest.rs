@@ -59,10 +59,12 @@ impl Manifest {
         if !BUNDLE_SCHEMA_UNTERSTUETZT.contains(&self.bundle_schema) {
             return Err(Fehler::Schema(self.bundle_schema));
         }
+        // Doppelt auch ohne Ruecksicht auf Gross-/Kleinschreibung: Mac und
+        // Windows unterscheiden `A/x` und `a/x` nicht (P-3.03).
         let mut gesehen = std::collections::HashSet::new();
         for d in &self.files {
             pfad_pruefen(&d.path)?;
-            if !gesehen.insert(d.path.as_str()) {
+            if !gesehen.insert(d.path.to_ascii_lowercase()) {
                 return Err(Fehler::Manifest(format!("Pfad doppelt: {}", d.path)));
             }
             if d.sha256.len() != 64
@@ -71,8 +73,12 @@ impl Manifest {
                 return Err(Fehler::Manifest(format!("Hash ungueltig: {}", d.path)));
             }
         }
-        version(&self.client_min)?;
-        version(&self.client_max)?;
+        if version(&self.client_min)? > version(&self.client_max)? {
+            return Err(Fehler::Manifest(format!(
+                "client_min {} groesser als client_max {}",
+                self.client_min, self.client_max
+            )));
+        }
         Ok(())
     }
 
@@ -82,25 +88,28 @@ impl Manifest {
 }
 
 /// Ein Pfad darf den Paketordner nie verlassen und muss auf Mac und Windows
-/// dasselbe bedeuten (P-3.03).
+/// dasselbe bedeuten (P-3.03): nur ASCII-Buchstaben, Ziffern, `.`, `_`, `-`
+/// und `/` als Trenner; keine leeren, `.`- oder `..`-Teile; kein Teil mit
+/// Punkt am Ende; keine reservierten Windows-Namen.
 fn pfad_pruefen(p: &str) -> Result<(), Fehler> {
-    let schlecht = p.is_empty()
-        || p.starts_with('/')
-        || p.contains('\\')
-        || p.contains(':')
-        || p.split('/').any(|t| t.is_empty() || t == "." || t == "..");
-    if schlecht {
+    let zeichen_ok = !p.is_empty()
+        && p.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/'));
+    let teile_ok = zeichen_ok
+        && p.split('/').all(|t| {
+            let stamm = t.split('.').next().unwrap_or("").to_ascii_uppercase();
+            let reserviert = matches!(stamm.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                || ((stamm.starts_with("COM") || stamm.starts_with("LPT"))
+                    && stamm.len() == 4
+                    && stamm.as_bytes()[3].is_ascii_digit());
+            !t.is_empty() && t != "." && t != ".." && !t.ends_with('.') && !reserviert
+        });
+    if !teile_ok {
         return Err(Fehler::Manifest(format!("Pfad nicht erlaubt: {p}")));
     }
     Ok(())
 }
 
-/// `major.minor.patch`, Vorab-Kennung (`-beta.1`) wird ignoriert.
-pub fn version(v: &str) -> Result<(u64, u64, u64), Fehler> {
-    let kern = v.split(['-', '+']).next().unwrap_or("");
-    let teile: Vec<_> = kern.split('.').map(str::parse::<u64>).collect();
-    match teile.as_slice() {
-        [Ok(a), Ok(b), Ok(c)] => Ok((*a, *b, *c)),
-        _ => Err(Fehler::Manifest(format!("Version ungueltig: {v}"))),
-    }
+/// SemVer; eine Vorabversion (`3.0.0-beta.1`) liegt vor dem Release `3.0.0`.
+pub fn version(v: &str) -> Result<semver::Version, Fehler> {
+    semver::Version::parse(v).map_err(|_| Fehler::Manifest(format!("Version ungueltig: {v}")))
 }

@@ -12,6 +12,7 @@ serde_json.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 sha2 = "0.10"
+semver = "1"
 # Dieselbe Pruefbibliothek, die der Tauri-Updater schon mitbringt.
 minisign-verify = "0.2"
 

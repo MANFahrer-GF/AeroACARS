@@ -345,3 +345,231 @@ fn liegengebliebener_zwischenstand_stoert_nicht() {
     installieren(&a, &s, &k, &m, &i).unwrap();
     assert_eq!(a.laden(None, &k, &eingebaut()).unwrap().herkunft, Herkunft::Aktuell);
 }
+
+#[test]
+fn gebautes_paket_laesst_sich_signiert_installieren() {
+    use runtime_bundle::bauen::{bauen, Optionen};
+    let quelle = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(quelle.path().join("ourairports")).unwrap();
+    std::fs::write(quelle.path().join("ourairports/airports.csv"), b"EDDF").unwrap();
+    std::fs::write(quelle.path().join("texte.json"), b"{}").unwrap();
+    std::fs::write(quelle.path().join(".DS_Store"), b"x").unwrap();
+    let ziel = tempfile::tempdir().unwrap();
+    let o = Optionen {
+        generation: 9,
+        erstellt: t0(),
+        gueltig_tage: 180,
+        client_min: "3.0.0".into(),
+        client_max: "3.99.99".into(),
+        requires: vec!["wasm-host-1".into()],
+        score_version: 27,
+        input_schema: 1,
+        quelle: Default::default(),
+    };
+    let m = bauen(quelle.path(), ziel.path(), &o).unwrap();
+    // Gleiche Quelle, gleiche Optionen: byte-gleiches Manifest.
+    let ziel2 = tempfile::tempdir().unwrap();
+    assert_eq!(m, bauen(quelle.path(), ziel2.path(), &o).unwrap());
+    let manifest = Manifest::lesen(&m).unwrap();
+    let pfade: Vec<_> = manifest.files.iter().map(|d| d.path.as_str()).collect();
+    assert_eq!(pfade, ["ourairports/airports.csv", "texte.json"]);
+
+    let s = Schluessel::neu();
+    let k = kontext(&[&s]);
+    let ablage = tempfile::tempdir().unwrap();
+    let a = Ablage::oeffnen(ablage.path()).unwrap();
+    let sig = s.signieren(&m);
+    let blobs = ziel.path().join("blobs");
+    a.installieren(
+        Eingang { manifest: &m, signatur: &sig },
+        &k,
+        &mut |d: &Datei| std::fs::read(blobs.join(&d.sha256)).map_err(|e| e.to_string()),
+        &ok,
+    )
+    .unwrap();
+    let l = a.laden(None, &k, &eingebaut()).unwrap();
+    assert_eq!(l.paket.datei("ourairports/airports.csv").unwrap(), b"EDDF");
+}
+
+// ---- Faelle aus der Codex-Pruefung vom 29.10.2026 ----
+
+#[test]
+fn pin_mit_gleicher_generation_aber_anderem_inhalt_gilt_nicht() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let k = kontext(&[&s]);
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let (m, i) = paket(5, &[("a", b"5")]);
+    let echt = installieren(&a, &s, &k, &m, &i).unwrap();
+    let falsch = RuntimeBundleId { generation: 5, manifest_sha256: "0".repeat(64) };
+    assert_ne!(echt, falsch);
+    let l = a.laden(Some(&falsch), &k, &eingebaut()).unwrap();
+    assert_eq!(l.herkunft, Herkunft::EingebautStattPin);
+}
+
+#[test]
+fn aufraeumen_bricht_bei_unlesbarem_behaltenen_manifest_ab_und_loescht_nichts() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let k = kontext(&[&s]);
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    for g in 1..=3u64 {
+        let inhalt = format!("stand {g}");
+        let (m, i) = paket(g, &[("a", inhalt.as_bytes())]);
+        installieren(&a, &s, &k, &m, &i).unwrap();
+    }
+    std::fs::write(dir.path().join("gen/3/manifest.json"), b"{kaputt").unwrap();
+    let blobs_vorher = std::fs::read_dir(dir.path().join("blobs")).unwrap().count();
+    assert!(a.aufraeumen(&[], t0() + Duration::days(40)).is_err());
+    assert!(dir.path().join("gen/1").exists(), "nichts darf geloescht sein");
+    assert_eq!(std::fs::read_dir(dir.path().join("blobs")).unwrap().count(), blobs_vorher);
+}
+
+#[test]
+fn kaputte_spaetere_datei_eines_mehrteiligen_pakets_faellt_zurueck() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let k = kontext(&[&s]);
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let (m5, i5) = paket(5, &[("a", b"a5"), ("b", b"b5"), ("c", b"c5")]);
+    installieren(&a, &s, &k, &m5, &i5).unwrap();
+    let (m6, i6) = paket(6, &[("a", b"a6"), ("b", b"b6"), ("c", b"c6")]);
+    installieren(&a, &s, &k, &m6, &i6).unwrap();
+    // Nur die letzte Datei von Stand 6 ist kaputt.
+    std::fs::write(dir.path().join("blobs").join(hex(&Sha256::digest(b"c6"))), b"xx").unwrap();
+    let l = a.laden(None, &k, &eingebaut()).unwrap();
+    assert_eq!(l.herkunft, Herkunft::Vorher);
+    assert_eq!(l.paket.datei("a").unwrap(), b"a5");
+}
+
+#[test]
+fn abgelehnte_installationen_lassen_den_ganzen_alten_zustand_stehen() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let mut k = kontext(&[&s]);
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    for g in [4u64, 5] {
+        let inhalt = format!("{g}");
+        let (m, i) = paket(g, &[("a", inhalt.as_bytes())]);
+        installieren(&a, &s, &k, &m, &i).unwrap();
+    }
+    let zustand = |a: &Ablage| (a.aktuell(), a.vorher(), a.laden(None, &kontext(&[&s]), &eingebaut()).unwrap().paket.datei("a").unwrap());
+    let vorher = zustand(&a);
+    // Selbsttest scheitert.
+    let (m6, i6) = paket(6, &[("a", b"6")]);
+    let sig = s.signieren(&m6);
+    let _ = a.installieren(Eingang { manifest: &m6, signatur: &sig }, &k, &mut holer(&i6), &|_| Err("nein".into()));
+    assert_eq!(zustand(&a), vorher);
+    // Abgelaufen.
+    k.jetzt = t0() + Duration::days(400);
+    let (m7, i7) = paket(7, &[("a", b"7")]);
+    assert!(installieren(&a, &s, &k, &m7, &i7).is_err());
+    assert_eq!(zustand(&a), vorher);
+}
+
+#[test]
+fn plattformfallen_in_pfaden_sind_verboten() {
+    for p in ["CON", "a/nul.txt", "com1", "LPT9.csv", "a./b", "x/y.", "ä.csv", "a b", "a?b"] {
+        let (m, _) = paket(5, &[(p, b"x")]);
+        assert!(Manifest::lesen(&m).is_err(), "Pfad {p:?} wurde angenommen");
+    }
+    let (m, _) = paket(5, &[("Texte/de.json", b"x"), ("texte/DE.json", b"y")]);
+    assert!(Manifest::lesen(&m).is_err(), "Gross-/Kleinschreibung darf nicht unterscheiden");
+    for p in ["ourairports/airports.csv", "module/bewertung.wasm", "texte/de-DE.json", "con_tabelle.json"] {
+        let (m, _) = paket(5, &[(p, b"x")]);
+        assert!(Manifest::lesen(&m).is_ok(), "Pfad {p:?} wurde abgelehnt");
+    }
+}
+
+#[test]
+fn vorabversion_liegt_vor_dem_release_und_grenzen_gelten_genau() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let (m, i) = paket(5, &[("a", b"x")]);
+    let mut k = kontext(&[&s]);
+    k.client_version = "3.0.0-beta.1".into();
+    assert!(matches!(installieren(&a, &s, &k, &m, &i).unwrap_err(), Fehler::Unpassend(_)));
+    for v in ["3.0.0", "3.99.99"] {
+        let dir = tempfile::tempdir().unwrap();
+        let a = Ablage::oeffnen(dir.path()).unwrap();
+        let mut k = kontext(&[&s]);
+        k.client_version = v.into();
+        installieren(&a, &s, &k, &m, &i).unwrap();
+    }
+    let mut k = kontext(&[&s]);
+    k.client_version = "drei".into();
+    assert!(installieren(&a, &s, &k, &m, &i).is_err());
+}
+
+#[test]
+fn umgekehrter_versionsbereich_ist_ungueltig() {
+    let (m, _) = paket(5, &[("a", b"x")]);
+    let m = manifest_aendern(&m, |v| v["client_min"] = "4.0.0".into());
+    assert!(matches!(Manifest::lesen(&m).unwrap_err(), Fehler::Manifest(_)));
+}
+
+#[test]
+fn kaputter_zeiger_sperrt_installation_und_laden_faellt_zurueck() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let k = kontext(&[&s]);
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let (m5, i5) = paket(5, &[("a", b"5")]);
+    installieren(&a, &s, &k, &m5, &i5).unwrap();
+    std::fs::write(dir.path().join("zeiger/stand.json"), b"{halb").unwrap();
+    // Eine alte Generation darf nicht durchrutschen, nur weil der Zeiger kaputt ist.
+    let (m3, i3) = paket(3, &[("a", b"3")]);
+    assert!(installieren(&a, &s, &k, &m3, &i3).is_err());
+    let l = a.laden(None, &k, &eingebaut()).unwrap();
+    assert_eq!(l.herkunft, Herkunft::Eingebaut);
+    assert!(l.hinweise.iter().any(|h| h.contains("Zeiger")));
+}
+
+#[test]
+fn vorhandener_generationsordner_mit_anderem_inhalt_wird_nicht_geloescht() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let k = kontext(&[&s]);
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let (m5, i5) = paket(5, &[("a", b"5")]);
+    installieren(&a, &s, &k, &m5, &i5).unwrap();
+    // Ordner gen/6 existiert schon (z. B. gepinnt), Zeiger steht noch auf 5.
+    std::fs::create_dir_all(dir.path().join("gen/6")).unwrap();
+    std::fs::write(dir.path().join("gen/6/manifest.json"), b"anderer stand").unwrap();
+    let (m6, i6) = paket(6, &[("a", b"6")]);
+    assert!(installieren(&a, &s, &k, &m6, &i6).is_err());
+    assert_eq!(std::fs::read(dir.path().join("gen/6/manifest.json")).unwrap(), b"anderer stand");
+    assert_eq!(a.aktuell(), Some(5));
+}
+
+#[test]
+fn gleichzeitige_installationen_enden_nie_auf_einer_kleineren_generation() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = std::sync::Arc::new(Schluessel::neu());
+    let mut faeden = Vec::new();
+    for g in 1..=8u64 {
+        let pfad = dir.path().to_path_buf();
+        let s = s.clone();
+        faeden.push(std::thread::spawn(move || {
+            let a = Ablage::oeffnen(&pfad).unwrap();
+            let k = kontext(&[&s]);
+            let inhalt = format!("stand {g}");
+            let (m, i) = paket(g, &[("a", inhalt.as_bytes())]);
+            let _ = installieren(&a, &s, &k, &m, &i);
+        }));
+    }
+    for f in faeden {
+        f.join().unwrap();
+    }
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let k = kontext(&[&s]);
+    let aktuell = a.aktuell().unwrap();
+    let l = a.laden(None, &k, &eingebaut()).unwrap();
+    assert_eq!(l.herkunft, Herkunft::Aktuell);
+    assert_eq!(l.paket.datei("a").unwrap(), format!("stand {aktuell}").as_bytes());
+    // Generation 8 wird immer angenommen (nichts ist groesser), und danach
+    // muss jede kleinere abgelehnt werden. Ohne Sperre konnte eine 7, die den
+    // alten Zeiger vor der 8 gelesen hatte, die 8 ueberschreiben.
+    assert_eq!(aktuell, 8);
+}

@@ -15,6 +15,7 @@
 //! <wurzel>/tmp/                      Zwischenstand, nie gelesen
 //! ```
 
+pub mod bauen;
 pub mod manifest;
 
 use std::collections::{BTreeSet, HashMap};
@@ -158,6 +159,14 @@ pub struct Ablage {
 
 const BEHALTEN_TAGE: i64 = 30;
 
+/// Beide Zeiger in einer Datei: Sie werden immer gemeinsam und atomar
+/// geschrieben, ein Absturz kann nie nur einen von beiden aendern.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct Zeiger {
+    aktuell: Option<u64>,
+    vorher: Option<u64>,
+}
+
 impl Ablage {
     pub fn oeffnen(wurzel: impl Into<PathBuf>) -> Result<Self, Fehler> {
         let wurzel = wurzel.into();
@@ -167,12 +176,13 @@ impl Ablage {
         Ok(Self { wurzel })
     }
 
+    /// Aktive Generation; `None` auch dann, wenn die Zeigerdatei kaputt ist.
     pub fn aktuell(&self) -> Option<u64> {
-        self.zeiger("aktuell")
+        self.zeiger().ok().and_then(|z| z.aktuell)
     }
 
     pub fn vorher(&self) -> Option<u64> {
-        self.zeiger("vorher")
+        self.zeiger().ok().and_then(|z| z.vorher)
     }
 
     /// Prueft und installiert einen neuen Stand und macht ihn zum aktuellen.
@@ -180,7 +190,8 @@ impl Ablage {
     /// Reihenfolge nach P-3.20: Signatur → Manifest → passt zum Programm →
     /// nicht abgelaufen → neuer als der aktive → fehlende Dateien holen und
     /// pruefen → Selbsttest → Zeiger umschalten. Scheitert ein Schritt, bleibt
-    /// der bisherige Stand unberuehrt aktiv.
+    /// der bisherige Stand unberuehrt aktiv. Ein zweiter Aufruf (auch aus
+    /// einem anderen Prozess) wartet an der Sperre.
     pub fn installieren(
         &self,
         eingang: Eingang<'_>,
@@ -188,13 +199,17 @@ impl Ablage {
         hole: &mut dyn FnMut(&Datei) -> Result<Vec<u8>, String>,
         selbsttest: &dyn Fn(&Paket) -> Result<(), String>,
     ) -> Result<RuntimeBundleId, Fehler> {
+        let _sperre = self.sperre(true)?;
         signatur_pruefen(eingang.manifest, eingang.signatur, &kontext.schluessel)?;
         let m = Manifest::lesen(eingang.manifest)?;
         passt(&m, kontext)?;
         if m.expires_at <= kontext.jetzt {
             return Err(Fehler::Abgelaufen(m.expires_at));
         }
-        if let Some(aktiv) = self.aktuell() {
+        // Kaputter Zeiger: nicht raten, sonst koennte eine alte Generation
+        // durchrutschen. Die Wiederherstellung macht das Laden (Rueckfall).
+        let zeiger = self.zeiger()?;
+        if let Some(aktiv) = zeiger.aktuell {
             if m.generation <= aktiv {
                 return Err(Fehler::Veraltet { neu: m.generation, aktiv });
             }
@@ -209,68 +224,100 @@ impl Ablage {
             self.atomar_schreiben(&ziel, &bytes)?;
         }
         let gen_ordner = self.gen_ordner(m.generation);
-        let tmp = self.wurzel.join("tmp").join(format!("gen-{}", m.generation));
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp)?;
-        fs::write(tmp.join("manifest.json"), eingang.manifest)?;
-        fs::write(tmp.join("manifest.json.minisig"), eingang.signatur)?;
-        fs::write(tmp.join("installiert"), kontext.jetzt.to_rfc3339())?;
-        let _ = fs::remove_dir_all(&gen_ordner);
-        fs::rename(&tmp, &gen_ordner)?;
+        let selbst_angelegt = if gen_ordner.exists() {
+            // Ein vorhandener Ordner dieser Generation wird nie geloescht: Er
+            // koennte gepinnt sein. Nur derselbe Stand darf ihn weiterverwenden.
+            if fs::read(gen_ordner.join("manifest.json"))? != eingang.manifest {
+                return Err(Fehler::Manifest(format!(
+                    "Generation {} liegt schon mit anderem Inhalt vor",
+                    m.generation
+                )));
+            }
+            false
+        } else {
+            let tmp = self.tmp_pfad(&format!("gen-{}", m.generation));
+            fs::create_dir_all(&tmp)?;
+            dauerhaft_schreiben(&tmp.join("manifest.json"), eingang.manifest)?;
+            dauerhaft_schreiben(&tmp.join("manifest.json.minisig"), eingang.signatur.as_bytes())?;
+            dauerhaft_schreiben(&tmp.join("installiert"), kontext.jetzt.to_rfc3339().as_bytes())?;
+            ordner_sichern(&tmp)?;
+            fs::rename(&tmp, &gen_ordner)?;
+            ordner_sichern(&self.wurzel.join("gen"))?;
+            true
+        };
 
         let paket = self.paket_aus_ablage(m.generation, kontext)?;
         if let Err(grund) = selbsttest(&paket) {
-            let _ = fs::remove_dir_all(&gen_ordner);
+            if selbst_angelegt {
+                let _ = fs::remove_dir_all(&gen_ordner);
+            }
             return Err(Fehler::Selbsttest(grund));
         }
-        if let Some(alt) = self.aktuell() {
-            self.zeiger_setzen("vorher", alt)?;
-        }
-        self.zeiger_setzen("aktuell", m.generation)?;
+        self.zeiger_setzen(Zeiger { aktuell: Some(m.generation), vorher: zeiger.aktuell })?;
         Ok(paket.id)
     }
 
     /// Laedt den Stand fuer diesen Programmstart (P-3.20, P-3.31).
     ///
-    /// Mit `pin` (offener Flug) gilt nur genau dieser Stand; fehlt er, der
-    /// eingebaute als `EingebautStattPin`. Ohne Pin: aktuell → vorher →
-    /// eingebaut. Ablauf spielt beim Laden keine Rolle (P-3.04).
+    /// Mit `pin` (offener Flug) gilt nur genau dieser Stand (Generation UND
+    /// Manifest-Hash); fehlt er, der eingebaute als `EingebautStattPin`. Ohne
+    /// Pin: aktuell → vorher → eingebaut. Ablauf spielt beim Laden keine
+    /// Rolle (P-3.04).
     pub fn laden(
         &self,
         pin: Option<&RuntimeBundleId>,
         kontext: &Kontext,
         eingebaut: &Eingebaut,
     ) -> Result<Ladeergebnis, Fehler> {
+        let _sperre = self.sperre(false)?;
         let mut hinweise = Vec::new();
         if let Some(pin) = pin {
             match self.paket_aus_ablage(pin.generation, kontext) {
                 Ok(p) if &p.id == pin => {
                     return Ok(Ladeergebnis { paket: p, herkunft: Herkunft::Pin, hinweise })
                 }
-                Ok(p) => hinweise.push(format!("Pin {pin}: lokal liegt {} ", p.id)),
+                Ok(p) => hinweise.push(format!("Pin {pin}: lokal liegt {}", p.id)),
                 Err(e) => hinweise.push(format!("Pin {pin}: {e}")),
             }
             let paket = eingebautes_paket(eingebaut, kontext)?;
             return Ok(Ladeergebnis { paket, herkunft: Herkunft::EingebautStattPin, hinweise });
         }
-        for (zeiger, herkunft) in [("aktuell", Herkunft::Aktuell), ("vorher", Herkunft::Vorher)] {
-            let Some(g) = self.zeiger(zeiger) else { continue };
+        let zeiger = match self.zeiger() {
+            Ok(z) => z,
+            Err(e) => {
+                hinweise.push(format!("Zeiger: {e}"));
+                Zeiger::default()
+            }
+        };
+        for (g, name, herkunft) in [
+            (zeiger.aktuell, "aktuell", Herkunft::Aktuell),
+            (zeiger.vorher, "vorher", Herkunft::Vorher),
+        ] {
+            let Some(g) = g else { continue };
             match self.paket_aus_ablage(g, kontext) {
                 Ok(paket) => return Ok(Ladeergebnis { paket, herkunft, hinweise }),
-                Err(e) => hinweise.push(format!("{zeiger} ({g}): {e}")),
+                Err(e) => hinweise.push(format!("{name} ({g}): {e}")),
             }
         }
         let paket = eingebautes_paket(eingebaut, kontext)?;
         Ok(Ladeergebnis { paket, herkunft: Herkunft::Eingebaut, hinweise })
     }
 
-    /// Entfernt Staende, die weder aktuell noch vorher noch gepinnt und aelter
-    /// als 30 Tage sind, und danach nicht mehr benutzte Dateien (P-3.41).
+    /// Entfernt Staende, die weder aktuell noch vorher noch in `pins` und
+    /// aelter als 30 Tage sind, und danach nicht mehr benutzte Dateien
+    /// (P-3.41). `pins` sind alle Staende, die gerade jemand braucht: der
+    /// offene Flug und der im laufenden Programm geladene.
+    ///
+    /// Bricht ab, ohne etwas zu loeschen, sobald der Zeiger oder das Manifest
+    /// eines behaltenen Stands nicht lesbar ist — sonst gingen genau dessen
+    /// Dateien verloren.
     pub fn aufraeumen(&self, pins: &[u64], jetzt: DateTime<Utc>) -> Result<usize, Fehler> {
+        let _sperre = self.sperre(true)?;
+        let zeiger = self.zeiger()?;
         let mut behalten: BTreeSet<u64> = pins.iter().copied().collect();
-        behalten.extend(self.aktuell());
-        behalten.extend(self.vorher());
-        let mut entfernt = 0;
+        behalten.extend(zeiger.aktuell);
+        behalten.extend(zeiger.vorher);
+        let mut weg = Vec::new();
         for g in self.generationen()? {
             if behalten.contains(&g) {
                 continue;
@@ -283,28 +330,34 @@ impl Ablage {
                 Some(t) if jetzt - t < Duration::days(BEHALTEN_TAGE) => {
                     behalten.insert(g);
                 }
-                _ => {
-                    fs::remove_dir_all(self.gen_ordner(g))?;
-                    entfernt += 1;
-                }
+                _ => weg.push(g),
             }
         }
         let mut gebraucht = BTreeSet::new();
         for g in &behalten {
-            if let Ok(bytes) = fs::read(self.gen_ordner(*g).join("manifest.json")) {
-                if let Ok(m) = serde_json::from_slice::<Manifest>(&bytes) {
-                    gebraucht.extend(m.files.into_iter().map(|d| d.sha256));
-                }
+            let ordner = self.gen_ordner(*g);
+            if !ordner.exists() {
+                continue; // gepinnt, aber hier nicht vorhanden: nichts zu schuetzen
             }
+            let bytes = fs::read(ordner.join("manifest.json"))?;
+            let m: Manifest =
+                serde_json::from_slice(&bytes).map_err(|e| Fehler::Manifest(format!("gen {g}: {e}")))?;
+            gebraucht.extend(m.files.into_iter().map(|d| d.sha256));
+        }
+        for g in &weg {
+            fs::remove_dir_all(self.gen_ordner(*g))?;
         }
         for eintrag in fs::read_dir(self.wurzel.join("blobs"))? {
             let eintrag = eintrag?;
             let name = eintrag.file_name().to_string_lossy().into_owned();
-            if !gebraucht.contains(&name) {
+            let ist_blob = eintrag.file_type()?.is_file()
+                && name.len() == 64
+                && name.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+            if ist_blob && !gebraucht.contains(&name) {
                 fs::remove_file(eintrag.path())?;
             }
         }
-        Ok(entfernt)
+        Ok(weg.len())
     }
 
     fn generationen(&self) -> Result<Vec<u64>, Fehler> {
@@ -340,27 +393,69 @@ impl Ablage {
         Ok(paket)
     }
 
-    fn zeiger(&self, name: &str) -> Option<u64> {
-        fs::read_to_string(self.wurzel.join("zeiger").join(name)).ok()?.trim().parse().ok()
+    /// Fehlt die Datei: noch nie installiert. Ist sie kaputt: Fehler.
+    fn zeiger(&self) -> Result<Zeiger, Fehler> {
+        match fs::read(self.wurzel.join("zeiger").join("stand.json")) {
+            Ok(b) => serde_json::from_slice(&b).map_err(|e| Fehler::Manifest(format!("Zeiger kaputt: {e}"))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Zeiger::default()),
+            Err(e) => Err(e.into()),
+        }
     }
 
-    fn zeiger_setzen(&self, name: &str, g: u64) -> Result<(), Fehler> {
-        self.atomar_schreiben(&self.wurzel.join("zeiger").join(name), g.to_string().as_bytes())
+    fn zeiger_setzen(&self, z: Zeiger) -> Result<(), Fehler> {
+        let bytes = serde_json::to_vec(&z).map_err(|e| Fehler::Manifest(e.to_string()))?;
+        self.atomar_schreiben(&self.wurzel.join("zeiger").join("stand.json"), &bytes)?;
+        ordner_sichern(&self.wurzel.join("zeiger"))
+    }
+
+    /// Exklusiv fuer Installieren und Aufraeumen, geteilt fuer Laden; gilt
+    /// auch zwischen Prozessen. Wird beim Fallenlassen der Datei geloest.
+    fn sperre(&self, exklusiv: bool) -> Result<fs::File, Fehler> {
+        let f = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.wurzel.join("sperre"))?;
+        if exklusiv {
+            f.lock()?;
+        } else {
+            f.lock_shared()?;
+        }
+        Ok(f)
+    }
+
+    fn tmp_pfad(&self, name: &str) -> PathBuf {
+        static ZAEHLER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = ZAEHLER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.wurzel.join("tmp").join(format!("{name}.{}.{n}", std::process::id()))
     }
 
     /// Schreiben in eine Zwischendatei und Umbenennen: Ein Absturz mittendrin
     /// hinterlaesst nie eine halbe Datei am Ziel.
     fn atomar_schreiben(&self, ziel: &Path, bytes: &[u8]) -> Result<(), Fehler> {
         let name = ziel.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let tmp = self.wurzel.join("tmp").join(format!("{name}.{}", std::process::id()));
-        {
-            let mut f = fs::File::create(&tmp)?;
-            f.write_all(bytes)?;
-            f.sync_all()?;
-        }
+        let tmp = self.tmp_pfad(&name);
+        dauerhaft_schreiben(&tmp, bytes)?;
         fs::rename(&tmp, ziel)?;
         Ok(())
     }
+}
+
+fn dauerhaft_schreiben(pfad: &Path, bytes: &[u8]) -> Result<(), Fehler> {
+    let mut f = fs::File::create(pfad)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    Ok(())
+}
+
+/// Macht Umbenennungen in einem Ordner dauerhaft (Unix). Unter Windows laesst
+/// sich ein Ordner nicht so oeffnen; dort gilt NTFS-Journaling.
+fn ordner_sichern(ordner: &Path) -> Result<(), Fehler> {
+    #[cfg(unix)]
+    fs::File::open(ordner)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = ordner;
+    Ok(())
 }
 
 fn eingebautes_paket(e: &Eingebaut, _kontext: &Kontext) -> Result<Paket, Fehler> {
