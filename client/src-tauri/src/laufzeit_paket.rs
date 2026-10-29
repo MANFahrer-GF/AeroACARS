@@ -23,10 +23,11 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
+const XPLANE_PROFILE: &str = "profile/xplane.json";
 
 /// Alles, was aus dem Laufzeit-Paket kommt, als EIN Stand (P-3.02): Er wird
 /// genau einmal je Programmlauf festgelegt — vollstaendig aus dem Paket oder
@@ -37,6 +38,9 @@ pub(crate) struct AktiverStand {
     pub runways: &'static str,
     pub airports: &'static str,
     pub grenzwerte: crate::grenzwerte::Grenzwerte,
+    /// X-Plane-Flugzeugprofile; `sim-xplane` liest sie ueber die beim Start
+    /// angemeldete Quelle von hier (keine eigene Sperre im Crate).
+    pub xplane_profile: &'static [sim_xplane::XplaneAircraftProfile],
 }
 
 static STAND: OnceLock<AktiverStand> = OnceLock::new();
@@ -61,6 +65,7 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         runways: text(RUNWAYS)?,
         airports: text(AIRPORTS)?,
         grenzwerte: crate::grenzwerte::lesen(|x| p.datei(x).ok())?,
+        xplane_profile: sim_xplane::profile_lesen(text(XPLANE_PROFILE)?)?,
     })
 }
 
@@ -71,6 +76,9 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         runways: crate::runway::eingebaut_runways_csv(),
         airports: crate::runway::eingebaut_airports_csv(),
         grenzwerte: crate::grenzwerte::lesen(|x| eingebaute_datei(x).map(<[u8]>::to_vec))?,
+        xplane_profile: sim_xplane::profile_lesen(
+            std::str::from_utf8(eingebaute_datei(XPLANE_PROFILE).ok_or(XPLANE_PROFILE)?).map_err(|e| e.to_string())?,
+        )?,
     })
 }
 
@@ -165,6 +173,8 @@ pub(crate) fn starten(app_daten: &Path) {
 }
 
 fn starten_einmal(app_daten: &Path) {
+    // Vor allem anderen: X-Plane-Profile kommen ab jetzt aus DIESEM Stand.
+    sim_xplane::profile_quelle_setzen(|| stand().xplane_profile);
     let pin = pin_des_offenen_flugs(app_daten);
     let eingebaut = eingebaut();
     let ergebnis = Ablage::oeffnen(app_daten.join("laufzeit-paket"))
@@ -364,6 +374,8 @@ async fn pin_nachholen(app_daten: &Path, pin: &RuntimeBundleId) -> Result<(), St
 /// wird nicht aktiviert (P-3.21).
 fn selbsttest(p: &Paket) -> Result<(), String> {
     crate::grenzwerte::lesen(|pfad| p.datei(pfad).ok())?;
+    let profile = p.datei(XPLANE_PROFILE).map_err(|e| e.to_string())?;
+    sim_xplane::profile_pruefen(std::str::from_utf8(&profile).map_err(|e| e.to_string())?)?;
     for (pfad, kopf) in [
         (RUNWAYS, "\"id\",\"airport_ref\",\"airport_ident\""),
         (AIRPORTS, "ident,type,latitude_deg,longitude_deg"),
@@ -406,6 +418,14 @@ RURs0NG12y4cVkAofIm/1xLPjtwC0kUUrvUHcpCsQ5B7Hb3Vr227UeoRQ8dqozQ4y1EqiSVK1uQEoRdh
 trusted comment: probe
 aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkKH3K7Cg==
 ";
+
+    /// Die eingebauten Profile des Clients sind dieselbe Datei, die
+    /// `sim-xplane` ohne angemeldete Quelle nimmt (eine Quelle, P-3.65).
+    #[test]
+    fn eingebaute_xplane_profile_sind_die_des_crates() {
+        assert_eq!(eingebaute_datei(XPLANE_PROFILE).unwrap(), sim_xplane::PROFILE_EINGEBAUT.as_bytes());
+        assert_eq!(stand().xplane_profile.len(), sim_xplane::profile_lesen(sim_xplane::PROFILE_EINGEBAUT).unwrap().len());
+    }
 
     #[test]
     fn eingebauter_stand_besteht_den_selbsttest() {

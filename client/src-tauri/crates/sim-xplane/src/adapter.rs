@@ -37,13 +37,12 @@ use sim_core::{SimKind, SimSnapshot, Simulator};
 use crate::dataref::{addon_quelle, XPlaneState, CATALOG};
 use crate::plugin2::{Ziel, PLUGIN2_PORT};
 use crate::plugin2_ziel::{
-    ist_kern, katalog_plan, kennung_ueberlagern, ui_name_ueberlagern, KatalogPlan, P2Stand,
+    ist_kern, kennung_ueberlagern, ui_name_ueberlagern, KatalogPlan, P2Stand,
     PluginZugang,
 };
 use crate::premium::{PremiumListener, PremiumStatus, PremiumTouchdown, PREMIUM_UDP_PORT};
 use crate::profile::{
-    build_active_catalog, profil_ersetzungen_leeren, profile_index_for_title, ActiveEntry,
-    PROFILES,
+    build_active_catalog, profil_ersetzungen_leeren, profile, profile_index_for_title, ActiveEntry,
 };
 use crate::rref::{decode_response, encode_request};
 use crate::web_api::{AircraftInfo, DrefIdCache, WebApiClient};
@@ -163,8 +162,11 @@ pub(crate) struct AdapterShared {
     /// Sperrfolge: `p2` vor `parsed`/`seen`/`last_values`/`zusatz`/
     /// `active_catalog`, nie umgekehrt.
     pub(crate) p2: Mutex<P2Stand>,
-    /// Das Katalog-Abo (Abo 1), einmal gebaut.
-    pub(crate) p2_plan: KatalogPlan,
+    /// Das Katalog-Abo (Abo 1), einmal gebaut — erst beim ersten Gebrauch:
+    /// Der Adapter entsteht vor dem Laufzeit-Paket (`AppState::default()`
+    /// vor `setup`), der Plan muss aber die Profile des Pakets tragen
+    /// (Codex 29.10.). Zugriff ueber [`AdapterShared::p2_plan`].
+    pub(crate) p2_plan_zelle: std::sync::OnceLock<KatalogPlan>,
     /// Bezugspunkt fuer `p2_katalog_ms`.
     pub(crate) p2_basis: Instant,
     /// Zeitpunkt (ms seit `p2_basis`) der letzten Katalogwerte des Plugins,
@@ -230,7 +232,7 @@ impl XPlaneAdapter {
             web_schreiben: Mutex::new(()),
             stop: AtomicBool::new(false),
             p2: Mutex::new(P2Stand::default()),
-            p2_plan: katalog_plan(),
+            p2_plan_zelle: std::sync::OnceLock::new(),
             p2_basis: Instant::now(),
             p2_katalog_ms: AtomicU64::new(0),
             p2_sitzung: AtomicBool::new(false),
@@ -529,7 +531,7 @@ pub(crate) fn klappen_aus_profil(aktiv: &[ActiveEntry]) -> bool {
 /// can be unit-tested without a UDP socket (QS-R4/P3).
 ///
 /// * `title` — the Web API aircraft title, or `None` (Web API off / XP11).
-/// * `probe_fresh` — per-profile (index = position in `PROFILES`): did
+/// * `probe_fresh` — per-profile (index = position in `profile()`): did
 ///   that profile's probe DataRef answer within `PROBE_STALE_AFTER`.
 /// * `probe_seen` — per-profile: has that probe DataRef *ever* answered.
 ///
@@ -548,7 +550,7 @@ pub(crate) fn desired_profile(
     probe_seen: &[bool],
 ) -> Option<usize> {
     let titel_passt = |pi: usize| {
-        PROFILES
+        profile()
             .get(pi)
             .is_some_and(|p| !p.titel_und_probe || title.is_some_and(|t| p.matches_title(t)))
     };
@@ -645,13 +647,13 @@ fn zu_pruefende_datarefs() -> Vec<&'static str> {
         .filter(|e| addon_quelle(e.field))
         .map(|e| grundname(e.name))
         .chain(
-            PROFILES
+            profile()
                 .iter()
                 .flat_map(|p| p.overrides.iter())
                 .filter(|o| addon_quelle(o.field))
                 .map(|o| grundname(o.dataref)),
         )
-        .chain(PROFILES.iter().map(|p| grundname(p.probe_dataref)))
+        .chain(profile().iter().map(|p| grundname(p.probe_dataref)))
         .collect();
     v.sort_unstable();
     v.dedup();
@@ -767,7 +769,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
     // `active` is the static CATALOG with the detected profile's
     // dataref overrides applied (LE6) — same length/indices as CATALOG.
     let mut active: Vec<ActiveEntry> = build_active_catalog(None);
-    // Index into PROFILES of the active profile, None until detected.
+    // Index into profile() of the active profile, None until detected.
     let mut active_profile: Option<usize> = None;
     // v0.12.2 (QS-R4/P1): per-profile timestamp of the last probe
     // response. The probes stay subscribed for the whole session, so a
@@ -777,11 +779,11 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
     // this is what makes the runtime aircraft-swap reset (LE6) work even
     // when there is no Web API title (XP11 / Web API off), the case the
     // old `last_title`-diff logic missed.
-    let mut probe_last_seen: Vec<Option<Instant>> = vec![None; PROFILES.len()];
+    let mut probe_last_seen: Vec<Option<Instant>> = vec![None; profile().len()];
     // Letzter Probenwert ungleich 0? RREF antwortet auch fuer fehlende
     // Datarefs (mit 0) — nur ein Wert ≠ 0 traegt `rref_profil`s Halten
     // ohne Titel (Codex-Nachpruefung 05.10.2026).
-    let mut probe_nicht_null: Vec<bool> = vec![false; PROFILES.len()];
+    let mut probe_nicht_null: Vec<bool> = vec![false; profile().len()];
     // Stand der bestaetigten Add-on-Quellen, den dieser Thread zuletzt
     // uebernommen hat (siehe `AdapterShared::addon_vorhanden`).
     let mut addon_gen_gesehen: u64 = u64::MAX;
@@ -818,7 +820,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
     // reserved discovery index. Low rate — we only need to learn the
     // dataref exists, not stream it.
     let subscribe_probes = |sock: &UdpSocket| {
-        for (pi, prof) in PROFILES.iter().enumerate() {
+        for (pi, prof) in profile().iter().enumerate() {
             let req = encode_request(1, DISCOVERY_INDEX_BASE + pi as i32, prof.probe_dataref);
             let _ = sock.send_to(&req, xplane_addr);
         }
@@ -827,7 +829,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
     // on listener shutdown. The probes otherwise stay subscribed for the
     // whole session (QS-R4/P1) so an aircraft swap is always detected.
     let unsubscribe_probes = |sock: &UdpSocket| {
-        for (pi, prof) in PROFILES.iter().enumerate() {
+        for (pi, prof) in profile().iter().enumerate() {
             let stop = encode_request(0, DISCOVERY_INDEX_BASE + pi as i32, prof.probe_dataref);
             let _ = sock.send_to(&stop, xplane_addr);
         }
@@ -916,7 +918,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
                             *nn = p.value != 0.0;
                         }
                         if p.value != 0.0 {
-                            if let Some(prof) = PROFILES.get(pi) {
+                            if let Some(prof) = profile().get(pi) {
                                 ungleich_null.insert(grundname(prof.probe_dataref));
                             }
                         }
@@ -1038,7 +1040,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
                 })
                 .map(|e| grundname(e.name).to_string())
                 .chain(
-                    PROFILES
+                    profile()
                         .iter()
                         .filter(|p| probe_gilt(p.probe_dataref, vorhanden.as_ref(), &ungleich_null))
                         .map(|p| grundname(p.probe_dataref).to_string()),
@@ -1063,7 +1065,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             let (profil, gilt) = shared.p2_uebergabe();
             profil_ersetzungen_leeren(&mut shared.parsed.lock(), active_profile, profil);
             active_profile = profil;
-            active = build_active_catalog(profil.map(|pi| &PROFILES[pi]));
+            active = build_active_catalog(profil.map(|pi| &profile()[pi]));
             *shared.active_catalog.lock() = active.clone();
             for t in probe_last_seen.iter_mut() {
                 *t = None;
@@ -1096,7 +1098,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             last_resubscribe_at = Instant::now();
             rref_ruht = false;
             tracing::info!(
-                profil = ?profil.map(|pi| PROFILES[pi].name),
+                profil = ?profil.map(|pi| profile()[pi].name),
                 "X-Plane: Plugin liefert nicht mehr — zurueck auf RREF"
             );
         }
@@ -1148,7 +1150,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
         // Eine Probe zaehlt nur, wenn die Web-API ihren Dataref bestaetigt:
         // RREF antwortet auch fuer fehlende Datarefs (mit 0) — bis
         // 27.09.2026 galt dadurch JEDES X-Plane-Flugzeug als Challenger 650.
-        let probe_bestaetigt: Vec<bool> = PROFILES
+        let probe_bestaetigt: Vec<bool> = profile()
             .iter()
             .map(|p| probe_gilt(p.probe_dataref, vorhanden.as_ref(), &ungleich_null))
             .collect();
@@ -1178,7 +1180,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
         if desired != active_profile {
             match desired {
                 Some(pi) => tracing::info!(
-                    profile = PROFILES[pi].name,
+                    profile = profile()[pi].name,
                     via = if probe_fresh.get(pi).copied().unwrap_or(false) {
                         "probe"
                     } else {
@@ -1195,7 +1197,7 @@ fn run_listener(shared: Arc<AdapterShared>, xplane_addr: std::net::SocketAddr) {
             // Rebuild the active catalog (LE6) and re-subscribe with
             // fresh indices. The probes keep running regardless, so a
             // later aircraft swap is always detected.
-            active = build_active_catalog(desired.map(|pi| &PROFILES[pi]));
+            active = build_active_catalog(desired.map(|pi| &profile()[pi]));
             *shared.active_catalog.lock() = active.clone();
             subscribe_catalog(&socket, &active);
         }
@@ -1470,7 +1472,18 @@ fn run_web_api_poller(shared: Arc<AdapterShared>, lauf: u64, basis: String) {
 mod quellen_tests {
     use super::{eintrag_gilt, probe_gilt, vorhanden_neu, zu_pruefende_datarefs};
     use crate::dataref::{FieldId, CATALOG};
-    use crate::profile::{build_active_catalog, PROFILES};
+    use crate::profile::{build_active_catalog, profile};
+
+    /// Der Adapter entsteht vor dem Laufzeit-Paket (`AppState::default()`
+    /// vor `setup`). Er darf dabei die Profile noch nicht lesen, sonst traegt
+    /// der Plugin-Plan den eingebauten statt des geladenen Stands (Codex 29.10.).
+    #[test]
+    fn neuer_adapter_baut_den_plugin_plan_erst_beim_gebrauch() {
+        let ad = super::XPlaneAdapter::new();
+        assert!(ad.shared.p2_plan_zelle.get().is_none());
+        let _ = ad.shared.p2_plan();
+        assert!(ad.shared.p2_plan_zelle.get().is_some());
+    }
     use std::collections::HashSet;
 
     fn menge(n: &[&str]) -> HashSet<String> {
@@ -1579,7 +1592,7 @@ mod quellen_tests {
     #[test]
     fn alle_quellen_werden_geprueft() {
         let liste = zu_pruefende_datarefs();
-        for p in crate::profile::PROFILES {
+        for p in crate::profile::profile() {
             assert!(
                 liste.contains(&p.probe_dataref.split('[').next().unwrap()),
                 "{}",
@@ -1604,7 +1617,7 @@ mod quellen_tests {
     /// sie das Fluegellicht bei jedem neuen Pruefstand.
     #[test]
     fn profil_ersetzung_einer_addon_quelle_gilt_unter_ihrem_namen() {
-        let ff757 = PROFILES.iter().find(|p| p.name == "FlightFactor 757").unwrap();
+        let ff757 = profile().iter().find(|p| p.name == "FlightFactor 757").unwrap();
         let aktiv = build_active_catalog(Some(ff757));
         let vorhanden: HashSet<String> = ["anim/46/button", "anim/rhotery/25"]
             .iter()
@@ -1647,7 +1660,7 @@ mod klappen_profil_tests {
         };
         assert_eq!(raste(&ad), (Some(2), Some(4)), "ohne Profil");
         let mut geprueft_eigen = 0;
-        for p in PROFILES {
+        for p in profile() {
             *ad.shared.active_catalog.lock() = build_active_catalog(Some(p));
             let eigen = p
                 .overrides
@@ -1677,8 +1690,8 @@ mod plugin_profil_ersetzung_tests {
     use crate::plugin2_ziel::ABO_KATALOG;
 
     fn ff757_mit_plugin(ad: &XPlaneAdapter) -> usize {
-        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
-        let plan = &ad.shared.p2_plan;
+        let pi = profile().iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let plan = ad.shared.p2_plan();
         let li = plan.namen.iter().position(|n| n == "anim/46/button").unwrap();
         let mut st = ad.shared.p2.lock();
         st.offen = true;
@@ -1715,9 +1728,9 @@ mod plugin_profil_ersetzung_tests {
             ui_name: Some("Boeing 757-RF".into()),
             pfad: Some("Aircraft/Boeing757-Full/757-RF_xp12.acf".into()),
         });
-        let namen = Arc::clone(&ad.shared.p2_plan.namen);
-        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
-        let probe = ad.shared.p2_plan.probe_index[pi];
+        let namen = Arc::clone(&ad.shared.p2_plan().namen);
+        let pi = profile().iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let probe = ad.shared.p2_plan().probe_index[pi];
         let da = NameStatus::Da { typ: Typ::Float, laenge: 1 };
         // Erst Probe und Name „da" (das Profil bleibt aktiv), dann „fehlt".
         ad.shared.ereignis(Ereignis::Status {
@@ -1747,9 +1760,9 @@ mod plugin_profil_ersetzung_tests {
             ui_name: Some("Boeing 757-RF".into()),
             pfad: Some("Aircraft/Boeing757-Full/757-RF_xp12.acf".into()),
         });
-        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
-        let probe = ad.shared.p2_plan.probe_index[pi];
-        let namen = Arc::clone(&ad.shared.p2_plan.namen);
+        let pi = profile().iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let probe = ad.shared.p2_plan().probe_index[pi];
+        let namen = Arc::clone(&ad.shared.p2_plan().namen);
         let da = NameStatus::Da { typ: Typ::Float, laenge: 1 };
         ad.shared.ereignis(Ereignis::Status {
             abo: ABO_KATALOG,
@@ -1873,11 +1886,11 @@ mod tests {
     /// Stratosphere-777.
     #[test]
     fn ff777_braucht_titel_und_probe() {
-        let ff = crate::profile::PROFILES
+        let ff = crate::profile::profile()
             .iter()
             .position(|p| p.name == "FlightFactor 777")
             .expect("FF777-Profil vorhanden");
-        let n = crate::profile::PROFILES.len();
+        let n = crate::profile::profile().len();
         let nur = |i: usize| {
             let mut v = vec![false; n];
             v[i] = true;
@@ -1907,11 +1920,11 @@ mod tests {
     /// vom Plugin gesetzte FF777-Profil bleibt, solange die Probe frisch ist.
     #[test]
     fn ff777_bleibt_beim_rueckfall_ohne_titel() {
-        let ff = crate::profile::PROFILES
+        let ff = crate::profile::profile()
             .iter()
             .position(|p| p.name == "FlightFactor 777")
             .unwrap();
-        let n = crate::profile::PROFILES.len();
+        let n = crate::profile::profile().len();
         let mut frisch = vec![false; n];
         frisch[ff] = true;
         let keine = vec![false; n];
@@ -1940,7 +1953,7 @@ mod tests {
     fn ff777_hebel_halb_ist_armed() {
         use crate::dataref::{FieldId, XPlaneState};
         use sim_core::Simulator;
-        let ff = crate::profile::PROFILES
+        let ff = crate::profile::profile()
             .iter()
             .find(|p| p.name == "FlightFactor 777")
             .unwrap();
@@ -2294,7 +2307,7 @@ mod plugin2_loopback_tests {
                 .p2
                 .lock()
                 .profil
-                .is_some_and(|pi| PROFILES[pi].name == "Laminar/Zibo 737-800")
+                .is_some_and(|pi| profile()[pi].name == "Laminar/Zibo 737-800")
         });
         let ap = warte(Duration::from_secs(15), || {
             ad.snapshot()

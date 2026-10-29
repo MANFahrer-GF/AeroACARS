@@ -25,7 +25,8 @@ pub const DETENT_TOLERANCE: f32 = 0.05;
 pub const ARMED_TOLERANCE: f32 = 0.01;
 
 /// How a raw RREF value is mapped onto the internal field value.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(tag = "art", content = "werte")]
 pub enum ValueMapping {
     /// Take the raw value 1:1 (e.g. int 0/1 booleans).
     Passthrough,
@@ -121,7 +122,7 @@ impl ValueMapping {
 /// One dataref-source override: read `field` from `dataref` (an
 /// aircraft-specific dataref) instead of the standard `CATALOG` entry,
 /// applying `mapping`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct DatarefOverride {
     pub field: FieldId,
     pub dataref: &'static str,
@@ -129,7 +130,7 @@ pub struct DatarefOverride {
 }
 
 /// A per-aircraft dataref profile (LE2).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct XplaneAircraftProfile {
     /// Human-readable name (logging only).
     pub name: &'static str,
@@ -160,459 +161,126 @@ impl XplaneAircraftProfile {
     }
 }
 
-/// CL650 flap-lever detent → internal `flaps_position`. Verified against
-/// the Hot-Start CL650 documentation (`Wires.txt`, module `FLAP_IND`):
-/// lever 0/1/2/3 = flaps 0°/20°/30°/45°. The internal LANDING-CONFIG
-/// check is `flaps_position >= 0.70`, so lever 2 (Flaps 30) and 3
-/// (Flaps 45) count as landing config, lever 0/1 (Flaps 0/20) do not.
-pub const CL650_FLAP_DETENTS: &[f32] = &[0.0, 0.45, 0.80, 1.0];
+/// Eingebauter Stand der Profile = Datei im Paketordner (P-3.65: eine
+/// Quelle).
+pub const EINGEBAUT: &str = include_str!("../../../../../bundle/profile/xplane.json");
 
-/// v0.12.6: Rotate MD-11 flap detents → internal `flaps_position` ratio.
-/// `Rotate/aircraft/systems/flaps_cmd_pos_deg` reports the commanded
-/// flap angle in degrees (0/15/28/35/50). Die MD-11 treibt — wie der
-/// CL650 — die Standard-Flaps-DataRef nicht; ohne dieses Mapping bleibt
-/// `flaps_position` den ganzen Flug 0.0 → LANDING-CONFIG „INCOMPLETE".
-/// Der interne Check ist `flaps_position >= 0.70`: Flaps 35 + 50 (die
-/// MD-11-Landeklappen) zählen als Landing-Config, 0/15/28 nicht.
-pub const MD11_FLAP_DEGREES: &[(f32, f32)] = &[
-    (0.0, 0.0),
-    (15.0, 0.30),
-    (28.0, 0.55),
-    (35.0, 0.80),
-    (50.0, 1.0),
-];
+/// Woher die Profile kommen. Der Client meldet beim Start eine Quelle an, die
+/// aus SEINEM einen Paketstand liest (P-3.02: keine zweite Sperre, nie
+/// gemischt). Ohne Anmeldung (Tests dieses Crates) gilt der eingebaute Stand.
+static QUELLE: std::sync::OnceLock<fn() -> &'static [XplaneAircraftProfile]> = std::sync::OnceLock::new();
 
-/// All known aircraft profiles (LE2). The first one whose detection
-/// matches wins.
-pub const PROFILES: &[XplaneAircraftProfile] = &[
-    // Hot-Start Challenger 650 (X-Aviation). GSG225-Befund: treibt die
-    // Standard-Flaps-DataRef nicht.
-    XplaneAircraftProfile {
-        name: "Hot Start CL650",
-        title_match: &["challenger 650", "x-aviation"],
-        probe_dataref: "abus/CL650/ARINC429/L-DCU-7/words/FCTL/0/FLAPS_LVR",
-        titel_und_probe: false,
-        overrides: &[
-            DatarefOverride {
-                field: FieldId::FlapsHandle,
-                dataref: "abus/CL650/ARINC429/L-DCU-7/words/FCTL/0/FLAPS_LVR",
-                mapping: ValueMapping::DetentTable(CL650_FLAP_DETENTS),
-            },
-            DatarefOverride {
-                field: FieldId::BatteryMaster,
-                dataref: "abus/CL650/modules/DC_ELEC/0/wires/BATT_CTRL_PWR",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::LightBeacon,
-                dataref: "CL650/overhead/ext_lts/beacon",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::LightTaxi,
-                dataref: "CL650/overhead/land_lts/recog_taxi",
-                mapping: ValueMapping::Passthrough,
-            },
-            // 28.10.2026 — P_-Profile v2.0 (Michel). Live-Abgleich: im
-            // letzten CL650-Flug (19.10.) blieben Parkbremse und alle AP-
-            // Felder den ganzen Flug aus. Parkbremse = Hebelstellung 0/1;
-            // AP aus den FCP-Lampen der Kapitaensseite (> 0.01 = an, ueber
-            // die Lampenfelder der FF777, die als ODER in die AP-Felder
-            // gehen). Schilder -1 ON / 0 OFF / 1 AUTO (Tastenbilder; laut
-            // Michel vom baugleichen Notlichtschalter abgeleitet, am Zeichen
-            // selbst noch nicht bestaetigt).
-            DatarefOverride {
-                field: FieldId::ParkingBrake,
-                dataref: "CL650/pedestal/park_brake_value",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::Ff777ApL,
-                dataref: "CL650/lamps/glareshield/FCP/ap_eng_1",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::Ff777HdgHold,
-                dataref: "CL650/lamps/glareshield/FCP/hdg_1",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::Ff777AltHold,
-                dataref: "CL650/lamps/glareshield/FCP/alt_1",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::Ff777Lnav,
-                dataref: "CL650/lamps/glareshield/FCP/nav_1",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::Ff777App,
-                dataref: "CL650/lamps/glareshield/FCP/appr_1",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::Ff777At,
-                dataref: "CL650/lamps/glareshield/ats_L",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::FfAnschnallzeichen,
-                dataref: "CL650/overhead/signs/seatbelt_value",
-                mapping: ValueMapping::DetentTableAb(-1.0, CL650_SCHILDER),
-            },
-            DatarefOverride {
-                field: FieldId::FfRauchverbot,
-                dataref: "CL650/overhead/signs/no_smoking_value",
-                mapping: ValueMapping::DetentTableAb(-1.0, CL650_SCHILDER),
-            },
-        ],
-    },
-    // v0.12.6 — Rotate MD-11 (X-Plane 12). Pilot-Befund (Michel/GSG):
-    // treibt die Standard-Flaps-DataRef nicht → `flaps_position` blieb
-    // den ganzen Flug 0.0. Eigene DataRef in Grad statt Hebel-Index.
-    XplaneAircraftProfile {
-        name: "Rotate MD-11",
-        title_match: &["rotate", "md-11"],
-        probe_dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
-        titel_und_probe: false,
-        overrides: &[
-            DatarefOverride {
-                field: FieldId::FlapsHandle,
-                dataref: "Rotate/aircraft/systems/flaps_cmd_pos_deg",
-                mapping: ValueMapping::DegreeTable(MD11_FLAP_DEGREES),
-            },
-            // 28.10.2026 — P_-Profile v2.0 (Michel), Beta, alles noch nicht
-            // im Sim bestaetigt. Schilder 0 OFF / 1 AUTO / 2 ON und Nose 0 OFF
-            // / 1 TAXI / 2 T/O aus den Tastenbildern; Taxilicht brennt in
-            // TAXI und T/O. AP: das FCP hat keine Modus-Lampen; Michel nennt
-            // aus `MD-11-core.xpl` `fgs_autoflight` (AUTOFLIGHT) und
-            // `afs_appr_engaged` (APPR/LAND), Werte ungemessen — > 0.01 = an
-            // ueber die Lampenfelder.
-            DatarefOverride {
-                field: FieldId::FfAnschnallzeichen,
-                dataref: "Rotate/aircraft/controls/seatbelts_lts",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::FfRauchverbot,
-                dataref: "Rotate/aircraft/controls/nosmoke_lts",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::LightTaxi,
-                dataref: "Rotate/aircraft/controls/nose_lts",
-                mapping: ValueMapping::DetentTable(&[0.0, 1.0, 1.0]),
-            },
-            DatarefOverride {
-                field: FieldId::Ff777ApL,
-                dataref: "Rotate/aircraft/controls/fgs_autoflight",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::Ff777App,
-                dataref: "Rotate/aircraft/systems/afs_appr_engaged",
-                mapping: ValueMapping::Passthrough,
-            },
-        ],
-    },
-    // v0.17.x (#aircraft-scan): Laminar/Zibo Boeing 737-800(X). Die
-    // `laminar/B738/autopilot/*_status`-Datarefs sind X-Plane-KERN (Laminars
-    // Default-737) — sie gelten fuer den Standard-737 UND den Zibo (der Zibo
-    // erbt X-Planes 737-Systeme). Belegt ueber das Scan-Tool: der Standard-
-    // 737-Upload zeigt sie NICHT als Ordner-Strings (stecken im XP-Binary),
-    // waehrend der Zibo sie in `zibomod.xpl` referenziert. Das Paket bringt
-    // `B738_Datarefs.txt` mit ("AUTOPILOT LIGHTS (read only)") als Doku.
-    //
-    // Wir biegen die AP-MODUS-Felder auf die 737-echten MCP-Annunciator-
-    // Lights (0/1) — authentischer als die generischen sim/cockpit2-Status.
-    //
-    // ApMaster (01.10.2026, Michel THY 372, Zibo, Plugin 1.0): die alte
-    // Annahme „`servos_on` wird vom XP-Kern-Autopilot getrieben" war falsch —
-    // der Zibo fliegt mit eigenem Autopiloten, `servos_on` blieb 2,5 h auf 0,
-    // obwohl die Hoehe auf FL360 ueber 70 min nur 8,5 ft streute. Jetzt die
-    // CMD-A-Lampe (im Zibo-Scan belegt, `B738_Datarefs.txt` „AUTOPILOT
-    // LIGHTS"). CMD B kommt als eigene Quelle `B738CmdB` dazu
-    // (`dataref.rs`); der Autopilot gilt als an, wenn A ODER B leuchtet —
-    // auch CMD B allein (Copilot fliegt). Die CMD-A-Lampe gilt als Profil-
-    // Ersetzung sofort; die Katalogquelle CMD B wie jeder `laminar/…`-Name
-    // erst nach ihrem ersten Wert ≠ 0 (`plugin2_ziel::ist_kern`). Der
-    // Standard-737 von X-Plane 12 hat dieselben Lua-Datarefs (geprueft
-    // 01.10.2026: cmd_a/b_status, taxi_light_brightness_pos,
-    // capt_probes_pos; kein logo_light → Logo bleibt dort = Nav).
-    XplaneAircraftProfile {
-        name: "Laminar/Zibo 737-800",
-        title_match: &["boeing", "737-800"],
-        probe_dataref: "laminar/B738/autopilot/cmd_a_status",
-        titel_und_probe: false,
-        overrides: &[
-            DatarefOverride {
-                field: FieldId::ApMaster,
-                dataref: "laminar/B738/autopilot/cmd_a_status",
-                mapping: ValueMapping::Passthrough,
-            },
-            // Zibo-Audit 01.10.2026 (Michel THY 372): Taxilicht und
-            // Sonden-Heizung standen den ganzen Flug auf „aus“ — der Zibo
-            // setzt die Standard-Schalter nicht. Taxilicht: Helligkeits-
-            // stellung, an bei 2 (wie vmsACARS `Zibo738.js`); Sonden-Heizung:
-            // Kapitaensschalter (Doku „PROBES ANTI ICE CAPTAIN“, 0/1).
-            DatarefOverride {
-                field: FieldId::LightTaxi,
-                dataref: "laminar/B738/toggle_switch/taxi_light_brightness_pos",
-                mapping: ValueMapping::DetentTable(&[0.0, 0.0, 1.0]),
-            },
-            DatarefOverride {
-                field: FieldId::PitotHeat,
-                dataref: "laminar/B738/toggle_switch/capt_probes_pos",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::ApHeading,
-                dataref: "laminar/B738/autopilot/hdg_sel_status",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::ApAltitude,
-                dataref: "laminar/B738/autopilot/alt_hld_status",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::ApNav,
-                dataref: "laminar/B738/autopilot/lnav_status",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::ApApproach,
-                dataref: "laminar/B738/autopilot/app_status",
-                mapping: ValueMapping::Passthrough,
-            },
-        ],
-    },
-    // 05.10.2026 — FlightFactor 777v2 (X-Plane 12). Pilot-Befund Michel
-    // (SIA375 27.09., NWS419 05.10.): der Speedbrake-Hebel steht in ARMED
-    // auf +0.5 in `speedbrake_ratio` statt auf -0.5 — beide Fluege 0 → 0.5
-    // im Anflug, Sprung auf 1.0 genau beim Aufsetzen (Auto-Ausfahren,
-    // cockpit.pdf S. 72: „ARMED — after landing, automatically moves speed
-    // brake lever to UP“). `spoilers_armed` blieb dadurch immer false.
-    // Probe aus `cduDatarefs.txt` des Pakets („/ok int does cdu work“);
-    // `1-sim/…` tragen alle FlightFactor-Muster, der Titel „777“ auch die
-    // freie Stratosphere-777 — deshalb nur mit beidem.
-    XplaneAircraftProfile {
-        name: "FlightFactor 777",
-        title_match: &["777"],
-        probe_dataref: "1-sim/cduL/ok",
-        titel_und_probe: true,
-        overrides: &[DatarefOverride {
-            field: FieldId::SpoilersHandle,
-            dataref: "sim/cockpit2/controls/speedbrake_ratio",
-            mapping: ValueMapping::ArmedAt(0.5),
-        }],
-    },
-    // 25.10.2026 — FlightFactor 757 und 767 (X-Plane 12), Quelle: P_-Profile
-    // von Michel (GSG), alle neun Varianten mit denselben Datarefs.
-    // Fluegellicht und Autobrake liegen dort auf allgemeinen Namen
-    // (`anim/46/button`, `anim/rhotery/25`), die andere Add-ons anders
-    // belegen — deshalb nur hier, mit Titel UND Probe. Probe: Landelicht-
-    // Schalter links, in allen neun Varianten vorhanden.
-    XplaneAircraftProfile {
-        name: "FlightFactor 757",
-        title_match: &["757"],
-        probe_dataref: "1-sim/lights/landingL/switch",
-        titel_und_probe: true,
-        overrides: FF757_767_OVERRIDES,
-    },
-    XplaneAircraftProfile {
-        name: "FlightFactor 767",
-        title_match: &["767"],
-        probe_dataref: "1-sim/lights/landingL/switch",
-        titel_und_probe: true,
-        overrides: FF757_767_OVERRIDES,
-    },
-    // 28.10.2026 — Felis 747-200 / 747-200F, Quelle: P_-Profile v2.0 von
-    // Michel. Live-Abgleich: in beiden Oktober-Fluegen (02./13.10.) blieben
-    // alle AP-Felder, Autobrake und Fluegellicht den ganzen Flug aus.
-    // AP-Wahlschalter A/B 0 OFF / 1 MAN / 2 COMMAND; MAN zaehlt als an — der
-    // Autopilot ist dort eingekuppelt, der Pilot steuert ueber ihn. A und B
-    // gehen ueber die beiden Lampenfelder der FF777 (> 0.01) als ODER in
-    // `autopilot_master`. Autobrake (live gemessen) 0 OFF / 1 DISARM /
-    // 2 MIN / 3 MED / 4 MAX auf die FF777-Skala (MIN = „1", MED = „2").
-    // Der NAV-MODE-Waehler (0 INS … 4 LAND) bleibt aussen vor: er steht am
-    // Boden auf HDG, auch bei ausgeschaltetem Autopiloten.
-    XplaneAircraftProfile {
-        name: "Felis 747-200",
-        title_match: &["felis", "747"],
-        // NAV-MODE-Waehler: steht schon im geladenen Flugzeug auf HDG (1),
-        // traegt also auch ohne Web-API, wo eine Probe erst ab ≠ 0 zaehlt.
-        probe_dataref: "B742/AP_panel/AP_nav_mode_sel",
-        titel_und_probe: false,
-        overrides: &[
-            DatarefOverride {
-                field: FieldId::Ff777ApL,
-                dataref: "B742/AP_panel/AP_engage_A",
-                mapping: ValueMapping::DetentTable(&[0.0, 1.0, 1.0]),
-            },
-            DatarefOverride {
-                field: FieldId::Ff777ApR,
-                dataref: "B742/AP_panel/AP_engage_B",
-                mapping: ValueMapping::DetentTable(&[0.0, 1.0, 1.0]),
-            },
-            DatarefOverride {
-                field: FieldId::Ff777AltHold,
-                dataref: "B742/front_lamps/AP_alt_hold_lit",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::Ff777At,
-                dataref: "B742/front_lamps/AP_AT_on_lit",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::FfAutobrake,
-                dataref: "B742/OVHD/auto_brake_sel",
-                mapping: ValueMapping::DetentTable(&[1.0, 2.0, 3.0, 4.0, 7.0]),
-            },
-            DatarefOverride {
-                field: FieldId::FfFluegellicht,
-                dataref: "B742/ext_light/wing_sw",
-                mapping: ValueMapping::Passthrough,
-            },
-            // Schilder nur als Lampe (kein AUTO) → an = ON.
-            DatarefOverride {
-                field: FieldId::FfAnschnallzeichen,
-                dataref: "B742/ovhd_lamps/fasten_sbelts_but_lit",
-                mapping: ValueMapping::Schwelle(0.01, 2.0),
-            },
-            DatarefOverride {
-                field: FieldId::FfRauchverbot,
-                dataref: "B742/ovhd_lamps/no_smoking_but_lit",
-                mapping: ValueMapping::Schwelle(0.01, 2.0),
-            },
-        ],
-    },
-    // 28.10.2026 — FlyJSim Dash 8-400 (Q4XP), P_-Profile v2.0. Kollisions-
-    // licht kommt schon ueber `Q4xpKollisionslicht` (dataref.rs). Hier die
-    // Kippschalter 0/1 fuer Fluegel (WING INSP), Anschnall- und Rauchverbots-
-    // zeichen (an = ON). Klappen laufen ueber den Standard (im Flug vom
-    // 28.09. belegt). Fuer AP-Modi gibt es keine Quelle: das FGCP hat keine
-    // Lampen, das FMA (`FJS/Q4XP/FMA/*`) liefert Zahlencodes, deren
-    // Bedeutung Michel noch misst.
-    XplaneAircraftProfile {
-        name: "FlyJSim Q4XP",
-        title_match: &["dash 8", "q400"],
-        probe_dataref: "FJS/Q4XP/FlightControls/FlapsHandle",
-        titel_und_probe: false,
-        overrides: &[
-            DatarefOverride {
-                field: FieldId::FfFluegellicht,
-                dataref: "FJS/Q4XP/Manips/TwoSwitch_Anim[22]",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::FfAnschnallzeichen,
-                dataref: "FJS/Q4XP/Manips/TwoSwitch_Anim[34]",
-                mapping: ValueMapping::Schwelle(0.5, 2.0),
-            },
-            DatarefOverride {
-                field: FieldId::FfRauchverbot,
-                dataref: "FJS/Q4XP/Manips/TwoSwitch_Anim[35]",
-                mapping: ValueMapping::Schwelle(0.5, 2.0),
-            },
-        ],
-    },
-    // 28.10.2026 — DeltaWing ATR 72-600 (`DWSim/ATR_Series`), P_-Profile
-    // v2.0, Beta: noch kein Flug mit AeroACARS, Werte aus den Tasten-
-    // bildern. Lichter und Schilder 0/1; Parkbremse 0 OFF / 0.5 HALB /
-    // 1 PARK (nur PARK zaehlt, `parking_brake` > 0.5); Klappenhebel in Grad
-    // 0/15/30, Landeklappen 30; AP aus der AP-Lampe links. Der acf-Titel
-    // ist unbekannt — Erkennung nur ueber die Probe.
-    XplaneAircraftProfile {
-        name: "DeltaWing ATR 72-600",
-        title_match: &[],
-        // Parkbremse: im abgestellten Flugzeug auf PARK (1) — ohne Titel muss
-        // die Probe auch ohne Web-API (erst ab ≠ 0) tragen.
-        probe_dataref: "DWSim/ATR_Series/datarefs/throttleQuadrant/parkingBrake/movement",
-        titel_und_probe: false,
-        overrides: &[
-            DatarefOverride {
-                field: FieldId::LightBeacon,
-                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/beaconSwitch",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::LightStrobe,
-                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/strobeSwitch",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::LightNav,
-                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/navSwitch",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::LightTaxi,
-                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/taxiToSwitch",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::LightLanding,
-                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/landingLSwitch",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::FfFluegellicht,
-                dataref: "DWSim/ATR_Series/datarefs/overhead/extLt/wingSwitch",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::FfAnschnallzeichen,
-                dataref: "DWSim/ATR_Series/datarefs/overhead/signs/seatBeltsSwitch",
-                mapping: ValueMapping::Schwelle(0.5, 2.0),
-            },
-            DatarefOverride {
-                field: FieldId::FfRauchverbot,
-                dataref: "DWSim/ATR_Series/datarefs/overhead/signs/noDeviceSwitch",
-                mapping: ValueMapping::Schwelle(0.5, 2.0),
-            },
-            DatarefOverride {
-                field: FieldId::Ff777ApL,
-                dataref: "DWSim/ATR_Series/lit/front/afcs/apLeft",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::ParkingBrake,
-                dataref: "DWSim/ATR_Series/datarefs/throttleQuadrant/parkingBrake/movement",
-                mapping: ValueMapping::Passthrough,
-            },
-            DatarefOverride {
-                field: FieldId::FlapsHandle,
-                dataref: "DWSim/ATR_Series/datarefs/throttleQuadrant/flapsLever/rotation",
-                mapping: ValueMapping::DegreeTable(ATR72_FLAP_DEGREES),
-            },
-        ],
-    },
-];
+/// Alle bekannten Profile (LE2) aus dem Laufzeit-Paket. Das erste, dessen
+/// Erkennung passt, gewinnt.
+pub fn profile() -> &'static [XplaneAircraftProfile] {
+    match QUELLE.get() {
+        Some(quelle) => quelle(),
+        None => {
+            static EIGEN: std::sync::OnceLock<&'static [XplaneAircraftProfile]> = std::sync::OnceLock::new();
+            EIGEN.get_or_init(|| profile_lesen(EINGEBAUT).expect("eingebaute X-Plane-Profile"))
+        }
+    }
+}
 
-/// CL650-Schilder ab Rohwert -1: -1 ON, 0 OFF, 1 AUTO → 2/0/1.
-const CL650_SCHILDER: &[f32] = &[2.0, 0.0, 1.0];
+/// Meldet die Quelle der Profile an (einmal je Lauf). `false`, wenn schon
+/// eine angemeldet ist.
+pub fn profile_quelle_setzen(quelle: fn() -> &'static [XplaneAircraftProfile]) -> bool {
+    QUELLE.set(quelle).is_ok()
+}
 
-/// ATR 72-600 Klappenhebel in Grad → interner Anteil; 30 = Landeklappen
-/// (Landing-Config ab 0.70), 15 nicht.
-pub const ATR72_FLAP_DEGREES: &[(f32, f32)] = &[(0.0, 0.0), (15.0, 0.5), (30.0, 1.0)];
+/// Prueft `profile/xplane.json` wie [`profile_lesen`], ohne etwas dauerhaft
+/// abzulegen (Selbsttest eines heruntergeladenen Stands, Codex 29.10.).
+pub fn profile_pruefen(json: &str) -> Result<(), String> {
+    datei_lesen(json).map(|_| ())
+}
 
-/// Gemeinsame Umbiegungen der FF757/767 (Werte „live bestaetigt" laut
-/// P_-Profilen: Autobrake RTO = -1 … MAX AUTO = 6).
-const FF757_767_OVERRIDES: &[DatarefOverride] = &[
-    DatarefOverride {
-        field: FieldId::FfFluegellicht,
-        dataref: "anim/46/button",
-        mapping: ValueMapping::Passthrough,
-    },
-    DatarefOverride {
-        field: FieldId::FfAutobrake,
-        dataref: "anim/rhotery/25",
-        mapping: ValueMapping::Versatz(1.0),
-    },
-];
+/// Liest `profile/xplane.json`. Unbekannte oder fehlende Felder sind ein
+/// Lesefehler (fail-closed, P-3.65); die Notizen bleiben in der Datei.
+/// Das Ergebnis lebt bis Programmende (einmal je Lauf, P-3.02).
+pub fn profile_lesen(json: &str) -> Result<&'static [XplaneAircraftProfile], String> {
+    fn s(x: String) -> &'static str {
+        Box::leak(x.into_boxed_str())
+    }
+    let d = datei_lesen(json)?;
+    let profile: Vec<XplaneAircraftProfile> = d
+        .profile
+        .into_iter()
+        .map(|p| XplaneAircraftProfile {
+            name: s(p.name),
+            title_match: Box::leak(p.title_match.into_iter().map(s).collect()),
+            probe_dataref: s(p.probe_dataref),
+            titel_und_probe: p.titel_und_probe,
+            overrides: Box::leak(
+                p.overrides
+                    .into_iter()
+                    .map(|o| DatarefOverride {
+                        field: o.field,
+                        dataref: s(o.dataref),
+                        mapping: match o.mapping {
+                            AbbildungDatei::Passthrough => ValueMapping::Passthrough,
+                            AbbildungDatei::DetentTable(t) => ValueMapping::DetentTable(Box::leak(t.into())),
+                            AbbildungDatei::DegreeTable(t) => ValueMapping::DegreeTable(Box::leak(t.into())),
+                            AbbildungDatei::ArmedAt(v) => ValueMapping::ArmedAt(v),
+                            AbbildungDatei::Versatz(v) => ValueMapping::Versatz(v),
+                            AbbildungDatei::DetentTableAb(a, t) => ValueMapping::DetentTableAb(a, Box::leak(t.into())),
+                            AbbildungDatei::Schwelle(a, b) => ValueMapping::Schwelle(a, b),
+                        },
+                    })
+                    .collect(),
+            ),
+        })
+        .collect();
+    Ok(Box::leak(profile.into()))
+}
+
+// Dateiform von `profile/xplane.json`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Datei {
+    format: u32,
+    profile: Vec<ProfilDatei>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfilDatei {
+    name: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    notiz: Vec<String>,
+    title_match: Vec<String>,
+    probe_dataref: String,
+    titel_und_probe: bool,
+    overrides: Vec<ErsetzungDatei>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ErsetzungDatei {
+    field: FieldId,
+    dataref: String,
+    mapping: AbbildungDatei,
+    #[serde(default)]
+    #[allow(dead_code)]
+    notiz: Vec<String>,
+}
+#[derive(serde::Deserialize)]
+#[serde(tag = "art", content = "werte", deny_unknown_fields)]
+enum AbbildungDatei {
+    Passthrough,
+    DetentTable(Vec<f32>),
+    DegreeTable(Vec<(f32, f32)>),
+    ArmedAt(f32),
+    Versatz(f32),
+    DetentTableAb(f32, Vec<f32>),
+    Schwelle(f32, f32),
+}
+
+fn datei_lesen(json: &str) -> Result<Datei, String> {
+    let d: Datei = serde_json::from_str(json).map_err(|e| format!("profile/xplane.json: {e}"))?;
+    if d.format != 1 {
+        return Err(format!("profile/xplane.json: Format {} unbekannt", d.format));
+    }
+    Ok(d)
+}
 
 /// Profilwechsel: Add-on-Felder, die das bisherige Profil aus einem eigenen
 /// Namen las (FF757/767-Fluegellicht), vergessen — sonst bliebe der letzte
@@ -627,10 +295,10 @@ pub fn profil_ersetzungen_leeren(
     if alt == neu {
         return;
     }
-    let Some(p) = alt.and_then(|pi| PROFILES.get(pi)) else {
+    let Some(p) = alt.and_then(|pi| profile().get(pi)) else {
         return;
     };
-    let weiter: &[DatarefOverride] = neu.and_then(|pi| PROFILES.get(pi)).map_or(&[], |n| n.overrides);
+    let weiter: &[DatarefOverride] = neu.and_then(|pi| profile().get(pi)).map_or(&[], |n| n.overrides);
     for o in p.overrides {
         let bleibt = weiter.iter().any(|n| n.field == o.field && n.dataref == o.dataref);
         if crate::dataref::addon_quelle(o.field) && !bleibt {
@@ -643,7 +311,7 @@ pub fn profil_ersetzungen_leeren(
 /// die zusaetzlich die Probe brauchen (`titel_und_probe`), zaehlen hier
 /// nicht.
 pub fn profile_index_for_title(title: &str) -> Option<usize> {
-    PROFILES
+    profile()
         .iter()
         .position(|p| !p.titel_und_probe && p.matches_title(title))
 }
@@ -691,8 +359,46 @@ pub fn build_active_catalog(profile: Option<&XplaneAircraftProfile>) -> Vec<Acti
 mod tests {
     use super::*;
 
+    /// Die Profile im Paket sind genau die der Konstante `profile()` aus
+    /// 2.1.24 (Etappe 1b, P-3.66): Abdruck (FNV-1a) der Debug-Ausgabe, vor
+    /// dem Entfernen der Konstante gegen sie verglichen. Aendert sich ein
+    /// Profil bewusst, wird der Abdruck mit Begruendung nachgezogen.
+    #[test]
+    fn profile_wie_2_1_24() {
+        let text = format!("{:?}", profile_lesen(EINGEBAUT).unwrap());
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in text.bytes() {
+            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+        assert_eq!((h, text.len()), (0x7c32f08235675c96, 7838));
+    }
+
+    #[test]
+    fn fremdes_oder_fehlendes_feld_ist_ein_lesefehler() {
+        let gut: serde_json::Value = serde_json::from_str(EINGEBAUT).unwrap();
+        let mut fremd = gut.clone();
+        fremd["profile"][0]["unbekannt"] = serde_json::json!(1);
+        assert!(profile_lesen(&fremd.to_string()).is_err());
+        let mut ohne = gut.clone();
+        ohne["profile"][0].as_object_mut().unwrap().remove("probe_dataref");
+        assert!(profile_lesen(&ohne.to_string()).is_err());
+        let mut format = gut;
+        format["format"] = serde_json::json!(2);
+        assert!(profile_lesen(&format.to_string()).is_err());
+    }
+
+    /// Umrechnung eines Profils aus dem Paket (statt der frueheren Konstanten).
+    fn abbildung(name: &str, feld: FieldId) -> ValueMapping {
+        profile()
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| p.overrides.iter().find(|o| o.field == feld))
+            .map(|o| o.mapping)
+            .expect(name)
+    }
+
     fn cl650() -> &'static XplaneAircraftProfile {
-        &PROFILES[0]
+        &profile()[0]
     }
 
     #[test]
@@ -716,7 +422,7 @@ mod tests {
             Some(0),
         );
         // Seit 28.10.2026 hat die Felis ein eigenes Profil, nicht das CL650.
-        let felis = PROFILES.iter().position(|p| p.name == "Felis 747-200");
+        let felis = profile().iter().position(|p| p.name == "Felis 747-200");
         assert!(felis.is_some());
         assert_eq!(profile_index_for_title("Felis 747-200"), felis);
         assert_eq!(profile_index_for_title("Boeing 747-400"), None);
@@ -724,7 +430,7 @@ mod tests {
 
     #[test]
     fn flaps_detent_table_maps_lever_to_ratio() {
-        let m = ValueMapping::DetentTable(CL650_FLAP_DETENTS);
+        let m = abbildung("Hot Start CL650", FieldId::FlapsHandle);
         assert_eq!(m.map(0.0), Some(0.0));
         assert_eq!(m.map(1.0), Some(0.45));
         assert_eq!(m.map(2.0), Some(0.80));
@@ -733,28 +439,28 @@ mod tests {
 
     #[test]
     fn flaps_lever_0_and_1_not_landing_config() {
-        let m = ValueMapping::DetentTable(CL650_FLAP_DETENTS);
+        let m = abbildung("Hot Start CL650", FieldId::FlapsHandle);
         assert!(m.map(0.0).unwrap() < 0.70);
         assert!(m.map(1.0).unwrap() < 0.70);
     }
 
     #[test]
     fn flaps_lever_2_and_3_are_landing_config() {
-        let m = ValueMapping::DetentTable(CL650_FLAP_DETENTS);
+        let m = abbildung("Hot Start CL650", FieldId::FlapsHandle);
         assert!(m.map(2.0).unwrap() >= 0.70);
         assert!(m.map(3.0).unwrap() >= 0.70);
     }
 
     #[test]
     fn detent_table_nonfinite_yields_no_value() {
-        let m = ValueMapping::DetentTable(CL650_FLAP_DETENTS);
+        let m = abbildung("Hot Start CL650", FieldId::FlapsHandle);
         assert_eq!(m.map(f32::NAN), None);
         assert_eq!(m.map(f32::INFINITY), None);
     }
 
     #[test]
     fn detent_table_rejects_non_integer_value() {
-        let m = ValueMapping::DetentTable(CL650_FLAP_DETENTS);
+        let m = abbildung("Hot Start CL650", FieldId::FlapsHandle);
         // 1.51 must NOT snap onto detent 2 (LE7 / QS-R2-P2).
         assert_eq!(m.map(1.51), None);
         assert_eq!(m.map(1.49), None);
@@ -764,7 +470,7 @@ mod tests {
 
     #[test]
     fn detent_table_out_of_range_yields_no_value() {
-        let m = ValueMapping::DetentTable(CL650_FLAP_DETENTS);
+        let m = abbildung("Hot Start CL650", FieldId::FlapsHandle);
         assert_eq!(m.map(-1.0), None);
         assert_eq!(m.map(4.0), None);
     }
@@ -779,7 +485,7 @@ mod tests {
 
     #[test]
     fn md11_degree_table_maps_each_detent() {
-        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        let m = abbildung("Rotate MD-11", FieldId::FlapsHandle);
         assert_eq!(m.map(0.0), Some(0.0));
         assert_eq!(m.map(15.0), Some(0.30));
         assert_eq!(m.map(28.0), Some(0.55));
@@ -790,14 +496,14 @@ mod tests {
     #[test]
     fn md11_flaps_35_and_50_are_landing_config() {
         // LANDING-CONFIG-Check ist `flaps_position >= 0.70`.
-        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        let m = abbildung("Rotate MD-11", FieldId::FlapsHandle);
         assert!(m.map(35.0).unwrap() >= 0.70);
         assert!(m.map(50.0).unwrap() >= 0.70);
     }
 
     #[test]
     fn md11_flaps_0_15_28_are_not_landing_config() {
-        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        let m = abbildung("Rotate MD-11", FieldId::FlapsHandle);
         assert!(m.map(0.0).unwrap() < 0.70);
         assert!(m.map(15.0).unwrap() < 0.70);
         assert!(m.map(28.0).unwrap() < 0.70);
@@ -806,7 +512,7 @@ mod tests {
     #[test]
     fn md11_degree_table_snaps_to_nearest_detent() {
         // Ein leichter Float-Wackler um eine Raste herum snappt sauber.
-        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        let m = abbildung("Rotate MD-11", FieldId::FlapsHandle);
         assert_eq!(m.map(34.6), Some(0.80));
         assert_eq!(m.map(15.4), Some(0.30));
         // Mitten zwischen 28 und 35 → näher an 28.
@@ -815,14 +521,14 @@ mod tests {
 
     #[test]
     fn degree_table_nonfinite_yields_no_value() {
-        let m = ValueMapping::DegreeTable(MD11_FLAP_DEGREES);
+        let m = abbildung("Rotate MD-11", FieldId::FlapsHandle);
         assert_eq!(m.map(f32::NAN), None);
         assert_eq!(m.map(f32::INFINITY), None);
     }
 
     #[test]
     fn md11_profile_matches_title() {
-        let md11 = PROFILES
+        let md11 = profile()
             .iter()
             .find(|p| p.name == "Rotate MD-11")
             .expect("MD-11 profile present");
@@ -833,7 +539,7 @@ mod tests {
 
     #[test]
     fn md11_active_catalog_overrides_flaps() {
-        let md11 = PROFILES
+        let md11 = profile()
             .iter()
             .find(|p| p.name == "Rotate MD-11")
             .expect("MD-11 profile present");
@@ -848,7 +554,7 @@ mod tests {
 
     #[test]
     fn zibo737_profile_matches_both_variants() {
-        let z = PROFILES
+        let z = profile()
             .iter()
             .find(|p| p.name == "Laminar/Zibo 737-800")
             .expect("Zibo 737 profile present");
@@ -862,7 +568,7 @@ mod tests {
 
     #[test]
     fn zibo737_active_catalog_overrides_ap_modes_and_master() {
-        let z = PROFILES
+        let z = profile()
             .iter()
             .find(|p| p.name == "Laminar/Zibo 737-800")
             .expect("Zibo 737 profile present");
@@ -952,7 +658,7 @@ mod tests {
     }
 
     fn profil(name: &str) -> &'static XplaneAircraftProfile {
-        PROFILES.iter().find(|p| p.name == name).expect(name)
+        profile().iter().find(|p| p.name == name).expect(name)
     }
 
     /// Titel wie in den GSG-Flugprotokollen (25.10.2026).
@@ -988,7 +694,7 @@ mod tests {
         }
         // Profilwechsel (RREF und Plugin) leert die Ersetzungen des alten
         // Profils, nicht die Felder anderer Quellen.
-        let pi = PROFILES.iter().position(|p| p.name == "FlightFactor 757").unwrap();
+        let pi = profile().iter().position(|p| p.name == "FlightFactor 757").unwrap();
         let mut s = crate::dataref::XPlaneState::default();
         s.apply_field(FieldId::FfFluegellicht, 1.0);
         s.apply_field(FieldId::FfAutobrake, 3.0);
@@ -997,13 +703,13 @@ mod tests {
         assert_eq!(s.ff_fluegellicht, Some(true), "gleiches Profil: nichts");
         // FF757 → FF767: dieselben Ersetzungen, der Wert bleibt (Codex-QS
         // Runde 3, Rueckfall Plugin → RREF).
-        let pi767 = PROFILES.iter().position(|p| p.name == "FlightFactor 767").unwrap();
+        let pi767 = profile().iter().position(|p| p.name == "FlightFactor 767").unwrap();
         profil_ersetzungen_leeren(&mut s, Some(pi), Some(pi767));
         assert_eq!(s.ff_fluegellicht, Some(true));
         assert_eq!(s.ff_autobrake, Some(3.0));
         // FF757 → FF777: das FF777-Profil ersetzt nur den Speedbrake —
         // Fluegellicht/Autobrake aus anim/* muessen weg.
-        let pi777 = PROFILES.iter().position(|p| p.name == "FlightFactor 777").unwrap();
+        let pi777 = profile().iter().position(|p| p.name == "FlightFactor 777").unwrap();
         let mut t = crate::dataref::XPlaneState::default();
         t.apply_field(FieldId::FfFluegellicht, 1.0);
         profil_ersetzungen_leeren(&mut t, Some(pi), Some(pi777));
@@ -1020,7 +726,7 @@ mod tests {
 
     #[test]
     fn neue_umrechnungen_ab_und_schwelle() {
-        let ab = ValueMapping::DetentTableAb(-1.0, CL650_SCHILDER);
+        let ab = abbildung("Hot Start CL650", FieldId::FfAnschnallzeichen);
         assert_eq!(ab.map(-1.0), Some(2.0));
         assert_eq!(ab.map(0.0), Some(0.0));
         assert_eq!(ab.map(1.0), Some(1.0));
@@ -1215,8 +921,8 @@ mod tests {
     /// neue Profil, der ATR nur ueber die Probe.
     #[test]
     fn neue_profile_werden_erkannt() {
-        let idx = |n: &str| PROFILES.iter().position(|p| p.name == n).unwrap();
-        let keine = vec![false; PROFILES.len()];
+        let idx = |n: &str| profile().iter().position(|p| p.name == n).unwrap();
+        let keine = vec![false; profile().len()];
         let wahl = |titel: Option<&str>, probe: Option<usize>| {
             let mut frisch = keine.clone();
             if let Some(pi) = probe {
@@ -1232,8 +938,8 @@ mod tests {
         }
         // Jede Probe gehoert nur einem Profil (ausser FF757/767, die sich
         // ueber den Titel trennen).
-        for (i, p) in PROFILES.iter().enumerate() {
-            for q in &PROFILES[i + 1..] {
+        for (i, p) in profile().iter().enumerate() {
+            for q in &profile()[i + 1..] {
                 if p.probe_dataref == q.probe_dataref {
                     assert!(p.titel_und_probe && q.titel_und_probe, "{} / {}", p.name, q.name);
                 }
@@ -1253,7 +959,7 @@ mod tests {
     #[test]
     fn neue_profile_leeren_ihre_ersetzungen() {
         for name in ["Felis 747-200", "FlyJSim Q4XP", "DeltaWing ATR 72-600", "Hot Start CL650"] {
-            let pi = PROFILES.iter().position(|p| p.name == name).unwrap();
+            let pi = profile().iter().position(|p| p.name == name).unwrap();
             let mut s = crate::dataref::XPlaneState::default();
             s.apply_field(FieldId::FfFluegellicht, 1.0);
             s.apply_field(FieldId::FfAnschnallzeichen, 2.0);

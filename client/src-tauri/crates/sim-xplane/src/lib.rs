@@ -73,6 +73,7 @@ pub use plugin2::PLUGIN2_PORT;
 pub use plugin2_ziel::PluginZugang;
 pub use premium::{PremiumStatus, PremiumTouchdown, PREMIUM_UDP_PORT};
 pub use probe::is_xplane_running;
+pub use profile::{profile_lesen, profile_pruefen, profile_quelle_setzen, XplaneAircraftProfile, EINGEBAUT as PROFILE_EINGEBAUT};
 
 /// Default UDP port X-Plane listens on. Subscriptions get sent here.
 pub const XPLANE_LISTEN_PORT: u16 = 49000;

@@ -1,0 +1,729 @@
+{
+  "format": 1,
+  "profile": [
+    {
+      "name": "Hot Start CL650",
+      "notiz": [
+        "Hot-Start Challenger 650 (X-Aviation). GSG225-Befund: treibt die",
+        "Standard-Flaps-DataRef nicht."
+      ],
+      "title_match": [
+        "challenger 650",
+        "x-aviation"
+      ],
+      "probe_dataref": "abus/CL650/ARINC429/L-DCU-7/words/FCTL/0/FLAPS_LVR",
+      "titel_und_probe": false,
+      "overrides": [
+        {
+          "field": "FlapsHandle",
+          "dataref": "abus/CL650/ARINC429/L-DCU-7/words/FCTL/0/FLAPS_LVR",
+          "mapping": {
+            "art": "DetentTable",
+            "werte": [
+              0.0,
+              0.45,
+              0.8,
+              1.0
+            ]
+          },
+          "notiz": [
+            "CL650 flap-lever detent → internal `flaps_position`. Verified against",
+            "the Hot-Start CL650 documentation (`Wires.txt`, module `FLAP_IND`):",
+            "lever 0/1/2/3 = flaps 0°/20°/30°/45°. The internal LANDING-CONFIG",
+            "check is `flaps_position >= 0.70`, so lever 2 (Flaps 30) and 3",
+            "(Flaps 45) count as landing config, lever 0/1 (Flaps 0/20) do not."
+          ]
+        },
+        {
+          "field": "BatteryMaster",
+          "dataref": "abus/CL650/modules/DC_ELEC/0/wires/BATT_CTRL_PWR",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "LightBeacon",
+          "dataref": "CL650/overhead/ext_lts/beacon",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "LightTaxi",
+          "dataref": "CL650/overhead/land_lts/recog_taxi",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "ParkingBrake",
+          "dataref": "CL650/pedestal/park_brake_value",
+          "mapping": {
+            "art": "Passthrough"
+          },
+          "notiz": [
+            "28.10.2026 — P_-Profile v2.0 (Michel). Live-Abgleich: im",
+            "letzten CL650-Flug (19.10.) blieben Parkbremse und alle AP-",
+            "Felder den ganzen Flug aus. Parkbremse = Hebelstellung 0/1;",
+            "AP aus den FCP-Lampen der Kapitaensseite (> 0.01 = an, ueber",
+            "die Lampenfelder der FF777, die als ODER in die AP-Felder",
+            "gehen). Schilder -1 ON / 0 OFF / 1 AUTO (Tastenbilder; laut",
+            "Michel vom baugleichen Notlichtschalter abgeleitet, am Zeichen",
+            "selbst noch nicht bestaetigt)."
+          ]
+        },
+        {
+          "field": "Ff777ApL",
+          "dataref": "CL650/lamps/glareshield/FCP/ap_eng_1",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "Ff777HdgHold",
+          "dataref": "CL650/lamps/glareshield/FCP/hdg_1",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "Ff777AltHold",
+          "dataref": "CL650/lamps/glareshield/FCP/alt_1",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "Ff777Lnav",
+          "dataref": "CL650/lamps/glareshield/FCP/nav_1",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "Ff777App",
+          "dataref": "CL650/lamps/glareshield/FCP/appr_1",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "Ff777At",
+          "dataref": "CL650/lamps/glareshield/ats_L",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "FfAnschnallzeichen",
+          "dataref": "CL650/overhead/signs/seatbelt_value",
+          "mapping": {
+            "art": "DetentTableAb",
+            "werte": [
+              -1.0,
+              [
+                2.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          "notiz": [
+            "CL650-Schilder ab Rohwert -1: -1 ON, 0 OFF, 1 AUTO → 2/0/1."
+          ]
+        },
+        {
+          "field": "FfRauchverbot",
+          "dataref": "CL650/overhead/signs/no_smoking_value",
+          "mapping": {
+            "art": "DetentTableAb",
+            "werte": [
+              -1.0,
+              [
+                2.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          "notiz": [
+            "CL650-Schilder ab Rohwert -1: -1 ON, 0 OFF, 1 AUTO → 2/0/1."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rotate MD-11",
+      "notiz": [
+        "v0.12.6 — Rotate MD-11 (X-Plane 12). Pilot-Befund (Michel/GSG):",
+        "treibt die Standard-Flaps-DataRef nicht → `flaps_position` blieb",
+        "den ganzen Flug 0.0. Eigene DataRef in Grad statt Hebel-Index."
+      ],
+      "title_match": [
+        "rotate",
+        "md-11"
+      ],
+      "probe_dataref": "Rotate/aircraft/systems/flaps_cmd_pos_deg",
+      "titel_und_probe": false,
+      "overrides": [
+        {
+          "field": "FlapsHandle",
+          "dataref": "Rotate/aircraft/systems/flaps_cmd_pos_deg",
+          "mapping": {
+            "art": "DegreeTable",
+            "werte": [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                15.0,
+                0.3
+              ],
+              [
+                28.0,
+                0.55
+              ],
+              [
+                35.0,
+                0.8
+              ],
+              [
+                50.0,
+                1.0
+              ]
+            ]
+          },
+          "notiz": [
+            "v0.12.6: Rotate MD-11 flap detents → internal `flaps_position` ratio.",
+            "`Rotate/aircraft/systems/flaps_cmd_pos_deg` reports the commanded",
+            "flap angle in degrees (0/15/28/35/50). Die MD-11 treibt — wie der",
+            "CL650 — die Standard-Flaps-DataRef nicht; ohne dieses Mapping bleibt",
+            "`flaps_position` den ganzen Flug 0.0 → LANDING-CONFIG „INCOMPLETE\".",
+            "Der interne Check ist `flaps_position >= 0.70`: Flaps 35 + 50 (die",
+            "MD-11-Landeklappen) zählen als Landing-Config, 0/15/28 nicht."
+          ]
+        },
+        {
+          "field": "FfAnschnallzeichen",
+          "dataref": "Rotate/aircraft/controls/seatbelts_lts",
+          "mapping": {
+            "art": "Passthrough"
+          },
+          "notiz": [
+            "28.10.2026 — P_-Profile v2.0 (Michel), Beta, alles noch nicht",
+            "im Sim bestaetigt. Schilder 0 OFF / 1 AUTO / 2 ON und Nose 0 OFF",
+            "/ 1 TAXI / 2 T/O aus den Tastenbildern; Taxilicht brennt in",
+            "TAXI und T/O. AP: das FCP hat keine Modus-Lampen; Michel nennt",
+            "aus `MD-11-core.xpl` `fgs_autoflight` (AUTOFLIGHT) und",
+            "`afs_appr_engaged` (APPR/LAND), Werte ungemessen — > 0.01 = an",
+            "ueber die Lampenfelder."
+          ]
+        },
+        {
+          "field": "FfRauchverbot",
+          "dataref": "Rotate/aircraft/controls/nosmoke_lts",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "LightTaxi",
+          "dataref": "Rotate/aircraft/controls/nose_lts",
+          "mapping": {
+            "art": "DetentTable",
+            "werte": [
+              0.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "field": "Ff777ApL",
+          "dataref": "Rotate/aircraft/controls/fgs_autoflight",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "Ff777App",
+          "dataref": "Rotate/aircraft/systems/afs_appr_engaged",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Laminar/Zibo 737-800",
+      "notiz": [
+        "v0.17.x (#aircraft-scan): Laminar/Zibo Boeing 737-800(X). Die",
+        "`laminar/B738/autopilot/*_status`-Datarefs sind X-Plane-KERN (Laminars",
+        "Default-737) — sie gelten fuer den Standard-737 UND den Zibo (der Zibo",
+        "erbt X-Planes 737-Systeme). Belegt ueber das Scan-Tool: der Standard-",
+        "737-Upload zeigt sie NICHT als Ordner-Strings (stecken im XP-Binary),",
+        "waehrend der Zibo sie in `zibomod.xpl` referenziert. Das Paket bringt",
+        "`B738_Datarefs.txt` mit (\"AUTOPILOT LIGHTS (read only)\") als Doku.",
+        "",
+        "Wir biegen die AP-MODUS-Felder auf die 737-echten MCP-Annunciator-",
+        "Lights (0/1) — authentischer als die generischen sim/cockpit2-Status.",
+        "",
+        "ApMaster (01.10.2026, Michel THY 372, Zibo, Plugin 1.0): die alte",
+        "Annahme „`servos_on` wird vom XP-Kern-Autopilot getrieben\" war falsch —",
+        "der Zibo fliegt mit eigenem Autopiloten, `servos_on` blieb 2,5 h auf 0,",
+        "obwohl die Hoehe auf FL360 ueber 70 min nur 8,5 ft streute. Jetzt die",
+        "CMD-A-Lampe (im Zibo-Scan belegt, `B738_Datarefs.txt` „AUTOPILOT",
+        "LIGHTS\"). CMD B kommt als eigene Quelle `B738CmdB` dazu",
+        "(`dataref.rs`); der Autopilot gilt als an, wenn A ODER B leuchtet —",
+        "auch CMD B allein (Copilot fliegt). Die CMD-A-Lampe gilt als Profil-",
+        "Ersetzung sofort; die Katalogquelle CMD B wie jeder `laminar/…`-Name",
+        "erst nach ihrem ersten Wert ≠ 0 (`plugin2_ziel::ist_kern`). Der",
+        "Standard-737 von X-Plane 12 hat dieselben Lua-Datarefs (geprueft",
+        "01.10.2026: cmd_a/b_status, taxi_light_brightness_pos,",
+        "capt_probes_pos; kein logo_light → Logo bleibt dort = Nav)."
+      ],
+      "title_match": [
+        "boeing",
+        "737-800"
+      ],
+      "probe_dataref": "laminar/B738/autopilot/cmd_a_status",
+      "titel_und_probe": false,
+      "overrides": [
+        {
+          "field": "ApMaster",
+          "dataref": "laminar/B738/autopilot/cmd_a_status",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "LightTaxi",
+          "dataref": "laminar/B738/toggle_switch/taxi_light_brightness_pos",
+          "mapping": {
+            "art": "DetentTable",
+            "werte": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          },
+          "notiz": [
+            "Zibo-Audit 01.10.2026 (Michel THY 372): Taxilicht und",
+            "Sonden-Heizung standen den ganzen Flug auf „aus“ — der Zibo",
+            "setzt die Standard-Schalter nicht. Taxilicht: Helligkeits-",
+            "stellung, an bei 2 (wie vmsACARS `Zibo738.js`); Sonden-Heizung:",
+            "Kapitaensschalter (Doku „PROBES ANTI ICE CAPTAIN“, 0/1)."
+          ]
+        },
+        {
+          "field": "PitotHeat",
+          "dataref": "laminar/B738/toggle_switch/capt_probes_pos",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "ApHeading",
+          "dataref": "laminar/B738/autopilot/hdg_sel_status",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "ApAltitude",
+          "dataref": "laminar/B738/autopilot/alt_hld_status",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "ApNav",
+          "dataref": "laminar/B738/autopilot/lnav_status",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "ApApproach",
+          "dataref": "laminar/B738/autopilot/app_status",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        }
+      ]
+    },
+    {
+      "name": "FlightFactor 777",
+      "notiz": [
+        "05.10.2026 — FlightFactor 777v2 (X-Plane 12). Pilot-Befund Michel",
+        "(SIA375 27.09., NWS419 05.10.): der Speedbrake-Hebel steht in ARMED",
+        "auf +0.5 in `speedbrake_ratio` statt auf -0.5 — beide Fluege 0 → 0.5",
+        "im Anflug, Sprung auf 1.0 genau beim Aufsetzen (Auto-Ausfahren,",
+        "cockpit.pdf S. 72: „ARMED — after landing, automatically moves speed",
+        "brake lever to UP“). `spoilers_armed` blieb dadurch immer false.",
+        "Probe aus `cduDatarefs.txt` des Pakets („/ok int does cdu work“);",
+        "`1-sim/…` tragen alle FlightFactor-Muster, der Titel „777“ auch die",
+        "freie Stratosphere-777 — deshalb nur mit beidem."
+      ],
+      "title_match": [
+        "777"
+      ],
+      "probe_dataref": "1-sim/cduL/ok",
+      "titel_und_probe": true,
+      "overrides": [
+        {
+          "field": "SpoilersHandle",
+          "dataref": "sim/cockpit2/controls/speedbrake_ratio",
+          "mapping": {
+            "art": "ArmedAt",
+            "werte": 0.5
+          }
+        }
+      ]
+    },
+    {
+      "name": "FlightFactor 757",
+      "notiz": [
+        "25.10.2026 — FlightFactor 757 und 767 (X-Plane 12), Quelle: P_-Profile",
+        "von Michel (GSG), alle neun Varianten mit denselben Datarefs.",
+        "Fluegellicht und Autobrake liegen dort auf allgemeinen Namen",
+        "(`anim/46/button`, `anim/rhotery/25`), die andere Add-ons anders",
+        "belegen — deshalb nur hier, mit Titel UND Probe. Probe: Landelicht-",
+        "Schalter links, in allen neun Varianten vorhanden.",
+        "Gemeinsame Umbiegungen der FF757/767 (Werte „live bestaetigt\" laut",
+        "P_-Profilen: Autobrake RTO = -1 … MAX AUTO = 6)."
+      ],
+      "title_match": [
+        "757"
+      ],
+      "probe_dataref": "1-sim/lights/landingL/switch",
+      "titel_und_probe": true,
+      "overrides": [
+        {
+          "field": "FfFluegellicht",
+          "dataref": "anim/46/button",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "FfAutobrake",
+          "dataref": "anim/rhotery/25",
+          "mapping": {
+            "art": "Versatz",
+            "werte": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "name": "FlightFactor 767",
+      "notiz": [
+        "Gemeinsame Umbiegungen der FF757/767 (Werte „live bestaetigt\" laut",
+        "P_-Profilen: Autobrake RTO = -1 … MAX AUTO = 6)."
+      ],
+      "title_match": [
+        "767"
+      ],
+      "probe_dataref": "1-sim/lights/landingL/switch",
+      "titel_und_probe": true,
+      "overrides": [
+        {
+          "field": "FfFluegellicht",
+          "dataref": "anim/46/button",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "FfAutobrake",
+          "dataref": "anim/rhotery/25",
+          "mapping": {
+            "art": "Versatz",
+            "werte": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Felis 747-200",
+      "notiz": [
+        "28.10.2026 — Felis 747-200 / 747-200F, Quelle: P_-Profile v2.0 von",
+        "Michel. Live-Abgleich: in beiden Oktober-Fluegen (02./13.10.) blieben",
+        "alle AP-Felder, Autobrake und Fluegellicht den ganzen Flug aus.",
+        "AP-Wahlschalter A/B 0 OFF / 1 MAN / 2 COMMAND; MAN zaehlt als an — der",
+        "Autopilot ist dort eingekuppelt, der Pilot steuert ueber ihn. A und B",
+        "gehen ueber die beiden Lampenfelder der FF777 (> 0.01) als ODER in",
+        "`autopilot_master`. Autobrake (live gemessen) 0 OFF / 1 DISARM /",
+        "2 MIN / 3 MED / 4 MAX auf die FF777-Skala (MIN = „1\", MED = „2\").",
+        "Der NAV-MODE-Waehler (0 INS … 4 LAND) bleibt aussen vor: er steht am",
+        "Boden auf HDG, auch bei ausgeschaltetem Autopiloten.",
+        "NAV-MODE-Waehler: steht schon im geladenen Flugzeug auf HDG (1),",
+        "traegt also auch ohne Web-API, wo eine Probe erst ab ≠ 0 zaehlt."
+      ],
+      "title_match": [
+        "felis",
+        "747"
+      ],
+      "probe_dataref": "B742/AP_panel/AP_nav_mode_sel",
+      "titel_und_probe": false,
+      "overrides": [
+        {
+          "field": "Ff777ApL",
+          "dataref": "B742/AP_panel/AP_engage_A",
+          "mapping": {
+            "art": "DetentTable",
+            "werte": [
+              0.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "field": "Ff777ApR",
+          "dataref": "B742/AP_panel/AP_engage_B",
+          "mapping": {
+            "art": "DetentTable",
+            "werte": [
+              0.0,
+              1.0,
+              1.0
+            ]
+          }
+        },
+        {
+          "field": "Ff777AltHold",
+          "dataref": "B742/front_lamps/AP_alt_hold_lit",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "Ff777At",
+          "dataref": "B742/front_lamps/AP_AT_on_lit",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "FfAutobrake",
+          "dataref": "B742/OVHD/auto_brake_sel",
+          "mapping": {
+            "art": "DetentTable",
+            "werte": [
+              1.0,
+              2.0,
+              3.0,
+              4.0,
+              7.0
+            ]
+          }
+        },
+        {
+          "field": "FfFluegellicht",
+          "dataref": "B742/ext_light/wing_sw",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "FfAnschnallzeichen",
+          "dataref": "B742/ovhd_lamps/fasten_sbelts_but_lit",
+          "mapping": {
+            "art": "Schwelle",
+            "werte": [
+              0.01,
+              2.0
+            ]
+          },
+          "notiz": [
+            "Schilder nur als Lampe (kein AUTO) → an = ON."
+          ]
+        },
+        {
+          "field": "FfRauchverbot",
+          "dataref": "B742/ovhd_lamps/no_smoking_but_lit",
+          "mapping": {
+            "art": "Schwelle",
+            "werte": [
+              0.01,
+              2.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "FlyJSim Q4XP",
+      "notiz": [
+        "28.10.2026 — FlyJSim Dash 8-400 (Q4XP), P_-Profile v2.0. Kollisions-",
+        "licht kommt schon ueber `Q4xpKollisionslicht` (dataref.rs). Hier die",
+        "Kippschalter 0/1 fuer Fluegel (WING INSP), Anschnall- und Rauchverbots-",
+        "zeichen (an = ON). Klappen laufen ueber den Standard (im Flug vom",
+        "28.09. belegt). Fuer AP-Modi gibt es keine Quelle: das FGCP hat keine",
+        "Lampen, das FMA (`FJS/Q4XP/FMA/*`) liefert Zahlencodes, deren",
+        "Bedeutung Michel noch misst."
+      ],
+      "title_match": [
+        "dash 8",
+        "q400"
+      ],
+      "probe_dataref": "FJS/Q4XP/FlightControls/FlapsHandle",
+      "titel_und_probe": false,
+      "overrides": [
+        {
+          "field": "FfFluegellicht",
+          "dataref": "FJS/Q4XP/Manips/TwoSwitch_Anim[22]",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "FfAnschnallzeichen",
+          "dataref": "FJS/Q4XP/Manips/TwoSwitch_Anim[34]",
+          "mapping": {
+            "art": "Schwelle",
+            "werte": [
+              0.5,
+              2.0
+            ]
+          }
+        },
+        {
+          "field": "FfRauchverbot",
+          "dataref": "FJS/Q4XP/Manips/TwoSwitch_Anim[35]",
+          "mapping": {
+            "art": "Schwelle",
+            "werte": [
+              0.5,
+              2.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "DeltaWing ATR 72-600",
+      "notiz": [
+        "28.10.2026 — DeltaWing ATR 72-600 (`DWSim/ATR_Series`), P_-Profile",
+        "v2.0, Beta: noch kein Flug mit AeroACARS, Werte aus den Tasten-",
+        "bildern. Lichter und Schilder 0/1; Parkbremse 0 OFF / 0.5 HALB /",
+        "1 PARK (nur PARK zaehlt, `parking_brake` > 0.5); Klappenhebel in Grad",
+        "0/15/30, Landeklappen 30; AP aus der AP-Lampe links. Der acf-Titel",
+        "ist unbekannt — Erkennung nur ueber die Probe.",
+        "Parkbremse: im abgestellten Flugzeug auf PARK (1) — ohne Titel muss",
+        "die Probe auch ohne Web-API (erst ab ≠ 0) tragen."
+      ],
+      "title_match": [],
+      "probe_dataref": "DWSim/ATR_Series/datarefs/throttleQuadrant/parkingBrake/movement",
+      "titel_und_probe": false,
+      "overrides": [
+        {
+          "field": "LightBeacon",
+          "dataref": "DWSim/ATR_Series/datarefs/overhead/extLt/beaconSwitch",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "LightStrobe",
+          "dataref": "DWSim/ATR_Series/datarefs/overhead/extLt/strobeSwitch",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "LightNav",
+          "dataref": "DWSim/ATR_Series/datarefs/overhead/extLt/navSwitch",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "LightTaxi",
+          "dataref": "DWSim/ATR_Series/datarefs/overhead/extLt/taxiToSwitch",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "LightLanding",
+          "dataref": "DWSim/ATR_Series/datarefs/overhead/extLt/landingLSwitch",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "FfFluegellicht",
+          "dataref": "DWSim/ATR_Series/datarefs/overhead/extLt/wingSwitch",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "FfAnschnallzeichen",
+          "dataref": "DWSim/ATR_Series/datarefs/overhead/signs/seatBeltsSwitch",
+          "mapping": {
+            "art": "Schwelle",
+            "werte": [
+              0.5,
+              2.0
+            ]
+          }
+        },
+        {
+          "field": "FfRauchverbot",
+          "dataref": "DWSim/ATR_Series/datarefs/overhead/signs/noDeviceSwitch",
+          "mapping": {
+            "art": "Schwelle",
+            "werte": [
+              0.5,
+              2.0
+            ]
+          }
+        },
+        {
+          "field": "Ff777ApL",
+          "dataref": "DWSim/ATR_Series/lit/front/afcs/apLeft",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "ParkingBrake",
+          "dataref": "DWSim/ATR_Series/datarefs/throttleQuadrant/parkingBrake/movement",
+          "mapping": {
+            "art": "Passthrough"
+          }
+        },
+        {
+          "field": "FlapsHandle",
+          "dataref": "DWSim/ATR_Series/datarefs/throttleQuadrant/flapsLever/rotation",
+          "mapping": {
+            "art": "DegreeTable",
+            "werte": [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                15.0,
+                0.5
+              ],
+              [
+                30.0,
+                1.0
+              ]
+            ]
+          },
+          "notiz": [
+            "ATR 72-600 Klappenhebel in Grad → interner Anteil; 30 = Landeklappen",
+            "(Landing-Config ab 0.70), 15 nicht."
+          ]
+        }
+      ]
+    }
+  ]
+}

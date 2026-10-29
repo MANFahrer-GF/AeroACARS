@@ -42,7 +42,7 @@ use crate::plugin2::{
     anfrage_liste, zahl_fuer, AboWunsch, Ereignis, NameStatus, Wert, Ziel, MAX_ABO_ID,
 };
 use crate::profile::{
-    build_active_catalog, profil_ersetzungen_leeren, DatarefOverride, ValueMapping, PROFILES,
+    build_active_catalog, profil_ersetzungen_leeren, DatarefOverride, ValueMapping, profile,
 };
 use crate::vermessung::P2Messung;
 use crate::web_api::AircraftInfo;
@@ -92,7 +92,7 @@ pub(crate) struct KatalogPlan {
     pub namen: Arc<Vec<String>>,
     pub rollen: Vec<Vec<Rolle>>,
     pub kern: Vec<bool>,
-    /// Name-Index der Probe je Profil (Reihenfolge wie `PROFILES`).
+    /// Name-Index der Probe je Profil (Reihenfolge wie `profile()`).
     pub probe_index: Vec<usize>,
 }
 
@@ -116,8 +116,8 @@ pub(crate) fn katalog_plan() -> KatalogPlan {
         let li = platz(e.name, &mut index, &mut namen, &mut rollen);
         rollen[li].push(Rolle::Katalog(ci));
     }
-    let mut probe_index = Vec::with_capacity(PROFILES.len());
-    for (pi, p) in PROFILES.iter().enumerate() {
+    let mut probe_index = Vec::with_capacity(profile().len());
+    for (pi, p) in profile().iter().enumerate() {
         for o in p.overrides {
             let Some(ci) = CATALOG.iter().position(|e| e.field == o.field) else {
                 continue;
@@ -152,7 +152,7 @@ pub(crate) struct P2Stand {
     pub kern_nicht_null: HashSet<usize>,
     /// Grundnamen, die beim RREF-Pfad vor der Sitzung galten.
     pub vorab: HashSet<String>,
-    /// Aktives Profil laut Plugin (Index in `PROFILES`).
+    /// Aktives Profil laut Plugin (Index in `profile()`).
     pub profil: Option<usize>,
     /// Flugzeugmeldung des Plugins (nur waehrend der Sitzung).
     pub flugzeug: Option<AircraftInfo>,
@@ -181,7 +181,7 @@ fn gilt(plan: &KatalogPlan, st: &P2Stand, web: Option<&HashSet<String>>, li: usi
 /// (aus der Flugzeugmeldung, also frisch) zaehlt nur, solange die Probe
 /// nicht als fehlend gemeldet ist — wie beim RREF-Pfad.
 fn profil_neu(shared: &AdapterShared, st: &mut P2Stand, web: Option<&HashSet<String>>) {
-    let plan = &shared.p2_plan;
+    let plan = shared.p2_plan();
     let frisch: Vec<bool> = plan
         .probe_index
         .iter()
@@ -198,14 +198,14 @@ fn profil_neu(shared: &AdapterShared, st: &mut P2Stand, web: Option<&HashSet<Str
     if neu != st.profil {
         match neu {
             Some(pi) => tracing::info!(
-                profil = PROFILES[pi].name,
+                profil = profile()[pi].name,
                 "X-Plane-Plugin: Flugzeugprofil aktiv"
             ),
             None => tracing::info!("X-Plane-Plugin: kein Flugzeugprofil — Standardkatalog"),
         }
         profil_ersetzungen_leeren(&mut shared.parsed.lock(), st.profil, neu);
         st.profil = neu;
-        *shared.active_catalog.lock() = build_active_catalog(neu.map(|pi| &PROFILES[pi]));
+        *shared.active_catalog.lock() = build_active_catalog(neu.map(|pi| &profile()[pi]));
     }
 }
 
@@ -270,6 +270,11 @@ pub(crate) fn ui_name_ueberlagern(
 }
 
 impl AdapterShared {
+    /// Das Katalog-Abo; beim ersten Gebrauch aus den dann geltenden Profilen.
+    pub(crate) fn p2_plan(&self) -> &KatalogPlan {
+        self.p2_plan_zelle.get_or_init(katalog_plan)
+    }
+
     fn jetzt_ms(&self) -> u64 {
         (self.p2_basis.elapsed().as_millis() as u64).max(1)
     }
@@ -294,7 +299,7 @@ impl AdapterShared {
     pub(crate) fn p2_uebergabe(&self) -> (Option<usize>, HashSet<String>) {
         let web = self.addon_vorhanden.lock().clone();
         let st = self.p2.lock();
-        let plan = &self.p2_plan;
+        let plan = self.p2_plan();
         let mut menge = HashSet::new();
         for li in 0..plan.namen.len() {
             let zaehlt = plan.rollen[li].iter().any(|r| match r {
@@ -335,7 +340,7 @@ impl AdapterShared {
     }
 
     fn katalog_status(&self, liste: Vec<(usize, NameStatus)>) {
-        let plan = &self.p2_plan;
+        let plan = self.p2_plan();
         let web = self.addon_vorhanden.lock().clone();
         let mut leeren: Vec<FieldId> = Vec::new();
         {
@@ -398,7 +403,7 @@ impl AdapterShared {
     }
 
     fn katalog_werte(&self, v: Vec<(usize, Wert)>) {
-        let plan = &self.p2_plan;
+        let plan = self.p2_plan();
         let web = self.addon_vorhanden.lock().clone();
         let mut st = self.p2.lock();
         if !st.offen {
@@ -430,7 +435,7 @@ impl AdapterShared {
             profil_neu(self, &mut st, web.as_ref());
         }
         let profil = st.profil;
-        let ersetzt: &[DatarefOverride] = profil.map(|pi| PROFILES[pi].overrides).unwrap_or(&[]);
+        let ersetzt: &[DatarefOverride] = profil.map(|pi| profile()[pi].overrides).unwrap_or(&[]);
         let verbunden = {
             let mut parsed = self.parsed.lock();
             let mut seen = self.seen.lock();
@@ -547,7 +552,7 @@ impl Ziel for AdapterShared {
         let mut w = vec![AboWunsch {
             id: ABO_KATALOG,
             rate: SUBSCRIPTION_HZ,
-            namen: Arc::clone(&self.p2_plan.namen),
+            namen: Arc::clone(&self.p2_plan().namen),
         }];
         let zusatz = self.zusatz.lock().datarefs();
         if !zusatz.is_empty() {
@@ -600,7 +605,7 @@ impl Ziel for AdapterShared {
                 self.p2_sitzung.store(true, Ordering::SeqCst);
                 let mut st = self.p2.lock();
                 st.offen = true;
-                st.status = vec![None; self.p2_plan.namen.len()];
+                st.status = vec![None; self.p2_plan().namen.len()];
                 st.kern_nicht_null.clear();
                 st.flugzeug = None;
             }
@@ -819,7 +824,7 @@ mod tests {
                 .iter()
                 .any(|r| matches!(r, Rolle::Katalog(c) if *c == ci)));
         }
-        for (pi, prof) in PROFILES.iter().enumerate() {
+        for (pi, prof) in profile().iter().enumerate() {
             let li = p.probe_index[pi];
             assert_eq!(p.namen[li], prof.probe_dataref);
             for o in prof.overrides {

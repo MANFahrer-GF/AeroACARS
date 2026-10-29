@@ -27,7 +27,7 @@ use sim_core::{SimSnapshot, Simulator};
 
 /// Field on the parsed `XPlaneState` to assign each DataRef value to.
 /// Each entry corresponds to one RREF subscription.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FieldId {
     Latitude,
     Longitude,
