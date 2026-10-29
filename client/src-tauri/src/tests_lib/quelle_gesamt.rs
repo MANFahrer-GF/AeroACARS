@@ -60,6 +60,13 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `bewertung::tests::fassung_gleich_modul`) und `bewertung_status` an
 /// PIREP, Landungsdatensatz (aus dem Modulergebnis) und Touchdown-Nutzlast
 /// (`None`, sie traegt die Klassen-Note).
+/// — plus P-6.03/P-7.02: `runtime_bundle_id` (Flug-Pin) in der
+/// PIREP-Nutzlast; `mod landungs_eingabe`; Feld `landung_fenster` (Kopie
+/// des Aufsetzfensters beim Dump); `landungs_bewertungseingabe` als EINE
+/// Stelle fuer Datensatz und Eingabe-Dokument (vorher inline in
+/// `build_landing_record`, Inhalt gleich); `record_landing_for_filed_flight`
+/// legt das Dokument ab und sendet es; Start sendet Liegengebliebenes
+/// (Tests `landungs_eingabe::tests`).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -70,4 +77,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "f87c9f7a5770781d12cc37bb11bca6b509314d4a495f9d718978b1a2d705a8dc";
+const HASH_VOR_DER_ZERLEGUNG: &str = "3bd150dfe1638782d84391902d5666e02871a8da4a115c915b89ed9fa8f4570e";

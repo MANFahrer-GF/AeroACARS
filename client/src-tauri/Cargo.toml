@@ -146,6 +146,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 paket-endpunkte.workspace = true
+flate2 = "1"
 bewertung-host.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"

@@ -37,6 +37,7 @@ mod grenzwerte;
 mod laufzeit_paket;
 mod datenuebernahme;
 mod bewertung;
+mod landungs_eingabe;
 mod runway;
 mod runway_assessment;
 mod stands;
@@ -5780,6 +5781,9 @@ struct PauseSegment {
 
 #[derive(Default)]
 struct FlightStats {
+    /// v3 (P-4.11, P-7.02): Aufsetzfenster der letzten Landung (17 Kanaele)
+    /// fuer das Eingabe-Dokument an live. Nur im Speicher.
+    landung_fenster: Vec<TouchdownWindowSample>,
     /// v1.6.12 — die letzten Telemetrieproben fuer die Replay-Erkennung.
     ///
     /// Der Aufsetzpuffer taugt dafuer nicht: er reicht nur 2,5 s vor den
@@ -21808,6 +21812,8 @@ fn build_pirep_payload(
         // damit Reports-Uebersicht die Pill ohne
         // Touchdown-Join zeigen kann.
         client_version: Some(env!("CARGO_PKG_VERSION")),
+        // v3 (P-6.03): Paketstand dieses Flugs (Flug-Pin, P-3.31).
+        runtime_bundle_id: laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
         pirep_id: flight.pirep_id.clone(),
         flight_number: format_callsign(&flight.airline_icao, &flight.flight_number),
         dep: flight.dpt_airport.clone(),
@@ -25832,6 +25838,33 @@ struct BahnFelder {
     runway_exits: Vec<storage::RunwayExit>,
 }
 
+/// v3 (P-4.04): die Bewertungseingabe einer Landung — EINE Stelle fuer den
+/// Landungsdatensatz und das Eingabe-Dokument an live.
+///
+/// v0.10.0 (#runway-utilization-score): LDA-basierten Bahn-Auslastungs-
+/// Score aktivieren. Wenn alle benötigten Felder vorhanden → neuer
+/// Algorithmus, sonst skipped mit konkretem Reason (KEIN Rollback auf
+/// meter-only). v0.15.x: effektiven Landeflughafen (Divert-aware) statt
+/// geplantes Ziel.
+fn landungs_bewertungseingabe(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    aircraft_icao: Option<&str>,
+    effective_arr_icao: &str,
+) -> landing_scoring::LandingScoringInput {
+    let mut scoring_input = scoring_eingang(
+        stats,
+        aircraft_icao,
+        Some(Ausweichziel {
+            eingereicht: effective_arr_icao,
+            geplant: &flight.arr_airport,
+        }),
+        flight.plan_strecke_nm,
+    );
+    fill_v2_rollout_fields(&mut scoring_input, stats, effective_arr_icao);
+    scoring_input
+}
+
 fn build_landing_record<F>(
     flight: &ActiveFlight,
     stats: &FlightStats,
@@ -25885,21 +25918,7 @@ where
     // Zahl aus Aggregate) — fuer Pilot verwirrend.
     // Fallback auf Touchdown-Klassifikation wenn keine Sub-Scores
     // berechnet werden konnten (Edge-Case Schutz).
-    let mut scoring_input = scoring_eingang(
-        stats,
-        aircraft_icao,
-        Some(Ausweichziel {
-            eingereicht: effective_arr_icao,
-            geplant: &flight.arr_airport,
-        }),
-        flight.plan_strecke_nm,
-    );
-    // v0.10.0 (#runway-utilization-score): LDA-basierten Bahn-Auslastungs-
-    // Score aktivieren. Wenn alle benötigten Felder vorhanden → neuer
-    // Algorithmus, sonst skipped mit konkretem Reason (KEIN Rollback auf
-    // meter-only).
-    // v0.15.x: effektiven Landeflughafen (Divert-aware) statt geplantes Ziel.
-    fill_v2_rollout_fields(&mut scoring_input, stats, effective_arr_icao);
+    let scoring_input = landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao);
     // v3 (P-4.31): Bewertung nur im WASM-Modul.
     let bewertet = crate::bewertung::bewerten(&scoring_input);
     let computed_sub_scores = bewertet.as_ref().map(|(a, _)| a.teilnoten.clone()).unwrap_or_default();
@@ -26480,7 +26499,7 @@ fn record_landing_for_filed_flight(
         });
         let aircraft_icao = aufgeloest.as_deref();
 
-        build_landing_record(
+        let record = build_landing_record(
             flight,
             stats,
             sim_label,
@@ -26488,8 +26507,33 @@ fn record_landing_for_filed_flight(
             aircraft_title,
             effective_arr_icao,
             airport_lookup,
-        )
+        );
+        // v3 (P-7.02): Eingabe-Dokument derselben Landung — dieselbe Eingabe
+        // wie der Datensatz (landungs_bewertungseingabe), nur mit Datensatz.
+        let dokument = record.as_ref().map(|_| {
+            let eingabe = landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao);
+            let ergebnis = crate::bewertung::bewerten(&eingabe);
+            landungs_eingabe::dokument(
+                &flight.pirep_id,
+                1,
+                landungs_eingabe::Art::Landung,
+                laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
+                &eingabe,
+                &stats.landung_fenster,
+                &ergebnis,
+            )
+        });
+        (record, dokument)
     };
+    let (record, dokument) = record;
+    if let (Some(doc), Ok(daten)) = (dokument, app.path().app_data_dir()) {
+        match landungs_eingabe::einreihen(&daten, &flight.pirep_id, 1, &doc) {
+            Ok(_) => {
+                tauri::async_runtime::spawn(landungs_eingabe::nachsenden(daten));
+            }
+            Err(e) => tracing::warn!(error = %e, "Eingabe-Dokument nicht ablegbar"),
+        }
+    }
 
     // ── Nach der Sperre: Historie schreiben und loggen ───────────────────
     let Some(record) = record else {
@@ -35469,6 +35513,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 let mut score_data_wurde_bereit = false;
                 {
                     let mut s = flight.stats.lock().expect("flight stats");
+                    // v3 (P-7.02): Fenster fuer das Eingabe-Dokument behalten.
+                    s.landung_fenster = samples_for_v2.clone();
                     // v0.20.0 (PIA3452): Edge gewinnt vor v2 — dieselbe
                     // Ordnung die `canonical_landing_rate_fpm` schon immer
                     // liest. Vorher schrieb v2 (= Fenster-MINIMUM ueber
@@ -54685,7 +54731,7 @@ pub fn run() {
         })
         .setup(|app| {
             // v3 (Etappe 1a): Laufzeit-Paket zuerst — legt OurAirports fest, bevor jemand Bahnen liest.
-            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten); }
+            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten.clone()); tauri::async_runtime::spawn(landungs_eingabe::nachsenden(daten)); }
             // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
             // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
             // geschrieben werden, an denen ein frueherer Lauf erkannt wird.

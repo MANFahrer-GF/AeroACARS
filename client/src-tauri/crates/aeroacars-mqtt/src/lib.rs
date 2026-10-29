@@ -1707,6 +1707,10 @@ pub struct PirepPayload {
     /// docs/spec/v0.10.0-runway-utilization-score.md LE11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_algorithm_version: Option<u8>,
+    /// v3 (P-6.03): Paketstand, mit dem der Flug bewertet wurde
+    /// (`<Generation>-<sha12>`); live speichert ihn am PIREP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_bundle_id: Option<String>,
     /// v3 (P-4.33): woher die Note kam — `endgueltig` (Modul des Pakets),
     /// `vorlaeufig` (eingebautes Modul), `modulfehler` (beide gescheitert).
     #[serde(default, skip_serializing_if = "Option::is_none")]
