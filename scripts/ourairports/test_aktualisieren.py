@@ -131,6 +131,83 @@ class Lauf(unittest.TestCase):
                 self.assertEqual(f.read(), "abc123\n")
 
 
+class GsgListe(unittest.TestCase):
+    """Aktuelle Liste von live, Rueckfall auf die feste Datei (P-9.42)."""
+
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        d = tempfile.mkdtemp()
+        self.fest = os.path.join(d, "gsg.txt")
+        with open(self.fest, "w") as f:
+            f.write("EDDF\nEDDM\n")
+        self.mock = mock
+
+    def mit_antwort(self, antwort):
+        def abrufen(url):
+            if isinstance(antwort, Exception):
+                raise antwort
+            return antwort
+        with self.mock.patch.object(oa, "abrufen", abrufen):
+            return oa.gsg_flughaefen("https://live.invalid/api/oeffentlich/gsg-flughaefen", self.fest)
+
+    def test_live_liste_ersetzt_feste(self):
+        gsg, vermerk = self.mit_antwort('{"tage": 90, "stand": 1, "icao": ["KJFK", "egll", "x", 5]}')
+        self.assertEqual(gsg, {"KJFK", "EGLL"})
+        self.assertIn("aktuelle Liste von live (2)", vermerk)
+
+    def test_rueckfall_bei_netzfehler(self):
+        gsg, vermerk = self.mit_antwort(OSError("404 Not Found"))
+        self.assertEqual(gsg, {"EDDF", "EDDM"})
+        self.assertIn("fehlgeschlagen", vermerk)
+        self.assertIn("feste Liste genutzt (2)", vermerk)
+
+    def test_rueckfall_bei_leerer_oder_kaputter_antwort(self):
+        # Eine leere Live-Liste darf die GSG-Schwellen nicht still abschalten.
+        for antwort in ('{"icao": []}', '{"icao": ["ZZ", null]}', "<html>Fehler</html>", "[]", '{"icao": "EDDF"}'):
+            gsg, vermerk = self.mit_antwort(antwort)
+            self.assertEqual(gsg, {"EDDF", "EDDM"}, antwort)
+            self.assertIn("feste Liste genutzt", vermerk, antwort)
+
+    def test_ohne_url_feste_liste(self):
+        gsg, vermerk = oa.gsg_flughaefen(None, self.fest)
+        self.assertEqual(gsg, {"EDDF", "EDDM"})
+        self.assertEqual(vermerk, "GSG-Flughaefen: feste Liste (2)")
+
+    def test_vermerk_im_bericht_auch_ohne_unterschied(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            ziel, roh = os.path.join(d, "ziel"), os.path.join(d, "roh")
+            os.mkdir(ziel)
+            os.mkdir(roh)
+            zeile = '"1","EDDF","large_airport","Frankfurt","50.0333","8.5706"' + ",x" * 13 + "\n"
+            for o in (roh, ziel):
+                with open(os.path.join(o, "runways.csv"), "w") as f:
+                    f.write(rw([("EDDF", 13123, "07C", 69.9, "25C")]))
+            with open(os.path.join(roh, "airports.csv"), "w") as f:
+                f.write(oa.AIRPORTS_KOPF_ROH + "\n" + zeile)
+            with open(os.path.join(ziel, "airports.csv"), "w") as f:
+                f.write(oa.airports_umsetzen(oa.AIRPORTS_KOPF_ROH + "\n" + zeile))
+            bericht = os.path.join(d, "bericht.md")
+            with self.mock.patch.object(oa, "abrufen", side_effect=OSError("weg")):
+                rc = oa.main(["--ziel", ziel, "--roh-ordner", roh, "--gsg", self.fest,
+                              "--gsg-url", "https://live.invalid/x", "--bericht", bericht])
+            self.assertEqual(rc, 0)
+            with open(bericht) as f:
+                text = f.read()
+            self.assertIn("Abruf von live fehlgeschlagen", text)
+            self.assertIn("Kein Unterschied", text)
+
+    def test_live_liste_wirkt_auf_die_pruefung(self):
+        # Gegenprobe: KJFK steht nur in der Live-Liste; seine Entfernung haelt
+        # den Lauf nur an, wenn die Live-Liste tatsaechlich verwendet wird.
+        alt = ap(BASIS_AP + [("KJFK", "large_airport", 40.64, -73.78)])
+        gsg_live, _ = self.mit_antwort('{"icao": ["KJFK"]}')
+        gsg_fest, _ = self.mit_antwort(OSError("weg"))
+        self.assertIn("GSG-Flughafen KJFK entfernt", oa.pruefen(alt, ap(BASIS_AP), rw(BASIS_RW), rw(BASIS_RW), gsg_live))
+        self.assertEqual(oa.pruefen(alt, ap(BASIS_AP), rw(BASIS_RW), rw(BASIS_RW), gsg_fest), [])
+
+
 class Umsetzen(unittest.TestCase):
     def test_vier_spalten_werte_unveraendert(self):
         roh = '"id","ident","type","name","latitude_deg","longitude_deg"\n"1","EDDF","large_airport","Frankfurt, Main","50.0333","8.5706"\n'

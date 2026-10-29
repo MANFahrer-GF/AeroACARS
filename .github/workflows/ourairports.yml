@@ -7,6 +7,10 @@
 # auf den Zweig und Paketlauf mit nur_ourairports=true — der darf ohne
 # Einzelfreigabe hinaus, wenn sich das Paket vom veroeffentlichten Stand
 # wirklich nur in ourairports/ unterscheidet (prueft bundle.yml).
+# GSG-Flughaefen: aktuelle Liste von live (90 Tage), faellt der Abruf aus,
+# die feste Liste scripts/ourairports/gsg-flughaefen.txt (im Bericht vermerkt).
+# Der Montagslauf wird von ourairports-ausloeser.yml auf main angestossen
+# (schedule feuert nur auf dem Standardzweig).
 
 name: OurAirports
 
@@ -37,7 +41,8 @@ jobs:
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           set +e
           python3 -I scripts/ourairports/aktualisieren.py --ziel bundle/ourairports --commit "$COMMIT" \
-            --gsg scripts/ourairports/gsg-flughaefen.txt --bericht "$RUNNER_TEMP/bericht.md" \
+            --gsg scripts/ourairports/gsg-flughaefen.txt --gsg-url https://live.kant.ovh/api/oeffentlich/gsg-flughaefen \
+            --bericht "$RUNNER_TEMP/bericht.md" \
             --stand scripts/ourairports/stand.txt
           RC=$?
           set -e

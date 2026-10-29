@@ -10,16 +10,24 @@ Staenden geeicht (Pflichtenheft P-9.42).
 Rueckgabe: 0 = kein Unterschied oder neuer Stand geschrieben; 2 = Halt (nichts
 geschrieben, Bericht nennt die Gruende); 1 = Fehler.
 
+GSG-Flughaefen: mit --gsg-url wird die aktuelle Liste (Plaetze aus Flugplaenen
+und PIREPs der letzten 90 Tage) von live geholt; schlaegt der Abruf fehl oder
+kommt kein gueltiger Code, gilt die feste Liste aus --gsg. Der Bericht nennt
+die Quelle.
+
 Aufruf: python3 -I aktualisieren.py --ziel bundle/ourairports
           [--commit SHA] [--gsg scripts/ourairports/gsg-flughaefen.txt]
+          [--gsg-url https://live.kant.ovh/api/oeffentlich/gsg-flughaefen]
           [--bericht bericht.md] [--stand scripts/ourairports/stand.txt]
           [--roh-ordner DIR]
 """
 import argparse
 import csv
 import io
+import json
 import math
 import os
+import re
 import sys
 import urllib.request
 
@@ -142,19 +150,45 @@ def holen(commit: str, datei: str, roh_ordner) -> str:
         return r.read().decode("utf-8")
 
 
+def abrufen(url: str) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": "aeroacars-ourairports"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read().decode("utf-8")
+
+
+def gsg_flughaefen(url, datei):
+    """(Menge, Vermerk): Liste von live, sonst die feste Datei."""
+    fest = set()
+    if datei:
+        with open(datei, encoding="utf-8") as f:
+            fest = {z.strip().upper() for z in f if z.strip()}
+    if not url:
+        return fest, f"GSG-Flughaefen: feste Liste ({len(fest)})"
+    try:
+        codes = json.loads(abrufen(url)).get("icao")
+        neu = {c.strip().upper() for c in codes if isinstance(c, str)} if isinstance(codes, list) else set()
+        neu = {c for c in neu if re.fullmatch(r"[A-Z0-9]{4}", c)}
+        if not neu:
+            raise ValueError("keine gueltigen ICAO-Codes")
+        return neu, f"GSG-Flughaefen: aktuelle Liste von live ({len(neu)})"
+    except Exception as e:  # noqa: BLE001 - jeder Ausfall faellt auf die feste Liste zurueck
+        return fest, (f"GSG-Flughaefen: Abruf von live fehlgeschlagen ({type(e).__name__}: {e}), "
+                      f"feste Liste genutzt ({len(fest)})")
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--ziel", required=True)
     p.add_argument("--commit", default="main")
     p.add_argument("--gsg", default=None)
+    p.add_argument("--gsg-url", default=None, help="aktuelle GSG-Flughafenliste von live; Rueckfall auf --gsg")
     p.add_argument("--bericht", default=None)
     p.add_argument("--stand", default=None, help="Datei fuer den OurAirports-Commit des geschriebenen Stands (P-9.44)")
     p.add_argument("--roh-ordner", default=None, help="Rohdateien lokal statt von GitHub (Tests)")
     a = p.parse_args(argv)
-    gsg = set()
-    if a.gsg:
-        with open(a.gsg, encoding="utf-8") as f:
-            gsg = {z.strip().upper() for z in f if z.strip()}
+    gsg, gsg_vermerk = gsg_flughaefen(a.gsg_url, a.gsg)
+    if "fehlgeschlagen" in gsg_vermerk:
+        print(f"::warning::{gsg_vermerk}")
     pfad_ap, pfad_rw = os.path.join(a.ziel, "airports.csv"), os.path.join(a.ziel, "runways.csv")
     with open(pfad_ap, encoding="utf-8") as f:
         alt_ap = f.read()
@@ -163,11 +197,14 @@ def main(argv=None) -> int:
     roh_ap = holen(a.commit, "airports.csv", a.roh_ordner)
     neu_ap = airports_umsetzen(roh_ap)
     neu_rw = holen(a.commit, "runways.csv", a.roh_ordner)
+    bericht = [f"# OurAirports {a.commit}", "", gsg_vermerk, ""]
     if neu_ap == alt_ap and neu_rw == alt_rw:
         print("OurAirports: kein Unterschied")
+        if a.bericht:
+            with open(a.bericht, "w", encoding="utf-8") as f:
+                f.write("\n".join(bericht + ["Kein Unterschied zum vorhandenen Stand."]) + "\n")
         return 0
     gruende = pruefen(alt_ap, neu_ap, alt_rw, neu_rw, gsg, roh_ap.split("\n", 1)[0], RUNWAYS_KOPF)
-    bericht = [f"# OurAirports {a.commit}", ""]
     if gruende:
         bericht += ["**Halt** — nichts geschrieben. Gruende:", ""] + [f"- {g}" for g in gruende]
     else:
