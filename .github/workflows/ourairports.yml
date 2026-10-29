@@ -18,6 +18,12 @@ on:
   schedule:
     - cron: '0 4 * * 1'
   workflow_dispatch:
+  # Nur damit GitHub den Workflow kennt: ein Workflow, der nicht auf main liegt,
+  # laesst sich erst per workflow_dispatch starten, nachdem er einmal durch ein
+  # Ereignis auf seinem Zweig gelaufen ist (vorher 404). Der Push-Lauf tut nichts.
+  push:
+    branches: [v3]
+    paths: ['.github/workflows/ourairports.yml']
 
 concurrency:
   group: ourairports
@@ -29,6 +35,7 @@ permissions:
 
 jobs:
   aktualisieren:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
