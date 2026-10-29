@@ -15,9 +15,12 @@ use runtime_bundle::{Ablage, Eingang, Eingebaut, Herkunft, Kontext, Manifest, Pa
 use sha2::{Digest, Sha256};
 
 /// Pruefschluessel der Laufzeit-Pakete (minisign, Base64), aktiv + Reserve
-/// (P-3.10). Solange keiner eingetragen ist, besteht kein heruntergeladener
-/// Stand die Pruefung, und es gilt immer der eingebaute.
-const PRUEFSCHLUESSEL: &[&str] = &[];
+/// (P-3.10). Der aktive signiert in CI (Secret `BUNDLE_MINISIGN_KEY`), der
+/// Reserveschluessel liegt offline und wird nur beim Schluesselwechsel benutzt.
+const PRUEFSCHLUESSEL: &[&str] = &[
+    "RWS3XSmTUeW2CWT94kbZKuf9E8DT6aBEtdEWEgNm48HLdY3TqTT9QbWn",
+    "RWRs0NG12y4cVsFVpERYP76rfw0Zo2DiQ+Ja9W1ZoX0BRtpLWeRBzk4I",
+];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
 const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1"];
@@ -379,6 +382,30 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Beide eingetragenen Schluessel sind echte minisign-Schluessel und
+    /// passen zu ihren geheimen Teilen: je eine Probesignatur (erzeugt mit
+    /// `minisign -S`) besteht die Pruefung, ein veraenderter Text nicht.
+    #[test]
+    fn pruefschluessel_aktiv_und_reserve_pruefen_echte_signaturen() {
+        let schluessel: Vec<String> = PRUEFSCHLUESSEL.iter().map(|s| s.to_string()).collect();
+        assert_eq!(schluessel.len(), 2);
+        for sig in [PROBE_AKTIV, PROBE_RESERVE] {
+            assert!(runtime_bundle::signatur_pruefen(b"AeroACARS Schluesselprobe", sig, &schluessel).is_ok());
+            assert!(runtime_bundle::signatur_pruefen(b"AeroACARS Schluesselprobe!", sig, &schluessel).is_err());
+        }
+    }
+
+    const PROBE_AKTIV: &str = r"untrusted comment: signature from minisign secret key
+RUS3XSmTUeW2CdEtCcDhIqYPqMPcm5kxNRuW89n/+UsVd59RG1XqzbYhlw+KUDk5y8HWBjZypCORBWLaIsY3cw9ZhqKH8O3Qpgc=
+trusted comment: probe
+RIZYY+6Vi9hE0sy++DEtpxMjwCRJzE8x+z9xOAEQsZLFChAUC3YIL7DTFJwgtPjdzVQ8fAHdh21gOdg9yKsDBg==
+";
+    const PROBE_RESERVE: &str = r"untrusted comment: signature from minisign secret key
+RURs0NG12y4cVkAofIm/1xLPjtwC0kUUrvUHcpCsQ5B7Hb3Vr227UeoRQ8dqozQ4y1EqiSVK1uQEoRdh/n1Xu978dRq6xxb31Ac=
+trusted comment: probe
+aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkKH3K7Cg==
+";
 
     #[test]
     fn eingebauter_stand_besteht_den_selbsttest() {
