@@ -26508,26 +26508,40 @@ fn record_landing_for_filed_flight(
             effective_arr_icao,
             airport_lookup,
         );
-        // v3 (P-7.02): Eingabe-Dokument derselben Landung — dieselbe Eingabe
-        // wie der Datensatz (landungs_bewertungseingabe), nur mit Datensatz.
-        let dokument = record.as_ref().map(|_| {
-            let eingabe = landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao);
-            let ergebnis = crate::bewertung::bewerten(&eingabe);
-            landungs_eingabe::dokument(
-                &flight.pirep_id,
-                1,
-                landungs_eingabe::Art::Landung,
-                laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
-                &eingabe,
-                &stats.landung_fenster,
-                &ergebnis,
-            )
-        });
-        (record, dokument)
+        // v3 (P-7.02): Eingabe und Fenster derselben Landung (dieselbe
+        // Eingabe wie der Datensatz). Ohne Fenster kein Dokument — der Server
+        // verlangt mindestens eine Probe (nach einem Neustart ist es leer).
+        let teile = record
+            .as_ref()
+            .filter(|_| !stats.landung_fenster.is_empty())
+            .map(|_| {
+                (
+                    landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao),
+                    stats.landung_fenster.clone(),
+                )
+            });
+        if record.is_some() && teile.is_none() {
+            tracing::info!(pirep_id = %flight.pirep_id, "kein Aufsetzfenster im Speicher — kein Eingabe-Dokument");
+        }
+        (record, teile)
     };
-    let (record, dokument) = record;
-    if let (Some(doc), Ok(daten)) = (dokument, app.path().app_data_dir()) {
-        match landungs_eingabe::einreihen(&daten, &flight.pirep_id, 1, &doc) {
+    let (record, teile) = record;
+    // Bewertung fuer das Dokument AUSSERHALB der Sperre der Flugdaten.
+    let dokument = teile.map(|(eingabe, fenster)| {
+        let ergebnis = crate::bewertung::bewerten(&eingabe);
+        landungs_eingabe::dokument(
+            &flight.pirep_id,
+            1,
+            landungs_eingabe::Art::Landung,
+            laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
+            &eingabe,
+            &fenster,
+            &ergebnis,
+        )
+    });
+    let konto = crate::live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
+    if let (Some(doc), Some(konto), Ok(daten)) = (dokument, konto, app.path().app_data_dir()) {
+        match landungs_eingabe::einreihen(&daten, &konto, &flight.pirep_id, 1, &doc) {
             Ok(_) => {
                 tauri::async_runtime::spawn(landungs_eingabe::nachsenden(daten));
             }

@@ -2,7 +2,12 @@
 //! Aufsetzer an live (`POST /api/landing-input`).
 //!
 //! Das Dokument wird beim Abgeben gebaut und ZUERST auf die Platte gelegt
-//! (`landing_inputs/`), dann gesendet. Scheitert das Senden (Netz, live
+//! (`landing_inputs/<konto>/`, `<konto>` = Kurzhash des Pilot-Tokens: nach
+//! einem Kontowechsel bleiben fremde Dokumente liegen statt mit dem falschen
+//! Token abgelehnt zu werden), dann gesendet. Ohne Aufsetzfenster gibt es kein
+//! Dokument (der Server verlangt mindestens eine Probe). Immer nur EIN
+//! Sendevorgang; geloescht wird nur, wenn die Datei noch genau das Gesendete
+//! enthaelt. Dateien aelter als 30 Tage werden aufgeraeumt. Scheitert das Senden (Netz, live
 //! nicht erreichbar, 5xx), bleibt die Datei liegen und wird beim naechsten
 //! Abgeben und beim Programmstart erneut versucht. Endgueltige Antworten:
 //! 200 (auch „wiederholt“) loescht die Datei; 400/403/409/413 legen sie nach
@@ -86,9 +91,17 @@ fn sicher(s: &str) -> String {
     s.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect()
 }
 
-/// Legt das Dokument gzip-gepackt in die Warteschlange.
-pub(crate) fn einreihen(app_daten: &Path, pirep_id: &str, seq: u32, doc: &serde_json::Value) -> std::io::Result<PathBuf> {
-    let ordner = app_daten.join(ORDNER);
+/// Aufbewahrung von Warteschlange und Abgelehntem.
+const AUFBEWAHREN: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+
+/// Kontoordner: Kurzhash des Pilot-Tokens (keine Kennung im Klartext).
+pub(crate) fn konto(token: &str) -> String {
+    hex(&Sha256::digest(token.as_bytes()))[..16].to_string()
+}
+
+/// Legt das Dokument gzip-gepackt in die Warteschlange des Kontos.
+pub(crate) fn einreihen(app_daten: &Path, konto: &str, pirep_id: &str, seq: u32, doc: &serde_json::Value) -> std::io::Result<PathBuf> {
+    let ordner = app_daten.join(ORDNER).join(sicher(konto));
     std::fs::create_dir_all(&ordner)?;
     let ziel = ordner.join(format!("{}_{seq}.json.gz", sicher(pirep_id)));
     let tmp = ziel.with_extension("tmp");
@@ -116,13 +129,30 @@ pub(crate) fn folge(status: Option<u16>) -> Folge {
     }
 }
 
-/// Sendet alle wartenden Dokumente. Ohne Pilot-Token passiert nichts (die
-/// Dateien bleiben liegen).
+/// Alte Dateien (Warteschlange und Abgelehntes) aufraeumen.
+fn aufraeumen(ordner: &Path) {
+    for unter in [ordner.to_path_buf(), ordner.join("abgelehnt")] {
+        let Ok(es) = std::fs::read_dir(&unter) else { continue };
+        for e in es.flatten() {
+            let alt = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+            if e.path().is_file() && alt.is_some_and(|a| a > AUFBEWAHREN) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
+/// Sendet alle wartenden Dokumente des angemeldeten Kontos. Ohne
+/// Pilot-Token passiert nichts (die Dateien bleiben liegen). Immer nur ein
+/// Durchlauf gleichzeitig (Codex 29.10.).
 pub(crate) async fn nachsenden(app_daten: PathBuf) {
+    static NUR_EINER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _einer = NUR_EINER.lock().await;
     let Some(token) = crate::live_zugang::pilot_token() else {
         return;
     };
-    let ordner = app_daten.join(ORDNER);
+    let ordner = app_daten.join(ORDNER).join(konto(&token));
+    aufraeumen(&ordner);
     let Ok(eintraege) = std::fs::read_dir(&ordner) else {
         return;
     };
@@ -141,10 +171,14 @@ pub(crate) async fn nachsenden(app_daten: PathBuf) {
             .bearer_auth(&token)
             // Server: Parser fuer application/gzip, Koerper roh gepackt.
             .header("content-type", "application/gzip")
-            .body(koerper)
+            .body(koerper.clone())
             .send()
             .await;
         let status = antwort.as_ref().ok().map(|r| r.status().as_u16());
+        // Nur loeschen/verschieben, was noch genau das Gesendete ist.
+        if std::fs::read(&pfad).ok().as_deref() != Some(koerper.as_slice()) {
+            continue;
+        }
         match folge(status) {
             Folge::Loeschen => {
                 let _ = std::fs::remove_file(&pfad);
@@ -199,8 +233,11 @@ mod tests {
         let ordner = std::env::temp_dir().join(format!("aeroacars-li-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&ordner);
         let d = serde_json::json!({"a": 1});
-        let p = einreihen(&ordner, "AB/../C", 2, &d).unwrap();
+        let p = einreihen(&ordner, "k1", "AB/../C", 2, &d).unwrap();
         assert_eq!(p.file_name().unwrap(), "ABC_2.json.gz");
+        assert!(p.starts_with(ordner.join(ORDNER).join("k1")), "je Konto ein Ordner");
+        assert_ne!(konto("token-a"), konto("token-b"));
+        assert_eq!(konto("token-a").len(), 16);
         let mut text = String::new();
         std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(std::fs::File::open(&p).unwrap()), &mut text).unwrap();
         assert_eq!(text, d.to_string());

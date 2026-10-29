@@ -67,6 +67,8 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `build_landing_record`, Inhalt gleich); `record_landing_for_filed_flight`
 /// legt das Dokument ab und sendet es; Start sendet Liegengebliebenes
 /// (Tests `landungs_eingabe::tests`).
+/// — plus Codex 29.10. zum Upload: Dokument nur mit Aufsetzfenster,
+/// Bewertung dafuer ausserhalb der Sperre, Warteschlange je Konto.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -77,4 +79,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "3bd150dfe1638782d84391902d5666e02871a8da4a115c915b89ed9fa8f4570e";
+const HASH_VOR_DER_ZERLEGUNG: &str = "f718edc4dace9635840d26774409adbabe0f173831cf97fc11269f97e5d04a0a";
