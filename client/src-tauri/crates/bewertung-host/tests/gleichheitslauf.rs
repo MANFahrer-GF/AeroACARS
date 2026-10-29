@@ -13,14 +13,19 @@
 //!
 //! Aufruf (Auszug aus den Protokollen, siehe Bericht Etappe 3):
 //! `GLEICHHEIT_AUSZUG=<auszug.jsonl> GLEICHHEIT_TICKS=<ticks.jsonl>
-//! GLEICHHEIT_ERGEBNIS=<ergebnis.jsonl> cargo test -p bewertung-host
+//! GLEICHHEIT_MANIFEST=<manifest.json des Pakets>
+//! GLEICHHEIT_ERGEBNIS=<lauf.json> cargo test -p bewertung-host
 //! --test gleichheitslauf -- --ignored --nocapture`.
+//! Ergebnis ist ein Dokument im Format des Servers (aeroacars-live,
+//! `recorder/src/gleichheitslauf.ts`): `{paket, modul_fassung, gelaufen_at,
+//! zeilen}`. Das Paket muss genau die Dateien tragen, mit denen gerechnet
+//! wurde (Modul, Grenzwerte, Tabellen) — sonst bricht der Lauf ab.
 //! Mit `KORPUS_AUSWAHL=<datei>` (Zeilen `<protokoll> <name>`) und
 //! `KORPUS_ZIEL=<ordner>` schreibt er zusaetzlich den Selbsttest-Korpus
 //! (P-13.02): je Flug Eingabe und erwartete Ausgabe, ohne Personendaten.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::time::Instant;
 
 use bewertung_host::Host;
@@ -369,11 +374,69 @@ fn teil_vergleich(alt: &Value, neu: &Value) -> Vec<(String, &'static str, Value,
     ] {
         let leer = |v: &Value| v.is_null() || v.as_array().is_some_and(|a| a.is_empty()) || v.as_object().is_some_and(|o| o.is_empty());
         let (a, n) = (f32_normiert(&alt[feld]), f32_normiert(&neu[feld]));
+        if feld == "messwert" && messwert_angezeigt_gleich(alt["key"].as_str(), &a, &n) {
+            continue;
+        }
         if !(a == n || (leer(&a) && leer(&n))) {
             d.push((feld.to_string(), art, a, n));
         }
     }
     d
+}
+
+/// Anzeigerundung des Messwerts je Achse (P-12.02). Messwerte tragen nur
+/// `g_force` (G, 0,01), `alignment` (Anteil der Bahnhaelfte, `sub_alignment`;
+/// P-12.02 nennt ihn nicht, 0,01 wie G) und `abfangen` (Sekunden, Anzeige
+/// mit einer Nachkommastelle, `abfangen.rs`). Andere Achsen: exakt.
+fn messwert_schritt(achse: Option<&str>) -> Option<f64> {
+    match achse? {
+        "g_force" | "alignment" => Some(0.01),
+        "abfangen" => Some(0.1),
+        _ => None,
+    }
+}
+
+fn messwert_angezeigt_gleich(achse: Option<&str>, a: &Value, n: &Value) -> bool {
+    match (messwert_schritt(achse), a.as_f64(), n.as_f64()) {
+        (Some(s), Some(a), Some(n)) => (a / s).round() == (n / s).round(),
+        _ => false,
+    }
+}
+
+/// Nr. des verglichenen Aufsetzers: 2.x speichert die Note des letzten
+/// (`touchdown_complete` je Aufsetzer, Touch-and-Go davor); 3.0 zaehlt ab 1.
+fn seq(f: &Flug) -> u64 {
+    (f.ereignisse.iter().filter(|e| e["type"] == "touchdown_complete").count() as u64).max(1)
+}
+
+fn sha256_hex(b: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(b).iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Umschlag fuer den Server. Prueft, dass das Paket die Dateien traegt, mit
+/// denen gerechnet wurde (`bundle(pfad)` liefert sie aus dem Repo), und dass
+/// seine `score_version` die Fassung des Moduls ist.
+fn umschlag(manifest: &[u8], bundle: impl Fn(&str) -> Option<Vec<u8>>, fassung: u64, gelaufen_at: String, zeilen: Vec<Value>) -> Value {
+    let m: Value = serde_json::from_slice(manifest).unwrap();
+    let mut modul_da = false;
+    for d in m["files"].as_array().unwrap() {
+        let pfad = d["path"].as_str().unwrap();
+        modul_da |= pfad == "module/bewertung.wasm";
+        if let Some(b) = bundle(pfad) {
+            assert_eq!(sha256_hex(&b), d["sha256"].as_str().unwrap(), "Paket passt nicht: {pfad}");
+        } else {
+            assert_ne!(pfad, "module/bewertung.wasm", "Modul fehlt im Repo");
+        }
+    }
+    assert!(modul_da, "Modul fehlt im Paket");
+    assert_eq!(m["score_version"].as_u64(), Some(fassung), "score_version des Pakets != Fassung des Moduls");
+    json!({
+        "paket": { "generation": m["generation"].as_u64().unwrap(), "manifest_sha256": sha256_hex(manifest) },
+        "modul_fassung": fassung,
+        "gelaufen_at": gelaufen_at,
+        "zeilen": zeilen,
+    })
 }
 
 /// 2.x schrieb `f32` ueber `serde_json::Value` (als `f64` verbreitert,
@@ -443,7 +506,11 @@ fn ticks_lesen(pfad: &str) -> HashMap<String, (Option<Value>, Vec<Value>)> {
 fn gleichheitslauf() {
     let fluege = lesen(&std::env::var("GLEICHHEIT_AUSZUG").unwrap());
     let ticks = ticks_lesen(&std::env::var("GLEICHHEIT_TICKS").unwrap());
-    let mut aus = std::fs::File::create(std::env::var("GLEICHHEIT_ERGEBNIS").unwrap()).unwrap();
+    let ziel = std::env::var("GLEICHHEIT_ERGEBNIS").unwrap();
+    let manifest = std::fs::read(std::env::var("GLEICHHEIT_MANIFEST").unwrap()).unwrap();
+    let mut zeilen: Vec<Value> = Vec::new();
+    let mut fassungen = std::collections::BTreeSet::new();
+    let mut pireps = std::collections::HashSet::new();
     let auswahl: HashMap<String, String> = std::env::var("KORPUS_AUSWAHL")
         .ok()
         .map(|p| {
@@ -474,10 +541,18 @@ fn gleichheitslauf() {
             "profil": profil,
             "fassung_2x": pf.map(|p| p["score_algorithm_version"].clone()),
             "client_version": pf.and_then(|p| str_(&p["client_version"])),
+            "seq": seq(f),
         });
         let ref_teile = pf.and_then(|p| p["sub_scores"].as_array()).filter(|a| !a.is_empty());
+        // Der Server verwirft den ganzen Lauf bei verglichener Zeile ohne
+        // Kennung oder doppeltem `pirep_id#seq`; solche Fluege zaehlen hier.
+        let pirep = pf.and_then(|p| str_(&p["pirep_id"])).filter(|p| !p.is_empty());
         let grund = if pf.is_none() {
             Some("kein_pirep")
+        } else if pirep.is_none() {
+            Some("keine_pirep_id")
+        } else if !pireps.insert((pirep.clone(), seq(f))) {
+            Some("doppelt")
         } else if ref_teile.is_none() {
             Some("keine_2x_teilnoten")
         } else {
@@ -487,7 +562,7 @@ fn gleichheitslauf() {
             kopf["status"] = json!("nicht_pruefbar");
             kopf["grund"] = json!(g);
             *zaehler.entry(format!("nicht_pruefbar/{g}")).or_default() += 1;
-            writeln!(aus, "{kopf}").unwrap();
+            zeilen.push(kopf);
             continue;
         }
         // Der Client setzt `landing_nicht_konventionell` bei jedem Aufsetzer
@@ -500,6 +575,7 @@ fn gleichheitslauf() {
         let dauer_us = t0.elapsed().as_micros();
         assert_eq!(ausgabe, bewerten_json(&ein), "WASM != nativ: {}", f.datei);
         let neu: Value = serde_json::from_str(&ausgabe).unwrap();
+        fassungen.insert(neu["fassung"].as_u64().unwrap());
         let ref_teile = ref_teile.unwrap();
         let betroffen = betroffene_achsen(&n);
         let mut abw = Vec::new();
@@ -538,7 +614,7 @@ fn gleichheitslauf() {
         kopf["fuel"] = json!(fuel);
         kopf["dauer_us"] = json!(dauer_us);
         *zaehler.entry("verglichen".into()).or_default() += 1;
-        writeln!(aus, "{kopf}").unwrap();
+        zeilen.push(kopf);
 
         if let (Some(name), Some(ziel)) = (auswahl.get(&f.datei), &korpus_ziel) {
             // Selbsttest-Korpus: nur Eingabe und Ausgabe des Moduls — keine
@@ -547,5 +623,67 @@ fn gleichheitslauf() {
             std::fs::write(format!("{ziel}/{name}.json"), serde_json::to_string_pretty(&fall).unwrap() + "\n").unwrap();
         }
     }
-    println!("GLEICHHEITSLAUF {zaehler:?}");
+    assert_eq!(fassungen.len(), 1, "Modul meldet mehrere Fassungen: {fassungen:?}");
+    let bundle = |pfad: &str| std::fs::read(format!("{}/../../../../bundle/{pfad}", env!("CARGO_MANIFEST_DIR"))).ok();
+    let gelaufen_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let lauf = umschlag(&manifest, bundle, *fassungen.first().unwrap(), gelaufen_at, zeilen);
+    std::fs::write(ziel, serde_json::to_string(&lauf).unwrap() + "\n").unwrap();
+    println!("GLEICHHEITSLAUF paket {} {zaehler:?}", lauf["paket"]);
+}
+
+#[test]
+fn messwert_wird_nach_anzeigerundung_verglichen() {
+    let teil = |k: &str, m: f64| json!({"key": k, "score": 80, "messwert": m});
+    // G: 1,231 und 1,234 zeigen beide 1,23.
+    assert!(teil_vergleich(&teil("g_force", 1.231), &teil("g_force", 1.234)).is_empty());
+    // Gegenprobe: eine Anzeigestelle Unterschied ist eine Abweichung.
+    assert_eq!(teil_vergleich(&teil("g_force", 1.234), &teil("g_force", 1.244)).len(), 1);
+    assert!(teil_vergleich(&teil("abfangen", 4.21), &teil("abfangen", 4.18)).is_empty());
+    assert_eq!(teil_vergleich(&teil("abfangen", 4.21), &teil("abfangen", 4.31)).len(), 1);
+    // Achse ohne Rundungsregel: exakt.
+    assert_eq!(teil_vergleich(&teil("fuel", 1.231), &teil("fuel", 1.234)).len(), 1);
+}
+
+#[test]
+fn seq_ist_der_letzte_aufsetzer() {
+    let flug = |n: usize| Flug { datei: "x".into(), ereignisse: (0..n).map(|_| json!({"type": "touchdown_complete"})).collect() };
+    assert_eq!(seq(&flug(0)), 1);
+    assert_eq!(seq(&flug(1)), 1);
+    assert_eq!(seq(&flug(2)), 2);
+}
+
+fn probe_manifest(modul: &[u8], fassung: u64) -> Vec<u8> {
+    serde_json::to_vec(&json!({"generation": 27, "score_version": fassung, "files": [
+        {"path": "module/bewertung.wasm", "sha256": sha256_hex(modul)},
+        {"path": "texte/de.json", "sha256": sha256_hex(b"nicht im repo")}
+    ]}))
+    .unwrap()
+}
+
+#[test]
+fn umschlag_im_format_des_servers() {
+    let m = probe_manifest(b"modul", 27);
+    let bundle = |p: &str| (p == "module/bewertung.wasm").then(|| b"modul".to_vec());
+    let u = umschlag(&m, bundle, 27, "2026-10-29T22:00:00Z".into(), vec![json!({"datei": "a"})]);
+    assert_eq!(u["paket"]["generation"], 27);
+    // Server (`bundleIdText`): 12 bis 64 Hex-Zeichen.
+    let sha = u["paket"]["manifest_sha256"].as_str().unwrap();
+    assert!(sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+    assert_eq!(sha, sha256_hex(&m));
+    assert_eq!(u["modul_fassung"], 27);
+    assert_eq!(u["zeilen"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "Paket passt nicht: module/bewertung.wasm")]
+fn umschlag_verweigert_fremdes_modul() {
+    let m = probe_manifest(b"modul", 27);
+    umschlag(&m, |_| Some(b"anderes modul".to_vec()), 27, String::new(), vec![]);
+}
+
+#[test]
+#[should_panic(expected = "score_version des Pakets")]
+fn umschlag_verweigert_andere_fassung() {
+    let m = probe_manifest(b"modul", 26);
+    umschlag(&m, |p| (p == "module/bewertung.wasm").then(|| b"modul".to_vec()), 27, String::new(), vec![]);
 }

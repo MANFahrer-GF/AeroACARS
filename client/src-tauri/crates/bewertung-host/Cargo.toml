@@ -13,6 +13,9 @@ wasmi = "2.0.0"
 wat = "1"
 landing-scoring.workspace = true
 serde_json.workspace = true
+# Gleichheitslauf: Paket-Kennung (sha256 des Manifests) und Laufzeit.
+sha2 = "0.10"
+chrono.workspace = true
 
 [lints]
 workspace = true
