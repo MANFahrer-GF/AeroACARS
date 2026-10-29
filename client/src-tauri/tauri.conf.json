@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "url": "aeroui://localhost/index.html",
         "title": "AeroACARS 3",
         "width": 1200,
         "height": 800,

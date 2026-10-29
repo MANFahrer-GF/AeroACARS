@@ -37,6 +37,8 @@ mod grenzwerte;
 mod laufzeit_paket;
 // v3 (Etappe 5): Lader der Oberflaeche ueber aeroui:// (P-8.02, P-8.20).
 mod ui_lader;
+// v3 (Etappe 5): Huelle — Systembefehle nur nach Bestaetigung (P-8.01, P-8.10).
+mod huelle;
 mod datenuebernahme;
 mod bewertung;
 mod landungs_eingabe;
@@ -14043,7 +14045,9 @@ fn current_client(state: &tauri::State<'_, AppState>) -> Result<Client, UiError>
 /// after a restart). Cheap atomic flip — the actual close-handler
 /// just reads the flag at the moment a CloseRequested fires.
 #[tauri::command]
-fn set_minimize_to_tray(state: tauri::State<'_, AppState>, enabled: bool) -> Result<(), UiError> {
+fn set_minimize_to_tray(app: AppHandle, state: tauri::State<'_, AppState>, enabled: bool) -> Result<(), UiError> {
+    // v3 (Etappe 5): die Huelle haelt den Wert, angewandt beim Start.
+    huelle::einstellung_setzen(&app, |e| e.minimize_to_tray = enabled);
     let was = state
         .minimize_to_tray_enabled
         .swap(enabled, std::sync::atomic::Ordering::Relaxed);
@@ -14064,8 +14068,10 @@ fn set_minimize_to_tray(state: tauri::State<'_, AppState>, enabled: bool) -> Res
 // Spec: docs/spec/v0.9.0-glitchtip-self-hosted.md (LE4) +
 //       docs/spec/v0.9.0-telemetry-contract.md Sektion 9 (DSGVO).
 #[tauri::command]
-fn error_reporting_set_consent(enabled: bool) -> Result<(), UiError> {
+fn error_reporting_set_consent(app: AppHandle, enabled: bool) -> Result<(), UiError> {
     sentry_init::set_consent(enabled);
+    // v3 (Etappe 5): die Huelle haelt die Einwilligung, angewandt beim Start.
+    huelle::einstellung_setzen(&app, |e| e.fehlerberichte = enabled);
     Ok(())
 }
 
@@ -52061,7 +52067,8 @@ async fn telemetrie_fenster_oeffnen(app: AppHandle) -> Result<(), UiError> {
     WebviewWindowBuilder::new(
         &app,
         "telemetrie",
-        WebviewUrl::App("index.html?fenster=telemetrie".into()),
+        // v3 (Etappe 5, P-8.20): aus derselben Generation wie das Hauptfenster.
+        WebviewUrl::CustomProtocol(ui_lader::adresse("index.html?fenster=telemetrie")),
     )
     .title("AeroACARS — Telemetrie")
     .inner_size(1400.0, 900.0)
@@ -55008,8 +55015,8 @@ pub fn run() {
         .setup(|app| {
             // v3 (Etappe 1a): Laufzeit-Paket zuerst — legt OurAirports fest, bevor jemand Bahnen liest.
             if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten.clone()); tauri::async_runtime::spawn(landungs_eingabe::nachsenden(daten)); }
-            // v3 (Etappe 5, P-8.03): Messlauf der CI — nur das Fenster `ui`, sonst nichts.
-            if ui_lader::selbsttest_starten(app) { return Ok(()); }
+            // v3 (Etappe 5): CI-Messlauf P-8.03 (nur Fenster `ui`), sonst Einstellungen der Huelle anwenden.
+            if ui_lader::selbsttest_starten(app) { return Ok(()); } else { huelle::beim_start_anwenden(app.handle()); }
             // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
             // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
             // geschrieben werden, an denen ein frueherer Lauf erkannt wird.
@@ -55282,6 +55289,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             laufzeit_paket::paket_datei,
+            huelle::shell_request,
+            huelle::shell_auftraege,
+            huelle::shell_auftrag_beantworten,
+            huelle::huelle_einstellungen,
+            huelle::flight_logs_auto_purge_set,
+            huelle::update_installieren,
             vermessung::vermessung_starten,
             vermessung::vermessung_ruhe,
             vermessung::vermessung_stellung,

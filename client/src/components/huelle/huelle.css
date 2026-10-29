@@ -1,0 +1,5 @@
+/* v3 (Etappe 5): Bestätigungsdialog der Hülle (HuelleFenster.tsx). */
+.huelle { padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+.huelle h1 { margin: 0; font-size: 1.25rem; }
+.huelle pre { margin: 0; padding: 8px 12px; max-height: 160px; overflow: auto; background: rgba(127, 127, 127, 0.12); border-radius: 6px; }
+.huelle__knoepfe { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }

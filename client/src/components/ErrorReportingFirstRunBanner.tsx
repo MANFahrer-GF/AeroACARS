@@ -32,8 +32,11 @@ export function ErrorReportingFirstRunBanner({ onDecided }: Props) {
   if (!visible) return null;
 
   const decide = (enabled: boolean) => {
-    setConsent(enabled);
-    void invoke("error_reporting_set_consent", { enabled }).catch(() => undefined);
+    // v3 (Etappe 5): gespeichert erst nach Bestätigung in der Hülle;
+    // abgelehnt = weiter ungefragt, das Banner kommt beim nächsten Start.
+    void invoke("error_reporting_set_consent", { enabled })
+      .then(() => setConsent(enabled))
+      .catch(() => undefined);
     setVisible(false);
     onDecided?.(enabled);
   };

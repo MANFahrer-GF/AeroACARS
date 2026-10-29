@@ -14,14 +14,16 @@ import "./App.css";
 import { applyTheme, getInitialTheme } from "./theme";
 import { GsgSkinProvider } from "./components/GsgSkinProvider";
 import { BasemapProvider } from "./components/BasemapContext";
-import { initSentry, getConsent, Sentry } from "./lib/sentry";
+import { initSentry, consentIsUnset, setConsent, Sentry } from "./lib/sentry";
 import {
   invoke,
   isTauri,
   hasRemoteToken,
   consumePinFromUrl,
   onReauthNeeded,
+  IST_HUELLE,
 } from "./lib/ipc";
+import { HuelleFenster } from "./components/huelle/HuelleFenster";
 import { RemotePinGate } from "./components/RemotePinGate";
 import { VatsimCdmView } from "./components/VatsimCdmView";
 import { Notice } from "./components/ui";
@@ -58,10 +60,17 @@ function paketLaden(): Promise<void> {
 // Call noch ohne Token feuern und sofort 401en → die UI in eine Re-Auth-
 // Schleife zwingen, bevor das PIN-Gate ueberhaupt steht. Deshalb nur im
 // Tauri-Build (dort ist die native IPC immer berechtigt).
+//
+// v3 (Etappe 5): Die Einwilligung ist ein Systembefehl und gehört der Hülle;
+// sie hält den Wert selbst und setzt ihn beim Start. Die Oberfläche liest
+// ihn nur noch und übernimmt ihn in ihren Speicher — nie umgekehrt.
+// Ungefragt bleibt ungefragt (Erststart-Banner), solange die Hülle „aus“ hat.
 if (isTauri) {
-  void invoke("error_reporting_set_consent", { enabled: getConsent() }).catch(
-    () => undefined,
-  );
+  void invoke<{ fehlerberichte: boolean }>("huelle_einstellungen")
+    .then((e) => {
+      if (e.fehlerberichte || !consentIsUnset()) setConsent(e.fehlerberichte);
+    })
+    .catch(() => undefined);
 }
 
 applyTheme(getInitialTheme());
@@ -489,7 +498,9 @@ const zeichnen = () => ReactDOM.createRoot(document.getElementById("root") as HT
         </div>
       )}
     >
-      {IST_TELEMETRIE_FENSTER ? (
+      {isTauri && IST_HUELLE ? (
+        <HuelleFenster />
+      ) : IST_TELEMETRIE_FENSTER ? (
         <GsgSkinProvider>
           <TelemetrieFenster />
         </GsgSkinProvider>
@@ -502,5 +513,6 @@ const zeichnen = () => ReactDOM.createRoot(document.getElementById("root") as HT
 
 // Tauri: Paketstand vor dem ersten Zeichnen (siehe paketLaden). Die
 // LAN-Oberflaeche wartet in `Root` nach der Freischaltung.
-if (isTauri) void paketLaden().then(zeichnen);
+// Die Hülle zeichnet nur mit eingebauten Texten (Klasse A, P-8.01).
+if (isTauri && !IST_HUELLE) void paketLaden().then(zeichnen);
 else zeichnen();

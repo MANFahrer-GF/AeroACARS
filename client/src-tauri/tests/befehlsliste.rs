@@ -51,6 +51,9 @@ fn systembefehle_bleiben_in_der_huelle() {
         "flight_logs_delete_all", "remote_server_start", "telemetrie_csv_speichern",
         "error_reporting_set_consent", "landing_delete", "kabinen_musik_pruefen", "ascan_list_aircraft",
         "vdgs_fenster_oeffnen", "telemetrie_fenster_oeffnen",
+        // Etappe 5: Wer Auftraege beantworten duerfte, koennte sich selbst
+        // bestaetigen — nur die Huelle.
+        "shell_auftraege", "shell_auftrag_beantworten", "update_installieren", "flight_logs_auto_purge_set",
     ] {
         assert_eq!(liste.get(b).map(String::as_str), Some("system"), "{b}");
     }
@@ -79,4 +82,21 @@ fn rechte_dateien_passen_zur_liste() {
     for p in rechte(&datei("default")) {
         assert!(p.contains(':'), "default.json: App-Recht {p} gehoert in ui.json/huelle.json");
     }
+}
+
+/// P-8.02: Ein Fenster bekommt entweder die Rechte der Oberflaeche oder die
+/// der Huelle, nie beide (Tauri vereinigt Capabilities je Fenster). Die
+/// Oberflaechen-Fenster duerfen keinen Systembefehl.
+#[test]
+fn fenster_haben_genau_eine_rechte_datei() {
+    let fenster = |name: &str| -> BTreeSet<String> {
+        let pfad = format!("{}/capabilities/{name}.json", env!("CARGO_MANIFEST_DIR"));
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&pfad).unwrap()).unwrap();
+        v["windows"].as_array().unwrap().iter().map(|w| w.as_str().unwrap().to_string()).collect()
+    };
+    let ui = fenster("ui");
+    let huelle = fenster("huelle");
+    assert!(ui.contains("main") && ui.contains("telemetrie"), "Haupt- und Telemetriefenster laden die Oberflaeche: {ui:?}");
+    assert_eq!(huelle, BTreeSet::from(["huelle".to_string()]), "nur das Fenster huelle darf Systembefehle");
+    assert!(ui.is_disjoint(&huelle), "Fenster in ui.json UND huelle.json: {:?}", ui.intersection(&huelle).collect::<Vec<_>>());
 }

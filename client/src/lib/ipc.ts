@@ -21,6 +21,8 @@
 // Tauri globals are absent). Instead we lazy `import()` the real APIs only on
 // the Tauri branch.
 
+import befehlsliste from "../../src-tauri/befehle.json";
+
 /** True when running inside the Tauri webview (native IPC available). */
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -495,10 +497,37 @@ export function clearIpcCache(): void {
   cacheGeneration++;
 }
 
-async function rawInvoke<T>(
+/** v3 (Etappe 5, P-8.10): Befehle der Stufe „system“ (befehle.json, eine
+ *  Quelle mit dem Kern). Die Oberfläche darf sie nicht selbst aufrufen
+ *  (Capability ui) — sie gehen über `shell_request` an die Hülle, die den
+ *  Piloten bestätigen lässt und das Ergebnis des Befehls zurückgibt. */
+export const SYSTEMBEFEHLE: ReadonlySet<string> = new Set(
+  Object.entries(befehlsliste.befehle as Record<string, string>)
+    .filter(([, stufe]) => stufe === "system")
+    .map(([befehl]) => befehl),
+);
+
+/** Das Hülle-Fenster selbst ruft alles direkt (Capability huelle). */
+export const IST_HUELLE =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("fenster") === "huelle";
+
+/** Ein Aufruf, wie er an den Kern geht: Systembefehle außerhalb der Hülle
+ *  als `shell_request(befehl, werte)`. */
+export function aufrufZiel(
   cmd: string,
   args?: Record<string, unknown>,
+  huelle = IST_HUELLE,
+): [string, Record<string, unknown> | undefined] {
+  if (!huelle && SYSTEMBEFEHLE.has(cmd)) return ["shell_request", { befehl: cmd, werte: args ?? {} }];
+  return [cmd, args];
+}
+
+async function rawInvoke<T>(
+  befehl: string,
+  werte?: Record<string, unknown>,
 ): Promise<T> {
+  const [cmd, args] = aufrufZiel(befehl, werte);
   if (isTauri) {
     await ensureTauriInvoke();
     return tauriInvoke!<T>(cmd, args);

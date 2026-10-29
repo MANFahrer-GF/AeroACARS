@@ -5001,5 +5001,13 @@
       "Arrived": "Arrivato",
       "PirepSubmitted": "PIREP inviato"
     }
+  },
+  "huelle": {
+    "titel": "Conferma richiesta",
+    "frage": "L'interfaccia vuole eseguire un'azione consentita solo dalla shell (file, accesso, consenso, eliminazione, finestre o servizi di rete). Eseguire?",
+    "ausfuehren": "Esegui",
+    "ablehnen": "Rifiuta",
+    "weitere": "Dopo questa attendono altre {{anzahl}} richieste.",
+    "leer": "Nessuna richiesta aperta."
   }
 }

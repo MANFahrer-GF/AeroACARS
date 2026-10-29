@@ -815,7 +815,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 enabled: bool,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::error_reporting_set_consent(a.enabled)),
+                Ok(a) => from_uierr(crate::error_reporting_set_consent(app.clone(), a.enabled)),
                 Err(e) => Err(e),
             }
         }
@@ -907,7 +907,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 enabled: bool,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::set_minimize_to_tray(st!(), a.enabled)),
+                Ok(a) => from_uierr(crate::set_minimize_to_tray(app.clone(), st!(), a.enabled)),
                 Err(e) => Err(e),
             }
         }
@@ -1026,6 +1026,31 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         "landing_backup_restore" => from_uierr(crate::landing_backup_restore(app.clone()).await),
         "flight_logs_stats" => from_uierr(crate::flight_logs_stats(app.clone())),
         "flight_logs_delete_all" => from_uierr(crate::flight_logs_delete_all(app.clone())),
+        // v3 (Etappe 5): Huelle. Vom Tablet aus nur anstossen — bestaetigt
+        // wird am Sim-PC (Fenster huelle), das Ergebnis kommt hierher zurueck.
+        "shell_request" => {
+            #[derive(Deserialize)]
+            struct A {
+                befehl: String,
+                #[serde(default)]
+                werte: Option<Value>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::huelle::shell_request(app.clone(), a.befehl, a.werte).await),
+                Err(e) => Err(e),
+            }
+        }
+        "huelle_einstellungen" => ok_json(crate::huelle::huelle_einstellungen(app.clone())),
+        "flight_logs_auto_purge_set" => {
+            #[derive(Deserialize)]
+            struct A {
+                enabled: bool,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::huelle::flight_logs_auto_purge_set(app.clone(), a.enabled)),
+                Err(e) => Err(e),
+            }
+        }
         "flight_logs_purge_older_than" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
@@ -1553,6 +1578,12 @@ mod tests {
             // unten, eigener Ereigniskanal).
             "telemetrie_csv_speichern",
             "telemetrie_fenster_oeffnen",
+            // v3 (Etappe 5): Befehle des Huelle-Fensters selbst (Auftraege
+            // lesen/beantworten) und das Update laufen nur am Sim-PC. Das
+            // Tablet stoesst Systembefehle ueber `shell_request` an.
+            "shell_auftraege",
+            "shell_auftrag_beantworten",
+            "update_installieren",
         ];
 
         // v1.5.6: LEER — die frueher hier geparkten Luecken (Taxi-Karte,

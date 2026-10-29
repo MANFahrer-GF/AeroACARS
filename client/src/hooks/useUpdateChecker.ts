@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
-import { isTauri } from "../lib/ipc";
+import { invoke, isTauri, listen } from "../lib/ipc";
 
 // v0.16.0 (#LAN-Remote): die Updater-/Process-Plugins existieren nur im
 // Tauri-Build. In einem reinen LAN-Browser (Tablet) gibt es keinen
@@ -16,11 +16,13 @@ async function tauriCheckForUpdate(): Promise<Update | null> {
   return (await check()) as Update | null;
 }
 
-async function tauriRelaunch(): Promise<void> {
-  if (!isTauri) return;
-  const { relaunch } = await import("@tauri-apps/plugin-process");
-  await relaunch();
-}
+/** v3 (Etappe 5, P-8.01): Laden, Installieren und Neustart macht die Hülle
+ *  (`update_installieren`, Rust; die Oberfläche hat dafür keine Rechte). Der
+ *  Fortschritt kommt als Ereignis in der Form des JS-Plugins. */
+type DownloadEvent =
+  | { event: "Started"; data: { contentLength?: number | null } }
+  | { event: "Progress"; data: { chunkLength: number } }
+  | { event: "Finished" };
 
 /**
  * v0.5.48 — Zentraler Update-Checker mit Eskalations-Stufen.
@@ -317,7 +319,7 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
       }
       let downloaded = 0;
       let total = 0;
-      await zuInstallieren.downloadAndInstall((event) => {
+      const fortschritt = (event: DownloadEvent) => {
         switch (event.event) {
           case "Started":
             total = event.data.contentLength ?? 0;
@@ -339,8 +341,14 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
             setProgress("Installiere — App startet gleich neu…");
             break;
         }
-      });
-      await tauriRelaunch();
+      };
+      const aus = await listen<DownloadEvent>("update-fortschritt", (e) => fortschritt(e.payload));
+      try {
+        // Startet bei Erfolg neu und kehrt nicht zurück.
+        await invoke("update_installieren", { version: zuInstallieren.version });
+      } finally {
+        aus();
+      }
     } catch (err) {
       setProgress(`Fehler: ${err}`);
       setInstalling(false);

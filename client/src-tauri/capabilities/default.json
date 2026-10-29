@@ -1,13 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main", "telemetrie"],
+  "description": "Plugin-Rechte der Fenster. App-Befehle stehen in ui.json/huelle.json (erzeugt). Update installieren und Neustart laufen in der Huelle ueber den Befehl update_installieren (Rust), die Oberflaeche darf nur nachsehen (Etappe 5).",
+  "windows": ["main", "telemetrie", "huelle"],
   "permissions": [
     "core:default",
     "opener:default",
-    "updater:default",
-    "process:default",
+    "updater:allow-check",
     "notification:default",
     "dialog:default",
     "core:webview:allow-print"

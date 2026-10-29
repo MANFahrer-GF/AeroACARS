@@ -3,9 +3,7 @@
   "identifier": "huelle",
   "description": "Eingebaute Huelle: alle Befehle (P-8.01). ERZEUGT von scripts/rechte-erzeugen.mjs aus befehle.json — nicht von Hand aendern.",
   "windows": [
-    "huelle",
-    "main",
-    "telemetrie"
+    "huelle"
   ],
   "permissions": [
     "allow-activity-log-clear",
@@ -55,6 +53,7 @@
     "allow-flight-get-route-fixes",
     "allow-flight-get-track",
     "allow-flight-list-orphans",
+    "allow-flight-logs-auto-purge-set",
     "allow-flight-logs-delete-all",
     "allow-flight-logs-purge-older-than",
     "allow-flight-logs-stats",
@@ -89,6 +88,7 @@
     "allow-hoppie-set-logon-code",
     "allow-hoppie-set-settings",
     "allow-hoppie-status",
+    "allow-huelle-einstellungen",
     "allow-inspector-add",
     "allow-inspector-list",
     "allow-inspector-remove",
@@ -157,6 +157,9 @@
     "allow-set-auto-file-enabled",
     "allow-set-minimize-to-tray",
     "allow-set-simbrief-settings",
+    "allow-shell-auftraege",
+    "allow-shell-auftrag-beantworten",
+    "allow-shell-request",
     "allow-sim-force-resync",
     "allow-sim-get-auswahl",
     "allow-sim-get-kind",
@@ -170,6 +173,7 @@
     "allow-ui-state-get-all",
     "allow-ui-state-seed",
     "allow-ui-state-set",
+    "allow-update-installieren",
     "allow-va-live-flights",
     "allow-vdgs-fenster-oeffnen",
     "allow-vdgs-fenster-offen",

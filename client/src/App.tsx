@@ -144,9 +144,6 @@ const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
 const AUTO_START_STORAGE_KEY = "aeroacars.autoStart";
 const AUTO_DELETE_LOGS_STORAGE_KEY = "aeroacars.autoDeleteFlightLogs";
-/** Days threshold for the auto-purge sweep. Mirrors the wording of the
- *  Settings hint — keep both in sync if you ever change it. */
-const AUTO_DELETE_LOGS_DAYS = 30;
 
 /** Tracks the version for which the "What's new" modal was last
  *  shown. App start compares this against the running version and
@@ -323,13 +320,22 @@ function App() {
     () => loadApproachAdvisories(),
   );
 
-  // Sync the minimize-to-tray flag to the Rust backend whenever it
-  // changes, plus on first mount. Backend default is `false`;
-  // localStorage is the source of truth across restarts. The actual
-  // close-handler in Rust just reads this atomic flag.
+  // v3 (Etappe 5): Tray und Löschautomatik gehören der Hülle (Systembefehle).
+  // Sie hält die Werte selbst und wendet sie beim Start an; die Oberfläche
+  // liest sie hier nur und zeigt sie an. Geändert wird über die Hülle
+  // (Bestätigung), siehe die Schalter-Handler unten.
   useEffect(() => {
-    void invoke("set_minimize_to_tray", { enabled: minimizeToTray }).catch(() => {});
-  }, [minimizeToTray]);
+    void invoke<{ minimize_to_tray: boolean; flugprotokolle_auto_loeschen: boolean }>(
+      "huelle_einstellungen",
+    )
+      .then((e) => {
+        setMinimizeToTray(e.minimize_to_tray);
+        saveMinimizeToTray(e.minimize_to_tray);
+        setAutoDeleteFlightLogs(e.flugprotokolle_auto_loeschen);
+        saveAutoDeleteFlightLogs(e.flugprotokolle_auto_loeschen);
+      })
+      .catch(() => {});
+  }, []);
 
   // v0.12.6: Auto-File-Flag in den Rust-Backend-State spiegeln — bei
   // Mount UND bei jedem Toggle. Der Position-Streamer im Backend filet
@@ -370,18 +376,6 @@ function App() {
         // app_info missing or errored — silently skip
       }
     })();
-  }, []);
-
-  // Auto-purge stale flight log files once per app launch when the
-  // toggle is on. Fires on mount only — re-toggling at runtime doesn't
-  // re-sweep (next launch will). 30-day threshold matches the Settings
-  // hint copy.
-  useEffect(() => {
-    if (!loadAutoDeleteFlightLogs()) return;
-    void invoke("flight_logs_purge_older_than", {
-      olderThanDays: AUTO_DELETE_LOGS_DAYS,
-    }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Sync the persisted auto-start flag to the Rust backend on every
@@ -732,8 +726,13 @@ function App() {
   }
 
   function handleAutoDeleteFlightLogsChange(next: boolean) {
-    setAutoDeleteFlightLogs(next);
-    saveAutoDeleteFlightLogs(next);
+    // v3 (Etappe 5): Löschautomatik hält die Hülle (löscht beim Start selbst).
+    void invoke("flight_logs_auto_purge_set", { enabled: next })
+      .then(() => {
+        setAutoDeleteFlightLogs(next);
+        saveAutoDeleteFlightLogs(next);
+      })
+      .catch(() => {});
   }
 
   // v0.12.12-dev: VA-News-Badge — pollt /api/news + localStorage.
@@ -1228,8 +1227,12 @@ function App() {
           }}
           minimizeToTray={minimizeToTray}
           onMinimizeToTrayChange={(next) => {
-            setMinimizeToTray(next);
-            saveMinimizeToTray(next);
+            void invoke("set_minimize_to_tray", { enabled: next })
+              .then(() => {
+                setMinimizeToTray(next);
+                saveMinimizeToTray(next);
+              })
+              .catch(() => {});
           }}
           approachAdvisoriesEnabled={approachAdvisoriesEnabled}
           onApproachAdvisoriesEnabledChange={(next) => {

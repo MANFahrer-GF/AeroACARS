@@ -107,6 +107,14 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `aeroui` (`ui_lader::anfrage`); in `.setup` nach dem Laufzeit-Paket der
 /// CI-Selbsttest (`ui_lader::selbsttest_starten`, nur mit
 /// `AEROACARS_UI_SELBSTTEST`). Tests `ui_lader::tests`, CI-Job `ui-selbsttest`.
+/// — plus Etappe 5 Schritt 3 (P-8.01/P-8.10): `mod huelle`; sechs Befehle
+/// `huelle::*` im `generate_handler!` (shell_request, shell_auftraege,
+/// shell_auftrag_beantworten, huelle_einstellungen,
+/// flight_logs_auto_purge_set, update_installieren); `set_minimize_to_tray`
+/// und `error_reporting_set_consent` nehmen `app` und speichern den Wert in
+/// der Huelle; im `setup` `huelle::beim_start_anwenden`; Telemetriefenster
+/// ueber `aeroui://` (`ui_lader::adresse`). Tests `huelle::tests`,
+/// `tests/befehlsliste.rs` (fenster_haben_genau_eine_rechte_datei).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -117,4 +125,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "7ac1ceadf4678cef3c6c991d2f1de5060567eeb7009a6c7e07a3536f8bc9fd56";
+const HASH_VOR_DER_ZERLEGUNG: &str = "535cf7fe7f32c5dfbe9139ab0c3b75b490ae8d907de59efe39a3857e25d1c08b";

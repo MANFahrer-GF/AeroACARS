@@ -735,13 +735,14 @@ function ErrorReportingPanel() {
   const [enabled, setEnabledState] = useState<boolean>(() => getConsent());
 
   const handleToggle = (next: boolean) => {
-    setEnabledState(next);
-    setConsent(next);
-    // Mirror in Rust-Backend (Atomic-Gate). Wenn der Command nicht
-    // existiert (alter Build), ignorieren — Default bleibt OFF.
-    void invoke("error_reporting_set_consent", { enabled: next }).catch(
-      () => undefined,
-    );
+    // v3 (Etappe 5): Erst die Hülle (Bestätigung des Piloten), dann der
+    // Schalter hier — lehnt er ab, bleibt alles, wie es war.
+    void invoke("error_reporting_set_consent", { enabled: next })
+      .then(() => {
+        setEnabledState(next);
+        setConsent(next);
+      })
+      .catch(() => undefined);
   };
 
   return (
