@@ -169,6 +169,16 @@ class GsgListe(unittest.TestCase):
             self.assertEqual(gsg, {"EDDF", "EDDM"}, antwort)
             self.assertIn("feste Liste genutzt", vermerk, antwort)
 
+    def test_rueckfall_bei_zu_kurzer_liste(self):
+        with open(self.fest, "w") as f:
+            f.write("EDDF\nEDDM\nEDDH\nEDDK\nEDDL\n")
+        gsg, vermerk = self.mit_antwort('{"icao": ["KJFK", "EGLL"]}')
+        self.assertEqual(gsg, {"EDDF", "EDDM", "EDDH", "EDDK", "EDDL"})
+        self.assertIn("nur 2 Codes", vermerk)
+        # Gegenprobe: ab der Haelfte gilt die Live-Liste.
+        gsg, _ = self.mit_antwort('{"icao": ["KJFK", "EGLL", "LFPG"]}')
+        self.assertEqual(gsg, {"KJFK", "EGLL", "LFPG"})
+
     def test_ohne_url_feste_liste(self):
         gsg, vermerk = oa.gsg_flughaefen(None, self.fest)
         self.assertEqual(gsg, {"EDDF", "EDDM"})

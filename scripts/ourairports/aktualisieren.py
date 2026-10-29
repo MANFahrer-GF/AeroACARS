@@ -170,6 +170,10 @@ def gsg_flughaefen(url, datei):
         neu = {c for c in neu if re.fullmatch(r"[A-Z0-9]{4}", c)}
         if not neu:
             raise ValueError("keine gueltigen ICAO-Codes")
+        # Eine unvollstaendige Antwort darf die GSG-Schwellen nicht still
+        # abschwaechen: weniger als die Haelfte der festen Liste gilt als Ausfall.
+        if len(neu) * 2 < len(fest):
+            raise ValueError(f"nur {len(neu)} Codes, feste Liste hat {len(fest)}")
         return neu, f"GSG-Flughaefen: aktuelle Liste von live ({len(neu)})"
     except Exception as e:  # noqa: BLE001 - jeder Ausfall faellt auf die feste Liste zurueck
         return fest, (f"GSG-Flughaefen: Abruf von live fehlgeschlagen ({type(e).__name__}: {e}), "
