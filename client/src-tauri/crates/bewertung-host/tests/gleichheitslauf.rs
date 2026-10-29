@@ -321,7 +321,14 @@ fn betroffene_achsen(n: &Nachbau) -> Vec<&'static str> {
     if n.nachgespielt.contains(&"ohne_touchdown_complete") {
         return vec!["*"];
     }
-    let mut a = vec!["fuel", "stability"]; // plan_strecke_nm; Anflug unter 500 ft
+    // plan_strecke_nm und `diverted` (Fuel); Anflug unter 500 ft (Stabilitaet).
+    let mut a = vec!["fuel", "stability"];
+    if n.nachgespielt.contains(&"vs_nur_gerundet") {
+        a.push("landing_rate");
+    }
+    if n.nachgespielt.contains(&"landung_abdeckung_fehlt") {
+        a.extend(["landing_rate", "g_force", "bounces"]);
+    }
     if n.nachgespielt.iter().any(|x| x.starts_with("wind") || x.starts_with("bezugsfahrt")) {
         a.push("alignment");
     }
@@ -348,6 +355,7 @@ fn teil_vergleich(alt: &Value, neu: &Value) -> Vec<(String, &'static str, Value,
         ("points", "note"),
         ("skipped", "note"),
         ("band", "text"),
+        ("label_key", "text"),
         ("rationale_key", "text"),
         ("tip_key", "text"),
         ("reason", "text"),
@@ -357,6 +365,7 @@ fn teil_vergleich(alt: &Value, neu: &Value) -> Vec<(String, &'static str, Value,
         ("value_key", "text"),
         ("value", "anzeige"),
         ("value_params", "anzeige"),
+        ("messwert", "anzeige"),
     ] {
         let leer = |v: &Value| v.is_null() || v.as_array().is_some_and(|a| a.is_empty()) || v.as_object().is_some_and(|o| o.is_empty());
         let (a, n) = (f32_normiert(&alt[feld]), f32_normiert(&neu[feld]));
@@ -481,6 +490,8 @@ fn gleichheitslauf() {
             writeln!(aus, "{kopf}").unwrap();
             continue;
         }
+        // Der Client setzt `landing_nicht_konventionell` bei jedem Aufsetzer
+        // und nimmt es im Flug nie zurueck — also: irgendein Aufsetzer.
         let nicht_konv = alle_ticks.iter().any(|t| flotte.nicht_konventionell(t));
         let Some(n) = nachbauen(f, tick.as_ref(), nicht_konv, &paket) else { unreachable!() };
         let ein = serde_json::to_string(&n.eingabe).unwrap();
