@@ -137,7 +137,7 @@
         let mut stats = FlightStats::new();
         assert!(takeoff_roll_detected(
             &mut stats,
-            &taxiing(TAKEOFF_ROLL_UNAMBIGUOUS_KT + 1.0),
+            &taxiing(crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_unambiguous_kt.wert + 1.0),
             Utc::now()
         ));
     }

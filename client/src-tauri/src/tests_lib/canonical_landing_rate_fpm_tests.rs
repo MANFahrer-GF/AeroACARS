@@ -823,14 +823,14 @@
             }
             compute_approach_stddev(&buf, None)
         };
-        let (vs_thin, bank_thin) = mk(STABILITY_MIN_SAMPLES - 1);
+        let (vs_thin, bank_thin) = mk(crate::grenzwerte::grenzwerte().anflug_kern.stability_min_samples.wert - 1);
         assert_eq!(
             vs_thin, None,
             "zu duenne Stichprobe darf keinen Wert liefern"
         );
         assert_eq!(bank_thin, None);
 
-        let (vs_ok, bank_ok) = mk(STABILITY_MIN_SAMPLES + 5);
+        let (vs_ok, bank_ok) = mk(crate::grenzwerte::grenzwerte().anflug_kern.stability_min_samples.wert + 5);
         assert!(
             vs_ok.is_some(),
             "ausreichende Stichprobe muss bewertet werden"

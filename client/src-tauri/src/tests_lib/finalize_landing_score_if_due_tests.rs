@@ -33,7 +33,7 @@
         finalize_landing_score_if_due(&mut stats, "TEST123", t(5), 0.0, true);
         assert!(
             stats.landing_score.is_none(),
-            "vor Ablauf von BOUNCE_WINDOW_SECS darf noch nicht finalisiert werden"
+            "vor Ablauf von crate::grenzwerte::grenzwerte().landung.bounce_window_secs.wert darf noch nicht finalisiert werden"
         );
     }
 
@@ -165,7 +165,7 @@
         stats.landing_at = Some(t(0));
         stats.landing_peak_vs_fpm = Some(-13.0);
         stats.touch_and_go_pending_since = None; // absichtlich: FSM hat es noch nicht gesetzt
-        let agl_over_threshold = TOUCH_AND_GO_AGL_THRESHOLD_FT + 1.0;
+        let agl_over_threshold = crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_agl_threshold_ft.wert + 1.0;
         finalize_landing_score_if_due(&mut stats, "TEST123", t(9), agl_over_threshold, false);
         assert!(
             stats.landing_score.is_none(),

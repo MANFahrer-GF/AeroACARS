@@ -650,7 +650,7 @@
         let mut abgelegt: Vec<(f32, f32)> = Vec::new();
         for (lg, qr) in echte_punkte {
             let weit_genug = abgelegt.last().is_none_or(|(l, q)| {
-                (lg - *l as f64).hypot(qr - *q as f64) >= BAHN_SPUR_MIN_ABSTAND_M
+                (lg - *l as f64).hypot(qr - *q as f64) >= crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_min_abstand_m.wert
             });
             if weit_genug {
                 abgelegt.push((*lg as f32, *qr as f32));
@@ -675,7 +675,7 @@
         let mut letzter: Option<(f64, f64)> = None;
         for (lg, qr) in &quer_weg {
             let nimm = letzter.is_none_or(|(l, q)| {
-                (lg - l).hypot((qr - q) * BAHN_SPUR_QUER_GEWICHT) >= BAHN_SPUR_MIN_ABSTAND_M
+                (lg - l).hypot((qr - q) * crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_quer_gewicht.wert) >= crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_min_abstand_m.wert
             });
             if nimm {
                 in_kurve += 1;
@@ -688,7 +688,7 @@
         let mut letzter: Option<f64> = None;
         for i in 0..12 {
             let lg = 1900.0 + i as f64 * 2.0;
-            if letzter.is_none_or(|l| (lg - l as f64).abs() >= BAHN_SPUR_MIN_ABSTAND_M) {
+            if letzter.is_none_or(|l| (lg - l as f64).abs() >= crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_min_abstand_m.wert) {
                 auf_gerade += 1;
                 letzter = Some(lg);
             }
@@ -1813,11 +1813,12 @@
                 Some(gs),
                 true, // die Aufzeichnung laeuft noch
             );
+            let rollout_tick_ms = crate::grenzwerte::grenzwerte().ausrollen.rollout_tick_ms.wert;
             assert_eq!(
                 t,
-                Duration::from_millis(ROLLOUT_TICK_MS),
+                Duration::from_millis(crate::grenzwerte::grenzwerte().ausrollen.rollout_tick_ms.wert),
                 "bei {gs} kt in der Ausfahrt taktet die Aufzeichnung mit \
-                 {t:?} statt {ROLLOUT_TICK_MS} ms — die Spur wird grob"
+                 {t:?} statt {rollout_tick_ms} ms — die Spur wird grob"
             );
         }
         // Rollt das Flugzeug zum Gate, ist die Spur zu Ende — und mit ihr
@@ -1829,7 +1830,7 @@
                 Some(true),
                 Some(20.0),
                 false,
-            ) > Duration::from_millis(ROLLOUT_TICK_MS),
+            ) > Duration::from_millis(crate::grenzwerte::grenzwerte().ausrollen.rollout_tick_ms.wert),
             "auf dem Rollweg laeuft der 5-Hz-Takt weiter"
         );
 
@@ -1839,7 +1840,7 @@
         for (lg, _) in echte_punkte {
             if nur_laengs
                 .last()
-                .is_none_or(|l| (lg - l).abs() >= BAHN_SPUR_MIN_ABSTAND_M)
+                .is_none_or(|l| (lg - l).abs() >= crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_min_abstand_m.wert)
             {
                 nur_laengs.push(*lg);
             }
@@ -1863,7 +1864,7 @@
         let mut stats = FlightStats::default();
         // Kein Aufsetz-GS bekannt (sollte im Landing-Pfad nicht vorkommen)
         // — Rueckfall auf den alten festen Wert, NICHT auf 0 oder Fehler.
-        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), crate::grenzwerte::grenzwerte().ausrollen.bahn_mess_min_gs_kt.wert);
 
         // Deckel: ab 100 kt Aufsetz-GS bleibt es beim alten Wert (0.6*100
         // = 60) — unveraendertes Verhalten fuer Jets/Airliner.
@@ -1889,21 +1890,21 @@
         // Ein nicht-endlicher Wert (sollte praktisch nie vorkommen) faellt
         // ebenfalls auf den festen Wert zurueck, NICHT auf 0.
         stats.landing_groundspeed_kt = Some(f32::NAN);
-        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), crate::grenzwerte::grenzwerte().ausrollen.bahn_mess_min_gs_kt.wert);
 
         // +/- unendlich: `is_finite()` verwirft beides, Ruecckfall auf den
         // festen Wert (QS-Fund, Codex 08.09.2026: nicht nur NaN testen).
         stats.landing_groundspeed_kt = Some(f32::INFINITY);
-        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), crate::grenzwerte::grenzwerte().ausrollen.bahn_mess_min_gs_kt.wert);
         stats.landing_groundspeed_kt = Some(f32::NEG_INFINITY);
-        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), crate::grenzwerte::grenzwerte().ausrollen.bahn_mess_min_gs_kt.wert);
 
         // Eine negative, aber ENDLICHE GS (Sensor-Glitch, physikalisch
         // unmoeglich) darf NICHT wie eine echte langsame Landung auf den
         // 25-kt-Boden geklemmt werden, sondern faellt auf den festen Wert
         // zurueck — genau wie NaN (QS-Fund, Codex 08.09.2026).
         stats.landing_groundspeed_kt = Some(-5.0);
-        assert_eq!(bahn_mess_schwelle_kt(&stats), BAHN_MESS_MIN_GS_KT);
+        assert_eq!(bahn_mess_schwelle_kt(&stats), crate::grenzwerte::grenzwerte().ausrollen.bahn_mess_min_gs_kt.wert);
     }
 
     /// v1.7.21: Ein leichtes GA-Muster mit niedriger Aufsetzfahrt bekommt
@@ -2295,9 +2296,10 @@
         // mit dem `bahndisziplin_tick` die Spur ohnehin ausduennt. Feiner
         // abzutasten brächte nichts, weil die Punkte dann verworfen werden.
         let meter_je_tick = 100.0 * 0.514_444 * 0.2;
+        let bahn_spur_min_abstand_m = crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_min_abstand_m.wert;
         assert!(
-            (meter_je_tick - BAHN_SPUR_MIN_ABSTAND_M).abs() < 1.0,
-            "{meter_je_tick} m je Tick gegen {BAHN_SPUR_MIN_ABSTAND_M} m Mindestabstand"
+            (meter_je_tick - crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_min_abstand_m.wert).abs() < 1.0,
+            "{meter_je_tick} m je Tick gegen {bahn_spur_min_abstand_m} m Mindestabstand"
         );
     }
 

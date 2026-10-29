@@ -61,7 +61,7 @@
             t += 200;
         }
 
-        let merged = merge_touchdown_profile(&snapshot, &post, td(), POST_TD_PROFILE_MS);
+        let merged = merge_touchdown_profile(&snapshot, &post, td(), crate::grenzwerte::grenzwerte().landung.post_td_profile_ms.wert);
 
         // Reicht jetzt bis ~10 s statt nur +500 ms.
         let max_t = merged.iter().map(|p| p.t_ms).max().unwrap();
@@ -71,7 +71,7 @@
         );
 
         // Nichts ueber dem 10-s-Fenster.
-        assert!(merged.iter().all(|p| p.t_ms <= POST_TD_PROFILE_MS));
+        assert!(merged.iter().all(|p| p.t_ms <= crate::grenzwerte::grenzwerte().landung.post_td_profile_ms.wert));
 
         // Keine doppelten Zeitstempel (Overlap sauber dedupliziert).
         let mut ts: Vec<i32> = merged.iter().map(|p| p.t_ms).collect();
@@ -92,7 +92,7 @@
     #[test]
     fn empty_post_buffer_keeps_snapshot_only() {
         let snapshot: Vec<TouchdownProfilePoint> = (-8..=0).map(|i| pp(i * 500, -200.0)).collect();
-        let merged = merge_touchdown_profile(&snapshot, &VecDeque::new(), td(), POST_TD_PROFILE_MS);
+        let merged = merge_touchdown_profile(&snapshot, &VecDeque::new(), td(), crate::grenzwerte::grenzwerte().landung.post_td_profile_ms.wert);
         assert_eq!(merged.len(), snapshot.len());
         assert_eq!(merged.last().unwrap().t_ms, 0);
     }

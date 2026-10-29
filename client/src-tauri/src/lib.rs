@@ -167,30 +167,30 @@ const ACTIVITY_LOG_FILE: &str = "activity_log.json";
 /// presence/absence is the actual signal.
 const RUN_SENTINEL_FILE: &str = "run_active.lock";
 
-/// Wie lange ein gespeicherter Flug ohne jede Aktualisierung liegen darf und
-/// trotzdem noch aufgenommen wird — **wenn der Server nicht erreichbar ist**.
-///
-/// ⚠️ Hier stand einmal `RESUME_MAX_AGE_HOURS = 12`, gemessen **ab
-/// Flugbeginn**, und die Datei wurde beim Überschreiten auch noch gelöscht.
-/// Das hat am 28.08.2026 den Flug THY77 (LTFM→KMIA, geplant 12h20m, geflogen
-/// 12h39m) gekostet: Der Pilot hat mitten im Reiseflug das Update gemacht,
-/// beim Neustart war der Flug 12h49m alt — verworfen UND gelöscht, also auch
-/// durch einen zweiten Neustart nicht mehr zu retten. Er saß in Reiseflughöhe
-/// vor „du musst am Boden sein" und hat den Flug am Ende von Hand nachgebucht;
-/// die Landebewertung war verloren.
-///
-/// Die Zahl stammte aus der allerersten Fassung (01.05.2026, „ignores anything
-/// older than 12h") und war an nichts gekoppelt — weder an eine Anforderung
-/// noch an das Serververhalten. phpVMS hält einen laufenden PIREP unbegrenzt;
-/// es räumt ihn erst weg, wenn er `acars.live_time` lang **keine
-/// Aktualisierung** bekam. Die Dauer eines Fluges spielt dort keine Rolle.
-///
-/// Deshalb entscheidet jetzt der **Server** — er ist die einzige Instanz, die
-/// es wirklich weiß, und `try_resume_flight` fragt ihn ohnehin schon. Diese
-/// Grenze greift nur noch als Notnagel, wenn er nicht antwortet, und sie zählt
-/// ab der **letzten Aktualisierung**, nicht ab dem Start. Ein Flug ist nicht
-/// deshalb tot, weil er lange dauert.
-const RESUME_STILLSTAND_MAX_HOURS: i64 = 24;
+// Wie lange ein gespeicherter Flug ohne jede Aktualisierung liegen darf und
+// trotzdem noch aufgenommen wird — **wenn der Server nicht erreichbar ist**.
+//
+// ⚠️ Hier stand einmal `RESUME_MAX_AGE_HOURS = 12`, gemessen **ab
+// Flugbeginn**, und die Datei wurde beim Überschreiten auch noch gelöscht.
+// Das hat am 28.08.2026 den Flug THY77 (LTFM→KMIA, geplant 12h20m, geflogen
+// 12h39m) gekostet: Der Pilot hat mitten im Reiseflug das Update gemacht,
+// beim Neustart war der Flug 12h49m alt — verworfen UND gelöscht, also auch
+// durch einen zweiten Neustart nicht mehr zu retten. Er saß in Reiseflughöhe
+// vor „du musst am Boden sein" und hat den Flug am Ende von Hand nachgebucht;
+// die Landebewertung war verloren.
+//
+// Die Zahl stammte aus der allerersten Fassung (01.05.2026, „ignores anything
+// older than 12h") und war an nichts gekoppelt — weder an eine Anforderung
+// noch an das Serververhalten. phpVMS hält einen laufenden PIREP unbegrenzt;
+// es räumt ihn erst weg, wenn er `acars.live_time` lang **keine
+// Aktualisierung** bekam. Die Dauer eines Fluges spielt dort keine Rolle.
+//
+// Deshalb entscheidet jetzt der **Server** — er ist die einzige Instanz, die
+// es wirklich weiß, und `try_resume_flight` fragt ihn ohnehin schon. Diese
+// Grenze greift nur noch als Notnagel, wenn er nicht antwortet, und sie zählt
+// ab der **letzten Aktualisierung**, nicht ab dem Start. Ein Flug ist nicht
+// deshalb tot, weil er lange dauert.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> resume_stillstand_max_hours (v2.1.24: 24)
 
 /// Phase-dependent position-post cadence. Ground manoeuvres (taxi, takeoff,
 /// landing rollout) and the approach are where pilots want a precise trail
@@ -209,46 +209,46 @@ const RESUME_STILLSTAND_MAX_HOURS: i64 = 24;
 /// VPS handles it trivially even with 200 concurrent pilots.
 const MQTT_PUBLISH_INTERVAL_SECS: u64 = 3;
 
-/// v0.5.35: Adaptive Tick-Cadence. Standardmäßig 3s, aber im
-/// Approach/Final/Landing/Takeoff schneller — sonst verfehlt das
-/// Sampling den Touchdown bei langsamen GA-Flugzeugen.
-///
-/// v0.5.45: Schwellen verschoben damit der mittlere Approach
-/// (1000-2000 ft AGL) nicht mehr auf 3s default faellt. Volanta/DLHv
-/// messen konstant bei 1 Hz oder hoeher — bei -800 fpm und 3s
-/// Lücke verlieren wir 42 ft Δ AGL zwischen Samples (User-Report
-/// DLH 1731 / CFG 9746 LDZA→EDDM, Sample-Cadence 3.5s im Final).
-///
-/// Neue Skala:
-///   AGL <100 ft   → 500 ms (2 Hz)   — Flare / Wheels-Up
-///   AGL <500 ft   → 750 ms (1.3 Hz) — kurz vor TD
-///   AGL <1500 ft  → 1000 ms (1 Hz)  — Final-Approach (war: 1000-500ft = 1s)
-///   AGL <2000 ft  → 1500 ms         — kurz vor Final
-///   sonst         → 3000 ms (default)
-/// Abtastintervall waehrend des Ausrollens.
-///
-/// # Warum das Ausrollen ein eigenes Intervall braucht
-///
-/// Der Rollweg lief bisher mit denselben 2 Hz wie der Flare. Bei 100 kt
-/// (51 m/s) ist das ein Messpunkt alle **25 Meter** — und damit eine Spur,
-/// die aus fuenfzehn bis dreissig Punkten besteht. Fuer die Frage „wie weit
-/// war das Rad von der Kante" reicht das gerade so; fuer die Frage „wie hat
-/// sich das Flugzeug auf der Bahn verhalten" nicht. Ein Ausbrechen und
-/// Zurueckziehen ueber vierzig Meter faellt zwischen zwei Punkte.
-///
-/// Bei 5 Hz sind es zehn Meter je Punkt — genau der Mindestabstand, mit dem
-/// `bahndisziplin_tick` die Spur ohnehin ausduennt. Damit ist die
-/// Aufzeichnung so fein, wie die Ablage es zulaesst, und nicht feiner.
-///
-/// # Was das kostet
-///
-/// Der Tick selbst ist billig: Er liest einen Schnappschuss und rechnet.
-/// Die teuren Wege — MQTT-Publish und der phpVMS-Punktabstand — haengen
-/// seit v0.6.0 bzw. v1.6.14 an eigenen Kadenzen und werden davon **nicht**
-/// beruehrt. Das Fenster ist ausserdem kurz: Ausrollen dauert dreissig bis
-/// sechzig Sekunden, danach steht das Flugzeug auf dem Rollweg und das
-/// Intervall geht auf 2 Hz zurueck.
-const ROLLOUT_TICK_MS: u64 = 200;
+// v0.5.35: Adaptive Tick-Cadence. Standardmäßig 3s, aber im
+// Approach/Final/Landing/Takeoff schneller — sonst verfehlt das
+// Sampling den Touchdown bei langsamen GA-Flugzeugen.
+//
+// v0.5.45: Schwellen verschoben damit der mittlere Approach
+// (1000-2000 ft AGL) nicht mehr auf 3s default faellt. Volanta/DLHv
+// messen konstant bei 1 Hz oder hoeher — bei -800 fpm und 3s
+// Lücke verlieren wir 42 ft Δ AGL zwischen Samples (User-Report
+// DLH 1731 / CFG 9746 LDZA→EDDM, Sample-Cadence 3.5s im Final).
+//
+// Neue Skala:
+//   AGL <100 ft   → 500 ms (2 Hz)   — Flare / Wheels-Up
+//   AGL <500 ft   → 750 ms (1.3 Hz) — kurz vor TD
+//   AGL <1500 ft  → 1000 ms (1 Hz)  — Final-Approach (war: 1000-500ft = 1s)
+//   AGL <2000 ft  → 1500 ms         — kurz vor Final
+//   sonst         → 3000 ms (default)
+// Abtastintervall waehrend des Ausrollens.
+//
+// # Warum das Ausrollen ein eigenes Intervall braucht
+//
+// Der Rollweg lief bisher mit denselben 2 Hz wie der Flare. Bei 100 kt
+// (51 m/s) ist das ein Messpunkt alle **25 Meter** — und damit eine Spur,
+// die aus fuenfzehn bis dreissig Punkten besteht. Fuer die Frage „wie weit
+// war das Rad von der Kante" reicht das gerade so; fuer die Frage „wie hat
+// sich das Flugzeug auf der Bahn verhalten" nicht. Ein Ausbrechen und
+// Zurueckziehen ueber vierzig Meter faellt zwischen zwei Punkte.
+//
+// Bei 5 Hz sind es zehn Meter je Punkt — genau der Mindestabstand, mit dem
+// `bahndisziplin_tick` die Spur ohnehin ausduennt. Damit ist die
+// Aufzeichnung so fein, wie die Ablage es zulaesst, und nicht feiner.
+//
+// # Was das kostet
+//
+// Der Tick selbst ist billig: Er liest einen Schnappschuss und rechnet.
+// Die teuren Wege — MQTT-Publish und der phpVMS-Punktabstand — haengen
+// seit v0.6.0 bzw. v1.6.14 an eigenen Kadenzen und werden davon **nicht**
+// beruehrt. Das Fenster ist ausserdem kurz: Ausrollen dauert dreissig bis
+// sechzig Sekunden, danach steht das Flugzeug auf dem Rollweg und das
+// Intervall geht auf 2 Hz zurueck.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> rollout_tick_ms (v2.1.24: 200)
 
 /// Ab dieser Fahrt gilt „am Ausrollen".
 ///
@@ -270,7 +270,10 @@ const ROLLOUT_TICK_MS: u64 = 200;
 /// Aufgezeichnet wird bis `BAHN_SPUR_STOP_GS_KT`; so lange laeuft jetzt
 /// auch der Takt. Das kostet wenig: Zwischen 60 und 5 Knoten vergehen
 /// keine dreissig Sekunden, und der Tick liest nur einen Schnappschuss.
-const ROLLOUT_TICK_MIN_GS_KT: f64 = BAHN_SPUR_STOP_GS_KT as f64;
+// v3: aus einem Grenzwert abgeleitet, deshalb Funktion statt Konstante.
+fn rollout_tick_min_gs_kt() -> f64 {
+    crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_stop_gs_kt.wert as f64
+}
 
 /// Wie `adaptive_tick_interval`, kennt aber zusaetzlich Bodenkontakt und
 /// Fahrt — beides braucht es, um das Ausrollen von allem anderen zu
@@ -302,9 +305,9 @@ fn adaptive_tick_interval_v2(
     if spur_laeuft
         || (matches!(phase, FlightPhase::Landing)
             && on_ground == Some(true)
-            && groundspeed_kt.is_some_and(|gs| gs >= ROLLOUT_TICK_MIN_GS_KT))
+            && groundspeed_kt.is_some_and(|gs| gs >= rollout_tick_min_gs_kt()))
     {
-        return Duration::from_millis(ROLLOUT_TICK_MS);
+        return Duration::from_millis(crate::grenzwerte::grenzwerte().ausrollen.rollout_tick_ms.wert);
     }
     if let (Some(agl), true) = (
         agl_ft,
@@ -453,50 +456,50 @@ fn position_interval(phase: FlightPhase) -> Duration {
     Duration::from_secs(secs)
 }
 
-/// Minimum great-circle distance between two consecutive samples before we
-/// add it to the running total. Filters out GPS jitter while parked.
-const DISTANCE_EPSILON_M: f64 = 5.0;
+// Minimum great-circle distance between two consecutive samples before we
+// add it to the running total. Filters out GPS jitter while parked.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> distance_epsilon_m (v2.1.24: 5.0)
 
-/// v0.12.1 (Stream A LE1): minimum real position displacement (metres)
-/// from the Boarding reference point before the Boarding→Pushback/TaxiOut
-/// transition may fire. A sim-reload velocity glitch can spike
-/// `groundspeed_kt` but cannot move `lat`/`lon` — so genuine displacement
-/// is the trustworthy signal. 5 m is small enough not to delay a real
-/// pushback, large enough to clear GPS jitter (< 1 m parked).
-const MIN_BOARDING_MOVEMENT_M: f64 = 5.0;
+// v0.12.1 (Stream A LE1): minimum real position displacement (metres)
+// from the Boarding reference point before the Boarding→Pushback/TaxiOut
+// transition may fire. A sim-reload velocity glitch can spike
+// `groundspeed_kt` but cannot move `lat`/`lon` — so genuine displacement
+// is the trustworthy signal. 5 m is small enough not to delay a real
+// pushback, large enough to clear GPS jitter (< 1 m parked).
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> min_boarding_movement_m (v2.1.24: 5.0)
 
-/// v0.12.1 (Stream A LE2): a gap between two processed `step_flight`
-/// snapshots longer than `RELOAD_GAP_FACTOR × position_interval(phase)`
-/// is treated as a sim reload/reposition — the first snapshot after the
-/// gap carries glitch-prone velocity values and must not drive a
-/// velocity-derived phase transition.
-const RELOAD_GAP_FACTOR: f64 = 2.5;
+// v0.12.1 (Stream A LE2): a gap between two processed `step_flight`
+// snapshots longer than `RELOAD_GAP_FACTOR × position_interval(phase)`
+// is treated as a sim reload/reposition — the first snapshot after the
+// gap carries glitch-prone velocity values and must not drive a
+// velocity-derived phase transition.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> reload_gap_factor (v2.1.24: 2.5)
 
 /// v0.12.1 (Stream A LE2): true if `gap_secs` between two processed
 /// snapshots is long enough to count as a sim reload/reposition.
 fn is_reload_gap(gap_secs: f64, interval_secs: f64) -> bool {
-    gap_secs > RELOAD_GAP_FACTOR * interval_secs
+    gap_secs > crate::grenzwerte::grenzwerte().phasen_kern.reload_gap_factor.wert * interval_secs
 }
 
-/// v0.12.1 (Stream A LE2): the Pushback→TaxiOut "powered taxi" signal.
-/// Gated by `!reload_gap_suspect` so a sim-reload glitch tick (which can
-/// spike `groundspeed_kt`) cannot drive the velocity-derived TaxiOut
-/// transition — same rule the Boarding branch already applies.
-///
-/// v0.15.13: zusätzlich VORWÄRTS-Bedingung (`velocity_body_z_fps`). Beim
-/// Pushback startet der Pilot häufig die Triebwerke MITTEN im Schieben — die
-/// alte Bedingung (Triebwerk + gs>3) flippte dann sofort auf TaxiOut, obwohl
-/// der Tug noch RÜCKWÄRTS schob (Live-Log BTX2222: Pushback nur 7 s statt
-/// ~78 s, weil das Triebwerk bei vbz=−6,5 ansprang). Solange vbz rückwärts/≈0
-/// ist, bleibt es Pushback. Liefert der Sim kein vbz (`None`), gilt das alte
-/// Verhalten (sonst blieben solche Aircraft für immer in Pushback hängen).
-/// Ab dieser Groundspeed rollt das Flugzeug sicher selbst: Ein Schlepper
-/// schiebt mit 2–5 kt (Joels eigener Pushback: 2,7 kt rückwärts), auch ein
-/// schneller GSX-Pushback bleibt deutlich darunter.
-const PUSHBACK_HAENGT_KT: f32 = 8.0;
-/// So lange muss das eigene Vorwärtsrollen anhalten, damit ein kurzer
-/// Ausreißer im Schnappschuss die Phase nicht umwirft.
-const PUSHBACK_HAENGT_S: i64 = 15;
+// v0.12.1 (Stream A LE2): the Pushback→TaxiOut "powered taxi" signal.
+// Gated by `!reload_gap_suspect` so a sim-reload glitch tick (which can
+// spike `groundspeed_kt`) cannot drive the velocity-derived TaxiOut
+// transition — same rule the Boarding branch already applies.
+//
+// v0.15.13: zusätzlich VORWÄRTS-Bedingung (`velocity_body_z_fps`). Beim
+// Pushback startet der Pilot häufig die Triebwerke MITTEN im Schieben — die
+// alte Bedingung (Triebwerk + gs>3) flippte dann sofort auf TaxiOut, obwohl
+// der Tug noch RÜCKWÄRTS schob (Live-Log BTX2222: Pushback nur 7 s statt
+// ~78 s, weil das Triebwerk bei vbz=−6,5 ansprang). Solange vbz rückwärts/≈0
+// ist, bleibt es Pushback. Liefert der Sim kein vbz (`None`), gilt das alte
+// Verhalten (sonst blieben solche Aircraft für immer in Pushback hängen).
+// Ab dieser Groundspeed rollt das Flugzeug sicher selbst: Ein Schlepper
+// schiebt mit 2–5 kt (Joels eigener Pushback: 2,7 kt rückwärts), auch ein
+// schneller GSX-Pushback bleibt deutlich darunter.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> pushback_haengt_kt (v2.1.24: 8.0)
+// So lange muss das eigene Vorwärtsrollen anhalten, damit ein kurzer
+// Ausreißer im Schnappschuss die Phase nicht umwirft.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> pushback_haengt_s (v2.1.24: 15)
 
 /// Rollt das Flugzeug selbst, obwohl der Simulator „Pushback läuft" meldet?
 ///
@@ -511,8 +514,8 @@ fn pushback_haengt_aber_rollt(
 ) -> bool {
     pushback_state.is_some_and(|p| p != 3)
         && powered_taxi
-        && groundspeed_kt > PUSHBACK_HAENGT_KT
-        && velocity_body_z_fps.is_some_and(|v| v > TAXI_DIRECTION_FPS)
+        && groundspeed_kt > crate::grenzwerte::grenzwerte().phasen_kern.pushback_haengt_kt.wert
+        && velocity_body_z_fps.is_some_and(|v| v > crate::grenzwerte::grenzwerte().phasen_kern.taxi_direction_fps.wert)
 }
 
 fn powered_taxi_move(
@@ -540,21 +543,21 @@ fn boarding_real_movement(
     prev_gs_over_threshold: bool,
     moved_m: f64,
 ) -> bool {
-    on_surface && gs_over_threshold && prev_gs_over_threshold && moved_m > MIN_BOARDING_MOVEMENT_M
+    on_surface && gs_over_threshold && prev_gs_over_threshold && moved_m > crate::grenzwerte::grenzwerte().phasen_kern.min_boarding_movement_m.wert
 }
 
-/// v0.15.13: Schwelle (fps) ab der die körperfeste Längs-Geschwindigkeit
-/// `velocity_body_z_fps` als klare Vorwärts-/Rückwärtsbewegung zählt (Rauschen
-/// am Stand liegt darunter). >0 = vorwärts, <0 = rückwärts. Bestätigt am Live-
-/// Log BTX2222 (X-Plane/ToLiss): −6,5 fps beim Tug-Push, +9..+14 fps beim
-/// Vorwärts-Taxi, |vbz| ≈ Groundspeed über ALLE Heading-Werte (= körperfest,
-/// nicht erdfest). MSFS „VELOCITY BODY Z" ist ohnehin körperfest, vorwärts +.
-const TAXI_DIRECTION_FPS: f32 = 1.0;
+// v0.15.13: Schwelle (fps) ab der die körperfeste Längs-Geschwindigkeit
+// `velocity_body_z_fps` als klare Vorwärts-/Rückwärtsbewegung zählt (Rauschen
+// am Stand liegt darunter). >0 = vorwärts, <0 = rückwärts. Bestätigt am Live-
+// Log BTX2222 (X-Plane/ToLiss): −6,5 fps beim Tug-Push, +9..+14 fps beim
+// Vorwärts-Taxi, |vbz| ≈ Groundspeed über ALLE Heading-Werte (= körperfest,
+// nicht erdfest). MSFS „VELOCITY BODY Z" ist ohnehin körperfest, vorwärts +.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> taxi_direction_fps (v2.1.24: 1.0)
 
 /// Bewegt sich das Flugzeug RÜCKWÄRTS (Tug-Pushback)? `None` (Sim liefert kein
 /// vbz) → `false` (unbekannt nicht als Rückwärts werten).
 fn moving_backward(velocity_body_z_fps: Option<f32>) -> bool {
-    matches!(velocity_body_z_fps, Some(v) if v < -TAXI_DIRECTION_FPS)
+    matches!(velocity_body_z_fps, Some(v) if v < -crate::grenzwerte::grenzwerte().phasen_kern.taxi_direction_fps.wert)
 }
 
 /// Bewegt sich das Flugzeug klar VORWÄRTS? `None` → `true` (kein vbz → altes
@@ -562,7 +565,7 @@ fn moving_backward(velocity_body_z_fps: Option<f32>) -> bool {
 /// Pushback hängen bleiben).
 fn moving_forward(velocity_body_z_fps: Option<f32>) -> bool {
     match velocity_body_z_fps {
-        Some(v) => v > TAXI_DIRECTION_FPS,
+        Some(v) => v > crate::grenzwerte::grenzwerte().phasen_kern.taxi_direction_fps.wert,
         None => true,
     }
 }
@@ -624,16 +627,16 @@ struct LageReferenz {
     aufgesetzt: Option<(f64, f64)>,
 }
 
-/// Wie lange vor dem letzten Punkt ein bestaetigtes Aufsetzen noch zur
-/// Luecke zaehlt. Ein Durchstart-Aufsetzer Minuten davor zaehlt nicht.
-const AUFSETZEN_VOR_LUECKE_MAX_S: i64 = 30;
-/// Wie lange NACH dem letzten Punkt das Aufsetzen hoechstens liegen darf:
-/// ein Abtast-Takt im Endanflug, mit Luft. Ein Aufsetzen, das erst nach
-/// einem Neuladen entsteht, liegt weit dahinter (Codex-Pruefung 26.10.2026).
-const AUFSETZEN_NACH_LETZTEM_PUNKT_MAX_S: i64 = 3;
-/// Wie weit der Aufsetzpunkt hoechstens vom letzten Punkt vor der Luecke
-/// liegt. Ein Aufsetzen ist keine Reise: Bei LTU 154 lagen 30 m dazwischen.
-const AUFSETZEN_VOR_LUECKE_MAX_NM: f64 = 1.0;
+// Wie lange vor dem letzten Punkt ein bestaetigtes Aufsetzen noch zur
+// Luecke zaehlt. Ein Durchstart-Aufsetzer Minuten davor zaehlt nicht.
+// Wert seit v3: bundle/grenzwerte/landung.json -> aufsetzen_vor_luecke_max_s (v2.1.24: 30)
+// Wie lange NACH dem letzten Punkt das Aufsetzen hoechstens liegen darf:
+// ein Abtast-Takt im Endanflug, mit Luft. Ein Aufsetzen, das erst nach
+// einem Neuladen entsteht, liegt weit dahinter (Codex-Pruefung 26.10.2026).
+// Wert seit v3: bundle/grenzwerte/landung.json -> aufsetzen_nach_letztem_punkt_max_s (v2.1.24: 3)
+// Wie weit der Aufsetzpunkt hoechstens vom letzten Punkt vor der Luecke
+// liegt. Ein Aufsetzen ist keine Reise: Bei LTU 154 lagen 30 m dazwischen.
+// Wert seit v3: bundle/grenzwerte/landung.json -> aufsetzen_vor_luecke_max_nm (v2.1.24: 1.0)
 
 /// Gehoert das bestaetigte Aufsetzen des Abtasters zu dieser Luecke?
 ///
@@ -655,15 +658,15 @@ fn aufsetzen_der_luecke(stats: &FlightStats, lat: f64, lon: f64) -> Option<(f64,
     ) else {
         return None;
     };
-    let zeitlich = td_at >= at - chrono::Duration::seconds(AUFSETZEN_VOR_LUECKE_MAX_S)
-        && td_at <= at + chrono::Duration::seconds(AUFSETZEN_NACH_LETZTEM_PUNKT_MAX_S);
-    let raeumlich = ::geo::distance_m(la, lo, lat, lon) / 1852.0 <= AUFSETZEN_VOR_LUECKE_MAX_NM;
+    let zeitlich = td_at >= at - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().landung.aufsetzen_vor_luecke_max_s.wert)
+        && td_at <= at + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().landung.aufsetzen_nach_letztem_punkt_max_s.wert);
+    let raeumlich = ::geo::distance_m(la, lo, lat, lon) / 1852.0 <= crate::grenzwerte::grenzwerte().landung.aufsetzen_vor_luecke_max_nm.wert;
     (zeitlich && raeumlich).then_some((la, lo))
 }
 
-/// Laenger als die Pruef-Frist des Abtasters (1,1 s). Ein haengender
-/// Kandidat sperrt das Fortsetzen nicht fuer immer.
-const AUFSETZ_PRUEFUNG_ABWARTEN_S: i64 = 5;
+// Laenger als die Pruef-Frist des Abtasters (1,1 s). Ein haengender
+// Kandidat sperrt das Fortsetzen nicht fuer immer.
+// Wert seit v3: bundle/grenzwerte/landung.json -> aufsetz_pruefung_abwarten_s (v2.1.24: 5)
 
 /// Prueft der Abtaster gerade ein Aufsetzen? Dann noch nicht ueber die Lage
 /// urteilen: Bei LTU 154 kam die Bestaetigung nur fuenf Sekunden vor dem
@@ -671,7 +674,7 @@ const AUFSETZ_PRUEFUNG_ABWARTEN_S: i64 = 5;
 fn aufsetzen_wird_geprueft(stats: &FlightStats, jetzt: DateTime<Utc>) -> bool {
     stats
         .pending_td_at
-        .is_some_and(|t| jetzt - t < chrono::Duration::seconds(AUFSETZ_PRUEFUNG_ABWARTEN_S))
+        .is_some_and(|t| jetzt - t < chrono::Duration::seconds(crate::grenzwerte::grenzwerte().landung.aufsetz_pruefung_abwarten_s.wert))
 }
 
 #[cfg(test)]
@@ -755,7 +758,7 @@ fn lage_abweichung(
     // Weite pruefen die Schritte unten wie sonst auch.
     let in_der_luecke_gelandet = vorher.aufgesetzt.is_some_and(|(la, lo)| {
         hoehe_verloren_ft < 1_000.0
-            && ::geo::distance_m(la, lo, jetzt.lat, jetzt.lon) / 1852.0 <= RESUME_DRIFT_CLEAN_NM
+            && ::geo::distance_m(la, lo, jetzt.lat, jetzt.lon) / 1852.0 <= crate::grenzwerte::grenzwerte().abgabe.resume_drift_clean_nm.wert
     });
     if vorher_in_der_luft && jetzt_am_boden && !in_der_luecke_gelandet {
         return Some(LageAbweichung::AmBoden);
@@ -763,23 +766,23 @@ fn lage_abweichung(
     if let Some(fuel) = vorher.fuel_kg {
         let durchgehend_am_boden = vorher.on_ground && jetzt.on_ground;
         if !durchgehend_am_boden
-            && (jetzt.fuel_total_kg - fuel) as f64 > RESUME_FUEL_JUMP_IMPOSSIBLE_KG
+            && (jetzt.fuel_total_kg - fuel) as f64 > crate::grenzwerte::grenzwerte().abgabe.resume_fuel_jump_impossible_kg.wert
         {
             return Some(LageAbweichung::SpritGestiegen);
         }
     }
     let drift_nm = ::geo::distance_m(vorher.lat, vorher.lon, jetzt.lat, jetzt.lon) / 1852.0;
     let erlaubt_nm = if !darf_weitergeflogen {
-        RESUME_DRIFT_CLEAN_NM
+        crate::grenzwerte::grenzwerte().abgabe.resume_drift_clean_nm.wert
     } else {
         match (vorher.gs_kt, vorher.at) {
             (Some(gs), Some(at)) => {
                 let luecke_h = (zeitpunkt - at).num_seconds().max(0) as f64 / 3600.0;
                 // 25 % Luft fuer Wind und Beschleunigung.
-                RESUME_DRIFT_CLEAN_NM + gs.max(0.0) as f64 * 1.25 * luecke_h
+                crate::grenzwerte::grenzwerte().abgabe.resume_drift_clean_nm.wert + gs.max(0.0) as f64 * 1.25 * luecke_h
             }
             // Altstand ohne Zeit/Tempo: die fruehere Grenze.
-            _ => RESUME_DRIFT_WARN_NM,
+            _ => crate::grenzwerte::grenzwerte().abgabe.resume_drift_warn_nm.wert,
         }
     };
     if drift_nm > erlaubt_nm {
@@ -947,54 +950,54 @@ const KG_TO_LB: f64 = 2.20462262;
 // together with the geometry it belongs to. The nearest-field search radius
 // lives at `arrival::NEAREST_SEARCH_RADIUS_NM`.
 //
-/// Universal "we're done here" fallback for the FSM. Catches helicopters
-/// (no taxi-out / taxi-in / parking-brake convention), short hops,
-/// emergency landings near the destination, and anything else where the
-/// normal Pushback → Cruise → BlocksOn chain doesn't fire cleanly.
-///
-/// When the aircraft is on-ground with engines off, sitting on the
-/// destination field (see `arrival::locate`), the FSM jumps straight to
-/// `Arrived` regardless of what phase it's currently in (apart from
-/// pre-block-off phases — we won't accidentally end a flight that hasn't
-/// started yet).
-/// Wall-clock dwell the engines-off condition
-/// (`arrived_fallback_conditions_basic`) must hold, uninterrupted, before
-/// the fallback fires. `engines_running` is an unsmoothed per-tick SimVar
-/// read (`GENERAL ENG COMBUSTION:N` / N1-fallback) with no read-side
-/// debouncing, so a lone stray sample shouldn't end the flight — but once
-/// it has genuinely held for a few seconds there is nothing left to wait
-/// for (the shutdown-pacing concern the old 30 s dwell was also covering
-/// is already handled by requiring `engines_running == 0` in the first
-/// place, not by waiting longer after it's confirmed).
-///
-/// Deliberately wall-clock, NOT a tick count: `adaptive_tick_interval`
-/// drops the streamer's tick cadence to 500 ms whenever the phase
-/// is Approach/Final/Landing/Takeoff/TakeoffRoll below 100 ft AGL — which
-/// is exactly the "stuck on Final while already on the ground" state this
-/// fallback exists to rescue. A fixed *tick-count* threshold would confirm
-/// up to ~6x faster than intended in that window (an earlier version of
-/// this fix made exactly that mistake — caught in code review before
-/// release); wall-clock time is cadence-independent by construction.
-///
-/// Lowered from 30 s (set at v0.1.20, never re-tuned) after a field report
-/// (GSG22 EDLN→EDDL, PIREP XrRp6eMQYvJJlExP): the pilot perceived the app
-/// as frozen on "Final" for 3-4 min after touchdown. Flight-log analysis
-/// showed the vast majority of that was real taxi-in + the pilot's own
-/// shutdown pacing; the only software-attributable wait was this dwell.
-/// 9 s still comfortably rules out a single bad sample (≥3 ticks at the
-/// normal 3 s ground cadence; far more during the sub-second flare
-/// cadence).
-const ARRIVED_FALLBACK_DWELL_SECS: i64 = 9;
-/// Wie lange ein Bremshalt auf einer Rollweg-Mittellinie (bei laufenden
-/// Triebwerken) halten muss, bevor er als Block-On zählt. Die drei falschen
-/// Block-Ons aus 30 Tagen Feldflügen (27.10.2026) hielten 27, 27 und 84 s.
-const ROLLWEG_HALT_BESTAETIGT_SECS: i64 = 120;
+// Universal "we're done here" fallback for the FSM. Catches helicopters
+// (no taxi-out / taxi-in / parking-brake convention), short hops,
+// emergency landings near the destination, and anything else where the
+// normal Pushback → Cruise → BlocksOn chain doesn't fire cleanly.
+//
+// When the aircraft is on-ground with engines off, sitting on the
+// destination field (see `arrival::locate`), the FSM jumps straight to
+// `Arrived` regardless of what phase it's currently in (apart from
+// pre-block-off phases — we won't accidentally end a flight that hasn't
+// started yet).
+// Wall-clock dwell the engines-off condition
+// (`arrived_fallback_conditions_basic`) must hold, uninterrupted, before
+// the fallback fires. `engines_running` is an unsmoothed per-tick SimVar
+// read (`GENERAL ENG COMBUSTION:N` / N1-fallback) with no read-side
+// debouncing, so a lone stray sample shouldn't end the flight — but once
+// it has genuinely held for a few seconds there is nothing left to wait
+// for (the shutdown-pacing concern the old 30 s dwell was also covering
+// is already handled by requiring `engines_running == 0` in the first
+// place, not by waiting longer after it's confirmed).
+//
+// Deliberately wall-clock, NOT a tick count: `adaptive_tick_interval`
+// drops the streamer's tick cadence to 500 ms whenever the phase
+// is Approach/Final/Landing/Takeoff/TakeoffRoll below 100 ft AGL — which
+// is exactly the "stuck on Final while already on the ground" state this
+// fallback exists to rescue. A fixed *tick-count* threshold would confirm
+// up to ~6x faster than intended in that window (an earlier version of
+// this fix made exactly that mistake — caught in code review before
+// release); wall-clock time is cadence-independent by construction.
+//
+// Lowered from 30 s (set at v0.1.20, never re-tuned) after a field report
+// (GSG22 EDLN→EDDL, PIREP XrRp6eMQYvJJlExP): the pilot perceived the app
+// as frozen on "Final" for 3-4 min after touchdown. Flight-log analysis
+// showed the vast majority of that was real taxi-in + the pilot's own
+// shutdown pacing; the only software-attributable wait was this dwell.
+// 9 s still comfortably rules out a single bad sample (≥3 ticks at the
+// normal 3 s ground cadence; far more during the sub-second flare
+// cadence).
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> arrived_fallback_dwell_secs (v2.1.24: 9)
+// Wie lange ein Bremshalt auf einer Rollweg-Mittellinie (bei laufenden
+// Triebwerken) halten muss, bevor er als Block-On zählt. Die drei falschen
+// Block-Ons aus 30 Tagen Feldflügen (27.10.2026) hielten 27, 27 und 84 s.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> rollweg_halt_bestaetigt_secs (v2.1.24: 120)
 
 /// Zählt ein Bremshalt auf der Rollweg-Mittellinie schon als Block-On?
 /// Ja, sobald die Triebwerke aus sind (wer auf dem Rollweg abstellt, ist
 /// angekommen) oder die Frist seit Beginn des Halts verstrichen ist.
 fn rollweg_halt_bestaetigt(seit: DateTime<Utc>, now: DateTime<Utc>, engines_running: u8) -> bool {
-    engines_running == 0 || (now - seit).num_seconds() >= ROLLWEG_HALT_BESTAETIGT_SECS
+    engines_running == 0 || (now - seit).num_seconds() >= crate::grenzwerte::grenzwerte().phasen_kern.rollweg_halt_bestaetigt_secs.wert
 }
 
 /// Gehört der gemerkte Haltbeginn zu DIESEM Halt? Nur, wenn das Flugzeug
@@ -1003,27 +1006,27 @@ fn rollweg_halt_bestaetigt(seit: DateTime<Utc>, now: DateTime<Utc>, engines_runn
 fn kandidat_hier(kandidat: &(DateTime<Utc>, f64, f64), lat: f64, lon: f64) -> bool {
     ::geo::distance_m(kandidat.1, kandidat.2, lat, lon) <= 10.0
 }
-/// v0.17.x (#Premium, Aircraft-Scan): längerer Dwell für den engines-
-/// UNABHÄNGIGEN Stillstands-Fallback (Groundspeed < 1 kt + Parkbremse am
-/// Ziel). Fängt Addons ab, deren `engines_running`-SimVar nach dem Shutdown
-/// klemmt: der Contrail-FA50-Trijet meldet dauerhaft 3 laufende Triebwerke,
-/// sodass der engines-off-Pfad NIE feuert und Auto-File hängt (Michel D.,
-/// D-BETI).
-///
-/// v0.18.x QA-Härtung (Einwand Thomas: lange Rollhalte an großen Hubs, z. B.
-/// Warten auf weitere Rollfreigabe, wo Piloten realistisch die Parkbremse
-/// ziehen): 2 Minuten reichten dafür nicht als Sicherheitsmarge. ZWEI
-/// unabhängige Gegenmaßnahmen, nicht nur eine:
-///   1. Dieser Pfad läuft nur noch für Flugzeuge mit bestätigt kaputtem
-///      Triebwerkszähler (`AircraftProfile::engine_count_unreliable`), NICHT
-///      mehr fleet-weit — ein Rollhalt in einem Fenix/PMDG/FBW/etc. kann
-///      diesen Pfad gar nicht mehr erreichen, weil der harte engines-off-Test
-///      (`ARRIVED_FALLBACK_DWELL_SECS`) für die die einzige Rolle spielt.
-///   2. Für die verbleibenden, eng begrenzten Fälle (aktuell nur FA50) ist der
-///      Dwell auf 5 Minuten verlängert — deutlich länger als ein typischer
-///      Rollhalt, aber am echten Zielflughafen nach Blockzeit ohne
-///      spürbaren Nachteil für den Piloten.
-const ARRIVED_STANDSTILL_DWELL_SECS: i64 = 300;
+// v0.17.x (#Premium, Aircraft-Scan): längerer Dwell für den engines-
+// UNABHÄNGIGEN Stillstands-Fallback (Groundspeed < 1 kt + Parkbremse am
+// Ziel). Fängt Addons ab, deren `engines_running`-SimVar nach dem Shutdown
+// klemmt: der Contrail-FA50-Trijet meldet dauerhaft 3 laufende Triebwerke,
+// sodass der engines-off-Pfad NIE feuert und Auto-File hängt (Michel D.,
+// D-BETI).
+//
+// v0.18.x QA-Härtung (Einwand Thomas: lange Rollhalte an großen Hubs, z. B.
+// Warten auf weitere Rollfreigabe, wo Piloten realistisch die Parkbremse
+// ziehen): 2 Minuten reichten dafür nicht als Sicherheitsmarge. ZWEI
+// unabhängige Gegenmaßnahmen, nicht nur eine:
+//   1. Dieser Pfad läuft nur noch für Flugzeuge mit bestätigt kaputtem
+//      Triebwerkszähler (`AircraftProfile::engine_count_unreliable`), NICHT
+//      mehr fleet-weit — ein Rollhalt in einem Fenix/PMDG/FBW/etc. kann
+//      diesen Pfad gar nicht mehr erreichen, weil der harte engines-off-Test
+//      (`ARRIVED_FALLBACK_DWELL_SECS`) für die die einzige Rolle spielt.
+//   2. Für die verbleibenden, eng begrenzten Fälle (aktuell nur FA50) ist der
+//      Dwell auf 5 Minuten verlängert — deutlich länger als ein typischer
+//      Rollhalt, aber am echten Zielflughafen nach Blockzeit ohne
+//      spürbaren Nachteil für den Piloten.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> arrived_standstill_dwell_secs (v2.1.24: 300)
 
 // ---- Touch-and-Go / Go-Around detection (Stage 3) ----
 //
@@ -1046,26 +1049,26 @@ const ARRIVED_STANDSTILL_DWELL_SECS: i64 = 300;
 // * +500 fpm V/S filter on GA — pilots really go around with positive
 //   V/S, no false positives from a flare round-out.
 
-/// Nach so vielen Sekunden am Boden wird ein Aufsetzer vorlaeufig als
-/// `FinalLanding` in `touchdown_events` verbucht (spaetestens beim Wechsel
-/// nach `TaxiIn`). Steigt das Flugzeug danach doch noch weg, macht
-/// [`landung_beim_wegsteigen_abschliessen`] aus genau diesem Eintrag einen
-/// `TouchAndGo` — die Zeit begrenzt das Erkennen des Wegsteigens nicht mehr.
-const FINAL_LANDING_VERBUCHEN_NACH_SECS: i64 = 30;
-/// Aircraft must climb above this AGL after a touchdown to count
-/// as a touch-and-go (not a tall bounce or runway-end pop-up).
-const TOUCH_AND_GO_AGL_THRESHOLD_FT: f32 = 100.0;
-/// Aircraft must be above the AGL threshold for this long for the
-/// T&G to be confirmed — short spike doesn't count.
-const TOUCH_AND_GO_DWELL_SECS: i64 = 1;
-/// AGL increase from `lowest_agl_during_approach_ft` that signals a
-/// possible go-around in progress.
-///
-/// v0.5.35: 200 → 150 ft. Reason: bei sparse Sampling kann der erste
-/// Frame nach der lowest_agl-Marke schon 60+ Sekunden später sein —
-/// in der Zeit klettert ein C152 leicht 200+ ft. Niedrigerer Threshold
-/// fängt mehr GA-Versuche ein. Dwell-Check filtert noch False Positives.
-const GO_AROUND_AGL_RECOVERY_FT: f32 = 150.0;
+// Nach so vielen Sekunden am Boden wird ein Aufsetzer vorlaeufig als
+// `FinalLanding` in `touchdown_events` verbucht (spaetestens beim Wechsel
+// nach `TaxiIn`). Steigt das Flugzeug danach doch noch weg, macht
+// [`landung_beim_wegsteigen_abschliessen`] aus genau diesem Eintrag einen
+// `TouchAndGo` — die Zeit begrenzt das Erkennen des Wegsteigens nicht mehr.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> final_landing_verbuchen_nach_secs (v2.1.24: 30)
+// Aircraft must climb above this AGL after a touchdown to count
+// as a touch-and-go (not a tall bounce or runway-end pop-up).
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> touch_and_go_agl_threshold_ft (v2.1.24: 100.0)
+// Aircraft must be above the AGL threshold for this long for the
+// T&G to be confirmed — short spike doesn't count.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> touch_and_go_dwell_secs (v2.1.24: 1)
+// AGL increase from `lowest_agl_during_approach_ft` that signals a
+// possible go-around in progress.
+//
+// v0.5.35: 200 → 150 ft. Reason: bei sparse Sampling kann der erste
+// Frame nach der lowest_agl-Marke schon 60+ Sekunden später sein —
+// in der Zeit klettert ein C152 leicht 200+ ft. Niedrigerer Threshold
+// fängt mehr GA-Versuche ein. Dwell-Check filtert noch False Positives.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> go_around_agl_recovery_ft (v2.1.24: 150.0)
 
 // ---- Holding-pattern detection (v0.5.11) ------------------------------
 //
@@ -1094,115 +1097,115 @@ const GO_AROUND_AGL_RECOVERY_FT: f32 = 150.0;
 // fingen lange Kurven auf FL388. Korpus 447 Flüge: echte Warteschleifen
 // drehen in 6 min ≥ 300° gleichsinnig, Flüge ohne Warteschleife im Level
 // zu 99 % ≤ 244°.
-const HOLDING_KURS_FENSTER_SECS: i64 = 360;
-const HOLDING_EINTRITT_DREHUNG_DEG: f32 = 300.0;
-/// Ende: so lange (fast) geradeaus — länger als jeder Schenkel.
-const HOLDING_AUSTRITT_FENSTER_SECS: i64 = 180;
-const HOLDING_AUSTRITT_DREHUNG_DEG: f32 = 45.0;
-/// Gezählt wird nur im Geradeaus-Höhenflug über dieser Höhe — keine
-/// Platzrunden, keine Steig-/Sinkkurven.
-const HOLDING_MIN_AGL_FT: f64 = 1500.0;
-const HOLDING_LEVEL_VS_FPM: f32 = 300.0;
-/// Sustained climb time required before we classify a Go-Around.
-const GO_AROUND_DWELL_SECS: i64 = 8;
-/// Seit 17.10.2026 („Stück 2“, docs/spec/phase-reiseband-v2.md) nur noch für
-/// v1 im Anflug/Final und für v1 im Reiseband bei v2 im Anflug/Final/Landung;
-/// innerhalb des Reisebands übernimmt v1 v2s Phase direkt (`reiseband_phase`).
-/// Die folgende Beschreibung ist die ursprüngliche Mechanik.
-///
-/// En-Route-Versöhner (Korpus-Audit 2026-07, 632 Flüge): Sicherheitsnetz
-/// für die GANZE Fehlerklasse "alte FSM hängt auf einer Luft-Phase fest",
-/// nicht für einen einzelnen Übergangs-Arm. Historie derselben Klasse,
-/// jedes Mal als Einzelfix hinterher: v0.5.40 (Pushback klemmt,
-/// pushback_state konstant 3), v0.13.17 (Boden-Phasen klemmen, tote
-/// Engine-SimVars), v0.19.1 (Final→Landing, Anzeige-only), GSG-105
-/// (Descent-Falle, es gibt keinen Descent→Climb-Weg zurück), zuletzt
-/// GSG22 EDLN→EDDL + eine C172 (Climb→Descent mathematisch unerreichbar:
-/// `lost_from_peak > 500..1200 ft` kann bei < 1000 ft Climb-Peak nie
-/// eintreten — Ansatz-Problem, kein Schwellenwert-Problem).
-///
-/// Mechanik: weicht v1 in einer Luft-Phase (Climb/Cruise/Descent/
-/// Approach/Final — NICHT Holding, das v2 bewusst nicht modelliert) so
-/// lange von v2s aufgelöster Phase ab, ohne sich selbst zu bewegen, wird
-/// v1s echter Zustand auf v2s Phase gezogen — über den normalen
-/// `next_phase`-Commit, also mit echtem `PhaseChanged`-Event (Treibstoff-
-/// Snapshot, METAR-Abruf, ACARS-Log, Auto-File-Kette ziehen alle nach;
-/// das unterscheidet ihn von der reinen Anzeige-Korrektur aus v0.19.1).
-/// Es wird KEINE neue Heuristik erfunden: Ziel ist v2s bereits
-/// review-gehärtete Resolver-Phase (phase_v2.rs), keine Roh-Segmente.
-///
-/// Der PRIMÄRE Schutz vor Fehl-Zügen ist NICHT der Dwell, sondern das
-/// Kinematik-Widerspruchs-Gate [`segment_contradicts_v1`]: gefeuert wird
-/// ausschließlich, wenn die Fenster-Evidenz v1s aktuelle Phase aktiv
-/// WIDERLEGT (Climb während anhaltenden Sinkens/am Boden, Descent während
-/// anhaltenden Steigens, …). Bloßes v1≠v2 genügt NICHT — QS-Runde 1
-/// bewies empirisch, dass v1 und v2 bei Level-Flug GEWOLLT und dauerhaft
-/// auseinanderliegen (v2 promotet Climb→Cruise ref-los erst nach 240 s
-/// Level; v2 hält bei Zwischen-Level-Offs bewusst Descent, wo v1s B-003
-/// sofort Cruise recovert; v1 latcht Cruise bei Climb-Restrictions
-/// single-tick, wo v2 korrekt Climb hält) — ein rein v1≠v2-basierter
-/// Versöhner oszillierte auf JEDEM gesunden Normalflug (Zug → v1s
-/// Primär-Arm latcht zurück → Zug → …). `Level`/`Insufficient`
-/// widersprechen deshalb NIE einer Luft-Phase.
-///
-/// Der Dwell obendrauf ist ASYMMETRISCH nach Zug-Richtung im natürlichen
-/// Flugbogen (Climb→Cruise→Descent→Approach→Final→Landing, s.
-/// `enroute_phase_rank`):
-///
-/// * **Rückwärts** (v2 hinter v1) — 90 s: die vorsichtigere Richtung
-///   (Defense-in-Depth über das Widerspruchs-Gate hinaus); länger als
-///   v2s komplettes Evidenz-Fenster (60 s) + Hysterese-Reserve, damit
-///   ein nachhinkendes v2 eine gesunde, frisch transitionierte v1 nie
-///   zurückzieht (die Uhr resettet bei jeder v1-Transition ohnehin).
-/// * **Vorwärts** (v2 vor v1) — 45 s: ein v2, das VORAUS ist, hat MEHR
-///   bestätigte Evidenz, nicht weniger. Replay-Befund BE24 (der Feld-
-///   Report-Flug): die ehrliche Divergenz-Spanne vor dem Touchdown
-///   betrug nur 82 s — mit einem symmetrischen 90-s-Dwell käme die
-///   Rettung erst NACH dem Aufsetzen, mit 45 s noch in der Luft (v1
-///   erlebt Final/Landing als echte Phasen und erfasst den Touchdown
-///   über die eigene Landing-Kante statt Sampler-Carry-Over).
-const ENROUTE_RECONCILE_DWELL_SECS: i64 = 90;
-/// Vorwärts-Dwell des En-Route-Versöhners — siehe
-/// [`ENROUTE_RECONCILE_DWELL_SECS`].
-const ENROUTE_RECONCILE_FORWARD_DWELL_SECS: i64 = 45;
-/// Minimum positive V/S at which the GA detector accepts a sample
-/// as "actually climbing" (filters out flare round-out / level-off).
-///
-/// v0.5.35: 500 → 300 fpm. Slow GA aircraft (Cessna 152, Piper Cub,
-/// taildraggers) klettern bei einem GA selten >500 fpm — der frühere
-/// Threshold übersah ihre Go-Arounds komplett.
-const GO_AROUND_MIN_VS_FPM: f32 = 300.0;
-/// Durchstarter zählen nur mit einer Landeschwelle höchstens so weit voraus
-/// vom tiefsten Anflugpunkt (17.10.2026, siehe `runway::schwelle_voraus`).
-/// 5 NM: Ein Durchstarter am Stabilitäts-Gate (1000 ft) liegt auf einem
-/// 3°-Gleitpfad 3,1 NM vor der Schwelle, bei 1500 ft 4,7 NM. Im Korpus
-/// lagen die falschen quer zur Bahn oder 5,3–25 NM entfernt.
-const GO_AROUND_SCHWELLE_NM: f64 = 5.0;
-/// … und höchstens so viel Abweichung zwischen Flugzeug- und Bahnkurs.
-const GO_AROUND_SCHWELLE_KURS_DEG: f32 = 45.0;
-/// AGL threshold above which we mark the flight as having actually
-/// flown. Powers the `was_airborne` gate that prevents both the
-/// Arrived-fallback and the divert-detection from firing pre-flight
-/// (GSX repositioning, ground-handling wackeln, etc.). 50 ft is well
-/// above gear-strut oscillation and runway-end short-hop noise.
-const WAS_AIRBORNE_AGL_FT: f32 = 50.0;
-/// Upper bound on AGL we'll trust for the `was_airborne` mark. Live bug
-/// 2026-05-03 (PMDG B738, GSX pushback): MSFS reported AGL=53819 ft
-/// for ~60 s right after the SimConnect handshake while the terrain
-/// engine was still loading — the aircraft was sitting on a stand
-/// at EDDH but the SimVar said it was at FL538 with on_ground=false.
-/// `was_airborne` flipped true from that loading glitch, and 30 min
-/// later the universal Arrived-fallback (gated by was_airborne)
-/// fired during the GSX pushback because pushback motion happens to
-/// match the conditions. The fix is to ignore obvious garbage AGL
-/// values: real pre-flight terrain data is bounded; nothing in the
-/// real world makes a parked aircraft suddenly "airborne at FL538".
-const WAS_AIRBORNE_AGL_MAX_FT: f32 = 30000.0;
-/// Minimum number of consecutive ticks the airborne conditions must
-/// hold before we flip `was_airborne`. Gates against single-tick
-/// glitches where MSFS briefly reports !on_ground during scenery
-/// load even with sane AGL. 2 ticks ≈ 5-10 s at the streamer cadence.
-const WAS_AIRBORNE_DWELL_TICKS: u8 = 2;
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> holding_kurs_fenster_secs (v2.1.24: 360)
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> holding_eintritt_drehung_deg (v2.1.24: 300.0)
+// Ende: so lange (fast) geradeaus — länger als jeder Schenkel.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> holding_austritt_fenster_secs (v2.1.24: 180)
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> holding_austritt_drehung_deg (v2.1.24: 45.0)
+// Gezählt wird nur im Geradeaus-Höhenflug über dieser Höhe — keine
+// Platzrunden, keine Steig-/Sinkkurven.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> holding_min_agl_ft (v2.1.24: 1500.0)
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> holding_level_vs_fpm (v2.1.24: 300.0)
+// Sustained climb time required before we classify a Go-Around.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> go_around_dwell_secs (v2.1.24: 8)
+// Seit 17.10.2026 („Stück 2“, docs/spec/phase-reiseband-v2.md) nur noch für
+// v1 im Anflug/Final und für v1 im Reiseband bei v2 im Anflug/Final/Landung;
+// innerhalb des Reisebands übernimmt v1 v2s Phase direkt (`reiseband_phase`).
+// Die folgende Beschreibung ist die ursprüngliche Mechanik.
+//
+// En-Route-Versöhner (Korpus-Audit 2026-07, 632 Flüge): Sicherheitsnetz
+// für die GANZE Fehlerklasse "alte FSM hängt auf einer Luft-Phase fest",
+// nicht für einen einzelnen Übergangs-Arm. Historie derselben Klasse,
+// jedes Mal als Einzelfix hinterher: v0.5.40 (Pushback klemmt,
+// pushback_state konstant 3), v0.13.17 (Boden-Phasen klemmen, tote
+// Engine-SimVars), v0.19.1 (Final→Landing, Anzeige-only), GSG-105
+// (Descent-Falle, es gibt keinen Descent→Climb-Weg zurück), zuletzt
+// GSG22 EDLN→EDDL + eine C172 (Climb→Descent mathematisch unerreichbar:
+// `lost_from_peak > 500..1200 ft` kann bei < 1000 ft Climb-Peak nie
+// eintreten — Ansatz-Problem, kein Schwellenwert-Problem).
+//
+// Mechanik: weicht v1 in einer Luft-Phase (Climb/Cruise/Descent/
+// Approach/Final — NICHT Holding, das v2 bewusst nicht modelliert) so
+// lange von v2s aufgelöster Phase ab, ohne sich selbst zu bewegen, wird
+// v1s echter Zustand auf v2s Phase gezogen — über den normalen
+// `next_phase`-Commit, also mit echtem `PhaseChanged`-Event (Treibstoff-
+// Snapshot, METAR-Abruf, ACARS-Log, Auto-File-Kette ziehen alle nach;
+// das unterscheidet ihn von der reinen Anzeige-Korrektur aus v0.19.1).
+// Es wird KEINE neue Heuristik erfunden: Ziel ist v2s bereits
+// review-gehärtete Resolver-Phase (phase_v2.rs), keine Roh-Segmente.
+//
+// Der PRIMÄRE Schutz vor Fehl-Zügen ist NICHT der Dwell, sondern das
+// Kinematik-Widerspruchs-Gate [`segment_contradicts_v1`]: gefeuert wird
+// ausschließlich, wenn die Fenster-Evidenz v1s aktuelle Phase aktiv
+// WIDERLEGT (Climb während anhaltenden Sinkens/am Boden, Descent während
+// anhaltenden Steigens, …). Bloßes v1≠v2 genügt NICHT — QS-Runde 1
+// bewies empirisch, dass v1 und v2 bei Level-Flug GEWOLLT und dauerhaft
+// auseinanderliegen (v2 promotet Climb→Cruise ref-los erst nach 240 s
+// Level; v2 hält bei Zwischen-Level-Offs bewusst Descent, wo v1s B-003
+// sofort Cruise recovert; v1 latcht Cruise bei Climb-Restrictions
+// single-tick, wo v2 korrekt Climb hält) — ein rein v1≠v2-basierter
+// Versöhner oszillierte auf JEDEM gesunden Normalflug (Zug → v1s
+// Primär-Arm latcht zurück → Zug → …). `Level`/`Insufficient`
+// widersprechen deshalb NIE einer Luft-Phase.
+//
+// Der Dwell obendrauf ist ASYMMETRISCH nach Zug-Richtung im natürlichen
+// Flugbogen (Climb→Cruise→Descent→Approach→Final→Landing, s.
+// `enroute_phase_rank`):
+//
+// * **Rückwärts** (v2 hinter v1) — 90 s: die vorsichtigere Richtung
+//   (Defense-in-Depth über das Widerspruchs-Gate hinaus); länger als
+//   v2s komplettes Evidenz-Fenster (60 s) + Hysterese-Reserve, damit
+//   ein nachhinkendes v2 eine gesunde, frisch transitionierte v1 nie
+//   zurückzieht (die Uhr resettet bei jeder v1-Transition ohnehin).
+// * **Vorwärts** (v2 vor v1) — 45 s: ein v2, das VORAUS ist, hat MEHR
+//   bestätigte Evidenz, nicht weniger. Replay-Befund BE24 (der Feld-
+//   Report-Flug): die ehrliche Divergenz-Spanne vor dem Touchdown
+//   betrug nur 82 s — mit einem symmetrischen 90-s-Dwell käme die
+//   Rettung erst NACH dem Aufsetzen, mit 45 s noch in der Luft (v1
+//   erlebt Final/Landing als echte Phasen und erfasst den Touchdown
+//   über die eigene Landing-Kante statt Sampler-Carry-Over).
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> enroute_reconcile_dwell_secs (v2.1.24: 90)
+// Vorwärts-Dwell des En-Route-Versöhners — siehe
+// [`ENROUTE_RECONCILE_DWELL_SECS`].
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> enroute_reconcile_forward_dwell_secs (v2.1.24: 45)
+// Minimum positive V/S at which the GA detector accepts a sample
+// as "actually climbing" (filters out flare round-out / level-off).
+//
+// v0.5.35: 500 → 300 fpm. Slow GA aircraft (Cessna 152, Piper Cub,
+// taildraggers) klettern bei einem GA selten >500 fpm — der frühere
+// Threshold übersah ihre Go-Arounds komplett.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> go_around_min_vs_fpm (v2.1.24: 300.0)
+// Durchstarter zählen nur mit einer Landeschwelle höchstens so weit voraus
+// vom tiefsten Anflugpunkt (17.10.2026, siehe `runway::schwelle_voraus`).
+// 5 NM: Ein Durchstarter am Stabilitäts-Gate (1000 ft) liegt auf einem
+// 3°-Gleitpfad 3,1 NM vor der Schwelle, bei 1500 ft 4,7 NM. Im Korpus
+// lagen die falschen quer zur Bahn oder 5,3–25 NM entfernt.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> go_around_schwelle_nm (v2.1.24: 5.0)
+// … und höchstens so viel Abweichung zwischen Flugzeug- und Bahnkurs.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> go_around_schwelle_kurs_deg (v2.1.24: 45.0)
+// AGL threshold above which we mark the flight as having actually
+// flown. Powers the `was_airborne` gate that prevents both the
+// Arrived-fallback and the divert-detection from firing pre-flight
+// (GSX repositioning, ground-handling wackeln, etc.). 50 ft is well
+// above gear-strut oscillation and runway-end short-hop noise.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> was_airborne_agl_ft (v2.1.24: 50.0)
+// Upper bound on AGL we'll trust for the `was_airborne` mark. Live bug
+// 2026-05-03 (PMDG B738, GSX pushback): MSFS reported AGL=53819 ft
+// for ~60 s right after the SimConnect handshake while the terrain
+// engine was still loading — the aircraft was sitting on a stand
+// at EDDH but the SimVar said it was at FL538 with on_ground=false.
+// `was_airborne` flipped true from that loading glitch, and 30 min
+// later the universal Arrived-fallback (gated by was_airborne)
+// fired during the GSX pushback because pushback motion happens to
+// match the conditions. The fix is to ignore obvious garbage AGL
+// values: real pre-flight terrain data is bounded; nothing in the
+// real world makes a parked aircraft suddenly "airborne at FL538".
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> was_airborne_agl_max_ft (v2.1.24: 30000.0)
+// Minimum number of consecutive ticks the airborne conditions must
+// hold before we flip `was_airborne`. Gates against single-tick
+// glitches where MSFS briefly reports !on_ground during scenery
+// load even with sane AGL. 2 ticks ≈ 5-10 s at the streamer cadence.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> was_airborne_dwell_ticks (v2.1.24: 2)
 
 // "Is the aircraft on the planned field, or on some other one?" is answered
 // exclusively by `arrival::locate` — including the radii it uses. There is no
@@ -1220,28 +1223,28 @@ const WAS_AIRBORNE_DWELL_TICKS: u8 = 2;
 // ICAO) and debounced (stability dwell) so an airport merely overflown
 // mid-descent doesn't trigger a fetch.
 
-/// AGL ceiling (ft) below which we consider the aircraft committed enough
-/// to an approach to bother pre-fetching. Above this the nearest field is
-/// still ambiguous (en-route over a busy area). 5000 ft AGL is the same
-/// gate the FSM uses to enter Approach.
-const DIVERT_PREFETCH_MAX_AGL_FT: f64 = 5000.0;
-/// Horizontal radius (nm) within which the diverged nearest field must lie
-/// before we treat the approach as committed to it. 10 nm ≈ a typical
-/// final-approach intercept distance; tighter than the 50 nm divert search
-/// so a field merely passed at altitude doesn't qualify.
-const DIVERT_PREFETCH_MAX_DIST_NM: f64 = 10.0;
-/// The aircraft must be descending at least this fast (negative fpm) — a
-/// level overflight of an airport mid-cruise never qualifies.
-const DIVERT_PREFETCH_MIN_SINK_FPM: f64 = -200.0;
-/// How long the diverged nearest field must remain the stable candidate
-/// before the pre-fetch fires. Debounces an airport that is briefly nearest
-/// while the aircraft tracks past it on a vector.
-const DIVERT_PREFETCH_STABLE_SECS: i64 = 10;
-/// The diverged field must be at least this far from the planned
-/// `arr_airport` to count as a real divert (same threshold the
-/// parked-Arrived divert detection uses). Below this it's the same airport
-/// area and the planned navdata already covers it.
-const DIVERT_PREFETCH_PLANNED_DIVERGE_NM: f64 = 5.0;
+// AGL ceiling (ft) below which we consider the aircraft committed enough
+// to an approach to bother pre-fetching. Above this the nearest field is
+// still ambiguous (en-route over a busy area). 5000 ft AGL is the same
+// gate the FSM uses to enter Approach.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> divert_prefetch_max_agl_ft (v2.1.24: 5000.0)
+// Horizontal radius (nm) within which the diverged nearest field must lie
+// before we treat the approach as committed to it. 10 nm ≈ a typical
+// final-approach intercept distance; tighter than the 50 nm divert search
+// so a field merely passed at altitude doesn't qualify.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> divert_prefetch_max_dist_nm (v2.1.24: 10.0)
+// The aircraft must be descending at least this fast (negative fpm) — a
+// level overflight of an airport mid-cruise never qualifies.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> divert_prefetch_min_sink_fpm (v2.1.24: -200.0)
+// How long the diverged nearest field must remain the stable candidate
+// before the pre-fetch fires. Debounces an airport that is briefly nearest
+// while the aircraft tracks past it on a vector.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> divert_prefetch_stable_secs (v2.1.24: 10)
+// The diverged field must be at least this far from the planned
+// `arr_airport` to count as a real divert (same threshold the
+// parked-Arrived divert detection uses). Below this it's the same airport
+// area and the planned navdata already covers it.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> divert_prefetch_planned_diverge_nm (v2.1.24: 5.0)
 
 /// How often we POST `/pireps/{id}/update` purely to bump `pireps.updated_at`
 /// and keep phpVMS's `RemoveExpiredLiveFlights` cron from soft-deleting
@@ -1272,53 +1275,53 @@ const SIM_GATE_FRESH_SECS: i64 = 5;
 /// Hinweis, woran es liegen kann (Pause, Slew, Zeitbeschleunigung).
 const RESUME_GATE_WARNUNG_SECS: i64 = 120;
 
-/// Spec sim-disconnect-auto-resume F2 (Drift-Stufen):
-///
-/// Schwellen fuer die Activity-Log-Eskalation beim Resume. Drift NM
-/// gemessen zwischen `paused_last_known` und dem ersten Post-Resume-
-/// Snapshot. Kein Level blockiert Auto-Resume (Spec-Prinzip P2:
-/// informieren statt blockieren).
-///
-///   <  1 NM : `▶ Flug automatisch fortgesetzt` (kein Distanz-Suffix)
-///   1-50    : Info-Level mit `repositioniert X nm`
-///   50-200  : Warn-Level (auffaellige Reposition)
-///   > 200   : Warn-Level mit Hinweis „pruefe ob der richtige Flug geladen ist"
-///
-/// Schwellen sind empirisch — typischer Autosave bei MSFS ist ~10 min
-/// alt, was bei 480 kt etwa 80 NM Drift produziert (= Warn-Range,
-/// erwartbar). >200 NM ist verdaechtig: entweder Bid-Reload am
-/// Departure-Airport (= falscher Flug?) oder grosser Slew-Move.
-const RESUME_DRIFT_TOAST_NM: f64 = 1.0;
-const RESUME_DRIFT_WARN_NM: f64 = 50.0;
-const RESUME_DRIFT_EXTREME_NM: f64 = 200.0;
+// Spec sim-disconnect-auto-resume F2 (Drift-Stufen):
+//
+// Schwellen fuer die Activity-Log-Eskalation beim Resume. Drift NM
+// gemessen zwischen `paused_last_known` und dem ersten Post-Resume-
+// Snapshot. Kein Level blockiert Auto-Resume (Spec-Prinzip P2:
+// informieren statt blockieren).
+//
+//   <  1 NM : `▶ Flug automatisch fortgesetzt` (kein Distanz-Suffix)
+//   1-50    : Info-Level mit `repositioniert X nm`
+//   50-200  : Warn-Level (auffaellige Reposition)
+//   > 200   : Warn-Level mit Hinweis „pruefe ob der richtige Flug geladen ist"
+//
+// Schwellen sind empirisch — typischer Autosave bei MSFS ist ~10 min
+// alt, was bei 480 kt etwa 80 NM Drift produziert (= Warn-Range,
+// erwartbar). >200 NM ist verdaechtig: entweder Bid-Reload am
+// Departure-Airport (= falscher Flug?) oder grosser Slew-Move.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> resume_drift_toast_nm (v2.1.24: 1.0)
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> resume_drift_warn_nm (v2.1.24: 50.0)
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> resume_drift_extreme_nm (v2.1.24: 200.0)
 
-/// v0.20 (Process-Integrity): ein Fuel-ANSTIEG von mehr als dieser Menge
-/// zwischen Pause/Neustart-Snapshot und dem ersten frischen Snapshot danach
-/// ist physikalisch unmöglich (Flugzeuge tanken nicht mitten im Flug nach)
-/// — starkes Indiz für einen Sim/App-Reload mit frischem/anderem Ladezustand
-/// statt einer echten durchgehenden Simulation. Bewusst nur die ZUNAHME
-/// bewerten, nicht den Betrag: eine normale Verbrauchs-ABNAHME (auch über
-/// mehrere Tonnen bei langen Pausen) ist harmlos.
-const RESUME_FUEL_JUMP_IMPOSSIBLE_KG: f64 = 200.0;
+// v0.20 (Process-Integrity): ein Fuel-ANSTIEG von mehr als dieser Menge
+// zwischen Pause/Neustart-Snapshot und dem ersten frischen Snapshot danach
+// ist physikalisch unmöglich (Flugzeuge tanken nicht mitten im Flug nach)
+// — starkes Indiz für einen Sim/App-Reload mit frischem/anderem Ladezustand
+// statt einer echten durchgehenden Simulation. Bewusst nur die ZUNAHME
+// bewerten, nicht den Betrag: eine normale Verbrauchs-ABNAHME (auch über
+// mehrere Tonnen bei langen Pausen) ist harmlos.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> resume_fuel_jump_impossible_kg (v2.1.24: 200.0)
 
-/// „Sprung ans Ziel": Der Sim stuerzt unterwegs ab, und danach steht das
-/// Flugzeug am ANKUNFTSFLUGHAFEN — nicht dort, wo der Flug abbrach.
-///
-/// Regel (Thomas, 23.09.2026): Nach einem Sim-Absturz darf sich der Pilot in
-/// der Gegend der Unterbrechung neu hinstellen und weiterfliegen. Was NICHT
-/// geht: sich ans Ziel stellen und den Flug genehmigen lassen.
-///
-/// Deshalb zwei Abstaende zum geplanten Ziel: War der Flug vorher weiter als
-/// `RESUME_ZIELSPRUNG_VORHER_NM` entfernt und steht er danach naeher als
-/// `RESUME_ZIELSPRUNG_NACHHER_NM` dran, ist das der Sprung ans Ziel. Wer
-/// kurz vor dem Platz abbricht (innerhalb der ersten Schwelle), faellt
-/// bewusst nicht darunter — dort ist Neuladen am Platz der normale Weg.
-const RESUME_ZIELSPRUNG_VORHER_NM: f64 = 15.0;
-const RESUME_ZIELSPRUNG_NACHHER_NM: f64 = 5.0;
-/// Schnellste Grundgeschwindigkeit, die noch als geflogen durchgeht (kt).
-/// Bewusst weit ueber jeder Reisegeschwindigkeit: Ein Jet im Jetstream
-/// schafft 600 kt ueber Grund. Wer mehr „fliegt", ist gesprungen.
-const RESUME_MAX_PLAUSIBEL_KT: f64 = 700.0;
+// „Sprung ans Ziel": Der Sim stuerzt unterwegs ab, und danach steht das
+// Flugzeug am ANKUNFTSFLUGHAFEN — nicht dort, wo der Flug abbrach.
+//
+// Regel (Thomas, 23.09.2026): Nach einem Sim-Absturz darf sich der Pilot in
+// der Gegend der Unterbrechung neu hinstellen und weiterfliegen. Was NICHT
+// geht: sich ans Ziel stellen und den Flug genehmigen lassen.
+//
+// Deshalb zwei Abstaende zum geplanten Ziel: War der Flug vorher weiter als
+// `RESUME_ZIELSPRUNG_VORHER_NM` entfernt und steht er danach naeher als
+// `RESUME_ZIELSPRUNG_NACHHER_NM` dran, ist das der Sprung ans Ziel. Wer
+// kurz vor dem Platz abbricht (innerhalb der ersten Schwelle), faellt
+// bewusst nicht darunter — dort ist Neuladen am Platz der normale Weg.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> resume_zielsprung_vorher_nm (v2.1.24: 15.0)
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> resume_zielsprung_nachher_nm (v2.1.24: 5.0)
+// Schnellste Grundgeschwindigkeit, die noch als geflogen durchgeht (kt).
+// Bewusst weit ueber jeder Reisegeschwindigkeit: Ein Jet im Jetstream
+// schafft 600 kt ueber Grund. Wer mehr „fliegt", ist gesprungen.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> resume_max_plausibel_kt (v2.1.24: 700.0)
 
 /// v0.20 (Process-Integrity): Ergebnis des Vergleichs "letzter bekannter
 /// Snapshot vor der Pause/dem Neustart" vs. "erster frischer Snapshot
@@ -1424,7 +1427,7 @@ fn strecke_war_fliegbar(d: &ResumeDiscontinuity) -> bool {
     match d.luecke_secs {
         Some(secs) if secs > 0 => {
             let stunden = secs as f64 / 3600.0;
-            d.drift_nm / stunden <= RESUME_MAX_PLAUSIBEL_KT
+            d.drift_nm / stunden <= crate::grenzwerte::grenzwerte().abgabe.resume_max_plausibel_kt.wert
         }
         // Luecke unbekannt oder null — keine Aussage moeglich.
         _ => true,
@@ -1442,7 +1445,7 @@ fn strecke_war_fliegbar(d: &ResumeDiscontinuity) -> bool {
 fn ist_sprung_ans_ziel(d: &ResumeDiscontinuity) -> bool {
     match (d.ziel_vorher_nm, d.ziel_nachher_nm) {
         (Some(vorher), Some(nachher))
-            if vorher > RESUME_ZIELSPRUNG_VORHER_NM && nachher < RESUME_ZIELSPRUNG_NACHHER_NM =>
+            if vorher > crate::grenzwerte::grenzwerte().abgabe.resume_zielsprung_vorher_nm.wert && nachher < crate::grenzwerte::grenzwerte().abgabe.resume_zielsprung_nachher_nm.wert =>
         {
             // Zwei Wege zum selben Urteil, und beide brauchen ein Merkmal
             // ausser der Nachbarschaft zum Ziel — sonst traefe es jeden
@@ -1466,13 +1469,13 @@ fn sprit_wurde_verbraucht(d: &ResumeDiscontinuity) -> bool {
     d.fuel_delta_kg < 0.0
 }
 
-/// Ab dieser Laenge zaehlt eine Unterbrechung fuer die Abgabe-Frage.
-///
-/// Kurze Aussetzer (Ladebildschirm, Menue, ein verlorener Tick) sind
-/// Alltag und sollen niemanden vor eine Entscheidung stellen. Zwei Minuten
-/// ohne Simulator sind etwas anderes: Danach steht das Flugzeug erfahrungs-
-/// gemaess woanders.
-const ABGABE_UNTERBRECHUNG_MIN_SECS: i64 = 120;
+// Ab dieser Laenge zaehlt eine Unterbrechung fuer die Abgabe-Frage.
+//
+// Kurze Aussetzer (Ladebildschirm, Menue, ein verlorener Tick) sind
+// Alltag und sollen niemanden vor eine Entscheidung stellen. Zwei Minuten
+// ohne Simulator sind etwas anderes: Danach steht das Flugzeug erfahrungs-
+// gemaess woanders.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> abgabe_unterbrechung_min_secs (v2.1.24: 120)
 
 /// Warum die App diesen Flug NICHT von selbst einreichen darf.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1509,13 +1512,13 @@ fn flug_war_unterbrochen(stats: &FlightStats) -> bool {
         .resume_luecke_max_secs
         .or(stats.resume_luecke_secs)
         .or_else(|| stats.resume_gap_minutes.map(|m| m * 60))
-        .is_some_and(|secs| secs >= ABGABE_UNTERBRECHUNG_MIN_SECS);
+        .is_some_and(|secs| secs >= crate::grenzwerte::grenzwerte().abgabe.abgabe_unterbrechung_min_secs.wert);
     neustart_lang_genug
         || !stats.resume_spruenge.is_empty()
         || stats
             .pause_segments
             .iter()
-            .any(|p| p.duration_secs >= ABGABE_UNTERBRECHUNG_MIN_SECS)
+            .any(|p| p.duration_secs >= crate::grenzwerte::grenzwerte().abgabe.abgabe_unterbrechung_min_secs.wert)
 }
 
 /// Wurde die Landung ueberhaupt gemessen? Ohne Aufsetzfenster gibt es
@@ -1860,9 +1863,9 @@ fn sprung_grund(d: &ResumeDiscontinuity) -> &'static str {
     }
     if ist_sprung_ans_ziel(d) {
         "ans Ziel gesprungen"
-    } else if d.drift_nm > RESUME_DRIFT_EXTREME_NM {
+    } else if d.drift_nm > crate::grenzwerte::grenzwerte().abgabe.resume_drift_extreme_nm.wert {
         "Position um mehr als 200 nm versetzt"
-    } else if d.fuel_delta_kg > RESUME_FUEL_JUMP_IMPOSSIBLE_KG && !d.both_grounded {
+    } else if d.fuel_delta_kg > crate::grenzwerte::grenzwerte().abgabe.resume_fuel_jump_impossible_kg.wert && !d.both_grounded {
         "Sprit in der Luft gestiegen"
     } else {
         // Kein Zweig passt: ein Flug, der mit einer aelteren Fassung
@@ -1878,65 +1881,65 @@ fn sprung_grund(d: &ResumeDiscontinuity) -> &'static str {
 /// Flug gibt es nicht — das ist ein Reload/neuer Ladezustand, keine
 /// durchgehende Simulation).
 fn is_impossible_discontinuity(d: &ResumeDiscontinuity) -> bool {
-    let impossible_fuel_jump = d.fuel_delta_kg > RESUME_FUEL_JUMP_IMPOSSIBLE_KG && !d.both_grounded;
-    d.drift_nm > RESUME_DRIFT_EXTREME_NM || impossible_fuel_jump || ist_sprung_ans_ziel(d)
+    let impossible_fuel_jump = d.fuel_delta_kg > crate::grenzwerte::grenzwerte().abgabe.resume_fuel_jump_impossible_kg.wert && !d.both_grounded;
+    d.drift_nm > crate::grenzwerte::grenzwerte().abgabe.resume_drift_extreme_nm.wert || impossible_fuel_jump || ist_sprung_ans_ziel(d)
 }
 
 #[cfg(test)]
 #[path = "tests_lib/resume_discontinuity_tests.rs"]
 mod resume_discontinuity_tests;
 
-/// v0.13.0 Stream F (LE22-LE26): Pilot-getriggerter Re-Check-Workflow.
-/// Wenn `resume_position_suspect=true`, kann der Pilot sich erst manuell im
-/// Sim wieder zur gespeicherten Position bringen und dann via
-/// `flight_resume_check_position`-Command einen Re-Check auslösen. Wenn
-/// die aktuelle Drift kleiner als diese Schwelle ist UND keine
-/// airborne↔on_ground-Inkonsistenz besteht, gilt der Resume als sauber
-/// (kein untrusted-Stempel) und der Flug läuft normal weiter.
-const RESUME_DRIFT_CLEAN_NM: f64 = 5.0;
+// v0.13.0 Stream F (LE22-LE26): Pilot-getriggerter Re-Check-Workflow.
+// Wenn `resume_position_suspect=true`, kann der Pilot sich erst manuell im
+// Sim wieder zur gespeicherten Position bringen und dann via
+// `flight_resume_check_position`-Command einen Re-Check auslösen. Wenn
+// die aktuelle Drift kleiner als diese Schwelle ist UND keine
+// airborne↔on_ground-Inkonsistenz besteht, gilt der Resume als sauber
+// (kein untrusted-Stempel) und der Flug läuft normal weiter.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> resume_drift_clean_nm (v2.1.24: 5.0)
 
-/// How close (in nautical miles) the aircraft must be to the departure airport
-/// to start the flight. Generous enough to cover taxi positions and remote
-/// stands; tight enough to reject "I'm at EDDF instead of EDDP".
-const MAX_START_DISTANCE_NM: f64 = 5.0;
+// How close (in nautical miles) the aircraft must be to the departure airport
+// to start the flight. Generous enough to cover taxi positions and remote
+// stands; tight enough to reject "I'm at EDDF instead of EDDP".
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> max_start_distance_nm (v2.1.24: 5.0)
 
-/// Symmetric to MAX_START_DISTANCE_NM but applied at touchdown / file:
-/// the pilot has to actually be on (or at) the planned arrival airport,
-/// not somewhere random. Diverts are still possible via
-/// `flight_end_manual` with a divert ICAO + reason. EDDP→EDDP plans are
-/// fine — same airport, same check.
-const MAX_FILE_DISTANCE_NM: f64 = 5.0;
+// Symmetric to MAX_START_DISTANCE_NM but applied at touchdown / file:
+// the pilot has to actually be on (or at) the planned arrival airport,
+// not somewhere random. Diverts are still possible via
+// `flight_end_manual` with a divert ICAO + reason. EDDP→EDDP plans are
+// fine — same airport, same check.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> max_file_distance_nm (v2.1.24: 5.0)
 
-/// v0.19.3: how far from the planned field a pilot's own confirmation ("yes,
-/// this is where I ended up", via the divert banner's override) may relax the
-/// `not_at_arrival` gate.
-///
-/// The confirmation exists for a real case: an off-field landing a few miles
-/// short of the destination raises a targetless divert hint, and the pilot then
-/// picks the planned airport from the override list — correctly, because that IS
-/// the field he was going to. Without the relaxation he would be told
-/// `not_at_arrival` with no way through.
-///
-/// But it must not become a bypass. The override list includes the planned
-/// airport, so two clicks from a cockpit 200 nm away would otherwise produce a
-/// clean, auto-approved arrival PIREP with nothing recording the distance.
-/// Beyond this bound the pilot files manually — the path that is audited and
-/// goes to admin review.
-const PILOT_CONFIRMED_ARRIVAL_MAX_NM: f64 = 15.0;
+// v0.19.3: how far from the planned field a pilot's own confirmation ("yes,
+// this is where I ended up", via the divert banner's override) may relax the
+// `not_at_arrival` gate.
+//
+// The confirmation exists for a real case: an off-field landing a few miles
+// short of the destination raises a targetless divert hint, and the pilot then
+// picks the planned airport from the override list — correctly, because that IS
+// the field he was going to. Without the relaxation he would be told
+// `not_at_arrival` with no way through.
+//
+// But it must not become a bypass. The override list includes the planned
+// airport, so two clicks from a cockpit 200 nm away would otherwise produce a
+// clean, auto-approved arrival PIREP with nothing recording the distance.
+// Beyond this bound the pilot files manually — the path that is audited and
+// goes to admin review.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> pilot_confirmed_arrival_max_nm (v2.1.24: 15.0)
 
-/// How close to another airport's reference point an aircraft has to be before
-/// we say it is STANDING ON that airport (and therefore may not confirm the
-/// planned one — see `standing_on_another_field`).
-///
-/// v0.19.3: deliberately tight, and deliberately not the on-field radius used
-/// elsewhere. The question here is not "is there an airport nearby" but "is the
-/// aircraft on it". Measured against the airports table: a 3 nm radius answers
-/// "yes" for 59 % of plausible off-field spots around a major airport, and even
-/// counting only landable fields, 36 % at 2 nm — which would have blocked the
-/// very pilot this relaxation exists for, the one who put it down in a field
-/// short of his destination and said so. At 1 nm it is 11 %, and those are spots
-/// that genuinely sit on top of another field.
-const STANDING_ON_OTHER_FIELD_NM: f64 = 1.0;
+// How close to another airport's reference point an aircraft has to be before
+// we say it is STANDING ON that airport (and therefore may not confirm the
+// planned one — see `standing_on_another_field`).
+//
+// v0.19.3: deliberately tight, and deliberately not the on-field radius used
+// elsewhere. The question here is not "is there an airport nearby" but "is the
+// aircraft on it". Measured against the airports table: a 3 nm radius answers
+// "yes" for 59 % of plausible off-field spots around a major airport, and even
+// counting only landable fields, 36 % at 2 nm — which would have blocked the
+// very pilot this relaxation exists for, the one who put it down in a field
+// short of his destination and said so. At 1 nm it is 11 %, and those are spots
+// that genuinely sit on top of another field.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> standing_on_other_field_nm (v2.1.24: 1.0)
 
 // v0.12.10: `clean_atc_model` ist nach `sim-core` gezogen, damit der
 // MSFS-Telemetrie-Adapter den `ATC MODEL` schon bei der Erfassung
@@ -5531,18 +5534,18 @@ struct TelemetrySample {
     fuel_kg: f32,
 }
 
-/// Maximum age of any entry in the touchdown ring buffer. 5 s gives
-/// us roughly the last final-approach segment plus the touchdown
-/// itself. Longer than ~6 s and we'd start picking up Cruise data;
-/// shorter than ~3 s and we'd miss the descent rate moments before
-/// flare.
-const TOUCHDOWN_BUFFER_SECS: i64 = 5;
+// Maximum age of any entry in the touchdown ring buffer. 5 s gives
+// us roughly the last final-approach segment plus the touchdown
+// itself. Longer than ~6 s and we'd start picking up Cruise data;
+// shorter than ~3 s and we'd miss the descent rate moments before
+// flare.
+// Wert seit v3: bundle/grenzwerte/landung.json -> touchdown_buffer_secs (v2.1.24: 5)
 
-/// v0.5.39: Wie lange nach dem TD-Edge wir post-TD weiter sampeln + die
-/// Streamer-Network-IO pausiert lassen. 10 s deckt typische Rollout-
-/// Phase + erste Reverse/Brake-Action ab. Pre-TD-Buffer (5 s) + dies
-/// ergibt einen TouchdownWindow von ~15 s, gedumpt als ein Event.
-const TOUCHDOWN_POST_WINDOW_MS: i64 = 10_000;
+// v0.5.39: Wie lange nach dem TD-Edge wir post-TD weiter sampeln + die
+// Streamer-Network-IO pausiert lassen. 10 s deckt typische Rollout-
+// Phase + erste Reverse/Brake-Action ab. Pre-TD-Buffer (5 s) + dies
+// ergibt einen TouchdownWindow von ~15 s, gedumpt als ein Event.
+// Wert seit v3: bundle/grenzwerte/landung.json -> touchdown_post_window_ms (v2.1.24: 10_000)
 
 /// v1.7.24 (GAF-707-Race, strukturell geloest — Vereinheitlichung 09/2026):
 /// Ab wann `finalize_landing_score_if_due` (und, mit demselben Wert,
@@ -8020,24 +8023,24 @@ impl LandingScore {
     fn classify(peak_vs_fpm: f32, peak_g: f32, bounces: u8) -> Self {
         let vs = peak_vs_fpm.abs();
         // Severity climbs with either V/S OR G — whichever is worse wins.
-        let by_vs = if vs >= TOUCHDOWN_VS_SEVERE_FPM {
+        let by_vs = if vs >= crate::grenzwerte::grenzwerte().ausrollen.touchdown_vs_severe_fpm.wert {
             Self::Severe
-        } else if vs >= TOUCHDOWN_VS_HARD_FPM {
+        } else if vs >= crate::grenzwerte::grenzwerte().ausrollen.touchdown_vs_hard_fpm.wert {
             Self::Hard
-        } else if vs >= TOUCHDOWN_VS_FIRM_FPM {
+        } else if vs >= crate::grenzwerte::grenzwerte().ausrollen.touchdown_vs_firm_fpm.wert {
             Self::Firm
-        } else if vs >= TOUCHDOWN_VS_SMOOTH_FPM {
+        } else if vs >= crate::grenzwerte::grenzwerte().ausrollen.touchdown_vs_smooth_fpm.wert {
             Self::Acceptable
         } else {
             Self::Smooth
         };
-        let by_g = if peak_g >= TOUCHDOWN_G_SEVERE {
+        let by_g = if peak_g >= crate::grenzwerte::grenzwerte().ausrollen.touchdown_g_severe.wert {
             Self::Severe
-        } else if peak_g >= TOUCHDOWN_G_HARD {
+        } else if peak_g >= crate::grenzwerte::grenzwerte().ausrollen.touchdown_g_hard.wert {
             Self::Hard
-        } else if peak_g >= TOUCHDOWN_G_FIRM {
+        } else if peak_g >= crate::grenzwerte::grenzwerte().ausrollen.touchdown_g_firm.wert {
             Self::Firm
-        } else if peak_g >= TOUCHDOWN_G_SMOOTH {
+        } else if peak_g >= crate::grenzwerte::grenzwerte().ausrollen.touchdown_g_smooth.wert {
             Self::Acceptable
         } else {
             Self::Smooth
@@ -8802,17 +8805,17 @@ pub struct ApproachBufferSample {
     pub crosswind_kt: Option<f32>,
 }
 
-/// Obergrenze fuer eine physikalisch moegliche Sinkrate im Anflug.
-///
-/// Ein Verkehrsflugzeug im Landeanflug sinkt mit 600-1500 fpm; selbst ein
-/// bewusst steiler Sinkflug bleibt unter 6000. Alles darueber ist kein
-/// Flugzustand, sondern ein Sim-Artefakt: Pause, Slew, Teleport, Ladebild,
-/// Positions-Sprung. Grosszuegig auf 10000 gesetzt — es geht nicht darum,
-/// schlechtes Fliegen wegzufiltern, sondern Werte, die keine Fluglage sind.
-const APPROACH_VS_PLAUSIBILITY_CAP_FPM: f32 = 10_000.0;
+// Obergrenze fuer eine physikalisch moegliche Sinkrate im Anflug.
+//
+// Ein Verkehrsflugzeug im Landeanflug sinkt mit 600-1500 fpm; selbst ein
+// bewusst steiler Sinkflug bleibt unter 6000. Alles darueber ist kein
+// Flugzustand, sondern ein Sim-Artefakt: Pause, Slew, Teleport, Ladebild,
+// Positions-Sprung. Grosszuegig auf 10000 gesetzt — es geht nicht darum,
+// schlechtes Fliegen wegzufiltern, sondern Werte, die keine Fluglage sind.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> approach_vs_plausibility_cap_fpm (v2.1.24: 10_000.0)
 
-/// Bank jenseits davon ist im Anflug ebenfalls kein Flugzustand mehr.
-const APPROACH_BANK_PLAUSIBILITY_CAP_DEG: f32 = 90.0;
+// Bank jenseits davon ist im Anflug ebenfalls kein Flugzustand mehr.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> approach_bank_plausibility_cap_deg (v2.1.24: 90.0)
 
 /// Ein Sample, das keine Fluglage beschreibt, gehoert nicht in den Puffer.
 ///
@@ -8837,8 +8840,8 @@ fn approach_sample_is_plausible(snap: &SimSnapshot) -> bool {
         && snap.groundspeed_kt.is_finite()
         && snap.indicated_airspeed_kt.is_finite();
     finite
-        && snap.vertical_speed_fpm.abs() <= APPROACH_VS_PLAUSIBILITY_CAP_FPM
-        && snap.bank_deg.abs() <= APPROACH_BANK_PLAUSIBILITY_CAP_DEG
+        && snap.vertical_speed_fpm.abs() <= crate::grenzwerte::grenzwerte().anflug_kern.approach_vs_plausibility_cap_fpm.wert
+        && snap.bank_deg.abs() <= crate::grenzwerte::grenzwerte().anflug_kern.approach_bank_plausibility_cap_deg.wert
 }
 
 /// Standardabweichung einer Stabilitaets-Achse, oder `None` bei zu duenner
@@ -8851,7 +8854,7 @@ fn approach_sample_is_plausible(snap: &SimSnapshot) -> bool {
 /// laufen koennen.
 fn stability_stddev(vals: impl Iterator<Item = f32>) -> Option<f32> {
     let v: Vec<f64> = vals.map(f64::from).collect();
-    if v.len() < STABILITY_MIN_SAMPLES {
+    if v.len() < crate::grenzwerte::grenzwerte().anflug_kern.stability_min_samples.wert {
         return None;
     }
     let n = v.len() as f64;
@@ -9073,11 +9076,11 @@ fn hoehe_fuer_durchstart(stats: &FlightStats, snap: &SimSnapshot) -> (f32, f32) 
             // auf einen anderen Platz (oder bei falscher Platzhoehe) waere HAT
             // um die Differenz verschoben — dann gilt AGL wie zuvor, statt den
             // Detektor mit einer falschen Bezugshoehe zu blenden.
-            if hat > 0.0 && diff <= HAT_AGL_PLAUSIBEL_FT {
+            if hat > 0.0 && diff <= crate::grenzwerte::grenzwerte().anflug_kern.hat_agl_plausibel_ft.wert {
                 // Die enge 1000-ft-Obergrenze nur, wenn HAT und AGL
                 // zusammenpassen (Gelaende, kein Hoehenfehler); bei groesserer
                 // Differenz bleibt es bei der weiten Grenze von 1500 ft.
-                let obergrenze = if diff <= HAT_AGL_VERTRAUT_FT {
+                let obergrenze = if diff <= crate::grenzwerte::grenzwerte().anflug_kern.hat_agl_vertraut_ft.wert {
                     1000.0
                 } else {
                     1500.0
@@ -9091,9 +9094,9 @@ fn hoehe_fuer_durchstart(stats: &FlightStats, snap: &SimSnapshot) -> (f32, f32) 
     }
 }
 
-/// Ein Flugplatz (Bezugspunkt) in diesem Umkreis macht „unter 700 ft AGL“ zum Endanflug,
-/// auch wenn HAT nicht passt (Ausweichplatz, Gelaende vor der Bahn).
-const FINAL_PLATZ_NM: f64 = 5.0;
+// Ein Flugplatz (Bezugspunkt) in diesem Umkreis macht „unter 700 ft AGL“ zum Endanflug,
+// auch wenn HAT nicht passt (Ausweichplatz, Gelaende vor der Bahn).
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> final_platz_nm (v2.1.24: 5.0)
 
 /// Final nur in Platznaehe (24.10.2026, AUA 561 EDDN–LOWI, Pilot 15): Ueber
 /// den Bergen 45 km vor Innsbruck lag das Gelaende unter 700 ft — die Phase
@@ -9103,23 +9106,23 @@ const FINAL_PLATZ_NM: f64 = 5.0;
 /// ein Flugplatz in `FINAL_PLATZ_NM`, ist es der Endanflug.
 fn final_in_platznaehe(stats: &FlightStats, snap: &SimSnapshot) -> bool {
     let hat_passt = stats.arr_airport_elevation_ft.is_none_or(|elev| {
-        ((snap.altitude_msl_ft as f32 - elev) - snap.altitude_agl_ft as f32).abs() <= HAT_AGL_PLAUSIBEL_FT
+        ((snap.altitude_msl_ft as f32 - elev) - snap.altitude_agl_ft as f32).abs() <= crate::grenzwerte::grenzwerte().anflug_kern.hat_agl_plausibel_ft.wert
     });
     // Erst wenn HAT nicht passt: Bezugspunkte aller Plaetze, auf denen ein
     // Flugzeug landen kann, auch ohne Bahngeometrie und Wasserlandeplaetze
     // (Codex 24.10.2026: sonst bliebe eine Landung dort ohne Final und ohne
     // „Nach der Landung“).
-    hat_passt || runway::nearest_airport_reference(snap.lat, snap.lon, FINAL_PLATZ_NM, "").is_some()
+    hat_passt || runway::nearest_airport_reference(snap.lat, snap.lon, crate::grenzwerte::grenzwerte().anflug_kern.final_platz_nm.wert, "").is_some()
 }
 
-/// Groesster Unterschied HAT↔AGL, den der Durchstart-Detektor noch als
-/// „gleicher Platz" liest. Gelaende vor Bergplaetzen schwankt um einige
-/// hundert Fuss (DLH2248: 455 ft).
-const HAT_AGL_PLAUSIBEL_FT: f32 = 1200.0;
-/// Bis zu dieser Differenz gilt HAT als verlaesslich genug fuer die enge
-/// Obergrenze (tiefster Punkt ≤ 1000 ft HAT). Darueber koennte die
-/// Platzhoehe falsch sein — dann bleibt die weite Grenze wie vor v1.9.16.
-const HAT_AGL_VERTRAUT_FT: f32 = 600.0;
+// Groesster Unterschied HAT↔AGL, den der Durchstart-Detektor noch als
+// „gleicher Platz" liest. Gelaende vor Bergplaetzen schwankt um einige
+// hundert Fuss (DLH2248: 455 ft).
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> hat_agl_plausibel_ft (v2.1.24: 1200.0)
+// Bis zu dieser Differenz gilt HAT als verlaesslich genug fuer die enge
+// Obergrenze (tiefster Punkt ≤ 1000 ft HAT). Darueber koennte die
+// Platzhoehe falsch sein — dann bleibt die weite Grenze wie vor v1.9.16.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> hat_agl_vertraut_ft (v2.1.24: 600.0)
 
 /// Detect a go-around in progress: aircraft has climbed
 /// `GO_AROUND_AGL_RECOVERY_FT` above the lowest AGL seen during this
@@ -9188,13 +9191,13 @@ fn check_go_around(
     if lowest > obergrenze {
         return None;
     }
-    let conds = agl > lowest + GO_AROUND_AGL_RECOVERY_FT
-        && snap.vertical_speed_fpm > GO_AROUND_MIN_VS_FPM
+    let conds = agl > lowest + crate::grenzwerte::grenzwerte().phasen_kern.go_around_agl_recovery_ft.wert
+        && snap.vertical_speed_fpm > crate::grenzwerte::grenzwerte().phasen_kern.go_around_min_vs_fpm.wert
         && !snap.on_ground
         && snap.engines_running > 0;
     if conds {
         let pending = stats.go_around_climb_pending_since.get_or_insert(now);
-        if (now - *pending).num_seconds() >= GO_AROUND_DWELL_SECS {
+        if (now - *pending).num_seconds() >= crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert {
             // 17.10.2026: Durchstarter nur, wenn am tiefsten Punkt eine
             // Landeschwelle voraus lag. Sonst war es ein Steigen aus dem
             // Anflug (tiefer Überlandflug, Gelände, Höhenänderung) — die
@@ -9203,7 +9206,7 @@ fn check_go_around(
             // Mehrweg-Gutschrift gibt). Korpus: 8 von 18 gezählten
             // Durchstartern lagen quer zur Bahn oder 5,3–25 NM entfernt.
             let an_der_bahn = stats.tiefster_anflugpunkt.is_none_or(|(lat, lon, kurs)| {
-                runway::schwelle_voraus(lat, lon, kurs, GO_AROUND_SCHWELLE_NM, GO_AROUND_SCHWELLE_KURS_DEG)
+                runway::schwelle_voraus(lat, lon, kurs, crate::grenzwerte::grenzwerte().phasen_kern.go_around_schwelle_nm.wert, crate::grenzwerte::grenzwerte().phasen_kern.go_around_schwelle_kurs_deg.wert)
             });
             if an_der_bahn {
                 stats.go_around_count = stats.go_around_count.saturating_add(1);
@@ -9359,40 +9362,40 @@ fn segment_contradicts_v1(v1: FlightPhase, segment: phase_v2::Segment) -> bool {
     }
 }
 
-/// Above this groundspeed, nobody is taxiing any more — no evidence needed.
-/// (Airliners taxi at 10–30 kt; the fastest sane taxi, an empty widebody on a
-/// long straight, tops out around 35–40 kt.)
-const TAKEOFF_ROLL_UNAMBIGUOUS_KT: f64 = 60.0;
-/// Below this, it isn't a takeoff roll no matter what the engines are doing —
-/// this is the floor a GA aircraft (rotating around 50 kt) must clear early
-/// enough that its TakeoffRoll phase is not skipped entirely.
-const TAKEOFF_ROLL_MIN_KT: f64 = 30.0;
-/// Sustained acceleration that says "this is a takeoff, not a taxi". A taxiing
-/// aircraft creeps up on its speed and holds it; a departing one is still
-/// gaining ~2–3 kt per second at this point. 1.2 kt/s over a 3-second window
-/// separates the two without demanding a rate a heavy, fully-loaded widebody
-/// cannot make.
-const TAKEOFF_ROLL_ACCEL_KT_PER_S: f64 = 1.2;
-const TAKEOFF_ROLL_ACCEL_WINDOW_SECS: i64 = 3;
-/// How many consecutive accelerating windows make a takeoff roll at the MARGINAL
-/// rate. One is a two-point delta and can be faked by a frame stutter or an
-/// un-pause; a real roll keeps accelerating for ten seconds and more.
-const TAKEOFF_ROLL_ACCEL_WINDOWS_NEEDED: u8 = 2;
-/// Acceleration that needs no second opinion. Nothing taxis at this rate, and
-/// waiting for a second window would be too slow for the aircraft that reach it:
-/// a bush plane at 5 kt/s rotates ~45 kt, i.e. six seconds after crossing the
-/// 30 kt floor — its whole TakeoffRoll phase would otherwise be skipped.
-const TAKEOFF_ROLL_ACCEL_STRONG_KT_PER_S: f64 = 2.5;
-/// N1 that means "takeoff thrust is set". Only available for addons that expose
-/// per-engine N1 (the premium set).
-///
-/// QS round 8: 60 % was too low. MSFS reports `TURB ENG N1` as gas-generator
-/// speed, and a PT6 turboprop IDLES at 52–65 % Ng — so a King Air, TBM, PC-12 or
-/// FA50 taxiing at idle already satisfied "takeoff thrust", and the detector
-/// collapsed back to the bare `gs > 30` rule this whole rewrite exists to
-/// replace. A jet at takeoff power sits at 85–95 % N1, and even a flex/derated
-/// departure stays above 80 %.
-const TAKEOFF_ROLL_N1_PCT: f64 = 80.0;
+// Above this groundspeed, nobody is taxiing any more — no evidence needed.
+// (Airliners taxi at 10–30 kt; the fastest sane taxi, an empty widebody on a
+// long straight, tops out around 35–40 kt.)
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_unambiguous_kt (v2.1.24: 60.0)
+// Below this, it isn't a takeoff roll no matter what the engines are doing —
+// this is the floor a GA aircraft (rotating around 50 kt) must clear early
+// enough that its TakeoffRoll phase is not skipped entirely.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_min_kt (v2.1.24: 30.0)
+// Sustained acceleration that says "this is a takeoff, not a taxi". A taxiing
+// aircraft creeps up on its speed and holds it; a departing one is still
+// gaining ~2–3 kt per second at this point. 1.2 kt/s over a 3-second window
+// separates the two without demanding a rate a heavy, fully-loaded widebody
+// cannot make.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_accel_kt_per_s (v2.1.24: 1.2)
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_accel_window_secs (v2.1.24: 3)
+// How many consecutive accelerating windows make a takeoff roll at the MARGINAL
+// rate. One is a two-point delta and can be faked by a frame stutter or an
+// un-pause; a real roll keeps accelerating for ten seconds and more.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_accel_windows_needed (v2.1.24: 2)
+// Acceleration that needs no second opinion. Nothing taxis at this rate, and
+// waiting for a second window would be too slow for the aircraft that reach it:
+// a bush plane at 5 kt/s rotates ~45 kt, i.e. six seconds after crossing the
+// 30 kt floor — its whole TakeoffRoll phase would otherwise be skipped.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_accel_strong_kt_per_s (v2.1.24: 2.5)
+// N1 that means "takeoff thrust is set". Only available for addons that expose
+// per-engine N1 (the premium set).
+//
+// QS round 8: 60 % was too low. MSFS reports `TURB ENG N1` as gas-generator
+// speed, and a PT6 turboprop IDLES at 52–65 % Ng — so a King Air, TBM, PC-12 or
+// FA50 taxiing at idle already satisfied "takeoff thrust", and the detector
+// collapsed back to the bare `gs > 30` rule this whole rewrite exists to
+// replace. A jet at takeoff power sits at 85–95 % N1, and even a flex/derated
+// departure stays above 80 %.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_n1_pct (v2.1.24: 80.0)
 
 /// Is the aircraft actually beginning its takeoff roll?
 ///
@@ -9449,7 +9452,7 @@ fn takeoff_roll_detected(stats: &mut FlightStats, snap: &SimSnapshot, now: DateT
     // TakeoffRoll it was written to stop.
     //
     // Below the floor we hold a baseline but count nothing.
-    if gs < TAKEOFF_ROLL_MIN_KT {
+    if gs < crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_min_kt.wert {
         stats.takeoff_roll_gs_ref = Some((now, gs));
         stats.takeoff_roll_accel_windows = 0;
         return false;
@@ -9464,19 +9467,19 @@ fn takeoff_roll_detected(stats: &mut FlightStats, snap: &SimSnapshot, now: DateT
         }
         Some((t0, gs0)) => {
             let dt = (now - t0).num_milliseconds() as f64 / 1000.0;
-            if dt >= TAKEOFF_ROLL_ACCEL_WINDOW_SECS as f64 {
+            if dt >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_accel_window_secs.wert as f64 {
                 let accel = (gs - gs0) / dt;
                 // Slide the window forward so the next tick measures fresh.
                 stats.takeoff_roll_gs_ref = Some((now, gs));
-                if accel >= TAKEOFF_ROLL_ACCEL_KT_PER_S {
+                if accel >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_accel_kt_per_s.wert {
                     stats.takeoff_roll_accel_windows =
                         stats.takeoff_roll_accel_windows.saturating_add(1);
                 } else {
                     stats.takeoff_roll_accel_windows = 0;
                 }
                 // Unambiguous rate: one window is proof. Marginal rate: two.
-                accel >= TAKEOFF_ROLL_ACCEL_STRONG_KT_PER_S
-                    || stats.takeoff_roll_accel_windows >= TAKEOFF_ROLL_ACCEL_WINDOWS_NEEDED
+                accel >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_accel_strong_kt_per_s.wert
+                    || stats.takeoff_roll_accel_windows >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_accel_windows_needed.wert
             } else {
                 false
             }
@@ -9487,7 +9490,7 @@ fn takeoff_roll_detected(stats: &mut FlightStats, snap: &SimSnapshot, now: DateT
         }
     };
 
-    if gs >= TAKEOFF_ROLL_UNAMBIGUOUS_KT {
+    if gs >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_unambiguous_kt.wert {
         return true;
     }
 
@@ -9500,7 +9503,7 @@ fn takeoff_roll_detected(stats: &mut FlightStats, snap: &SimSnapshot, now: DateT
                 .cloned()
                 .fold(None::<f64>, |m, v| Some(m.map_or(v, |m| m.max(v))))
         })
-        .is_some_and(|max_n1| max_n1 >= TAKEOFF_ROLL_N1_PCT);
+        .is_some_and(|max_n1| max_n1 >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_n1_pct.wert);
 
     takeoff_thrust || accelerating
 }
@@ -9642,8 +9645,8 @@ fn rescue_landing_at_from_sampler(stats: &mut FlightStats, now: DateTime<Utc>) {
 /// don't accidentally fire (banked → level → banked is normal at
 /// hold turn entry/exit).
 fn check_holding_entry(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) -> bool {
-    let drehung = kurs_drehung_deg(stats, now, HOLDING_KURS_FENSTER_SECS, true);
-    if snap.altitude_agl_ft > HOLDING_MIN_AGL_FT && drehung.abs() >= HOLDING_EINTRITT_DREHUNG_DEG {
+    let drehung = kurs_drehung_deg(stats, now, crate::grenzwerte::grenzwerte().phasen_kern.holding_kurs_fenster_secs.wert, true);
+    if snap.altitude_agl_ft > crate::grenzwerte::grenzwerte().phasen_kern.holding_min_agl_ft.wert && drehung.abs() >= crate::grenzwerte::grenzwerte().phasen_kern.holding_eintritt_drehung_deg.wert {
         tracing::info!(
             drehung_deg = drehung,
             agl_ft = snap.altitude_agl_ft,
@@ -9660,13 +9663,13 @@ fn kurs_merken(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) 
         stats.kurs_verlauf.clear();
         return;
     }
-    let level = snap.vertical_speed_fpm.abs() < HOLDING_LEVEL_VS_FPM
-        && snap.altitude_agl_ft > HOLDING_MIN_AGL_FT;
+    let level = snap.vertical_speed_fpm.abs() < crate::grenzwerte::grenzwerte().phasen_kern.holding_level_vs_fpm.wert
+        && snap.altitude_agl_ft > crate::grenzwerte::grenzwerte().phasen_kern.holding_min_agl_ft.wert;
     stats.kurs_verlauf.push_back((now, snap.heading_deg_true, level));
     while stats
         .kurs_verlauf
         .front()
-        .is_some_and(|(t, _, _)| (now - *t).num_seconds() > HOLDING_KURS_FENSTER_SECS)
+        .is_some_and(|(t, _, _)| (now - *t).num_seconds() > crate::grenzwerte::grenzwerte().phasen_kern.holding_kurs_fenster_secs.wert)
     {
         stats.kurs_verlauf.pop_front();
     }
@@ -9691,10 +9694,10 @@ fn kurs_ruhig(stats: &FlightStats, now: DateTime<Utc>) -> bool {
     let abgedeckt = stats
         .kurs_verlauf
         .front()
-        .is_some_and(|(t, _, _)| (now - *t).num_seconds() >= HOLDING_AUSTRITT_FENSTER_SECS);
+        .is_some_and(|(t, _, _)| (now - *t).num_seconds() >= crate::grenzwerte::grenzwerte().phasen_kern.holding_austritt_fenster_secs.wert);
     abgedeckt
-        && kurs_drehung_deg(stats, now, HOLDING_AUSTRITT_FENSTER_SECS, false).abs()
-            < HOLDING_AUSTRITT_DREHUNG_DEG
+        && kurs_drehung_deg(stats, now, crate::grenzwerte::grenzwerte().phasen_kern.holding_austritt_fenster_secs.wert, false).abs()
+            < crate::grenzwerte::grenzwerte().phasen_kern.holding_austritt_drehung_deg.wert
 }
 
 // ---- v0.5.11: AGL-derivative touchdown VS estimator -------------------
@@ -9733,8 +9736,8 @@ const TD_WINDOW_TIERS_MS: &[(i64, usize)] = &[
     (3000, 3),
     (12000, 3),
 ];
-const TD_AGL_MAX_AT_TOUCHDOWN_FT: f32 = 5.0;
-const TD_AGL_MAX_AT_WINDOW_START_FT: f32 = 250.0;
+// Wert seit v3: bundle/grenzwerte/landung.json -> td_agl_max_at_touchdown_ft (v2.1.24: 5.0)
+// Wert seit v3: bundle/grenzwerte/landung.json -> td_agl_max_at_window_start_ft (v2.1.24: 250.0)
 
 /// Result of a touchdown VS estimation, including diagnostics so the
 /// rest of the system can log which window won and its sample
@@ -9774,14 +9777,14 @@ fn estimate_xplane_touchdown_vs_from_agl(
         // pre-touchdown sample. Strict AGL ≤ 5 ft alone would reject
         // every MSFS touchdown.
         let last = samples.last()?;
-        let is_at_touchdown = last.on_ground || last.agl_ft <= TD_AGL_MAX_AT_TOUCHDOWN_FT;
+        let is_at_touchdown = last.on_ground || last.agl_ft <= crate::grenzwerte::grenzwerte().landung.td_agl_max_at_touchdown_ft.wert;
         if !is_at_touchdown {
             continue;
         }
         // Window-start sample must already be near the ground (i.e.
         // we're not picking up a high-altitude pre-flare descent).
         let first = samples.first()?;
-        if first.agl_ft > TD_AGL_MAX_AT_WINDOW_START_FT {
+        if first.agl_ft > crate::grenzwerte::grenzwerte().landung.td_agl_max_at_window_start_ft.wert {
             continue;
         }
         // Geometric descent rate via avg-AGL midpoint trick
@@ -9948,8 +9951,8 @@ fn negative_only(value: Option<f32>) -> Option<f32> {
 // time-tier `estimate_xplane_touchdown_vs_from_agl` as fallback (when
 // the latched MSFS SimVar is null) — that path is GEES-aligned and
 // validated against pilot reports; we don't change MSFS behaviour.
-const LUA_STYLE_SAMPLE_COUNT: usize = 30;
-const LUA_STYLE_MIN_SAMPLES: usize = 5;
+// Wert seit v3: bundle/grenzwerte/landung.json -> lua_style_sample_count (v2.1.24: 30)
+// Wert seit v3: bundle/grenzwerte/landung.json -> lua_style_min_samples (v2.1.24: 5)
 
 fn estimate_xplane_touchdown_vs_lua_style(
     buffer: &std::collections::VecDeque<TelemetrySample>,
@@ -9960,22 +9963,22 @@ fn estimate_xplane_touchdown_vs_lua_style(
         buffer.iter().filter(|s| s.at <= touchdown_at).collect();
     samples.sort_by_key(|s| s.at);
     let n = samples.len();
-    if n < LUA_STYLE_MIN_SAMPLES {
+    if n < crate::grenzwerte::grenzwerte().landung.lua_style_min_samples.wert {
         return None;
     }
-    let take = n.min(LUA_STYLE_SAMPLE_COUNT);
+    let take = n.min(crate::grenzwerte::grenzwerte().landung.lua_style_sample_count.wert);
     let recent = &samples[n - take..];
 
     // Touchdown sample (latest) must really be at the ground.
     let last = *recent.last()?;
-    let is_at_touchdown = last.on_ground || last.agl_ft <= TD_AGL_MAX_AT_TOUCHDOWN_FT;
+    let is_at_touchdown = last.on_ground || last.agl_ft <= crate::grenzwerte::grenzwerte().landung.td_agl_max_at_touchdown_ft.wert;
     if !is_at_touchdown {
         return None;
     }
     // Window-start sample must already be in approach footprint
     // (no high-altitude pre-flare contamination).
     let first = *recent.first()?;
-    if first.agl_ft > TD_AGL_MAX_AT_WINDOW_START_FT {
+    if first.agl_ft > crate::grenzwerte::grenzwerte().landung.td_agl_max_at_window_start_ft.wert {
         return None;
     }
 
@@ -9997,45 +10000,45 @@ fn estimate_xplane_touchdown_vs_lua_style(
     })
 }
 
-/// Compute population standard deviations of V/S and bank over the
-/// approach buffer. Returns `(None, None)` when fewer than 3 samples
-/// (insufficient signal). Single-pass formula (Welford's algorithm
-/// would be marginally more numerically stable but at this scale it
-/// makes no difference).
-/// v0.5.46: Window-Filter analog zu compute_approach_stability_v2.
-/// Adrian (User-Feedback 2026-05-09): "bei der Anflugstabilität wird noch
-/// der gerade Teil auf dem LOC ausgewertet, bevor es auf den G/S geht.
-/// Daher gibt es hier so schlechte Werte." Dazu Flare die letzten 3 sec
-/// vor TD (Pilot-Pull) faelschlich als Instabilitaet gewertet.
-///
-/// Filter:
-///   - AGL <= 1500 ft (LOC-Intercept ueber 1500ft ausgeschlossen)
-///   - ts <= TD - 3s wenn td_ts gegeben (Flare-Last-3s ausgeschlossen)
-const APPROACH_STABILITY_AGL_CAP_FT: f32 = 1500.0;
-const APPROACH_FLARE_CUTOFF_MS: i64 = 3000;
+// Compute population standard deviations of V/S and bank over the
+// approach buffer. Returns `(None, None)` when fewer than 3 samples
+// (insufficient signal). Single-pass formula (Welford's algorithm
+// would be marginally more numerically stable but at this scale it
+// makes no difference).
+// v0.5.46: Window-Filter analog zu compute_approach_stability_v2.
+// Adrian (User-Feedback 2026-05-09): "bei der Anflugstabilität wird noch
+// der gerade Teil auf dem LOC ausgewertet, bevor es auf den G/S geht.
+// Daher gibt es hier so schlechte Werte." Dazu Flare die letzten 3 sec
+// vor TD (Pilot-Pull) faelschlich als Instabilitaet gewertet.
+//
+// Filter:
+//   - AGL <= 1500 ft (LOC-Intercept ueber 1500ft ausgeschlossen)
+//   - ts <= TD - 3s wenn td_ts gegeben (Flare-Last-3s ausgeschlossen)
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> approach_stability_agl_cap_ft (v2.1.24: 1500.0)
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> approach_flare_cutoff_ms (v2.1.24: 3000)
 
-/// Mindest-Stichprobe fuer eine Stabilitaets-Streuung.
-///
-/// v0.20.1: Vorher reichten 3 Samples. Im VPS-Korpus (678 Landungen) lieferten
-/// genau die duennen Fenster den Unsinn: bei 1-9 Samples war jede zweite
-/// V/S-Streuung ueber 1000 fpm, bei einem Flug 12.810. Eine Streuung aus einer
-/// Handvoll Ticks ist keine Aussage ueber den Anflug — sie ist Rauschen, das
-/// als Note beim Piloten ankommt. Unter dieser Grenze gibt es lieber KEINEN
-/// Wert (der Sub-Score wird dann als "nicht bewertet" uebersprungen) als eine
-/// erfundene Zahl.
-const STABILITY_MIN_SAMPLES: usize = 10;
+// Mindest-Stichprobe fuer eine Stabilitaets-Streuung.
+//
+// v0.20.1: Vorher reichten 3 Samples. Im VPS-Korpus (678 Landungen) lieferten
+// genau die duennen Fenster den Unsinn: bei 1-9 Samples war jede zweite
+// V/S-Streuung ueber 1000 fpm, bei einem Flug 12.810. Eine Streuung aus einer
+// Handvoll Ticks ist keine Aussage ueber den Anflug — sie ist Rauschen, das
+// als Note beim Piloten ankommt. Unter dieser Grenze gibt es lieber KEINEN
+// Wert (der Sub-Score wird dann als "nicht bewertet" uebersprungen) als eine
+// erfundene Zahl.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> stability_min_samples (v2.1.24: 10)
 
-/// v0.16.6: sampler-path stability-evaluation window. When a validated 50 Hz
-/// sampler touchdown evaluates approach stability (bush flights — the FSM
-/// never reaches Landing), only approach-buffer samples within this many
-/// seconds BEFORE the touchdown count. The phase-independent sampling
-/// (`should_push_approach_sample`) feeds the buffer on ANY descending
-/// low-level segment, so a 38-min Oregon-bush-tour leg flown at 1500 ft AGL
-/// would otherwise poison the 1000-ft gate with manoeuvring that has nothing
-/// to do with the actual approach. 180 s covers even a slow C152 final from
-/// well outside the gate. FSM-path flights pass `window = None` and are
-/// unaffected.
-const SAMPLER_STABILITY_WINDOW_SECS: i64 = 180;
+// v0.16.6: sampler-path stability-evaluation window. When a validated 50 Hz
+// sampler touchdown evaluates approach stability (bush flights — the FSM
+// never reaches Landing), only approach-buffer samples within this many
+// seconds BEFORE the touchdown count. The phase-independent sampling
+// (`should_push_approach_sample`) feeds the buffer on ANY descending
+// low-level segment, so a 38-min Oregon-bush-tour leg flown at 1500 ft AGL
+// would otherwise poison the 1000-ft gate with manoeuvring that has nothing
+// to do with the actual approach. 180 s covers even a slow C152 final from
+// well outside the gate. FSM-path flights pass `window = None` and are
+// unaffected.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> sampler_stability_window_secs (v2.1.24: 180)
 
 /// v0.16.6: time-window filter for the approach buffer — keeps only samples
 /// within `dur` before `td` (samples after `td` are dropped too). Shared by
@@ -10053,41 +10056,41 @@ fn approach_buffer_window(
         .collect()
 }
 
-/// v0.12.1 (Stream C LE12): the `max V/S deviation < 500 ft` metric
-/// ignores samples below this height. A V/S excursion at < 50 ft is the
-/// flare / ground-effect, not approach instability — counting it produced
-/// a spurious 826 fpm "deviation" on GSG225 from a small flare balloon.
-/// The 3-second time-based flare cutoff doesn't reach far enough back
-/// when the pilot flares early/long; this height floor is the backstop.
-const MAX_VS_DEV_FLOOR_FT: f32 = 50.0;
+// v0.12.1 (Stream C LE12): the `max V/S deviation < 500 ft` metric
+// ignores samples below this height. A V/S excursion at < 50 ft is the
+// flare / ground-effect, not approach instability — counting it produced
+// a spurious 826 fpm "deviation" on GSG225 from a small flare balloon.
+// The 3-second time-based flare cutoff doesn't reach far enough back
+// when the pilot flares early/long; this height floor is the backstop.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> max_vs_dev_floor_ft (v2.1.24: 50.0)
 
-/// v0.12.1 (Stream C LE11): if flaps read 0 across the whole approach
-/// gate while the gear is down AND the gate-entry speed is below this
-/// IAS, the flaps dataref is untrustworthy (study-level X-Plane add-ons
-/// such as the Hot-Start CL650 don't drive the standard flap dataref) —
-/// a genuine flapless landing would be considerably faster. The
-/// LANDING-CONFIG check then reports "not assessable" instead of a
-/// false "INCOMPLETE".
-const FLAPS_UNREADABLE_MAX_IAS_KT: f32 = 160.0;
-/// Klappenstellung, unterhalb derer eine Landekonfiguration (Fahrwerk
-/// unten, Landegeschwindigkeit) als Messfehler statt Pilotenfehler gilt —
-/// siehe Kommentar am `flaps_unreadable`-Check. 0.25 fängt die bekannten
-/// Skalen-Artefakte (÷5-Doppelnormalisierung → 0.2) und liegt klar unter
-/// jeder echten Lande-Klappenstufe.
-const FLAPS_IMPLAUSIBLE_BELOW: f32 = 0.25;
-/// Klappenstellung (normiert 0..1), ab der die Landekonfiguration am
-/// 1000-ft-Tor als erfuellt gilt. Gilt fuer jedes Muster, dessen Raster der
-/// Sim auf 1,0 skaliert — das ist die grosse Mehrheit.
-const FLAPS_LANDING_MIN: f32 = 0.70;
-/// Geschwindigkeitsfenster eines stabilisierten Anflugs oberhalb Vref
-/// (Flight Safety Foundation ALAR, Briefing Note 7.1: Vref … Vref+20).
-///
-/// Wird als Physik-Gegenprobe gebraucht, wenn die Klappenzahl unter
-/// `FLAPS_LANDING_MIN` liegt, aber schon das Maximum dieses Fluges ist:
-/// mit deutlich weniger als Landeklappen kommt niemand auf Vref+20 herunter.
-/// Passt die Geschwindigkeit, misst die Zahl das Raster des Sims und nicht
-/// den Piloten.
-const STABILISIERT_UEBER_VREF_KT: f32 = 20.0;
+// v0.12.1 (Stream C LE11): if flaps read 0 across the whole approach
+// gate while the gear is down AND the gate-entry speed is below this
+// IAS, the flaps dataref is untrustworthy (study-level X-Plane add-ons
+// such as the Hot-Start CL650 don't drive the standard flap dataref) —
+// a genuine flapless landing would be considerably faster. The
+// LANDING-CONFIG check then reports "not assessable" instead of a
+// false "INCOMPLETE".
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> flaps_unreadable_max_ias_kt (v2.1.24: 160.0)
+// Klappenstellung, unterhalb derer eine Landekonfiguration (Fahrwerk
+// unten, Landegeschwindigkeit) als Messfehler statt Pilotenfehler gilt —
+// siehe Kommentar am `flaps_unreadable`-Check. 0.25 fängt die bekannten
+// Skalen-Artefakte (÷5-Doppelnormalisierung → 0.2) und liegt klar unter
+// jeder echten Lande-Klappenstufe.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> flaps_implausible_below (v2.1.24: 0.25)
+// Klappenstellung (normiert 0..1), ab der die Landekonfiguration am
+// 1000-ft-Tor als erfuellt gilt. Gilt fuer jedes Muster, dessen Raster der
+// Sim auf 1,0 skaliert — das ist die grosse Mehrheit.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> flaps_landing_min (v2.1.24: 0.70)
+// Geschwindigkeitsfenster eines stabilisierten Anflugs oberhalb Vref
+// (Flight Safety Foundation ALAR, Briefing Note 7.1: Vref … Vref+20).
+//
+// Wird als Physik-Gegenprobe gebraucht, wenn die Klappenzahl unter
+// `FLAPS_LANDING_MIN` liegt, aber schon das Maximum dieses Fluges ist:
+// mit deutlich weniger als Landeklappen kommt niemand auf Vref+20 herunter.
+// Passt die Geschwindigkeit, misst die Zahl das Raster des Sims und nicht
+// den Piloten.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> stabilisiert_ueber_vref_kt (v2.1.24: 20.0)
 
 /// Was `compute_approach_stability_v2` ueber das geflogene Muster wissen
 /// muss, um die Landekonfiguration zu beurteilen.
@@ -10115,9 +10118,9 @@ fn compute_approach_stddev(
     let filtered: Vec<&ApproachBufferSample> = buf
         .iter()
         .filter(|s| {
-            let in_agl_band = s.agl_ft > 0.0 && s.agl_ft <= APPROACH_STABILITY_AGL_CAP_FT;
+            let in_agl_band = s.agl_ft > 0.0 && s.agl_ft <= crate::grenzwerte::grenzwerte().anflug_kern.approach_stability_agl_cap_ft.wert;
             let pre_flare = match td_ts {
-                Some(td) => (td - s.at).num_milliseconds() >= APPROACH_FLARE_CUTOFF_MS,
+                Some(td) => (td - s.at).num_milliseconds() >= crate::grenzwerte::grenzwerte().anflug_kern.approach_flare_cutoff_ms.wert,
                 None => true,
             };
             in_agl_band && pre_flare
@@ -10715,37 +10718,37 @@ pub struct ApproachStabilityV2 {
     pub wind: Option<landing_scoring::anflug_wind::AnflugWind>,
 }
 
-/// Mindestdauer unter der Sinkgrenze, ab der „excessive sink" gilt.
-///
-/// v1.9.16: Bis dahin genuegte EIN Sample. Ein einzelner Ausreisser —
-/// Boe, Sim-Zittern — machte den Anflug zu „excessive". Jetzt zaehlt die
-/// Grenze (−1000 fpm bei 3°, mit dem Gleitwinkel skaliert), wenn sie
-/// mindestens 10 s am Stueck unterschritten wird. Die Grenze selbst
-/// bleibt hart; nur kurzes Ueberschiessen kostet nichts.
-const SINK_TOLERANZ_MS: i64 = 10_000;
-/// Dasselbe am 200-ft-Tor (2.1.6, SWR 255 EBBR 20.10.2026: −1180 fpm und
-/// 32 kt unter Vref, trotzdem „stabil bei 200 ft“). Unter 200 ft dauert der
-/// Anflug nur ~11–20 s; 10 s am Stueck waren dort nie zu erreichen, ein
-/// einzelnes Sample knapp ueber der Grenze riss den Lauf. Die Haelfte des
-/// Fensters genuegt.
-const DA_SINK_TOLERANZ_MS: i64 = 5_000;
-/// Fahrt am 200-ft-Tor: so weit unter der typischen Vref des Musters ist
-/// der Anflug nicht stabil, egal wie gleichmaessig er ist. Die Toleranz
-/// deckt leichte Gewichte (Vref liegt je nach Masse ±10 kt um den typischen Wert).
-const DA_VREF_TOLERANZ_KT: f32 = 15.0;
+// Mindestdauer unter der Sinkgrenze, ab der „excessive sink" gilt.
+//
+// v1.9.16: Bis dahin genuegte EIN Sample. Ein einzelner Ausreisser —
+// Boe, Sim-Zittern — machte den Anflug zu „excessive". Jetzt zaehlt die
+// Grenze (−1000 fpm bei 3°, mit dem Gleitwinkel skaliert), wenn sie
+// mindestens 10 s am Stueck unterschritten wird. Die Grenze selbst
+// bleibt hart; nur kurzes Ueberschiessen kostet nichts.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> sink_toleranz_ms (v2.1.24: 10_000)
+// Dasselbe am 200-ft-Tor (2.1.6, SWR 255 EBBR 20.10.2026: −1180 fpm und
+// 32 kt unter Vref, trotzdem „stabil bei 200 ft“). Unter 200 ft dauert der
+// Anflug nur ~11–20 s; 10 s am Stueck waren dort nie zu erreichen, ein
+// einzelnes Sample knapp ueber der Grenze riss den Lauf. Die Haelfte des
+// Fensters genuegt.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> da_sink_toleranz_ms (v2.1.24: 5_000)
+// Fahrt am 200-ft-Tor: so weit unter der typischen Vref des Musters ist
+// der Anflug nicht stabil, egal wie gleichmaessig er ist. Die Toleranz
+// deckt leichte Gewichte (Vref liegt je nach Masse ±10 kt um den typischen Wert).
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> da_vref_toleranz_kt (v2.1.24: 15.0)
 
-/// Score-Version 24: Bezugs-Grundgeschwindigkeit der Sinkgrenze (kt).
-///
-/// Die Grenze −1000 fpm (bei 3°) entspricht bei 145 kt ueber Grund etwa
-/// dem 1,3-fachen der Soll-Sinkrate des Gleitpfads. Wer schneller ueber
-/// Grund fliegt — Rueckenwind, schnelle Anflugmuster —, muss physikalisch
-/// staerker sinken; seine Grenze waechst deshalb mit der Grundgeschwindig-
-/// keit mit. Darunter bleibt sie bei −1000 fpm: Die Regel wird nur
-/// LOCKERER, nie strenger (Thomas 16.10.2026 nach JBU1500 MUVR, Korpus
-/// 1068 Anfluege: 0 Fluege neu mit Abzug, 23 ohne). Die 145 kt sind eine
-/// Wahl, keine Herleitung: der Median-Jet-Anflug, an dem die alte feste
-/// Grenze offenbar geeicht war.
-const SINK_GS_BEZUG_KT: f64 = 145.0;
+// Score-Version 24: Bezugs-Grundgeschwindigkeit der Sinkgrenze (kt).
+//
+// Die Grenze −1000 fpm (bei 3°) entspricht bei 145 kt ueber Grund etwa
+// dem 1,3-fachen der Soll-Sinkrate des Gleitpfads. Wer schneller ueber
+// Grund fliegt — Rueckenwind, schnelle Anflugmuster —, muss physikalisch
+// staerker sinken; seine Grenze waechst deshalb mit der Grundgeschwindig-
+// keit mit. Darunter bleibt sie bei −1000 fpm: Die Regel wird nur
+// LOCKERER, nie strenger (Thomas 16.10.2026 nach JBU1500 MUVR, Korpus
+// 1068 Anfluege: 0 Fluege neu mit Abzug, 23 ohne). Die 145 kt sind eine
+// Wahl, keine Herleitung: der Median-Jet-Anflug, an dem die alte feste
+// Grenze offenbar geeicht war.
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> sink_gs_bezug_kt (v2.1.24: 145.0)
 
 /// Sinkgrenze eines Messpunkts in fpm (negativ): −1000 × Gleitwinkel-
 /// Faktor, ab 145 kt ueber Grund im Verhaeltnis der Grundgeschwindigkeit
@@ -10753,7 +10756,7 @@ const SINK_GS_BEZUG_KT: f64 = 145.0;
 fn sinkgrenze_fpm(gs_kt: f32, gs_factor: f64) -> f64 {
     let gs = f64::from(gs_kt);
     let faktor = if gs.is_finite() {
-        (gs / SINK_GS_BEZUG_KT).max(1.0)
+        (gs / crate::grenzwerte::grenzwerte().anflug_kern.sink_gs_bezug_kt.wert).max(1.0)
     } else {
         1.0
     };
@@ -10785,7 +10788,7 @@ fn laengster_sinklauf<'a>(
         // Eine Luecke im Buffer (Sim-Pause: der Zaehler friert ein) darf
         // keinen Lauf ueberbruecken — zwei Samples vor und nach der Pause
         // sind keine 10 s Sinkflug.
-        if vorher.is_some_and(|v| (s.at - v).num_milliseconds() > SINK_MAX_LUECKE_MS) {
+        if vorher.is_some_and(|v| (s.at - v).num_milliseconds() > crate::grenzwerte::grenzwerte().anflug_kern.sink_max_luecke_ms.wert) {
             lauf = None;
         }
         vorher = Some(s.at);
@@ -10807,8 +10810,8 @@ fn laengster_sinklauf<'a>(
     bester
 }
 
-/// Groesster Abstand zweier Samples innerhalb eines Laufs (Kadenz ~1 s).
-const SINK_MAX_LUECKE_MS: i64 = 4000;
+// Groesster Abstand zweier Samples innerhalb eines Laufs (Kadenz ~1 s).
+// Wert seit v3: bundle/grenzwerte/anflug_kern.json -> sink_max_luecke_ms (v2.1.24: 4000)
 
 /// Landekonfiguration (Fahrwerk + Klappen) an einem Tor-Sample. `alle` =
 /// alle Samples im 1000-ft-Gate (fuer die Pruefung, ob der Klappenkanal
@@ -10839,9 +10842,9 @@ fn landekonfiguration(
     // die ganze Fehlerklasse für alle künftigen Profile.
     let flaps_all_implausible = alle
         .iter()
-        .all(|s| s.flaps_position < FLAPS_IMPLAUSIBLE_BELOW);
+        .all(|s| s.flaps_position < crate::grenzwerte::grenzwerte().anflug_kern.flaps_implausible_below.wert);
     let flaps_unreadable =
-        flaps_all_implausible && gear_ok && gate_entry.ias_kt < FLAPS_UNREADABLE_MAX_IAS_KT;
+        flaps_all_implausible && gear_ok && gate_entry.ias_kt < crate::grenzwerte::grenzwerte().anflug_kern.flaps_unreadable_max_ias_kt.wert;
 
     // v1.6.6: der allgemeine Fall des Obigen. Wenn sich der Klappenwert im
     // GANZEN Flug kein einziges Mal bewegt hat, traegt der Kanal keine
@@ -10862,7 +10865,7 @@ fn landekonfiguration(
     } else if flaps_tot || flaps_unreadable {
         None
     } else {
-        let mut flaps_ok = gate_entry.flaps_position >= FLAPS_LANDING_MIN;
+        let mut flaps_ok = gate_entry.flaps_position >= crate::grenzwerte::grenzwerte().anflug_kern.flaps_landing_min.wert;
         if !flaps_ok {
             // v1.6.6: fremdes Rastermass. Nicht jedes Muster skaliert seine
             // Klappen auf 1,0 — die Fokker 28 im Sim endet bei 0,667, die
@@ -10886,8 +10889,8 @@ fn landekonfiguration(
                 (konfig.flaps_max_im_flug, konfig.typical_vref_kt)
             {
                 let am_eigenen_maximum = gate_entry.flaps_position >= max_im_flug - 0.01
-                    && gate_entry.flaps_position >= FLAPS_IMPLAUSIBLE_BELOW;
-                if am_eigenen_maximum && gate_entry.ias_kt <= vref + STABILISIERT_UEBER_VREF_KT {
+                    && gate_entry.flaps_position >= crate::grenzwerte::grenzwerte().anflug_kern.flaps_implausible_below.wert;
+                if am_eigenen_maximum && gate_entry.ias_kt <= vref + crate::grenzwerte::grenzwerte().anflug_kern.stabilisiert_ueber_vref_kt.wert {
                     flaps_ok = true;
                 }
             }
@@ -11016,7 +11019,7 @@ fn compute_approach_stability_v2_mit_final(
             let h = height_for(s);
             let in_height_band = h > 0.0 && h <= 1000.0;
             let pre_flare = match td_ts {
-                Some(td) => (td - s.at).num_milliseconds() >= APPROACH_FLARE_CUTOFF_MS,
+                Some(td) => (td - s.at).num_milliseconds() >= crate::grenzwerte::grenzwerte().anflug_kern.approach_flare_cutoff_ms.wert,
                 None => true,
             };
             in_height_band && pre_flare
@@ -11079,7 +11082,7 @@ fn compute_approach_stability_v2_mit_final(
     // Score-Version 24: die Grenze waechst ab 145 kt ueber Grund mit
     // (`sinkgrenze_fpm`) — nur lockerer, nie strenger.
     let sinklauf = laengster_sinklauf(&gate_samples, gs_factor);
-    out.excessive_sink = Some(sinklauf.is_some_and(|l| l.dauer_ms() >= SINK_TOLERANZ_MS));
+    out.excessive_sink = Some(sinklauf.is_some_and(|l| l.dauer_ms() >= crate::grenzwerte::grenzwerte().anflug_kern.sink_toleranz_ms.wert));
     {
         let mut wind = landing_scoring::anflug_wind::wind_zusammenfassen(
             &gate_samples
@@ -11170,7 +11173,7 @@ fn compute_approach_stability_v2_mit_final(
         // flare / ground-effect regime — a V/S excursion below
         // MAX_VS_DEV_FLOOR_FT is the flare, not approach instability.
         let h = height_for(s);
-        if h <= 500.0 && h >= MAX_VS_DEV_FLOOR_FT {
+        if h <= 500.0 && h >= crate::grenzwerte::grenzwerte().anflug_kern.max_vs_dev_floor_ft.wert {
             let dev_f32 = dev as f32;
             if dev_f32 > max_dev_below_500 {
                 max_dev_below_500 = dev_f32;
@@ -11234,7 +11237,7 @@ fn compute_approach_stability_v2_mit_final(
         .filter(|s| {
             let h = height_for(s);
             let pre_flare = match td_ts {
-                Some(td) => (td - s.at).num_milliseconds() >= APPROACH_FLARE_CUTOFF_MS,
+                Some(td) => (td - s.at).num_milliseconds() >= crate::grenzwerte::grenzwerte().anflug_kern.approach_flare_cutoff_ms.wert,
                 None => true,
             };
             h > 0.0 && h <= 200.0 && pre_flare
@@ -11286,10 +11289,10 @@ fn compute_approach_stability_v2_mit_final(
         // und −1180 fpm galten als „stabil bei 200 ft“). Ohne bekannte Vref
         // (Muster unbekannt) entfaellt die Fahrtpruefung.
         let da_excess_sink =
-            laengster_sinklauf(&da_samples, gs_factor).is_some_and(|l| l.dauer_ms() >= DA_SINK_TOLERANZ_MS);
+            laengster_sinklauf(&da_samples, gs_factor).is_some_and(|l| l.dauer_ms() >= crate::grenzwerte::grenzwerte().anflug_kern.da_sink_toleranz_ms.wert);
         let da_zu_langsam = konfig
             .typical_vref_kt
-            .is_some_and(|vref| da_ias_mean < f64::from(vref - DA_VREF_TOLERANZ_KT));
+            .is_some_and(|vref| da_ias_mean < f64::from(vref - crate::grenzwerte::grenzwerte().anflug_kern.da_vref_toleranz_kt.wert));
         // Strenger Cutoff bei DA: jerk < 80, bank < 3°, ias < 8 kt
         let da_stable = da_jerk < 80.0 && da_bank_sd < 3.0 && da_ias_sd < 8.0 && !da_excess_sink && !da_zu_langsam;
         out.stable_at_da = Some(da_stable);
@@ -11474,100 +11477,100 @@ fn log_fuel_weight_at_phase(
 /// depending on phase cadence — fine for the cost of a small JSON write.
 const STATS_PERSIST_EVERY_TICKS: u32 = 5;
 
-/// Touchdown analyzer window in seconds — how long after the first
-/// on-ground tick we keep refining peak G-force and peak descent rate
-/// before locking in the final score. 5 s is enough to catch the spike
-/// (which can lag the initial contact by a tick or two) without bleeding
-/// into the rollout. Bounded above by `TOUCHDOWN_BUFFER_SECS` (the ring
-/// buffer's reach) and below by `TOUCHDOWN_G_WINDOW_MS`.
-const TOUCHDOWN_WINDOW_SECS: i64 = 5;
+// Touchdown analyzer window in seconds — how long after the first
+// on-ground tick we keep refining peak G-force and peak descent rate
+// before locking in the final score. 5 s is enough to catch the spike
+// (which can lag the initial contact by a tick or two) without bleeding
+// into the rollout. Bounded above by `TOUCHDOWN_BUFFER_SECS` (the ring
+// buffer's reach) and below by `TOUCHDOWN_G_WINDOW_MS`.
+// Wert seit v3: bundle/grenzwerte/landung.json -> touchdown_window_secs (v2.1.24: 5)
 
-/// V/S sampling window around the on-ground edge, in milliseconds.
-/// We pick the worst-case (most negative) V/S from buffered samples
-/// within ±`/2` of the touchdown timestamp instead of using a single
-/// tick. 500 ms matches BeatMyLanding's `TouchdownWindowMs` — large
-/// enough that the actual contact frame falls inside even when the
-/// edge detection is one tick late, small enough not to pull in
-/// pre-flare descent or post-bounce rebound values.
-const TOUCHDOWN_VS_WINDOW_MS: i64 = 500;
+// V/S sampling window around the on-ground edge, in milliseconds.
+// We pick the worst-case (most negative) V/S from buffered samples
+// within ±`/2` of the touchdown timestamp instead of using a single
+// tick. 500 ms matches BeatMyLanding's `TouchdownWindowMs` — large
+// enough that the actual contact frame falls inside even when the
+// edge detection is one tick late, small enough not to pull in
+// pre-flare descent or post-bounce rebound values.
+// Wert seit v3: bundle/grenzwerte/landung.json -> touchdown_vs_window_ms (v2.1.24: 500)
 
-/// Peak-G search window, in milliseconds AFTER the on-ground edge.
-/// G spike from gear strut compression typically peaks 100–300 ms
-/// after first contact and is over within ~600 ms. We use 800 ms —
-/// tighter than BeatMyLanding's `MaxGWindowMs` (1500) because the
-/// later ms reach into strut REBOUND territory which inflates G with
-/// pseudo-impact spikes, hurting the score on otherwise-clean
-/// landings (the 1.24 G "acceptable" downgrade we kept seeing on
-/// pilot reports of butter touchdowns).
-const TOUCHDOWN_G_WINDOW_MS: i64 = 800;
+// Peak-G search window, in milliseconds AFTER the on-ground edge.
+// G spike from gear strut compression typically peaks 100–300 ms
+// after first contact and is over within ~600 ms. We use 800 ms —
+// tighter than BeatMyLanding's `MaxGWindowMs` (1500) because the
+// later ms reach into strut REBOUND territory which inflates G with
+// pseudo-impact spikes, hurting the score on otherwise-clean
+// landings (the 1.24 G "acceptable" downgrade we kept seeing on
+// pilot reports of butter touchdowns).
+// Wert seit v3: bundle/grenzwerte/landung.json -> touchdown_g_window_ms (v2.1.24: 800)
 
-/// Maximum window in seconds during which we still count subsequent
-/// liftoffs as bounces of the original touchdown (rather than a fresh
-/// landing event). Matches BeatMyLanding's `BounceWindow`.
-const BOUNCE_WINDOW_SECS: i64 = 8;
+// Maximum window in seconds during which we still count subsequent
+// liftoffs as bounces of the original touchdown (rather than a fresh
+// landing event). Matches BeatMyLanding's `BounceWindow`.
+// Wert seit v3: bundle/grenzwerte/landung.json -> bounce_window_secs (v2.1.24: 8)
 
-/// Wie lange ein Flugzeug mindestens in der Luft sein muss, damit es als
-/// Sprung zaehlt.
-///
-/// ⚠ Ein echter Sprung dauert merklich — das Flugzeug steigt, kommt
-/// zurueck. Ein flatternder Bodenkontakt-Schalter ist nach Millisekunden
-/// vorbei. Bei THY42 (FALE 24, 30.08.2026) waren die beiden falsch
-/// gezaehlten "Spruenge" 40 und 160 ms lang, bei einer Hoehenaenderung
-/// von 0,01 Fuss.
-///
-/// 300 ms ist bewusst grosszuegig: Ein Sprung, der kuerzer ist, hat das
-/// Flugzeug auch kaum vom Boden gebracht.
-const BOUNCE_MIN_DAUER_MS: i64 = 300;
+// Wie lange ein Flugzeug mindestens in der Luft sein muss, damit es als
+// Sprung zaehlt.
+//
+// ⚠ Ein echter Sprung dauert merklich — das Flugzeug steigt, kommt
+// zurueck. Ein flatternder Bodenkontakt-Schalter ist nach Millisekunden
+// vorbei. Bei THY42 (FALE 24, 30.08.2026) waren die beiden falsch
+// gezaehlten "Spruenge" 40 und 160 ms lang, bei einer Hoehenaenderung
+// von 0,01 Fuss.
+//
+// 300 ms ist bewusst grosszuegig: Ein Sprung, der kuerzer ist, hat das
+// Flugzeug auch kaum vom Boden gebracht.
+// Wert seit v3: bundle/grenzwerte/landung.json -> bounce_min_dauer_ms (v2.1.24: 300)
 
-/// P1/8b (Thomas 22.10.2026): Mindestdauer einer Luftphase fuer den
-/// „leichten Hopser“ (unter der 5-ft-Hopser-Schwelle). Messung am Bestand
-/// (`handoff/2026-10-22-hopser-messung.md`, 1738 Landungen): keine Phase
-/// unter 1 s erreicht 2 ft; Flattern bleibt unter 1 ft (AFR1010 7,1 s bei
-/// 0,05 ft). Gilt fuer den 50-Hz-Pfad und den 1-Hz-Streamer.
-const BOUNCE_LIGHT_MIN_DAUER_MS: i64 = 1000;
+// P1/8b (Thomas 22.10.2026): Mindestdauer einer Luftphase fuer den
+// „leichten Hopser“ (unter der 5-ft-Hopser-Schwelle). Messung am Bestand
+// (`handoff/2026-10-22-hopser-messung.md`, 1738 Landungen): keine Phase
+// unter 1 s erreicht 2 ft; Flattern bleibt unter 1 ft (AFR1010 7,1 s bei
+// 0,05 ft). Gilt fuer den 50-Hz-Pfad und den 1-Hz-Streamer.
+// Wert seit v3: bundle/grenzwerte/landung.json -> bounce_light_min_dauer_ms (v2.1.24: 1000)
 
-/// P1/8b: Mindesthoehe ueber der Bodenhoehe (erste Probe mit Bodenkontakt)
-/// fuer den leichten Hopser. Darueber ab `BOUNCE_SCORED_MIN_AGL_FT` ist es
-/// ein normaler Hopser.
-const BOUNCE_LIGHT_MIN_AGL_FT: f32 = 2.0;
+// P1/8b: Mindesthoehe ueber der Bodenhoehe (erste Probe mit Bodenkontakt)
+// fuer den leichten Hopser. Darueber ab `BOUNCE_SCORED_MIN_AGL_FT` ist es
+// ein normaler Hopser.
+// Wert seit v3: bundle/grenzwerte/landung.json -> bounce_light_min_agl_ft (v2.1.24: 2.0)
 
 /// P1/8b: Regel des leichten Hopsers fuer den 1-Hz-Streamer (eine Luftphase,
 /// die mit Bodenkontakt endete). Unter `BOUNCE_AGL_THRESHOLD_FT` — darueber
 /// zaehlt der Streamer einen normalen Hopser.
 fn leichter_hopser_im_streamer(dauer_ms: i64, max_ueber_boden_ft: f64) -> bool {
-    dauer_ms >= BOUNCE_LIGHT_MIN_DAUER_MS
-        && max_ueber_boden_ft >= BOUNCE_LIGHT_MIN_AGL_FT as f64
-        && max_ueber_boden_ft < BOUNCE_AGL_THRESHOLD_FT
+    dauer_ms >= crate::grenzwerte::grenzwerte().landung.bounce_light_min_dauer_ms.wert
+        && max_ueber_boden_ft >= crate::grenzwerte::grenzwerte().landung.bounce_light_min_agl_ft.wert as f64
+        && max_ueber_boden_ft < crate::grenzwerte::grenzwerte().landung.bounce_agl_threshold_ft.wert
 }
 
-/// AGL altitude (ft) the aircraft must climb above before we can
-/// detect a bounce. Below this, on-ground flickers are noise (gear
-/// strut oscillation, sloppy SimVar updates).
-///
-/// v0.8.3 (#3): von 35 ft auf 15 ft gesenkt. Vorher war der Wert an
-/// BeatMyLanding's `BounceRadioAltThresholdFeet` (35) ausgerichtet, was
-/// zur Folge hatte dass Standard-Bounces von 5-15 ft (= das was Piloten
-/// als „typischer Hopser" wahrnehmen) NIE gezaehlt wurden. In 14 Tagen
-/// Produktion: 183 Touchdowns, **5** Bounces erkannt (2.7 %), null aus
-/// X-Plane, alle 5 nur bei extrem harten MSFS-Landungen (vs <= -500 fpm).
-/// Reported von Adrian (2026-05-14 PR-Kontext, Beispiel #167).
-///
-/// Wert = `touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT`, damit der
-/// live-Streamer-Tally und der Forensics-Override-Pfad gegen dieselbe
-/// Schwelle messen. f64 to match `SimSnapshot::altitude_agl_ft`.
-///
-/// Lernpaket AP3 (29.09.2026): 5 ft und seitdem RELATIV zur Bodenhoehe
-/// beim ersten Bodenkontakt (`FlightStats::bounce_boden_agl_ft`), wie der
-/// 50-Hz-Pfad seit dem THY42-Fix. Die Hoehe ueber Grund wird am
-/// Schwerpunkt gemessen — ein grosses Flugzeug steht am Boden schon bei
-/// rund 20 ft (td 1403: 19,6 ft); absolut gemessen koennte es nie unter
-/// eine Rueckkehrschwelle von 5 ft fallen.
-const BOUNCE_AGL_THRESHOLD_FT: f64 = 5.0;
+// AGL altitude (ft) the aircraft must climb above before we can
+// detect a bounce. Below this, on-ground flickers are noise (gear
+// strut oscillation, sloppy SimVar updates).
+//
+// v0.8.3 (#3): von 35 ft auf 15 ft gesenkt. Vorher war der Wert an
+// BeatMyLanding's `BounceRadioAltThresholdFeet` (35) ausgerichtet, was
+// zur Folge hatte dass Standard-Bounces von 5-15 ft (= das was Piloten
+// als „typischer Hopser" wahrnehmen) NIE gezaehlt wurden. In 14 Tagen
+// Produktion: 183 Touchdowns, **5** Bounces erkannt (2.7 %), null aus
+// X-Plane, alle 5 nur bei extrem harten MSFS-Landungen (vs <= -500 fpm).
+// Reported von Adrian (2026-05-14 PR-Kontext, Beispiel #167).
+//
+// Wert = `touchdown_v2::BOUNCE_SCORED_MIN_AGL_FT`, damit der
+// live-Streamer-Tally und der Forensics-Override-Pfad gegen dieselbe
+// Schwelle messen. f64 to match `SimSnapshot::altitude_agl_ft`.
+//
+// Lernpaket AP3 (29.09.2026): 5 ft und seitdem RELATIV zur Bodenhoehe
+// beim ersten Bodenkontakt (`FlightStats::bounce_boden_agl_ft`), wie der
+// 50-Hz-Pfad seit dem THY42-Fix. Die Hoehe ueber Grund wird am
+// Schwerpunkt gemessen — ein grosses Flugzeug steht am Boden schon bei
+// rund 20 ft (td 1403: 19,6 ft); absolut gemessen koennte es nie unter
+// eine Rueckkehrschwelle von 5 ft fallen.
+// Wert seit v3: bundle/grenzwerte/landung.json -> bounce_agl_threshold_ft (v2.1.24: 5.0)
 
-/// Hoehe ueber der Bodenhoehe (ft), unter die das Flugzeug nach dem
-/// Scharfschalten zurueck muss, damit ein Hopser zaehlt — oder es meldet
-/// wieder Bodenkontakt. Relativ wie `BOUNCE_AGL_THRESHOLD_FT`.
-const BOUNCE_AGL_RETURN_FT: f64 = 2.0;
+// Hoehe ueber der Bodenhoehe (ft), unter die das Flugzeug nach dem
+// Scharfschalten zurueck muss, damit ein Hopser zaehlt — oder es meldet
+// wieder Bodenkontakt. Relativ wie `BOUNCE_AGL_THRESHOLD_FT`.
+// Wert seit v3: bundle/grenzwerte/landung.json -> bounce_agl_return_ft (v2.1.24: 2.0)
 
 /// Max samples retained in `FlightStats::approach_buffer`.
 ///
@@ -11684,33 +11687,33 @@ fn n1_mittel_laufend(n1: Option<&[f64]>) -> Option<f32> {
     Some((laufend.iter().sum::<f64>() / laufend.len() as f64) as f32)
 }
 
-/// Primary rollout-end trigger: groundspeed at which we consider the
-/// pilot has finished using the runway and is about to clear at a
-/// high-speed taxiway exit. Real pilots almost never decelerate to a
-/// full stop on the runway — they brake to ~40 kt and turn off at the
-/// next exit. Using a 40 kt threshold gives a "runway distance used"
-/// metric that matches what other ACARS tools (BeatMyLanding,
-/// vmsACARS) and FOQA reports show.
-///
-/// Source for 40 kt: ICAO Doc 9981 (Procedures for Air Navigation
-/// Services — Aerodromes) recommends rapid-exit taxiways be designed
-/// for a 65 km/h (≈ 35 kt) exit speed; FAA AC 150/5300-13B uses 60 kt
-/// for high-speed RETs but pilots routinely brake further to ~40 kt
-/// before committing to the turn.
-const ROLLOUT_EXIT_GS_KT: f32 = 40.0;
+// Primary rollout-end trigger: groundspeed at which we consider the
+// pilot has finished using the runway and is about to clear at a
+// high-speed taxiway exit. Real pilots almost never decelerate to a
+// full stop on the runway — they brake to ~40 kt and turn off at the
+// next exit. Using a 40 kt threshold gives a "runway distance used"
+// metric that matches what other ACARS tools (BeatMyLanding,
+// vmsACARS) and FOQA reports show.
+//
+// Source for 40 kt: ICAO Doc 9981 (Procedures for Air Navigation
+// Services — Aerodromes) recommends rapid-exit taxiways be designed
+// for a 65 km/h (≈ 35 kt) exit speed; FAA AC 150/5300-13B uses 60 kt
+// for high-speed RETs but pilots routinely brake further to ~40 kt
+// before committing to the turn.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> rollout_exit_gs_kt (v2.1.24: 40.0)
 
-/// Secondary trigger: full stop on the runway (rare in practice — long
-/// rwys at uncontrolled fields, GA touch-and-go's gone wrong). Kept
-/// as a hard floor so a pilot who really does brake to a stop still
-/// gets a finalised metric.
-const ROLLOUT_STOP_GS_KT: f32 = 5.0;
+// Secondary trigger: full stop on the runway (rare in practice — long
+// rwys at uncontrolled fields, GA touch-and-go's gone wrong). Kept
+// as a hard floor so a pilot who really does brake to a stop still
+// gets a finalised metric.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> rollout_stop_gs_kt (v2.1.24: 5.0)
 
-/// Tertiary trigger: heading has rotated this many degrees from the
-/// touchdown heading, meaning the aircraft has clearly turned onto a
-/// taxiway and is no longer using the runway. Stops the accumulator
-/// from counting the taxi-out distance against the rollout figure.
-/// Computed signed (wraparound-safe) and compared in absolute value.
-const ROLLOUT_HEADING_DEVIATION_DEG: f32 = 30.0;
+// Tertiary trigger: heading has rotated this many degrees from the
+// touchdown heading, meaning the aircraft has clearly turned onto a
+// taxiway and is no longer using the runway. Stops the accumulator
+// from counting the taxi-out distance against the rollout figure.
+// Computed signed (wraparound-safe) and compared in absolute value.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> rollout_heading_deviation_deg (v2.1.24: 30.0)
 
 /// Hard-landing thresholds, ordered worst-first. The first row that
 /// the peak |V/S| or G-force breaches wins; combined with
@@ -11747,68 +11750,68 @@ const ROLLOUT_HEADING_DEVIATION_DEG: f32 = 30.0;
 ///   Severe         ≥ 1000 fpm ≥ 2.10 G   (structural concern)
 /// ```
 // V/S boundaries — fpm, |abs| at touchdown:
-const TOUCHDOWN_VS_SEVERE_FPM: f32 = 1000.0;
-const TOUCHDOWN_VS_HARD_FPM: f32 = 600.0;
-const TOUCHDOWN_VS_FIRM_FPM: f32 = 400.0;
-const TOUCHDOWN_VS_SMOOTH_FPM: f32 = 200.0;
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> touchdown_vs_severe_fpm (v2.1.24: 1000.0)
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> touchdown_vs_hard_fpm (v2.1.24: 600.0)
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> touchdown_vs_firm_fpm (v2.1.24: 400.0)
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> touchdown_vs_smooth_fpm (v2.1.24: 200.0)
 // G boundaries — peak G in the touchdown window:
-const TOUCHDOWN_G_SEVERE: f32 = 2.10;
-const TOUCHDOWN_G_HARD: f32 = 1.70;
-const TOUCHDOWN_G_FIRM: f32 = 1.40;
-const TOUCHDOWN_G_SMOOTH: f32 = 1.20;
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> touchdown_g_severe (v2.1.24: 2.10)
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> touchdown_g_hard (v2.1.24: 1.70)
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> touchdown_g_firm (v2.1.24: 1.40)
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> touchdown_g_smooth (v2.1.24: 1.20)
 
-/// AP master toggles only emit a log entry once they've held for this
-/// many seconds. Stops a flickering / pulsed LVar (Fenix's momentary
-/// `S_FCU_AP*` was the original culprit) from spamming the log with
-/// alternating ENGAGED / OFF lines.
-const AP_DEBOUNCE_SECS: i64 = 2;
+// AP master toggles only emit a log entry once they've held for this
+// many seconds. Stops a flickering / pulsed LVar (Fenix's momentary
+// `S_FCU_AP*` was the original culprit) from spamming the log with
+// alternating ENGAGED / OFF lines.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> ap_debounce_secs (v2.1.24: 2)
 
 // ---- v0.16.10 Premium-Cockpit-Daten — Debounce-Fenster ----
-/// Generic-FMA-Zeile (Fenix/FBW/INI/…): 3 s wie beim PMDG-Pendant —
-/// FMA-Sub-Modes wechseln bei Mode-Reversions gern mehrfach pro Sekunde.
-const PREMIUM_FMA_DEBOUNCE_SECS: i64 = 3;
-/// MASTER CAUTION / MASTER WARNING: Annunciator-Lampen flackern bei
-/// Cockpit-Tests am Boden — 2 s Stabilität bevor eine Transition loggt.
-const MASTER_ANNUNCIATOR_DEBOUNCE_SECS: i64 = 2;
-/// Flugzeug-eigene FWC-Phase: rein informativ, 5 s Debounce reichen.
-const AIRCRAFT_PHASE_DEBOUNCE_SECS: i64 = 5;
-/// Stab-out-of-trim-Annunciator: pulst während Trim-Läufen.
-const STAB_TRIM_DEBOUNCE_SECS: i64 = 5;
-/// Schubhebel-Detent (TOGA/FLX-MCT/CL): der Hebel wandert beim Setzen
-/// durch Zwischen-Detents — 3 s Stabilität pro Gate.
-const THRUST_GATE_DEBOUNCE_SECS: i64 = 3;
-/// v0.16.10 QS (B1): Approach-Speeds — VLS/VAPP driften auf FBW/INI
-/// laufend (Gewichts-/Konfigurations-Neuberechnung); 10 s Stabilität
-/// pro 5-kt-Bucket bevor eine Änderung loggt.
-const APPROACH_SPEEDS_DEBOUNCE_SECS: i64 = 10;
-/// v0.16.10 QS (B1): Bucket-Breite des Approach-Speeds-Latch-Keys.
-const APPROACH_SPEEDS_BUCKET_KT: f64 = 5.0;
-/// v0.16.10 QS (M5): Connect-Grace — so lange nach einem Stream-
-/// (Re-)Start ignorieren die Premium-Logger alle Snapshots (Addon-
-/// LVars lesen direkt nach Connect 0.0 bis das WASM sie befüllt).
-const PREMIUM_LOG_WARMUP_SECS: i64 = 10;
-/// v0.16.10 QS (M5): Tick-Lücke ab der ein Stream-(Re-)Start
-/// angenommen wird. Der Streamer tickt adaptiv alle 0,5-3 s — alles
-/// darüber heißt Sim-Disconnect/Pause/App-Resume.
-const PREMIUM_LOG_STREAM_GAP_SECS: i64 = 15;
-/// v0.16.10 QS (Minor 6): Umkehrschub-/Ground-Spoiler-Logger brauchen
-/// Groundspeed über dieser Schwelle an der Rising-Edge — ein Lever-
-/// Check beim Taxi (Reverser kurz gezogen, Spoiler-Test) soll keine
-/// "Umkehrschub aktiviert"-Zeile erzeugen.
-const REVERSER_SPOILER_MIN_GS_KT: f32 = 40.0;
-/// Below-G/S-Alert: re-arm sobald der Alert so lange geklärt ist
-/// (einmal-pro-Approach-Latch, ein neuer Sinkflug unter den G/S soll
-/// wieder loggen dürfen).
-const BELOW_GS_REARM_SECS: i64 = 30;
-/// v0.X — Diagnostics-Fund 2026-07-26: MSFS' natives STALL-WARNING-
-/// SimVar ist bei Payware mit eigenem Flugmodell (Fenix/FSReborn/
-/// ToLiss/PMDG) bekannt unzuverlaessig und kann bei ganz normaler
-/// Reise-/Anfluggeschwindigkeit kurz auf `true` flackern (Legacy-
-/// Flugmodell-Artefakt, kein echter Stall des tatsaechlich simulierten
-/// Flugzeugs — GSG-Live-Diagnostics zeigte dadurch 7,5% aller Fluege
-/// faelschlich als "Stall"). Nur ins Live-Map/Diagnostics-Payload
-/// veroeffentlichen wenn das SimVar mind. diese Zeit am Stueck true war.
-const STALL_WARNING_MQTT_DEBOUNCE_SECS: i64 = 3;
+// Generic-FMA-Zeile (Fenix/FBW/INI/…): 3 s wie beim PMDG-Pendant —
+// FMA-Sub-Modes wechseln bei Mode-Reversions gern mehrfach pro Sekunde.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> premium_fma_debounce_secs (v2.1.24: 3)
+// MASTER CAUTION / MASTER WARNING: Annunciator-Lampen flackern bei
+// Cockpit-Tests am Boden — 2 s Stabilität bevor eine Transition loggt.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> master_annunciator_debounce_secs (v2.1.24: 2)
+// Flugzeug-eigene FWC-Phase: rein informativ, 5 s Debounce reichen.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> aircraft_phase_debounce_secs (v2.1.24: 5)
+// Stab-out-of-trim-Annunciator: pulst während Trim-Läufen.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> stab_trim_debounce_secs (v2.1.24: 5)
+// Schubhebel-Detent (TOGA/FLX-MCT/CL): der Hebel wandert beim Setzen
+// durch Zwischen-Detents — 3 s Stabilität pro Gate.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> thrust_gate_debounce_secs (v2.1.24: 3)
+// v0.16.10 QS (B1): Approach-Speeds — VLS/VAPP driften auf FBW/INI
+// laufend (Gewichts-/Konfigurations-Neuberechnung); 10 s Stabilität
+// pro 5-kt-Bucket bevor eine Änderung loggt.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> approach_speeds_debounce_secs (v2.1.24: 10)
+// v0.16.10 QS (B1): Bucket-Breite des Approach-Speeds-Latch-Keys.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> approach_speeds_bucket_kt (v2.1.24: 5.0)
+// v0.16.10 QS (M5): Connect-Grace — so lange nach einem Stream-
+// (Re-)Start ignorieren die Premium-Logger alle Snapshots (Addon-
+// LVars lesen direkt nach Connect 0.0 bis das WASM sie befüllt).
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> premium_log_warmup_secs (v2.1.24: 10)
+// v0.16.10 QS (M5): Tick-Lücke ab der ein Stream-(Re-)Start
+// angenommen wird. Der Streamer tickt adaptiv alle 0,5-3 s — alles
+// darüber heißt Sim-Disconnect/Pause/App-Resume.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> premium_log_stream_gap_secs (v2.1.24: 15)
+// v0.16.10 QS (Minor 6): Umkehrschub-/Ground-Spoiler-Logger brauchen
+// Groundspeed über dieser Schwelle an der Rising-Edge — ein Lever-
+// Check beim Taxi (Reverser kurz gezogen, Spoiler-Test) soll keine
+// "Umkehrschub aktiviert"-Zeile erzeugen.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> reverser_spoiler_min_gs_kt (v2.1.24: 40.0)
+// Below-G/S-Alert: re-arm sobald der Alert so lange geklärt ist
+// (einmal-pro-Approach-Latch, ein neuer Sinkflug unter den G/S soll
+// wieder loggen dürfen).
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> below_gs_rearm_secs (v2.1.24: 30)
+// v0.X — Diagnostics-Fund 2026-07-26: MSFS' natives STALL-WARNING-
+// SimVar ist bei Payware mit eigenem Flugmodell (Fenix/FSReborn/
+// ToLiss/PMDG) bekannt unzuverlaessig und kann bei ganz normaler
+// Reise-/Anfluggeschwindigkeit kurz auf `true` flackern (Legacy-
+// Flugmodell-Artefakt, kein echter Stall des tatsaechlich simulierten
+// Flugzeugs — GSG-Live-Diagnostics zeigte dadurch 7,5% aller Fluege
+// faelschlich als "Stall"). Nur ins Live-Map/Diagnostics-Payload
+// veroeffentlichen wenn das SimVar mind. diese Zeit am Stueck true war.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> stall_warning_mqtt_debounce_secs (v2.1.24: 3)
 
 /// v0.16.10: Generischer Latch+Debounce-Tracker für Premium-Activity-
 /// Log-Zeilen. Gleiches Idiom wie der AP-Master-Debounce
@@ -11892,10 +11895,10 @@ fn premium_log_warmup_active(
 ) -> bool {
     let stream_restarted = match last_tick_at.replace(now) {
         None => true,
-        Some(prev) => (now - prev).num_seconds() > PREMIUM_LOG_STREAM_GAP_SECS,
+        Some(prev) => (now - prev).num_seconds() > crate::grenzwerte::grenzwerte().cockpit.premium_log_stream_gap_secs.wert,
     };
     if stream_restarted {
-        *warmup_until = Some(now + chrono::Duration::seconds(PREMIUM_LOG_WARMUP_SECS));
+        *warmup_until = Some(now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().cockpit.premium_log_warmup_secs.wert));
     }
     match *warmup_until {
         Some(until) if now < until => true,
@@ -11907,17 +11910,17 @@ fn premium_log_warmup_active(
     }
 }
 
-/// Suppress repeated "same" activity entries fired within this window.
-/// React StrictMode in dev double-mounts effects, so the login + session-
-/// restore commands run twice on startup; we don't want the user to see
-/// every event duplicated. Five seconds is wide enough to dedupe those
-/// without merging genuine repeats during a long flight.
-const ACTIVITY_DEDUPE_WINDOW_SECS: i64 = 5;
+// Suppress repeated "same" activity entries fired within this window.
+// React StrictMode in dev double-mounts effects, so the login + session-
+// restore commands run twice on startup; we don't want the user to see
+// every event duplicated. Five seconds is wide enough to dedupe those
+// without merging genuine repeats during a long flight.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> activity_dedupe_window_secs (v2.1.24: 5)
 
 fn would_dedupe(log: &VecDeque<ActivityEntry>, now: DateTime<Utc>, message: &str) -> bool {
     log.back().is_some_and(|prev| {
         prev.message == message
-            && (now - prev.timestamp).num_seconds() < ACTIVITY_DEDUPE_WINDOW_SECS
+            && (now - prev.timestamp).num_seconds() < crate::grenzwerte::grenzwerte().cockpit.activity_dedupe_window_secs.wert
     })
 }
 
@@ -12088,12 +12091,12 @@ pub(crate) enum FlickerVerdict {
     Suppress,
 }
 
-/// Fenster, über das Wechsel gezählt werden.
-const FLICKER_WINDOW_SECS: i64 = 30;
-/// Ab so vielen Wechseln im Fenster gilt die Lampe als blinkend. Vier
-/// Wechsel in 30 s (= Halteperioden unter ~8 s) schafft kein Mensch am
-/// Schalter; der gemessene FLASH-Takt lag bei 3 s.
-const FLICKER_MIN_CHANGES: u8 = 4;
+// Fenster, über das Wechsel gezählt werden.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> flicker_window_secs (v2.1.24: 30)
+// Ab so vielen Wechseln im Fenster gilt die Lampe als blinkend. Vier
+// Wechsel in 30 s (= Halteperioden unter ~8 s) schafft kein Mensch am
+// Schalter; der gemessene FLASH-Takt lag bei 3 s.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> flicker_min_changes (v2.1.24: 4)
 
 /// Entscheidet, ob ein Lichtwechsel protokolliert, als Blinken gemeldet oder
 /// geschluckt wird.
@@ -12118,7 +12121,7 @@ pub(crate) fn flicker_verdict(
     // blinkt. Mit einem festen Fenster ab dem ersten Wechsel lief die Serie
     // alle 30 s ab und "Blinkmodus" wurde erneut gemeldet — bei den
     // gemessenen fünf Minuten zehnmal statt einmal.
-    if (now - last_change).num_seconds() > FLICKER_WINDOW_SECS {
+    if (now - last_change).num_seconds() > crate::grenzwerte::grenzwerte().cockpit.flicker_window_secs.wert {
         *entry = (now, 1, false);
         return FlickerVerdict::Log;
     }
@@ -12126,7 +12129,7 @@ pub(crate) fn flicker_verdict(
     let count = count.saturating_add(1);
     *entry = (now, count, announced);
 
-    if count < FLICKER_MIN_CHANGES {
+    if count < crate::grenzwerte::grenzwerte().cockpit.flicker_min_changes.wert {
         FlickerVerdict::Log
     } else if !announced {
         entry.2 = true;
@@ -18194,7 +18197,7 @@ async fn flight_start_mit(
     };
     if let (Some(lat), Some(lon)) = (dpt_airport.lat, dpt_airport.lon) {
         let distance_nm = ::geo::distance_m(snapshot.lat, snapshot.lon, lat, lon) / 1852.0;
-        if distance_nm > MAX_START_DISTANCE_NM {
+        if distance_nm > crate::grenzwerte::grenzwerte().abgabe.max_start_distance_nm.wert {
             return Err(UiError::new(
                 "not_at_departure",
                 format!(
@@ -19350,7 +19353,7 @@ async fn flight_start_manual(
     };
     if let (Some(lat), Some(lon)) = (dpt_airport.lat, dpt_airport.lon) {
         let distance_nm = ::geo::distance_m(snapshot.lat, snapshot.lon, lat, lon) / 1852.0;
-        if distance_nm > MAX_START_DISTANCE_NM {
+        if distance_nm > crate::grenzwerte::grenzwerte().abgabe.max_start_distance_nm.wert {
             return Err(UiError::new(
                 "not_at_departure",
                 format!(
@@ -19702,12 +19705,12 @@ async fn flight_start_manual(
     Ok(info)
 }
 
-/// Minimum thresholds a flight has to pass before we'll let it file as a clean
-/// ACARS PIREP. Anything below these is either a buggy run, a half-baked test,
-/// or a flight that never actually flew — phpVMS shouldn't get those.
-const MIN_FLIGHT_TIME_MIN: i32 = 1;
-const MIN_DISTANCE_NM: f64 = 1.0;
-const MIN_POSITION_COUNT: u32 = 5;
+// Minimum thresholds a flight has to pass before we'll let it file as a clean
+// ACARS PIREP. Anything below these is either a buggy run, a half-baked test,
+// or a flight that never actually flew — phpVMS shouldn't get those.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> min_flight_time_min (v2.1.24: 1)
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> min_distance_nm (v2.1.24: 1.0)
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> min_position_count (v2.1.24: 5)
 
 /// Names of fields that failed validation, returned to the UI as the
 /// `details` payload of the `flight_validation_failed` UiError. The UI looks
@@ -19719,13 +19722,13 @@ fn validate_for_filing(
     elapsed_minutes: i32,
 ) -> Vec<&'static str> {
     let mut missing = Vec::new();
-    if elapsed_minutes < MIN_FLIGHT_TIME_MIN {
+    if elapsed_minutes < crate::grenzwerte::grenzwerte().abgabe.min_flight_time_min.wert {
         missing.push("flight_time");
     }
-    if stats.distance_nm < MIN_DISTANCE_NM {
+    if stats.distance_nm < crate::grenzwerte::grenzwerte().abgabe.min_distance_nm.wert {
         missing.push("distance");
     }
-    if stats.position_count < MIN_POSITION_COUNT {
+    if stats.position_count < crate::grenzwerte::grenzwerte().abgabe.min_position_count.wert {
         missing.push("position_count");
     }
     if stats.block_fuel_kg.is_none() || stats.last_fuel_kg.is_none() {
@@ -20788,15 +20791,15 @@ pub fn should_reset_holding_pending(prev_phase: FlightPhase, next_phase: FlightP
 // Trust-Check: ICAO muss matchen, Centerline-Offset darf max 200 m sein,
 // Float-Distance darf max -100 m sein. Werte sind hardcoded (v1.2).
 
-/// Maximale Centerline-Distanz (m) vom Touchdown-Punkt zur erkannten
-/// Runway-Mittellinie. Daruber: vermutlich falscher Runway-Match.
-pub const RUNWAY_TRUST_MAX_CENTERLINE_OFFSET_M: f32 = 200.0;
+// Maximale Centerline-Distanz (m) vom Touchdown-Punkt zur erkannten
+// Runway-Mittellinie. Daruber: vermutlich falscher Runway-Match.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> runway_trust_max_centerline_offset_m (v2.1.24: 200.0)
 
-/// Minimum-Float-Distance (m). Werte unter -100 m bedeuten der
-/// Touchdown war so weit vor der Threshold dass die Runway-Geometrie
-/// nicht mehr stimmen kann. Liegt typische TDZ-Marker-Versetzungen
-/// (e.g. EDDM 26L) komfortabel im trusted-Bereich.
-pub const RUNWAY_TRUST_MIN_FLOAT_DISTANCE_M: f32 = -100.0;
+// Minimum-Float-Distance (m). Werte unter -100 m bedeuten der
+// Touchdown war so weit vor der Threshold dass die Runway-Geometrie
+// nicht mehr stimmen kann. Liegt typische TDZ-Marker-Versetzungen
+// (e.g. EDDM 26L) komfortabel im trusted-Bereich.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> runway_trust_min_float_distance_m (v2.1.24: -100.0)
 
 /// v0.7.6 P1-3: Pure-function Trust-Check ohne FlightStats-Abhaengigkeit
 /// damit die Logik 1:1 testbar ist. Returns (trusted, reason).
@@ -20844,13 +20847,13 @@ pub fn runway_geometry_trust_check(
     // nicht "Wert zu gross"; wir bestrafen nicht das Fehlen einer
     // optionalen Diagnostik).
     if let Some(offset) = centerline_offset_m {
-        if offset.abs() > RUNWAY_TRUST_MAX_CENTERLINE_OFFSET_M {
+        if offset.abs() > crate::grenzwerte::grenzwerte().ausrollen.runway_trust_max_centerline_offset_m.wert {
             return (false, Some("centerline_offset_too_large"));
         }
     }
     // Float-Distance (None ist OK — siehe Centerline-Begruendung)
     if let Some(float) = float_distance_m {
-        if float < RUNWAY_TRUST_MIN_FLOAT_DISTANCE_M {
+        if float < crate::grenzwerte::grenzwerte().ausrollen.runway_trust_min_float_distance_m.wert {
             return (false, Some("negative_float_distance"));
         }
     }
@@ -21555,8 +21558,8 @@ where
     }
 
     if let (Some(lat), Some(lon)) = (landing_lat, landing_lon) {
-        const TD_NEAREST_RADIUS_NM: f64 = 25.0;
-        let nearest = runway::find_nearest_airports(lat, lon, TD_NEAREST_RADIUS_NM * 1852.0, 1);
+        // Wert seit v3: bundle/grenzwerte/ausrollen.json -> td_nearest_radius_nm (v2.1.24: 25.0)
+        let nearest = runway::find_nearest_airports(lat, lon, crate::grenzwerte::grenzwerte().ausrollen.td_nearest_radius_nm.wert * 1852.0, 1);
         if let Some(closest) = nearest.first() {
             return TouchdownAirportResolution {
                 icao: closest.icao.clone(),
@@ -22483,46 +22486,46 @@ fn emit_landing_finalized(app: &AppHandle, flight: &ActiveFlight) {
 // Siehe `crates/landing-scoring/src/sprit.rs` fuer das Warum.
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Schwelle „tief" = Platzhoehe des Ziels + 8 000 ft. Ueber Platzhoehe,
-/// nicht MSL (Nairobi liegt auf 5 330 ft) und nicht Terrain-AGL (Innsbruck
-/// springt). Gedeckelt unter der geplanten Reiseflughoehe, damit eine C172
-/// nicht den ganzen Flug „tief" ist.
-const SPRIT_SCHWELLE_UEBER_PLATZ_FT: f64 = 8_000.0;
-const SPRIT_SCHWELLE_ABSTAND_ZUR_REISEHOEHE_FT: f64 = 1_000.0;
-/// Ein Tick-Abstand ueber dieser Grenze ist eine Pause oder ein Neustart —
-/// die Zeit dazwischen wurde nicht geflogen und zaehlt nicht.
-const SPRIT_TICK_MAX_S: f64 = 60.0;
-/// Wie weit die gemessene Position neben der geplanten Route liegen darf,
-/// damit der Plan-Anteil noch am Ort bestimmt wird (`sprit_plan_am_ort`).
-///
-/// 25 NM deckt Radarvektoren und Warteschleifen ab. Wer weiter draussen
-/// fliegt, folgt nicht mehr dem Plan — dort waere ein Plan-Anteil geraten,
-/// und lieber keine Phase als eine ausgedachte.
-const SPRIT_PROJEKTION_MAX_ABSTAND_NM: f64 = 25.0;
+// Schwelle „tief" = Platzhoehe des Ziels + 8 000 ft. Ueber Platzhoehe,
+// nicht MSL (Nairobi liegt auf 5 330 ft) und nicht Terrain-AGL (Innsbruck
+// springt). Gedeckelt unter der geplanten Reiseflughoehe, damit eine C172
+// nicht den ganzen Flug „tief" ist.
+// Wert seit v3: bundle/grenzwerte/sprit.json -> sprit_schwelle_ueber_platz_ft (v2.1.24: 8_000.0)
+// Wert seit v3: bundle/grenzwerte/sprit.json -> sprit_schwelle_abstand_zur_reisehoehe_ft (v2.1.24: 1_000.0)
+// Ein Tick-Abstand ueber dieser Grenze ist eine Pause oder ein Neustart —
+// die Zeit dazwischen wurde nicht geflogen und zaehlt nicht.
+// Wert seit v3: bundle/grenzwerte/sprit.json -> sprit_tick_max_s (v2.1.24: 60.0)
+// Wie weit die gemessene Position neben der geplanten Route liegen darf,
+// damit der Plan-Anteil noch am Ort bestimmt wird (`sprit_plan_am_ort`).
+//
+// 25 NM deckt Radarvektoren und Warteschleifen ab. Wer weiter draussen
+// fliegt, folgt nicht mehr dem Plan — dort waere ein Plan-Anteil geraten,
+// und lieber keine Phase als eine ausgedachte.
+// Wert seit v3: bundle/grenzwerte/sprit.json -> sprit_projektion_max_abstand_nm (v2.1.24: 25.0)
 
-/// Ab wann zwei Segmente als „gleich nah" gelten und die geplante Zeit
-/// entscheidet. Nur fuer den echten Mehrdeutigkeitsfall — Warteschleife,
-/// Prozedurkehre, eine STAR, die zweimal an derselben Stelle vorbeifuehrt.
-const SPRIT_PROJEKTION_GLEICHSTAND_NM: f64 = 1.0;
-/// Ein Landesprit unter 1 % des Startsprits ist kein Flug, sondern ein
-/// Auslesefehler. (Der Kommentar nannte frueher KMRH→TXKF als Beispiel —
-/// die Korpus-Pruefung hat gezeigt, dass dieser Flug mit 2,8 % darueber
-/// liegt und seine Reserve-Unterschreitung echt ist: ein Leichtflugzeug,
-/// das als A346 verbucht wurde.)
-const SPRIT_TANK_MIN_ANTEIL: f32 = 0.01;
+// Ab wann zwei Segmente als „gleich nah" gelten und die geplante Zeit
+// entscheidet. Nur fuer den echten Mehrdeutigkeitsfall — Warteschleife,
+// Prozedurkehre, eine STAR, die zweimal an derselben Stelle vorbeifuehrt.
+// Wert seit v3: bundle/grenzwerte/sprit.json -> sprit_projektion_gleichstand_nm (v2.1.24: 1.0)
+// Ein Landesprit unter 1 % des Startsprits ist kein Flug, sondern ein
+// Auslesefehler. (Der Kommentar nannte frueher KMRH→TXKF als Beispiel —
+// die Korpus-Pruefung hat gezeigt, dass dieser Flug mit 2,8 % darueber
+// liegt und seine Reserve-Unterschreitung echt ist: ein Leichtflugzeug,
+// das als A346 verbucht wurde.)
+// Wert seit v3: bundle/grenzwerte/sprit.json -> sprit_tank_min_anteil (v2.1.24: 0.01)
 
-/// Wie weit unter der Reiseflughoehe der Sinkflug als begonnen gilt.
-///
-/// Der Vergleichspunkt darf NICHT allein an der Reststrecke haengen: die
-/// Plan-Reststrecke ist Strecke ueber Grund entlang STAR und Transition, die
-/// gemessene Restdistanz eine Luftlinie. Der Umweganteil betraegt im Median
-/// +44 % (Korpus-Pruefung, 38 Fluege) — die Bedingung wird also weit
-/// draussen im Reiseflug wahr. Gemessen lag der Punkt im Median 4 Minuten
-/// und 23 NM vor dem echten Sinkflugbeginn, im Extremfall 16 Minuten.
-/// Dadurch rutschte Reiseflug in die Anflugphase und „bis Sinkflug" wurde
-/// systematisch zu negativ (Median −7,2 % statt −5,0 %, Einzelfaelle bis
-/// 18 Prozentpunkte).
-const SPRIT_SINKFLUG_UNTER_REISEHOEHE_FT: f64 = 1_500.0;
+// Wie weit unter der Reiseflughoehe der Sinkflug als begonnen gilt.
+//
+// Der Vergleichspunkt darf NICHT allein an der Reststrecke haengen: die
+// Plan-Reststrecke ist Strecke ueber Grund entlang STAR und Transition, die
+// gemessene Restdistanz eine Luftlinie. Der Umweganteil betraegt im Median
+// +44 % (Korpus-Pruefung, 38 Fluege) — die Bedingung wird also weit
+// draussen im Reiseflug wahr. Gemessen lag der Punkt im Median 4 Minuten
+// und 23 NM vor dem echten Sinkflugbeginn, im Extremfall 16 Minuten.
+// Dadurch rutschte Reiseflug in die Anflugphase und „bis Sinkflug" wurde
+// systematisch zu negativ (Median −7,2 % statt −5,0 %, Einzelfaelle bis
+// 18 Prozentpunkte).
+// Wert seit v3: bundle/grenzwerte/sprit.json -> sprit_sinkflug_unter_reisehoehe_ft (v2.1.24: 1_500.0)
 
 /// Aus dem Navlog: geplante Reststrecke ab TOD (Summe der Segmente nach
 /// dem TOD-Fix) und geplanter Verbrauch bis TOD. `None`, wenn das Navlog
@@ -22658,7 +22661,7 @@ fn sprit_plan_am_ort_suche(
         let fuss_lat = a.lat + (b.lat - a.lat) * t;
         let fuss_lon = a.lon + (b.lon - a.lon) * t;
         let abstand_nm = ::geo::distance_m(lat, lon, fuss_lat, fuss_lon) / 1852.0;
-        if abstand_nm > SPRIT_PROJEKTION_MAX_ABSTAND_NM {
+        if abstand_nm > crate::grenzwerte::grenzwerte().sprit.sprit_projektion_max_abstand_nm.wert {
             continue;
         }
         // Plan-Sprit am Lotfusspunkt: zwischen den Nachbarfixen interpoliert.
@@ -22684,7 +22687,7 @@ fn sprit_plan_am_ort_suche(
                 // Plan, nie halb so kurz. Liegt der Kandidat mehr als doppelt
                 // so weit wie das bisher Geflogene, ist er ein anderes Stueck
                 // der Route (Rundflug: STAR ueber der SID).
-                if mit_regel && plan_position_nm > 2.0 * g + SPRIT_PROJEKTION_GLEICHSTAND_NM {
+                if mit_regel && plan_position_nm > 2.0 * g + crate::grenzwerte::grenzwerte().sprit.sprit_projektion_gleichstand_nm.wert {
                     continue;
                 }
                 (plan_position_nm - g).abs()
@@ -22714,7 +22717,7 @@ fn sprit_plan_am_ort_suche(
         let besser = match &beste {
             None => true,
             Some((bz, ba, _)) => {
-                if (abstand_nm - *ba).abs() <= SPRIT_PROJEKTION_GLEICHSTAND_NM {
+                if (abstand_nm - *ba).abs() <= crate::grenzwerte::grenzwerte().sprit.sprit_projektion_gleichstand_nm.wert {
                     strecken_abweichung < *bz
                 } else {
                     abstand_nm < *ba
@@ -22824,9 +22827,9 @@ fn ist_platzhoehe_navdaten_ft(flight: &ActiveFlight, stats: &FlightStats) -> Opt
 
 fn sprit_schwelle_ft(stats: &FlightStats) -> Option<f64> {
     let platz = stats.arr_airport_elevation_ft? as f64;
-    let mut schwelle = platz + SPRIT_SCHWELLE_UEBER_PLATZ_FT;
+    let mut schwelle = platz + crate::grenzwerte::grenzwerte().sprit.sprit_schwelle_ueber_platz_ft.wert;
     if let Some(cruise) = stats.planned_cruise_alt_ft {
-        schwelle = schwelle.min(cruise - SPRIT_SCHWELLE_ABSTAND_ZUR_REISEHOEHE_FT);
+        schwelle = schwelle.min(cruise - crate::grenzwerte::grenzwerte().sprit.sprit_schwelle_abstand_zur_reisehoehe_ft.wert);
     }
     (schwelle > platz).then_some(schwelle)
 }
@@ -22897,7 +22900,7 @@ fn sprit_boden_marken(
         return;
     }
     let seit = *stats.sprit_triebwerke_aus_seit.get_or_insert(now);
-    if (now - seit).num_milliseconds() < (SPRIT_TRIEBWERKE_AUS_S * 1000.0) as i64 {
+    if (now - seit).num_milliseconds() < (crate::grenzwerte::grenzwerte().sprit.sprit_triebwerke_aus_s.wert * 1000.0) as i64 {
         return;
     }
     sprit_triebwerke_aus_rasten(stats, fuel_kg);
@@ -23008,10 +23011,10 @@ fn sprit_plan_neu_lesen(stats: &mut FlightStats) {
     stats.sprit_plan_bis_tod_kg = None;
 }
 
-/// Wie lange die Triebwerke durchgehend aus sein muessen, bis
-/// „Triebwerke aus" rastet. Laenger als jedes Zappeln der Verbrennungs-
-/// Anzeige, kuerzer als jedes echte Abstellen am Stand.
-const SPRIT_TRIEBWERKE_AUS_S: f64 = 10.0;
+// Wie lange die Triebwerke durchgehend aus sein muessen, bis
+// „Triebwerke aus" rastet. Laenger als jedes Zappeln der Verbrennungs-
+// Anzeige, kuerzer als jedes echte Abstellen am Stand.
+// Wert seit v3: bundle/grenzwerte/sprit.json -> sprit_triebwerke_aus_s (v2.1.24: 10.0)
 
 /// Eine Messung „Sprit beim Überflug" — Rohdaten, gerechnet wird erst in
 /// `sprit_wegpunkt_zeilen`.
@@ -23028,11 +23031,11 @@ struct SpritWpMessung {
     uebersprungen: bool,
 }
 
-/// Wie nah das Flugzeug beim Abschnittswechsel am Wegpunkt sein muss, damit
-/// der Tankstand als „beim Überflug gemessen" gilt. Fünf Meilen: Beim
-/// Überfliegen einer Kurve (fly-by) schneidet das Flugzeug die Ecke, und
-/// der Wechsel fällt auf die Winkelhalbierende, nicht auf den Fix.
-const SPRIT_WP_NAH_NM: f64 = 5.0;
+// Wie nah das Flugzeug beim Abschnittswechsel am Wegpunkt sein muss, damit
+// der Tankstand als „beim Überflug gemessen" gilt. Fünf Meilen: Beim
+// Überfliegen einer Kurve (fly-by) schneidet das Flugzeug die Ecke, und
+// der Wechsel fällt auf die Winkelhalbierende, nicht auf den Fix.
+// Wert seit v3: bundle/grenzwerte/sprit.json -> sprit_wp_nah_nm (v2.1.24: 5.0)
 
 /// Sprit je Wegpunkt: erkennt den Überflug und hält den Tankstand fest.
 ///
@@ -23084,7 +23087,7 @@ fn sprit_wegpunkt_tick(
         Some(alt) if neu > alt => {
             for k in (alt + 1)..=neu {
                 let f = &stats.planned_waypoints[k];
-                let nah = ::geo::distance_m(lat, lon, f.lat, f.lon) / 1852.0 <= SPRIT_WP_NAH_NM;
+                let nah = ::geo::distance_m(lat, lon, f.lat, f.lon) / 1852.0 <= crate::grenzwerte::grenzwerte().sprit.sprit_wp_nah_nm.wert;
                 let gemessen = k == neu && nah;
                 stats.sprit_wp_messungen.push(SpritWpMessung {
                     idx: k,
@@ -23282,7 +23285,7 @@ fn sprit_tick(
             (None, Some(plan)) => plan,
             (None, None) => f64::MAX,
         };
-        let sinkt = alt_msl_ft <= reise - SPRIT_SINKFLUG_UNTER_REISEHOEHE_FT;
+        let sinkt = alt_msl_ft <= reise - crate::grenzwerte::grenzwerte().sprit.sprit_sinkflug_unter_reisehoehe_ft.wert;
         if !sinkt {
             return;
         }
@@ -23336,7 +23339,7 @@ fn sprit_tick(
         stats.sprit_schwelle_ft = sprit_schwelle_ft(stats);
         return;
     }
-    let Some(dt) = dt_s.filter(|d| *d > 0.0 && *d <= SPRIT_TICK_MAX_S) else {
+    let Some(dt) = dt_s.filter(|d| *d > 0.0 && *d <= crate::grenzwerte::grenzwerte().sprit.sprit_tick_max_s.wert) else {
         return;
     };
     if stats.sprit_schwelle_ft.is_none() {
@@ -23359,7 +23362,7 @@ fn sprit_tank_plausibel(stats: &FlightStats) -> bool {
     if !(to.is_finite() && ldg.is_finite()) || to <= 0.0 || ldg < 0.0 || ldg > to {
         return false;
     }
-    if ldg < to * SPRIT_TANK_MIN_ANTEIL {
+    if ldg < to * crate::grenzwerte::grenzwerte().sprit.sprit_tank_min_anteil.wert {
         return false;
     }
     match stats.sprit_vergleichspunkt_kg {
@@ -24000,9 +24003,9 @@ fn fill_v2_rollout_fields(
     // bekam dadurch nicht einmal ein Drittel des Vorhalts zugestanden, den
     // er tatsaechlich fliegen musste — ausgerechnet die Klasse, die unter
     // Seitenwind am meisten leidet.
-    const MIN_BEZUGSGESCHWINDIGKEIT_KT: f32 = 25.0;
+    // Wert seit v3: bundle/grenzwerte/anflug_kern.json -> min_bezugsgeschwindigkeit_kt (v2.1.24: 25.0)
     let brauchbar =
-        |v: Option<f32>| v.filter(|x| x.is_finite() && *x > MIN_BEZUGSGESCHWINDIGKEIT_KT);
+        |v: Option<f32>| v.filter(|x| x.is_finite() && *x > crate::grenzwerte::grenzwerte().anflug_kern.min_bezugsgeschwindigkeit_kt.wert);
     input.landing_groundspeed_kt = brauchbar(stats.landing_true_airspeed_kt)
         .or_else(|| {
             match (
@@ -24384,12 +24387,12 @@ fn finalize_landing_rate(
     stats.landing_source = source.map(|s| s.to_string());
 }
 
-/// Build a `LandingRecord` from the current flight + stats. Returns None
-/// when there's no usable touchdown captured (e.g. PIREP filed before
-/// landing — synthetic / bug). The record is the immutable snapshot we
-/// show in the Landing tab; once written it never changes.
-/// v0.13.15: maximales Post-TD-Fenster fuer das angezeigte V/S-Profil.
-const POST_TD_PROFILE_MS: i32 = 10_000;
+// Build a `LandingRecord` from the current flight + stats. Returns None
+// when there's no usable touchdown captured (e.g. PIREP filed before
+// landing — synthetic / bug). The record is the immutable snapshot we
+// show in the Landing tab; once written it never changes.
+// v0.13.15: maximales Post-TD-Fenster fuer das angezeigte V/S-Profil.
+// Wert seit v3: bundle/grenzwerte/landung.json -> post_td_profile_ms (v2.1.24: 10_000)
 
 /// v0.13.15 (Pilot-Befund ViolonC 2026-05-31): Baut das anzuzeigende V/S-
 /// Touchdown-Profil. `snapshot_profile` ist der aus dem 5-s-snapshot_buffer
@@ -24525,18 +24528,18 @@ fn displacement_not_in_geometry_ft(m: &runway::RunwayMatch) -> i32 {
 /// Kern von `displacement_not_in_geometry_ft` auf zwei Zahlen — auch fuer
 /// den ILS-Bezug aus der unveraenderten Navigraph-Bahn (Score-Version 25).
 fn versatz_nicht_in_geometrie_ft(gemeldet_ft: i32, geometrie_ft: i32) -> i32 {
-    /// Dieselbe Toleranz wie `runway::geometry_implied_displacement_ft`
-    /// (dort begruendet: 40-Bahnen-Stichprobe trennt sauber bei
-    /// hoechstens 13,7 m Rauschen gegen mindestens 30,8 m bei echtem,
-    /// aber physischem Versatz).
-    const BESTAETIGUNGS_TOLERANZ_M: f64 = 20.0;
+    // Dieselbe Toleranz wie `runway::geometry_implied_displacement_ft`
+    // (dort begruendet: 40-Bahnen-Stichprobe trennt sauber bei
+    // hoechstens 13,7 m Rauschen gegen mindestens 30,8 m bei echtem,
+    // aber physischem Versatz).
+    // Wert seit v3: bundle/grenzwerte/ausrollen.json -> bestaetigungs_toleranz_m (v2.1.24: 20.0)
     const FT_TO_M: f64 = 0.3048;
 
     if gemeldet_ft <= 0 || geometrie_ft <= 0 {
         return gemeldet_ft.max(0);
     }
     let diff_m = (geometrie_ft - gemeldet_ft) as f64 * FT_TO_M;
-    if diff_m.abs() <= BESTAETIGUNGS_TOLERANZ_M {
+    if diff_m.abs() <= crate::grenzwerte::grenzwerte().ausrollen.bestaetigungs_toleranz_m.wert {
         0
     } else {
         gemeldet_ft
@@ -25514,7 +25517,7 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     // Waeren beide Zahlen gleich, wuerde jede kuenftige Lockerung dort
     // stillschweigend ins Leere greifen — der Korridor verschwaende, und
     // niemand wuesste warum.
-    const VERLAUF_BEHALTEN_M: f64 = 200.0;
+    // Wert seit v3: bundle/grenzwerte/ausrollen.json -> verlauf_behalten_m (v2.1.24: 200.0)
     // Dieselbe Ableitung wie unten in `clearance_side` — einmal
     // gerechnet, damit beide nicht auseinanderlaufen koennen.
     let raeum_seite: Option<String> = kante_seite.clone().or_else(|| stats.bahn_raeum_seite.clone()).or_else(|| {
@@ -25527,7 +25530,7 @@ fn bahn_felder(stats: &FlightStats, icao: Option<&str>, skip_grund: Option<Strin
     for a in ausfahrten.iter_mut() {
         let nah = match (stats.bahn_raeum_laengs_m, raeum_seite.as_deref()) {
             (Some(r), Some(seite)) => {
-                a.seite == seite && (a.laengs_m - r).abs() <= VERLAUF_BEHALTEN_M
+                a.seite == seite && (a.laengs_m - r).abs() <= crate::grenzwerte::grenzwerte().ausrollen.verlauf_behalten_m.wert
             }
             _ => false,
         };
@@ -25987,7 +25990,7 @@ where
         &stats.touchdown_profile,
         &stats.post_touchdown_buffer,
         touchdown_at,
-        POST_TD_PROFILE_MS,
+        crate::grenzwerte::grenzwerte().landung.post_td_profile_ms.wert,
     );
 
     // v0.7.1 Phase 1 (P1.1-D + P1.3-C): erweitert um t_ms, agl_ft,
@@ -28562,7 +28565,7 @@ async fn flight_end(
                 runway::nearest_airport_reference(
                     la,
                     lo,
-                    STANDING_ON_OTHER_FIELD_NM,
+                    crate::grenzwerte::grenzwerte().abgabe.standing_on_other_field_nm.wert,
                     arr_icao.trim(),
                 )
                 .is_some()
@@ -28611,7 +28614,7 @@ async fn flight_end(
     // who knows); beyond it he has to file manually, which is the audited path.
     let distance_to_arr_nm = if pilot_confirmed_planned {
         match measured_arr_nm {
-            Some(d) if d > PILOT_CONFIRMED_ARRIVAL_MAX_NM => Some(d), // gate stays armed
+            Some(d) if d > crate::grenzwerte::grenzwerte().abgabe.pilot_confirmed_arrival_max_nm.wert => Some(d), // gate stays armed
             _ => None,
         }
     } else {
@@ -28629,7 +28632,7 @@ async fn flight_end(
         let elapsed_minutes = (Utc::now() - flight.started_at).num_minutes() as i32;
         let mut missing = validate_for_filing(flight, &stats, elapsed_minutes);
         if let Some(d) = distance_to_arr_nm {
-            if d > MAX_FILE_DISTANCE_NM {
+            if d > crate::grenzwerte::grenzwerte().abgabe.max_file_distance_nm.wert {
                 missing.push("not_at_arrival");
             }
         }
@@ -31626,18 +31629,18 @@ fn apply_pause_resume(
         PauseReason::ManualResume => "Flug wiederaufgenommen",
     };
     let (level, msg) = match drift_nm {
-        Some(d) if d > RESUME_DRIFT_EXTREME_NM => (
+        Some(d) if d > crate::grenzwerte::grenzwerte().abgabe.resume_drift_extreme_nm.wert => (
             ActivityLevel::Warn,
             format!(
                 "{auto_prefix} — Sehr grosse Reposition {:.1} nm. Pruefe ob der richtige Flug geladen ist.",
                 d
             ),
         ),
-        Some(d) if d > RESUME_DRIFT_WARN_NM => (
+        Some(d) if d > crate::grenzwerte::grenzwerte().abgabe.resume_drift_warn_nm.wert => (
             ActivityLevel::Warn,
             format!("{auto_prefix} — Auffaellige Reposition {:.1} nm", d),
         ),
-        Some(d) if d > RESUME_DRIFT_TOAST_NM => (
+        Some(d) if d > crate::grenzwerte::grenzwerte().abgabe.resume_drift_toast_nm.wert => (
             ActivityLevel::Info,
             format!("{auto_prefix} — Repositioniert {:.1} nm", d),
         ),
@@ -32083,64 +32086,64 @@ fn ana_str(v: &Option<serde_json::Value>, key: &str) -> Option<String> {
     Some(v.as_ref()?.get(key)?.as_str()?.to_string())
 }
 
-/// v0.12.3 (LE8): **der eine** Scored-G-Wert, den jeder Pfad eines
-/// `FlightStats` nutzt — Touchdown-Klassifikation, Activity-/ACARS-Text,
-/// MQTT-Touchdown-Payload und das `LandingScored`-Event.
-///
-/// Liest den EMA-geglätteten `scored_g` aus der Forensik-Analyse. Gibt es
-/// kein Touchdown-Fenster (`landing_analysis` ist `None`), fällt der Wert
-/// definiert auf den rohen Peak zurück (`raw_fallback`, LE8) — **kein**
-/// Pfad bekommt je `None`/`0` an den Score.
-/// v0.20 (QS-Fix, fallback_zero-Score-Bug): gibt jetzt `None` zurück statt
-/// immer irgendeinen Wert — siehe `FlightStats::canonical_peak_g_force`.
-/// `ana_f32(landing_analysis, "scored_g")` kommt aus der unabhängigen
-/// touchdown_v2-Forensik-Pipeline; die ist bei einem fallback_zero-Flug
-/// (kein validierter Touchdown, siehe `canonical_landing_rate_fpm`) von
-/// selbst leer, muss also nicht extra gegatet werden.
-/// Kanal-Charakteristik des G-Messwerts, je Simulator — die Grundlage der
-/// Fairness-Normierung unten.
-///
-/// **Der Befund (14.08.2026, Korpus 577 Landungen).** MSFS und X-Plane
-/// liefern NICHT dieselbe physikalische Groesse:
-///
-/// * MSFS `G FORCE` ist ein gedaempfter Instrumentenwert. Regression ueber
-///   473 Landungen: `G = 1,011 + 0,000844 · |fpm|` → implizierte
-///   Abbremszeit **614 ms**.
-/// * X-Plane `sim/flightmodel2/misc/gforce_normal` ist die frame-genaue
-///   Lastziffer. Regression ueber 104 Landungen: `G = 1,002 + 0,001942 ·
-///   |fpm|` → **267 ms**.
-///
-/// 614 ms sind fuer eine Fahrwerksfederung physikalisch unmoeglich (Airliner
-/// ~200-300 ms, GA-Blattfeder ~100-150 ms) — das ist die Signatur eines
-/// Tiefpasses im MSFS-Kanal. X-Plane liegt genau im plausiblen Bereich.
-///
-/// **Warum eine reine Skalierung genuegt:** die Signalform ist in beiden Sims
-/// identisch (Median/Peak im 500-ms-Fenster 0,863 gegen 0,855). Es
-/// unterscheidet sich nur die Amplitude, nicht die Form — also reicht ein
-/// Amplitudenfaktor, kein Nachbau des Filters.
-///
-/// **Warum MSFS die Referenz ist:** die Punkteschwellen in `sub_g_force`
-/// (1,20/1,40/1,70/2,10) stammen aus der Zeit, als AeroACARS MSFS-only war,
-/// und sind nie neu kalibriert worden. Auf X-Plane umzustellen haette jeden
-/// bestehenden Score verschoben; die Kette auf die kalibrierte Referenz zu
-/// bringen ist der kleinere und ehrlichere Eingriff.
-///
-/// Der ROHWERT bleibt unangetastet — er wandert unveraendert als
-/// `peak_g_load` in die Forensik und ins Touchdown-Payload. Normalisiert
-/// wird ausschliesslich der Wert, der in die BEWERTUNG geht; genau dafuer
-/// existiert die Trennung `scored_g_load` / `peak_g_load` seit v0.12.3.
-///
-/// Ein neuer Simulator traegt hier seine gemessene Steigung ein — dieselbe
-/// Messung, dieselbe Herleitung.
-const G_KANAL_STEIGUNG_MSFS: f32 = 0.000_844;
-const G_KANAL_STEIGUNG_XPLANE: f32 = 0.001_942;
+// v0.12.3 (LE8): **der eine** Scored-G-Wert, den jeder Pfad eines
+// `FlightStats` nutzt — Touchdown-Klassifikation, Activity-/ACARS-Text,
+// MQTT-Touchdown-Payload und das `LandingScored`-Event.
+//
+// Liest den EMA-geglätteten `scored_g` aus der Forensik-Analyse. Gibt es
+// kein Touchdown-Fenster (`landing_analysis` ist `None`), fällt der Wert
+// definiert auf den rohen Peak zurück (`raw_fallback`, LE8) — **kein**
+// Pfad bekommt je `None`/`0` an den Score.
+// v0.20 (QS-Fix, fallback_zero-Score-Bug): gibt jetzt `None` zurück statt
+// immer irgendeinen Wert — siehe `FlightStats::canonical_peak_g_force`.
+// `ana_f32(landing_analysis, "scored_g")` kommt aus der unabhängigen
+// touchdown_v2-Forensik-Pipeline; die ist bei einem fallback_zero-Flug
+// (kein validierter Touchdown, siehe `canonical_landing_rate_fpm`) von
+// selbst leer, muss also nicht extra gegatet werden.
+// Kanal-Charakteristik des G-Messwerts, je Simulator — die Grundlage der
+// Fairness-Normierung unten.
+//
+// **Der Befund (14.08.2026, Korpus 577 Landungen).** MSFS und X-Plane
+// liefern NICHT dieselbe physikalische Groesse:
+//
+// * MSFS `G FORCE` ist ein gedaempfter Instrumentenwert. Regression ueber
+//   473 Landungen: `G = 1,011 + 0,000844 · |fpm|` → implizierte
+//   Abbremszeit **614 ms**.
+// * X-Plane `sim/flightmodel2/misc/gforce_normal` ist die frame-genaue
+//   Lastziffer. Regression ueber 104 Landungen: `G = 1,002 + 0,001942 ·
+//   |fpm|` → **267 ms**.
+//
+// 614 ms sind fuer eine Fahrwerksfederung physikalisch unmoeglich (Airliner
+// ~200-300 ms, GA-Blattfeder ~100-150 ms) — das ist die Signatur eines
+// Tiefpasses im MSFS-Kanal. X-Plane liegt genau im plausiblen Bereich.
+//
+// **Warum eine reine Skalierung genuegt:** die Signalform ist in beiden Sims
+// identisch (Median/Peak im 500-ms-Fenster 0,863 gegen 0,855). Es
+// unterscheidet sich nur die Amplitude, nicht die Form — also reicht ein
+// Amplitudenfaktor, kein Nachbau des Filters.
+//
+// **Warum MSFS die Referenz ist:** die Punkteschwellen in `sub_g_force`
+// (1,20/1,40/1,70/2,10) stammen aus der Zeit, als AeroACARS MSFS-only war,
+// und sind nie neu kalibriert worden. Auf X-Plane umzustellen haette jeden
+// bestehenden Score verschoben; die Kette auf die kalibrierte Referenz zu
+// bringen ist der kleinere und ehrlichere Eingriff.
+//
+// Der ROHWERT bleibt unangetastet — er wandert unveraendert als
+// `peak_g_load` in die Forensik und ins Touchdown-Payload. Normalisiert
+// wird ausschliesslich der Wert, der in die BEWERTUNG geht; genau dafuer
+// existiert die Trennung `scored_g_load` / `peak_g_load` seit v0.12.3.
+//
+// Ein neuer Simulator traegt hier seine gemessene Steigung ein — dieselbe
+// Messung, dieselbe Herleitung.
+// Wert seit v3: bundle/grenzwerte/landung.json -> g_kanal_steigung_msfs (v2.1.24: 0.000_844)
+// Wert seit v3: bundle/grenzwerte/landung.json -> g_kanal_steigung_xplane (v2.1.24: 0.001_942)
 
 /// Rechnet einen G-Messwert auf die MSFS-Referenzkette um. `None` als
 /// Simulator (oder ein unbekannter) bleibt unveraendert — lieber roh als
 /// falsch normiert.
 fn g_auf_referenzkette(g: f32, simulator: Option<&str>) -> f32 {
     let faktor = match simulator {
-        Some("xplane") => G_KANAL_STEIGUNG_MSFS / G_KANAL_STEIGUNG_XPLANE,
+        Some("xplane") => crate::grenzwerte::grenzwerte().landung.g_kanal_steigung_msfs.wert / crate::grenzwerte::grenzwerte().landung.g_kanal_steigung_xplane.wert,
         _ => return g,
     };
     // Nur der Ueberschuss ueber 1 g wird skaliert: 1 g ist in beiden Sims
@@ -32288,20 +32291,23 @@ fn scored_g_fuer_punkte(stats: &FlightStats) -> Option<f32> {
 // still reflects the firm touchdown — we credit the reduction, never
 // turn a firm landing soft.
 
-/// Half-window (ms) of AGL samples used for each local linear-fit slope.
-/// ±300 ms ≈ 15-20 samples at 50 Hz — wide enough to average out MSFS's
-/// ~0.5 ft AGL quantization, narrow enough to resolve the flare's sink
-/// reduction. Corpus-stable: detection verdict identical at 250/350 too.
-const MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS: i64 = 300;
-/// Minimum airborne AGL samples inside a fit window for the slope to be
-/// trusted. Below this the least-squares slope is too sensitive to a
-/// single quantization step; we skip that time point.
-const MSFS_FLARE_AGL_FIT_MIN_SAMPLES: usize = 4;
+// Half-window (ms) of AGL samples used for each local linear-fit slope.
+// ±300 ms ≈ 15-20 samples at 50 Hz — wide enough to average out MSFS's
+// ~0.5 ft AGL quantization, narrow enough to resolve the flare's sink
+// reduction. Corpus-stable: detection verdict identical at 250/350 too.
+// Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_agl_fit_half_window_ms (v2.1.24: 300)
+// Minimum airborne AGL samples inside a fit window for the slope to be
+// trusted. Below this the least-squares slope is too sensitive to a
+// single quantization step; we skip that time point.
+// Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_agl_fit_min_samples (v2.1.24: 4)
 /// AGL above this (ft) at a fit point means we are not yet in the flare/
 /// short-final geometry — the same guard the touchdown AGL estimator
 /// uses for window-start. Keeps a high pre-flare descent out of the
 /// flare-window slope set. Reuses TD_AGL_MAX_AT_WINDOW_START_FT.
-const MSFS_FLARE_AGL_MAX_FT: f32 = TD_AGL_MAX_AT_WINDOW_START_FT;
+// v3: aus einem Grenzwert abgeleitet, deshalb Funktion statt Konstante.
+fn msfs_flare_agl_max_ft() -> f32 {
+    crate::grenzwerte::grenzwerte().landung.td_agl_max_at_window_start_ft.wert
+}
 
 // ─── v0.16.22 hardening: phantom-flare guards ────────────────────────────
 //
@@ -32321,71 +32327,71 @@ const MSFS_FLARE_AGL_MAX_FT: f32 = TD_AGL_MAX_AT_WINDOW_START_FT;
 // near-frozen B738 (7 distinct) QS also flagged, while NOT touching any
 // of 115 real flares (incl. JBU323, the FSLabs A321, the Baron 58P).
 //
-/// Gate 1a — minimum DISTINCT `agl_ft` values among the airborne flare-
-/// window samples for the AGL geometry to be trusted. Below this the trace
-/// is too coarse to differentiate (a step/plateau, not a slope). VPS data:
-/// the only two flights under 8 in 316 landings are the two frozen
-/// phantoms (4 and 7 distinct); the lowest REAL flare has 18 distinct —
-/// a 2.25× margin. On reject we fall back to the SimVar path so no garbage
-/// AGL endpoint is published.
-const MSFS_FLARE_MIN_DISTINCT_AGL: usize = 8;
-/// Gate 1b — maximum MEDIAN sample Δt (ms) inside the flare window. Above
-/// this the effective rate is < ~16 Hz and a local slope is unreliable.
-/// All healthy captures in the corpus sit at ~31 ms (32 Hz); this is a
-/// safety net for genuinely degraded capture (it fires on none of the 316
-/// — the frozen E195 still streamed at 31 ms, so distinct-count, not Δt,
-/// is what catches it). Reject → SimVar fallback.
-const MSFS_FLARE_MAX_MEDIAN_DT_MS: i64 = 60;
-/// Gate 1c — minimum DISTINCT `agl_ft` values in the FLARE-END fit window
-/// (±MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS around flare_hi). This is the LOCAL
-/// version of Gate 1a: it catches a freeze that corrupts ONLY the flare-
-/// end slope while the rest of the window streamed fine. Such a freeze
-/// reads vs_at_flare_end ≈ 0 from a plateau and INFLATES the reduction
-/// (E195 phantom whole-window; vrNEVnl phantom mid-window with 25 distinct
-/// overall, which Gate 1a misses; pVGZW real-but-corrupt — a genuine flare
-/// whose AGL froze in the final ~360 ms so the AGL ENDPOINT is garbage and
-/// the honest SimVar value should publish instead). VPS data: the three
-/// frozen-end phantoms have 1-3 distinct values in the end-fit window; the
-/// largest REAL flares (reduction 500+) have 8 — a clean 2× margin at 4.
-const MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL: usize = 4;
-/// Gate 1c BACKSTOP — minimum AGL SPAN (ft) in the flare-END fit window
-/// (±MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS around flare_hi). The distinct-bucket
-/// count above (Gate 1c) is fooled by a NOISY freeze: a trace that dithers
-/// across ≥4 quantized 0.01 ft buckets while spanning near-zero TRUE height
-/// passes the bucket count yet still reads vs_at_flare_end ≈ 0 from the flat
-/// plateau → a huge fake reduction → phantom score-100. The span check is the
-/// physics floor that bucket-counting cannot give: in the final ±300 ms a
-/// REAL flare descends through real height. On the corpus the slowest REAL
-/// flare-end (extra_y8Y5, end −95 fpm) covers ≈0.95 ft in that 600 ms window
-/// and the JBU323/jbu322 flares span 4-6 ft; a frozen/near-frozen plateau
-/// spans ~0. 0.3 ft sits an order of magnitude below the slowest real end
-/// span yet an order of magnitude above quantization+jitter (~0.01-0.05 ft),
-/// so it fires ONLY on a true plateau. Reject → SimVar fallback.
-const MSFS_FLARE_MIN_END_AGL_SPAN_FT: f32 = 0.3;
-/// Gate 2 — balloon tolerance (ft). If the airborne AGL trace rises by
-/// more than this above a prior in-window minimum it is non-monotone (a
-/// bounce/balloon), not a descent+flare. DA40 GSG2056 balloons ~2.4 ft;
-/// every real flare in the corpus stays ≤ ~0.25 ft. Reject → SimVar
-/// fallback. (An on_ground=true sample anywhere in the window is a
-/// separate, unconditional bounce reject.)
-const MSFS_FLARE_BALLOON_TOL_FT: f32 = 1.5;
-/// Gate 3 — pitch-corroboration veto. `flare_detected` is additionally
-/// withheld when the net pitch trend across the window is strongly
-/// NOSE-DOWN (a settle/shed signature, not a pull). Tuned conservatively:
-/// real held-attitude flares on the VPS show window pitch-deltas as low as
-/// −0.6° (the pilot sets a flare attitude early and HOLDS it while the
-/// sink decays in ground effect), so a positive "+Δ required" gate would
-/// wrongly suppress real flares — Gates 1+2 are the primary phantom
-/// defense. This veto only trips on a clear nose-down trend, below every
-/// real flare observed, and is belt-and-suspenders for a future bounce
-/// that somehow evades Gate 2.
-const MSFS_FLARE_PITCH_NOSEDOWN_VETO_DEG: f32 = -1.0;
-/// The flare-source detection floor (fpm of reduction). Kept at 50 (NOT
-/// nudged to 60): the real FSLabs A321 flare in the QS set reduces 58.5
-/// fpm and MUST stay detected, so 60 would drop a real marginal flare.
-/// The fragile band is instead cleaned by Gates 1-3, which remove the
-/// frozen/bounce members of that band without touching real soft flares.
-const MSFS_FLARE_DETECT_FLOOR_FPM: f64 = 50.0;
+// Gate 1a — minimum DISTINCT `agl_ft` values among the airborne flare-
+// window samples for the AGL geometry to be trusted. Below this the trace
+// is too coarse to differentiate (a step/plateau, not a slope). VPS data:
+// the only two flights under 8 in 316 landings are the two frozen
+// phantoms (4 and 7 distinct); the lowest REAL flare has 18 distinct —
+// a 2.25× margin. On reject we fall back to the SimVar path so no garbage
+// AGL endpoint is published.
+// Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_min_distinct_agl (v2.1.24: 8)
+// Gate 1b — maximum MEDIAN sample Δt (ms) inside the flare window. Above
+// this the effective rate is < ~16 Hz and a local slope is unreliable.
+// All healthy captures in the corpus sit at ~31 ms (32 Hz); this is a
+// safety net for genuinely degraded capture (it fires on none of the 316
+// — the frozen E195 still streamed at 31 ms, so distinct-count, not Δt,
+// is what catches it). Reject → SimVar fallback.
+// Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_max_median_dt_ms (v2.1.24: 60)
+// Gate 1c — minimum DISTINCT `agl_ft` values in the FLARE-END fit window
+// (±MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS around flare_hi). This is the LOCAL
+// version of Gate 1a: it catches a freeze that corrupts ONLY the flare-
+// end slope while the rest of the window streamed fine. Such a freeze
+// reads vs_at_flare_end ≈ 0 from a plateau and INFLATES the reduction
+// (E195 phantom whole-window; vrNEVnl phantom mid-window with 25 distinct
+// overall, which Gate 1a misses; pVGZW real-but-corrupt — a genuine flare
+// whose AGL froze in the final ~360 ms so the AGL ENDPOINT is garbage and
+// the honest SimVar value should publish instead). VPS data: the three
+// frozen-end phantoms have 1-3 distinct values in the end-fit window; the
+// largest REAL flares (reduction 500+) have 8 — a clean 2× margin at 4.
+// Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_min_end_fit_distinct_agl (v2.1.24: 4)
+// Gate 1c BACKSTOP — minimum AGL SPAN (ft) in the flare-END fit window
+// (±MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS around flare_hi). The distinct-bucket
+// count above (Gate 1c) is fooled by a NOISY freeze: a trace that dithers
+// across ≥4 quantized 0.01 ft buckets while spanning near-zero TRUE height
+// passes the bucket count yet still reads vs_at_flare_end ≈ 0 from the flat
+// plateau → a huge fake reduction → phantom score-100. The span check is the
+// physics floor that bucket-counting cannot give: in the final ±300 ms a
+// REAL flare descends through real height. On the corpus the slowest REAL
+// flare-end (extra_y8Y5, end −95 fpm) covers ≈0.95 ft in that 600 ms window
+// and the JBU323/jbu322 flares span 4-6 ft; a frozen/near-frozen plateau
+// spans ~0. 0.3 ft sits an order of magnitude below the slowest real end
+// span yet an order of magnitude above quantization+jitter (~0.01-0.05 ft),
+// so it fires ONLY on a true plateau. Reject → SimVar fallback.
+// Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_min_end_agl_span_ft (v2.1.24: 0.3)
+// Gate 2 — balloon tolerance (ft). If the airborne AGL trace rises by
+// more than this above a prior in-window minimum it is non-monotone (a
+// bounce/balloon), not a descent+flare. DA40 GSG2056 balloons ~2.4 ft;
+// every real flare in the corpus stays ≤ ~0.25 ft. Reject → SimVar
+// fallback. (An on_ground=true sample anywhere in the window is a
+// separate, unconditional bounce reject.)
+// Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_balloon_tol_ft (v2.1.24: 1.5)
+// Gate 3 — pitch-corroboration veto. `flare_detected` is additionally
+// withheld when the net pitch trend across the window is strongly
+// NOSE-DOWN (a settle/shed signature, not a pull). Tuned conservatively:
+// real held-attitude flares on the VPS show window pitch-deltas as low as
+// −0.6° (the pilot sets a flare attitude early and HOLDS it while the
+// sink decays in ground effect), so a positive "+Δ required" gate would
+// wrongly suppress real flares — Gates 1+2 are the primary phantom
+// defense. This veto only trips on a clear nose-down trend, below every
+// real flare observed, and is belt-and-suspenders for a future bounce
+// that somehow evades Gate 2.
+// Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_pitch_nosedown_veto_deg (v2.1.24: -1.0)
+// The flare-source detection floor (fpm of reduction). Kept at 50 (NOT
+// nudged to 60): the real FSLabs A321 flare in the QS set reduces 58.5
+// fpm and MUST stay detected, so 60 would drop a real marginal flare.
+// The fragile band is instead cleaned by Gates 1-3, which remove the
+// frozen/bounce members of that band without touching real soft flares.
+// Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_detect_floor_fpm (v2.1.24: 50.0)
 
 /// Pitch-corrected AGL-geometric V/S (fpm, negative = descending) at the
 /// time point `t_ms`, via a least-squares fit of `agl_ft` over the
@@ -32411,8 +32417,8 @@ fn agl_geometric_vs_fpm_at(
     pitch_deg_at_t: f32,
     fit_hi_cap: Option<i64>,
 ) -> Option<f32> {
-    let lo = t_ms - MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
-    let hi = t_ms + MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
+    let lo = t_ms - crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
+    let hi = t_ms + crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
     // Least-squares slope of agl_ft (y) over time-offset in ms (x,
     // centred on t_ms so the numbers stay small). Only airborne samples
     // near the ground — a high sample would be pre-flare descent.
@@ -32433,7 +32439,7 @@ fn agl_geometric_vs_fpm_at(
                 continue;
             }
         }
-        if s.agl_ft > MSFS_FLARE_AGL_MAX_FT || !s.agl_ft.is_finite() {
+        if s.agl_ft > msfs_flare_agl_max_ft() || !s.agl_ft.is_finite() {
             continue;
         }
         let x = (ts - t_ms) as f64; // ms, centred
@@ -32444,7 +32450,7 @@ fn agl_geometric_vs_fpm_at(
         sxx += x * x;
         sxy += x * y;
     }
-    if n < MSFS_FLARE_AGL_FIT_MIN_SAMPLES {
+    if n < crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_min_samples.wert {
         return None;
     }
     let nf = n as f64;
@@ -32552,14 +32558,14 @@ fn evaluate_msfs_flare_gates(
     // tripping firm landings. (The fit endpoints are already capped at the
     // edge — this gate is the corroborating veto so a bounce earns no
     // credited flare. Data-quality gates 1a/1b/1c stay on the pre-edge set.)
-    let bounce_scan_hi = flare_hi + MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
+    let bounce_scan_hi = flare_hi + crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
 
     // Airborne, finite-AGL, near-ground samples in the FLARE window drive the
     // data-quality checks (mirrors the slope fit's qualifying set).
     let air: Vec<&TouchdownWindowSample> = in_window
         .iter()
         .copied()
-        .filter(|s| !s.on_ground && s.agl_ft.is_finite() && s.agl_ft <= MSFS_FLARE_AGL_MAX_FT)
+        .filter(|s| !s.on_ground && s.agl_ft.is_finite() && s.agl_ft <= msfs_flare_agl_max_ft())
         .collect();
     // Airborne set over the EXTENDED balloon-scan window (pre-edge flare
     // window + post-edge fit reach) — used ONLY for the balloon (non-monotone
@@ -32572,7 +32578,7 @@ fn evaluate_msfs_flare_gates(
                 && ts <= bounce_scan_hi
                 && !s.on_ground
                 && s.agl_ft.is_finite()
-                && s.agl_ft <= MSFS_FLARE_AGL_MAX_FT
+                && s.agl_ft <= msfs_flare_agl_max_ft()
         })
         .collect();
     air_bounce.sort_by_key(|s| s.at.timestamp_millis());
@@ -32592,8 +32598,8 @@ fn evaluate_msfs_flare_gates(
     // fit window only — catches a freeze that corrupts the end slope while
     // the rest of the window is fine (Gate 1a's whole-window count misses
     // a localized mid/late freeze). Same quantization as Gate 1a.
-    let end_lo = flare_hi - MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
-    let end_hi = flare_hi + MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
+    let end_lo = flare_hi - crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
+    let end_hi = flare_hi + crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
     let end_agls: Vec<f32> = air
         .iter()
         .filter(|s| {
@@ -32669,14 +32675,14 @@ fn evaluate_msfs_flare_gates(
     // backstop is what catches a dither that spreads across ≥4 buckets yet
     // covers near-zero true height (vs_at_flare_end ≈ 0 → fake reduction).
     let end_span_flat = end_agl_span
-        .map(|sp| sp < MSFS_FLARE_MIN_END_AGL_SPAN_FT)
+        .map(|sp| sp < crate::grenzwerte::grenzwerte().landung.msfs_flare_min_end_agl_span_ft.wert)
         .unwrap_or(false);
-    let end_frozen = (n_end_distinct > 0 && n_end_distinct < MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL)
+    let end_frozen = (n_end_distinct > 0 && n_end_distinct < crate::grenzwerte::grenzwerte().landung.msfs_flare_min_end_fit_distinct_agl.wert)
         || end_span_flat;
-    let dq_reject = n_distinct < MSFS_FLARE_MIN_DISTINCT_AGL
-        || median_dt > MSFS_FLARE_MAX_MEDIAN_DT_MS
+    let dq_reject = n_distinct < crate::grenzwerte::grenzwerte().landung.msfs_flare_min_distinct_agl.wert
+        || median_dt > crate::grenzwerte::grenzwerte().landung.msfs_flare_max_median_dt_ms.wert
         || end_frozen;
-    let bounce_reject = any_on_ground || balloon_ft > MSFS_FLARE_BALLOON_TOL_FT;
+    let bounce_reject = any_on_ground || balloon_ft > crate::grenzwerte::grenzwerte().landung.msfs_flare_balloon_tol_ft.wert;
 
     // ── Gate 3 (pitch corroboration): net window pitch trend. Compare the
     // mean pitch over the first ~300 ms of airborne samples to the mean over
@@ -32699,7 +32705,7 @@ fn evaluate_msfs_flare_gates(
         let p_start = mean_pitch(&|t| t <= first_t + 300);
         let p_end = mean_pitch(&|t| t >= last_t - 300);
         match (p_start, p_end) {
-            (Some(a), Some(b)) => (b - a) <= MSFS_FLARE_PITCH_NOSEDOWN_VETO_DEG,
+            (Some(a), Some(b)) => (b - a) <= crate::grenzwerte::grenzwerte().landung.msfs_flare_pitch_nosedown_veto_deg.wert,
             _ => false,
         }
     } else {
@@ -32836,51 +32842,51 @@ fn compute_landing_analysis(
     // ein und liest zu nah an Null).
     // Dieselbe Konstante begrenzt die Lückenprüfung der Bewertbarkeit.
     const AGL_FENSTER_MS: i64 = touchdown_v2::LUECKEN_FENSTER_VOR_MS;
-    /// Weniger Messpunkte im Fenster → keine belastbare Steigung.
-    const AGL_MIN_SAMPLES: usize = 4;
-    /// Manche Zusatzflugzeuge frieren die Hoehe ein. Ohne Bewegung in der
-    /// Kurve ist die Ableitung wertlos (im Korpus: 0,5 % der Landungen).
-    const AGL_MIN_VERSCHIEDENE: usize = 3;
-    /// Wie lange die Hoehe hoechstens stillstehen darf, in Millisekunden.
-    ///
-    /// **Warum das zusaetzlich zu `AGL_MIN_VERSCHIEDENE` noetig ist.** Die
-    /// Hoehe wird oft mit halber Bildrate nachgefuehrt; kurze Haltezeiten
-    /// sind der Normalfall und harmlos. Laengere sind es nicht: die
-    /// verschluckte Bewegung holt der Simulator danach am Stueck nach, und
-    /// die Ausgleichsgerade mittelt das Plateau mit ein — sie liest dann zu
-    /// FLACH, also zu weich.
-    ///
-    /// **Warum in Zeit und nicht in Messpunkten.** Die Abtastrate schwankt
-    /// um mehr als das Vierfache (MSFS median 36, X-Plane 45, im Extrem
-    /// 146 Werte je Sekunde). Fuenf gleiche Werte sind bei 36 Hz ein echter
-    /// Stillstand von 140 ms, bei 146 Hz aber nur 34 ms ganz normaler
-    /// Ueberabtastung. Eine Zaehlgrenze verwirft deshalb genau die
-    /// Aufzeichnungen mit der BESTEN Datenlage. Eine erste Fassung dieses
-    /// Riegels zaehlte Messpunkte und kostete unterm Strich Punkte
-    /// (QS-Befund Runde 4).
-    ///
-    /// **Die Grenze ist gemessen, nicht geschaetzt.** Ueber 748 Fenster mit
-    /// der G-Kraft als unabhaengigem Schiedsrichter: bis 40 ms Stillstand
-    /// trifft die Hoehenkurve in 70 % der Faelle naeher als der
-    /// Simulator-Kanal, bei 41–80 ms in 58 %, bei 81–120 ms in 79 % — erst
-    /// ab 121 ms kippt es auf 43 %, dort ist der Kanal also besser.
-    /// Betroffen sind 0,9 % der Landungen.
-    ///
-    /// Anlass war die Aufzeichnung `a320_vrnevnl_frozen_end`: die Hoehe
-    /// steht dort ueber eine halbe Sekunde still, danach kommt der ganze
-    /// Weg in einem Schritt. Die Gerade las −45 statt −162 fpm — der Pilot
-    /// haette 15 Punkte fuer einen langen Abfangbogen verloren, den er nie
-    /// geflogen ist.
-    const AGL_MAX_STILLSTAND_MS: i64 = 120;
-    /// Die Ausgleichsgerade braucht eine echte Zeitbasis. Gemessen liefert
-    /// MSFS rund 32, X-Plane rund 43 Hoehenwerte je Sekunde; 0,15 s sind
-    /// also etwa 5 bis 7 Messpunkte. Darunter bestimmt der Abstand zweier
-    /// Nachfuehrschritte den Anstieg vollstaendig.
-    const AGL_MIN_SPANNE_S: f64 = 0.15;
-    /// Ueber diesem Betrag ist es kein Sinkflug mehr, sondern ein Sprung im
-    /// Hoehenbezug (Gelaendekante, Helipad-Dach, Bodenmodell-Wechsel).
-    /// Deckt sich mit `VS_FLOOR_FPM` der kanonischen Landerate.
-    const AGL_MAX_PLAUSIBEL_FPM: f32 = -3000.0;
+    // Weniger Messpunkte im Fenster → keine belastbare Steigung.
+    // Wert seit v3: bundle/grenzwerte/landung.json -> agl_min_samples (v2.1.24: 4)
+    // Manche Zusatzflugzeuge frieren die Hoehe ein. Ohne Bewegung in der
+    // Kurve ist die Ableitung wertlos (im Korpus: 0,5 % der Landungen).
+    // Wert seit v3: bundle/grenzwerte/landung.json -> agl_min_verschiedene (v2.1.24: 3)
+    // Wie lange die Hoehe hoechstens stillstehen darf, in Millisekunden.
+    //
+    // **Warum das zusaetzlich zu `AGL_MIN_VERSCHIEDENE` noetig ist.** Die
+    // Hoehe wird oft mit halber Bildrate nachgefuehrt; kurze Haltezeiten
+    // sind der Normalfall und harmlos. Laengere sind es nicht: die
+    // verschluckte Bewegung holt der Simulator danach am Stueck nach, und
+    // die Ausgleichsgerade mittelt das Plateau mit ein — sie liest dann zu
+    // FLACH, also zu weich.
+    //
+    // **Warum in Zeit und nicht in Messpunkten.** Die Abtastrate schwankt
+    // um mehr als das Vierfache (MSFS median 36, X-Plane 45, im Extrem
+    // 146 Werte je Sekunde). Fuenf gleiche Werte sind bei 36 Hz ein echter
+    // Stillstand von 140 ms, bei 146 Hz aber nur 34 ms ganz normaler
+    // Ueberabtastung. Eine Zaehlgrenze verwirft deshalb genau die
+    // Aufzeichnungen mit der BESTEN Datenlage. Eine erste Fassung dieses
+    // Riegels zaehlte Messpunkte und kostete unterm Strich Punkte
+    // (QS-Befund Runde 4).
+    //
+    // **Die Grenze ist gemessen, nicht geschaetzt.** Ueber 748 Fenster mit
+    // der G-Kraft als unabhaengigem Schiedsrichter: bis 40 ms Stillstand
+    // trifft die Hoehenkurve in 70 % der Faelle naeher als der
+    // Simulator-Kanal, bei 41–80 ms in 58 %, bei 81–120 ms in 79 % — erst
+    // ab 121 ms kippt es auf 43 %, dort ist der Kanal also besser.
+    // Betroffen sind 0,9 % der Landungen.
+    //
+    // Anlass war die Aufzeichnung `a320_vrnevnl_frozen_end`: die Hoehe
+    // steht dort ueber eine halbe Sekunde still, danach kommt der ganze
+    // Weg in einem Schritt. Die Gerade las −45 statt −162 fpm — der Pilot
+    // haette 15 Punkte fuer einen langen Abfangbogen verloren, den er nie
+    // geflogen ist.
+    // Wert seit v3: bundle/grenzwerte/landung.json -> agl_max_stillstand_ms (v2.1.24: 120)
+    // Die Ausgleichsgerade braucht eine echte Zeitbasis. Gemessen liefert
+    // MSFS rund 32, X-Plane rund 43 Hoehenwerte je Sekunde; 0,15 s sind
+    // also etwa 5 bis 7 Messpunkte. Darunter bestimmt der Abstand zweier
+    // Nachfuehrschritte den Anstieg vollstaendig.
+    // Wert seit v3: bundle/grenzwerte/landung.json -> agl_min_spanne_s (v2.1.24: 0.15)
+    // Ueber diesem Betrag ist es kein Sinkflug mehr, sondern ein Sprung im
+    // Hoehenbezug (Gelaendekante, Helipad-Dach, Bodenmodell-Wechsel).
+    // Deckt sich mit `VS_FLOOR_FPM` der kanonischen Landerate.
+    // Wert seit v3: bundle/grenzwerte/landung.json -> agl_max_plausibel_fpm (v2.1.24: -3000.0)
 
     // `auch_bei_stillstand` schaltet den Stillstands-Riegel ab. Der Score
     // laesst ihn an (eine eingefrorene Hoehenspur liest zu weich, siehe
@@ -32906,7 +32912,7 @@ fn compute_landing_analysis(
                 ts >= lo && ts <= edge_ms && s.agl_ft.is_finite() && !s.on_ground
             })
             .collect();
-        if fenster.len() < AGL_MIN_SAMPLES {
+        if fenster.len() < crate::grenzwerte::grenzwerte().landung.agl_min_samples.wert {
             return None;
         }
         let verschieden = fenster
@@ -32914,7 +32920,7 @@ fn compute_landing_analysis(
             .map(|s| (s.agl_ft * 1000.0).round() as i64)
             .collect::<std::collections::BTreeSet<_>>()
             .len();
-        if verschieden < AGL_MIN_VERSCHIEDENE {
+        if verschieden < crate::grenzwerte::grenzwerte().landung.agl_min_verschiedene.wert {
             return None;
         }
         // Laengster Stillstand der Hoehe, in Millisekunden.
@@ -32944,13 +32950,13 @@ fn compute_landing_analysis(
             }
             best
         };
-        let eingefroren = laengster_stillstand_ms > AGL_MAX_STILLSTAND_MS;
+        let eingefroren = laengster_stillstand_ms > crate::grenzwerte::grenzwerte().landung.agl_max_stillstand_ms.wert;
         if eingefroren && !auch_bei_stillstand {
             return None;
         }
         let t0 = fenster.first()?.at.timestamp_millis();
         let spanne = (fenster.last()?.at.timestamp_millis() - t0) as f64 / 1000.0;
-        if spanne < AGL_MIN_SPANNE_S {
+        if spanne < crate::grenzwerte::grenzwerte().landung.agl_min_spanne_s.wert {
             return None;
         }
         // **Ausgleichsgerade, nicht Endpunkt-Differenz.** Eine Zweipunkt-
@@ -32986,7 +32992,7 @@ fn compute_landing_analysis(
         let fpm = (zaehler / nenner * 60.0) as f32;
         // Nur ein SINKEN ist eine Landerate; ein Steigen im Fenster heisst,
         // dass der Aufsetzpunkt nicht sauber erfasst wurde.
-        if !fpm.is_finite() || !(AGL_MAX_PLAUSIBEL_FPM..0.0).contains(&fpm) {
+        if !fpm.is_finite() || !(crate::grenzwerte::grenzwerte().landung.agl_max_plausibel_fpm.wert..0.0).contains(&fpm) {
             return None;
         }
         Some(fpm)
@@ -33065,11 +33071,11 @@ fn compute_landing_analysis(
                 Some((s.at.timestamp_millis() as f64 / 1000.0, y as f64))
             })
             .collect();
-        if punkte.len() < AGL_MIN_SAMPLES {
+        if punkte.len() < crate::grenzwerte::grenzwerte().landung.agl_min_samples.wert {
             return None;
         }
         let spanne = punkte.last()?.0 - punkte.first()?.0;
-        if spanne < AGL_MIN_SPANNE_S {
+        if spanne < crate::grenzwerte::grenzwerte().landung.agl_min_spanne_s.wert {
             return None;
         }
         // Dieselben Riegel wie die Hoehenkurve selbst — eine eingefrorene
@@ -33083,7 +33089,7 @@ fn compute_landing_analysis(
             .map(|p| (p.1 * 1000.0).round() as i64)
             .collect::<std::collections::BTreeSet<_>>()
             .len();
-        if bewegung_pruefen && verschiedene < AGL_MIN_VERSCHIEDENE {
+        if bewegung_pruefen && verschiedene < crate::grenzwerte::grenzwerte().landung.agl_min_verschiedene.wert {
             return None;
         }
         let mut laengster_stillstand_ms = 0_i64;
@@ -33096,7 +33102,7 @@ fn compute_landing_analysis(
                 lauf_start = paar[1].0;
             }
         }
-        if bewegung_pruefen && laengster_stillstand_ms > AGL_MAX_STILLSTAND_MS {
+        if bewegung_pruefen && laengster_stillstand_ms > crate::grenzwerte::grenzwerte().landung.agl_max_stillstand_ms.wert {
             return None;
         }
         let n = punkte.len() as f64;
@@ -33147,13 +33153,13 @@ fn compute_landing_analysis(
                 // dieselbe Rechnung macht, saeubert stattdessen Ausreisser
                 // aus der Bodenspur; wir verwerfen, weil eine falsche
                 // Erklaerung im Landebericht schlimmer ist als keine.
-                const PROBE_TOLERANZ_FPM: f32 = 20.0;
+                // Wert seit v3: bundle/grenzwerte/landung.json -> probe_toleranz_fpm (v2.1.24: 20.0)
                 // Ueber 3000 fpm ist es kein Gelaende mehr, sondern ein
                 // Sprung im Hoehenbezug — dieselbe Grenze wie bei der
                 // Hoehenkurve.
-                if (gemessen - (eigen + gelaende)).abs() > PROBE_TOLERANZ_FPM
-                    || gelaende.abs() > AGL_MAX_PLAUSIBEL_FPM.abs()
-                    || eigen.abs() > AGL_MAX_PLAUSIBEL_FPM.abs()
+                if (gemessen - (eigen + gelaende)).abs() > crate::grenzwerte::grenzwerte().landung.probe_toleranz_fpm.wert
+                    || gelaende.abs() > crate::grenzwerte::grenzwerte().landung.agl_max_plausibel_fpm.wert.abs()
+                    || eigen.abs() > crate::grenzwerte::grenzwerte().landung.agl_max_plausibel_fpm.wert.abs()
                 {
                     (None, None)
                 } else {
@@ -33505,7 +33511,7 @@ fn compute_landing_analysis(
             // veto (Gate 3) additionally withholds detection when the net
             // pitch trend is strongly nose-down (a settle/shed, not a
             // pull) — the reduction/score still publish for forensics.
-            let mut detected = red > MSFS_FLARE_DETECT_FLOOR_FPM;
+            let mut detected = red > crate::grenzwerte::grenzwerte().landung.msfs_flare_detect_floor_fpm.wert;
             if is_msfs && use_agl && flare_gates.pitch_nose_down {
                 detected = false;
             }
@@ -33578,7 +33584,7 @@ fn compute_landing_analysis(
             // merklich; ein flatternder Schalter ist nach Millisekunden
             // vorbei. Bei THY42 waren es 40 und 160 ms.
             let dauer_ms = ts - bounce_start_ms;
-            if dauer_ms >= BOUNCE_MIN_DAUER_MS {
+            if dauer_ms >= crate::grenzwerte::grenzwerte().landung.bounce_min_dauer_ms.wert {
                 if current_bounce_max >= crate::grenzwerte::grenzwerte().aufsetzen.bounce_forensic_min_agl_ft.wert {
                     forensic_bounces += 1;
                     if current_bounce_max > bounce_max_agl {
@@ -33587,8 +33593,8 @@ fn compute_landing_analysis(
                 }
                 if current_bounce_max >= crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert {
                     scored_bounces += 1;
-                } else if dauer_ms >= BOUNCE_LIGHT_MIN_DAUER_MS
-                    && current_bounce_max >= BOUNCE_LIGHT_MIN_AGL_FT
+                } else if dauer_ms >= crate::grenzwerte::grenzwerte().landung.bounce_light_min_dauer_ms.wert
+                    && current_bounce_max >= crate::grenzwerte::grenzwerte().landung.bounce_light_min_agl_ft.wert
                 {
                     // P1/8b: leichter Hopser — lange in der Luft, aber unter
                     // der Hopser-Schwelle. Nie zusaetzlich zu einem normalen.
@@ -33764,13 +33770,13 @@ fn landung_episode_zuruecksetzen(stats: &mut FlightStats) {
 /// Sampler auf demselben Tick, und der zweite Aufsetzer bekommt seinen
 /// eigenen Dump + seine eigene `apply_accident_heuristic`-Auswertung.
 fn touchdown_dump_faellig(elapsed_seit_touchdown_ms: i64, agl_jetzt_ft: f32) -> bool {
-    elapsed_seit_touchdown_ms >= TOUCHDOWN_POST_WINDOW_MS
-        || agl_jetzt_ft > TOUCH_AND_GO_AGL_THRESHOLD_FT
+    elapsed_seit_touchdown_ms >= crate::grenzwerte::grenzwerte().landung.touchdown_post_window_ms.wert
+        || agl_jetzt_ft > crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_agl_threshold_ft.wert
 }
 
 fn open_touchdown_capture_window(stats: &mut FlightStats, now: DateTime<Utc>) {
     stats.landing_critical_until =
-        Some(now + chrono::Duration::milliseconds(TOUCHDOWN_POST_WINDOW_MS));
+        Some(now + chrono::Duration::milliseconds(crate::grenzwerte::grenzwerte().landung.touchdown_post_window_ms.wert));
     stats.post_touchdown_buffer.clear();
     for s in &stats.snapshot_buffer {
         stats.post_touchdown_buffer.push_back(*s);
@@ -33956,8 +33962,8 @@ fn aufsetz_messen(
     // mit dem neuen Sample neu, kein Reset-Detect.
     let mut prev_sample_for_reset_check: Option<(f64, f64, f64, DateTime<Utc>)> = None;
     let mut reset_warning_logged_this_session = false;
-    const RESET_NULL_ISLAND_DEG: f64 = 0.1;
-    const RESET_MAX_ALT_JUMP_FT: f64 = 10_000.0;
+    // Wert seit v3: bundle/grenzwerte/abgabe.json -> reset_null_island_deg (v2.1.24: 0.1)
+    // Wert seit v3: bundle/grenzwerte/abgabe.json -> reset_max_alt_jump_ft (v2.1.24: 10_000.0)
     // Strecke und Abstand stehen jetzt in `RESET_LIMITS` bei
     // `classify_segment` — hier bleiben nur die Werte, die diese
     // Schleife selbst auswertet.
@@ -34031,7 +34037,7 @@ fn aufsetz_messen(
         // Vorher stand die Pruefung dreimal im Code, in drei Fassungen;
         // eine davon zaehlte einen Sprung von 4900 NM als geflogen.
         let is_null_island =
-            snap.lat.abs() < RESET_NULL_ISLAND_DEG && snap.lon.abs() < RESET_NULL_ISLAND_DEG;
+            snap.lat.abs() < crate::grenzwerte::grenzwerte().abgabe.reset_null_island_deg.wert && snap.lon.abs() < crate::grenzwerte::grenzwerte().abgabe.reset_null_island_deg.wert;
         let (alt_jump, dist_jump_nm, urteil) = match prev_sample_for_reset_check {
             Some((p_lat, p_lon, p_alt, p_at)) => {
                 let dt = (now - p_at).num_milliseconds() as f64 / 1000.0;
@@ -34049,7 +34055,7 @@ fn aufsetz_messen(
             None => (0.0, 0.0, SegmentVerdict::Flown),
         };
         let ist_sprung = matches!(urteil, SegmentVerdict::Jump(_));
-        let is_alt_jump = ist_sprung && alt_jump > RESET_MAX_ALT_JUMP_FT;
+        let is_alt_jump = ist_sprung && alt_jump > crate::grenzwerte::grenzwerte().abgabe.reset_max_alt_jump_ft.wert;
 
         if is_null_island || ist_sprung {
             if !reset_warning_logged_this_session {
@@ -34866,7 +34872,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                     // only, the FSM arm has no guard).
                                     let td_ts = Some(pending_at);
                                     let stab_window =
-                                        chrono::Duration::seconds(SAMPLER_STABILITY_WINDOW_SECS);
+                                        chrono::Duration::seconds(crate::grenzwerte::grenzwerte().anflug_kern.sampler_stability_window_secs.wert);
                                     let windowed_buf = approach_buffer_window(
                                         &stats.approach_buffer,
                                         pending_at,
@@ -34963,7 +34969,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                                         bank_sd_filtered = ?stab_v2.bank_stddev_filtered_deg,
                                         stable_at_gate = ?stab_v2.stable_at_gate,
                                         samples = stab_v2.window_sample_count,
-                                        window_secs = SAMPLER_STABILITY_WINDOW_SECS,
+                                        window_secs = crate::grenzwerte::grenzwerte().anflug_kern.sampler_stability_window_secs.wert,
                                         "approach stability v2 computed (sampler path)"
                                     );
 
@@ -35176,9 +35182,9 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // Frueh-Dump bei Bounce-in-Aufprall — siehe Doc-Kommentar
                     // an `touchdown_dump_faellig`.
                     let agl_jetzt_ft = snap.altitude_agl_ft as f32;
-                    let climbed_out_early = agl_jetzt_ft > TOUCH_AND_GO_AGL_THRESHOLD_FT;
+                    let climbed_out_early = agl_jetzt_ft > crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_agl_threshold_ft.wert;
                     if touchdown_dump_faellig(elapsed_ms, agl_jetzt_ft) {
-                        if climbed_out_early && elapsed_ms < TOUCHDOWN_POST_WINDOW_MS {
+                        if climbed_out_early && elapsed_ms < crate::grenzwerte::grenzwerte().landung.touchdown_post_window_ms.wert {
                             tracing::info!(
                                 pirep_id = %flight.pirep_id,
                                 elapsed_ms,
@@ -35217,7 +35223,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 }
             };
 
-            let cutoff = now - chrono::Duration::seconds(TOUCHDOWN_BUFFER_SECS);
+            let cutoff = now - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().landung.touchdown_buffer_secs.wert);
             while stats.snapshot_buffer.front().is_some_and(|s| s.at < cutoff) {
                 stats.snapshot_buffer.pop_front();
             }
@@ -35688,7 +35694,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 tracing::info!(
                     pirep_id = %flight.pirep_id,
                     sample_count = count,
-                    window_ms = TOUCHDOWN_POST_WINDOW_MS,
+                    window_ms = crate::grenzwerte::grenzwerte().landung.touchdown_post_window_ms.wert,
                     flare_score = flare_score,
                     smooth_500ms_fpm = smooth_500,
                     vs_v2_fpm = v2_result.as_ref().map(|v| v.vs_fpm),
@@ -35787,16 +35793,16 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
 /// - sonst die Rate in kg/h, geclampt auf `[0, FF_MAX]`: Tankung (negativ) oder
 ///   ein FOB-Sprung (Dump/Reset) ergeben `0` statt eines unsinnigen Werts.
 fn derive_fuel_flow_kg_per_h(prev_fob_kg: f32, cur_fob_kg: f32, dt_secs: f32) -> Option<f32> {
-    const FF_DERIVE_WINDOW_S: f32 = 60.0;
+    // Wert seit v3: bundle/grenzwerte/sprit.json -> ff_derive_window_s (v2.1.24: 60.0)
     // 4-Mot-Heavy verbrennt grob 5–8 t/h; > 30 t/h ist physikalisch unplausibel.
-    const FF_MAX_KG_PER_H: f32 = 30_000.0;
-    if dt_secs < FF_DERIVE_WINDOW_S {
+    // Wert seit v3: bundle/grenzwerte/sprit.json -> ff_max_kg_per_h (v2.1.24: 30_000.0)
+    if dt_secs < crate::grenzwerte::grenzwerte().sprit.ff_derive_window_s.wert {
         return None;
     }
     let dt_h = dt_secs / 3600.0;
     let rate = (prev_fob_kg - cur_fob_kg) / dt_h;
     Some(
-        if rate.is_finite() && (0.0..=FF_MAX_KG_PER_H).contains(&rate) {
+        if rate.is_finite() && (0.0..=crate::grenzwerte::grenzwerte().sprit.ff_max_kg_per_h.wert).contains(&rate) {
             rate
         } else {
             0.0
@@ -35805,23 +35811,23 @@ fn derive_fuel_flow_kg_per_h(prev_fob_kg: f32, cur_fob_kg: f32, dt_secs: f32) ->
 }
 
 // ---- v0.16.10 Fuel-Used-Fallback (Task B) ----
-/// SimVar gilt als "lebendig" sobald sie mehr als diesen Wert meldet —
-/// dann hat sie Vorrang vor dem FOB-Delta.
-const FUEL_USED_SIMVAR_ALIVE_KG: f32 = 0.5;
-/// FOB-Delta muss mindestens so groß sein bevor der Fallback greift
-/// (filtert FOB-Mess-Rauschen am Gate raus).
-const FUEL_USED_MIN_DELTA_KG: f32 = 5.0;
-/// Steigt der FOB mehr als so viel ÜBER die Baseline, war das ein
-/// Mid-Flight-/Gate-Refuel → Baseline auf den neuen Maximalwert
-/// re-latchen statt negative Deltas zu produzieren.
-const FUEL_USED_REFUEL_RELATCH_KG: f32 = 50.0;
-/// v0.16.10 QS (M1): Gate-DEFUEL — ein instantaner FOB-ABFALL pro Tick
-/// über diese Schwelle (vor dem Takeoff) re-latcht die Baseline NACH
-/// UNTEN. Spiegelt den Block-Fuel-Defuel-Guard (`DEFUEL_THRESHOLD_KG`
-/// in `update_running_stats`): 200 kg liegt über jedem realistischen
-/// Engine-Burn eines Tick-Intervalls, also kein False-Positive durch
-/// normalen Betrieb.
-const FUEL_USED_DEFUEL_RELATCH_KG: f32 = 200.0;
+// SimVar gilt als "lebendig" sobald sie mehr als diesen Wert meldet —
+// dann hat sie Vorrang vor dem FOB-Delta.
+// Wert seit v3: bundle/grenzwerte/sprit.json -> fuel_used_simvar_alive_kg (v2.1.24: 0.5)
+// FOB-Delta muss mindestens so groß sein bevor der Fallback greift
+// (filtert FOB-Mess-Rauschen am Gate raus).
+// Wert seit v3: bundle/grenzwerte/sprit.json -> fuel_used_min_delta_kg (v2.1.24: 5.0)
+// Steigt der FOB mehr als so viel ÜBER die Baseline, war das ein
+// Mid-Flight-/Gate-Refuel → Baseline auf den neuen Maximalwert
+// re-latchen statt negative Deltas zu produzieren.
+// Wert seit v3: bundle/grenzwerte/sprit.json -> fuel_used_refuel_relatch_kg (v2.1.24: 50.0)
+// v0.16.10 QS (M1): Gate-DEFUEL — ein instantaner FOB-ABFALL pro Tick
+// über diese Schwelle (vor dem Takeoff) re-latcht die Baseline NACH
+// UNTEN. Spiegelt den Block-Fuel-Defuel-Guard (`DEFUEL_THRESHOLD_KG`
+// in `update_running_stats`): 200 kg liegt über jedem realistischen
+// Engine-Burn eines Tick-Intervalls, also kein False-Positive durch
+// normalen Betrieb.
+// Wert seit v3: bundle/grenzwerte/sprit.json -> fuel_used_defuel_relatch_kg (v2.1.24: 200.0)
 
 /// PMDG liefert FUEL TOTAL QUANTITY USED nicht (Live-Befund GLO4587
 /// 2026-06-11) — Fallback aus FOB-Delta.
@@ -35859,7 +35865,7 @@ fn fuel_used_effective_kg(
             // Flugstart (bzw. erster Tick mit Fuel) → Baseline latchen.
             None => *initial_fob_kg = Some(fob_kg),
             // Refuel: FOB deutlich über Baseline → auf neues Max re-latchen.
-            Some(initial) if fob_kg > initial + FUEL_USED_REFUEL_RELATCH_KG => {
+            Some(initial) if fob_kg > initial + crate::grenzwerte::grenzwerte().sprit.fuel_used_refuel_relatch_kg.wert => {
                 *initial_fob_kg = Some(fob_kg);
             }
             // v0.16.10 QS (M1): Gate-Defuel — instantaner Tick-Abfall
@@ -35870,7 +35876,7 @@ fn fuel_used_effective_kg(
                 if pre_takeoff
                     && fob_kg < initial
                     && prev_fob_kg
-                        .is_some_and(|prev| prev - fob_kg > FUEL_USED_DEFUEL_RELATCH_KG) =>
+                        .is_some_and(|prev| prev - fob_kg > crate::grenzwerte::grenzwerte().sprit.fuel_used_defuel_relatch_kg.wert) =>
             {
                 *initial_fob_kg = Some(fob_kg);
             }
@@ -35878,13 +35884,13 @@ fn fuel_used_effective_kg(
         }
     }
     // SimVar lebt → sie ist authoritativ (kennt z.B. APU-Burn exakt).
-    if simvar_used_kg >= FUEL_USED_SIMVAR_ALIVE_KG {
+    if simvar_used_kg >= crate::grenzwerte::grenzwerte().sprit.fuel_used_simvar_alive_kg.wert {
         return simvar_used_kg;
     }
     match *initial_fob_kg {
         Some(initial) => {
             let delta = initial - fob_kg;
-            if delta > FUEL_USED_MIN_DELTA_KG {
+            if delta > crate::grenzwerte::grenzwerte().sprit.fuel_used_min_delta_kg.wert {
                 // Clamp ist Belt-and-Braces — delta > 5 impliziert > 0.
                 delta.max(0.0)
             } else {
@@ -39255,7 +39261,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 if snap.stall_warning {
                     let since = *stats.stall_mqtt_true_since.get_or_insert(now);
                     snap.stall_warning =
-                        (now - since).num_seconds() >= STALL_WARNING_MQTT_DEBOUNCE_SECS;
+                        (now - since).num_seconds() >= crate::grenzwerte::grenzwerte().cockpit.stall_warning_mqtt_debounce_secs.wert;
                 } else {
                     stats.stall_mqtt_true_since = None;
                 }
@@ -40154,14 +40160,14 @@ fn takeoff_climb_gate_ft(category: aircraft_category::AircraftCategory) -> f64 {
     }
 }
 
-/// Sampler touchdown-edge gear-force threshold (N). Below this the gear is
-/// considered unloaded (in the air); X-Plane `fnrml_gear` spikes far above it
-/// on a wheel touchdown.
-const SAMPLER_GEAR_TOUCHDOWN_THRESHOLD_N: f32 = 1.0;
+// Sampler touchdown-edge gear-force threshold (N). Below this the gear is
+// considered unloaded (in the air); X-Plane `fnrml_gear` spikes far above it
+// on a wheel touchdown.
+// Wert seit v3: bundle/grenzwerte/landung.json -> sampler_gear_touchdown_threshold_n (v2.1.24: 1.0)
 
-/// Seaplane / amphibian water-contact AGL (ft): at or below this height above
-/// the water surface the floats / hull are settling onto the water.
-const SAMPLER_WATER_CONTACT_AGL_FT: f64 = 3.0;
+// Seaplane / amphibian water-contact AGL (ft): at or below this height above
+// the water surface the floats / hull are settling onto the water.
+// Wert seit v3: bundle/grenzwerte/landung.json -> sampler_water_contact_agl_ft (v2.1.24: 3.0)
 
 /// Category-aware "in air" signal for the 50 Hz touchdown sampler.
 ///
@@ -40186,10 +40192,10 @@ fn sampler_in_air_now(
     gear_normal_force_n: Option<f32>,
 ) -> bool {
     if category.water_capable() && !on_ground {
-        altitude_agl_ft > SAMPLER_WATER_CONTACT_AGL_FT
+        altitude_agl_ft > crate::grenzwerte::grenzwerte().landung.sampler_water_contact_agl_ft.wert
     } else {
         match gear_normal_force_n {
-            Some(force) => force < SAMPLER_GEAR_TOUCHDOWN_THRESHOLD_N,
+            Some(force) => force < crate::grenzwerte::grenzwerte().landung.sampler_gear_touchdown_threshold_n.wert,
             None => !on_ground,
         }
     }
@@ -40204,9 +40210,9 @@ fn touchdown_buffer_sample(stats: &FlightStats) -> Option<TelemetrySample> {
     stats.snapshot_buffer.iter().find(|s| s.on_ground).cloned()
 }
 
-/// Wie viel spaeter als das bestaetigte Aufsetzen die Pufferprobe liegen
-/// darf, um noch als Aufsetzmoment zu gelten.
-const AUFSETZPROBE_TOLERANZ_MS: i64 = 2_000;
+// Wie viel spaeter als das bestaetigte Aufsetzen die Pufferprobe liegen
+// darf, um noch als Aufsetzmoment zu gelten.
+// Wert seit v3: bundle/grenzwerte/landung.json -> aufsetzprobe_toleranz_ms (v2.1.24: 2_000)
 
 /// Behaelt der FSM-Landing-Arm den Stempel des Abtasters? Ja, wenn der
 /// Abtaster das Aufsetzen schon bestaetigt und gestempelt hat und der Puffer
@@ -40221,7 +40227,7 @@ fn abtaster_stempel_bleibt(stats: &FlightStats, td_buf_sample: Option<&Telemetry
     if gespeicherter_aufsetzpunkt(stats).is_none() {
         return false;
     }
-    td_buf_sample.is_none_or(|s| (s.at - td_at).num_milliseconds() > AUFSETZPROBE_TOLERANZ_MS)
+    td_buf_sample.is_none_or(|s| (s.at - td_at).num_milliseconds() > crate::grenzwerte::grenzwerte().landung.aufsetzprobe_toleranz_ms.wert)
 }
 
 #[cfg(test)]
@@ -40503,21 +40509,21 @@ fn stamp_touchdown_metadata(
     stats.landing_crosswind_kt = snap.aircraft_wind_x_kt;
 }
 
-/// v0.16.24: how close (in nm) a second airport must be to the nearest one
-/// for the touchdown to count as "ambiguous between two fields". Inside this
-/// margin we prefer the planned `arr_airport` if it's one of the two — so a
-/// touchdown that is geometrically tied between the planned airport and an
-/// immediate neighbour never flips away from the plan. 1.5 nm is well below
-/// the spacing of any two distinct real-world airports a pilot could land on
-/// in one rollout, yet large enough to absorb the nearest-threshold proxy
-/// error `find_nearest_airports` introduces (it keys on the closest runway
-/// threshold, not the airport reference point).
-const CORRELATE_AIRPORT_AMBIGUITY_NM: f64 = 1.5;
-/// v0.16.24: search radius (nm) for resolving the ACTUAL landing airport from
-/// the touchdown coordinate. The touchdown is on a runway, so the nearest
-/// airport is at most a runway-half-length away (~1.5 nm for the longest
-/// strips). 6 nm is generous head-room without pulling in distant neighbours.
-const CORRELATE_AIRPORT_SEARCH_RADIUS_NM: f64 = 6.0;
+// v0.16.24: how close (in nm) a second airport must be to the nearest one
+// for the touchdown to count as "ambiguous between two fields". Inside this
+// margin we prefer the planned `arr_airport` if it's one of the two — so a
+// touchdown that is geometrically tied between the planned airport and an
+// immediate neighbour never flips away from the plan. 1.5 nm is well below
+// the spacing of any two distinct real-world airports a pilot could land on
+// in one rollout, yet large enough to absorb the nearest-threshold proxy
+// error `find_nearest_airports` introduces (it keys on the closest runway
+// threshold, not the airport reference point).
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> correlate_airport_ambiguity_nm (v2.1.24: 1.5)
+// v0.16.24: search radius (nm) for resolving the ACTUAL landing airport from
+// the touchdown coordinate. The touchdown is on a runway, so the nearest
+// airport is at most a runway-half-length away (~1.5 nm for the longest
+// strips). 6 nm is generous head-room without pulling in distant neighbours.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> correlate_airport_search_radius_nm (v2.1.24: 6.0)
 
 /// v0.16.24: resolve the ICAO of the airport the wheels ACTUALLY touched on,
 /// from the touchdown coordinate, for keying the navdata cache.
@@ -40578,7 +40584,7 @@ fn correlate_airport_icao(arr_airport: &str, td_lat: f64, td_lon: f64) -> String
     let nearby = runway::find_nearest_airports(
         td_lat,
         td_lon,
-        CORRELATE_AIRPORT_SEARCH_RADIUS_NM * 1852.0,
+        crate::grenzwerte::grenzwerte().ausrollen.correlate_airport_search_radius_nm.wert * 1852.0,
         5,
     );
     let Some(nearest) = nearby.first() else {
@@ -40603,7 +40609,7 @@ fn correlate_airport_icao(arr_airport: &str, td_lat: f64, td_lon: f64) -> String
         .find(|na| na.icao.trim().eq_ignore_ascii_case(&planned));
     if let Some(planned_cand) = planned_in_candidates {
         let gap_nm = (planned_cand.distance_m - nearest.distance_m) / 1852.0;
-        if gap_nm <= CORRELATE_AIRPORT_AMBIGUITY_NM {
+        if gap_nm <= crate::grenzwerte::grenzwerte().ausrollen.correlate_airport_ambiguity_nm.wert {
             return planned;
         }
     }
@@ -40662,8 +40668,8 @@ fn divert_prefetch_decision(
 ) -> Option<String> {
     // Gate: airborne, low enough, and actually descending.
     let committed_approach = !snap.on_ground
-        && snap.altitude_agl_ft <= DIVERT_PREFETCH_MAX_AGL_FT
-        && (snap.vertical_speed_fpm as f64) <= DIVERT_PREFETCH_MIN_SINK_FPM;
+        && snap.altitude_agl_ft <= crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_max_agl_ft.wert
+        && (snap.vertical_speed_fpm as f64) <= crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_min_sink_fpm.wert;
     if !committed_approach {
         stats.divert_prefetch_stable_since = None;
         return None;
@@ -40687,7 +40693,7 @@ fn divert_prefetch_decision(
     let dist_to_planned_nmi = runway::distance_to_airport_m(&planned, snap.lat, snap.lon)
         .map(|m| m / 1852.0)
         .unwrap_or(f64::INFINITY);
-    if dist_to_planned_nmi < DIVERT_PREFETCH_PLANNED_DIVERGE_NM {
+    if dist_to_planned_nmi < crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_planned_diverge_nm.wert {
         stats.divert_prefetch_stable_since = None;
         return None;
     }
@@ -40698,7 +40704,7 @@ fn divert_prefetch_decision(
     let nearby = runway::find_nearest_icao_airports(
         snap.lat,
         snap.lon,
-        DIVERT_PREFETCH_MAX_DIST_NM * 1852.0,
+        crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_max_dist_nm.wert * 1852.0,
         1,
     );
     let Some(nearest) = nearby.into_iter().next() else {
@@ -40722,7 +40728,7 @@ fn divert_prefetch_decision(
         }
     }
     let stable_since = stats.divert_prefetch_stable_since.get_or_insert(now);
-    if (now - *stable_since).num_seconds() < DIVERT_PREFETCH_STABLE_SECS {
+    if (now - *stable_since).num_seconds() < crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_stable_secs.wert {
         return None;
     }
 
@@ -41076,10 +41082,10 @@ fn alte_achse_von(stats: &FlightStats) -> Option<AlteAchse> {
     })
 }
 
-/// Wie weit zwei Bahnachsen seitlich auseinanderliegen duerfen, um noch
-/// als dieselbe zu gelten. Bahnen sind mindestens 30 m breit; eine
-/// Schwelle, die 5 m neben der alten Achse liegt, ist dieselbe Bahn.
-const ACHSE_TOLERANZ_M: f64 = 5.0;
+// Wie weit zwei Bahnachsen seitlich auseinanderliegen duerfen, um noch
+// als dieselbe zu gelten. Bahnen sind mindestens 30 m breit; eine
+// Schwelle, die 5 m neben der alten Achse liegt, ist dieselbe Bahn.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> achse_toleranz_m (v2.1.24: 5.0)
 
 /// Bringt die Rollspur in das Bezugssystem einer NEU zugeordneten Bahn.
 ///
@@ -41158,7 +41164,7 @@ fn spur_auf_neue_achse(stats: &mut FlightStats, alt: Option<&AlteAchse>) {
         neu.end_lon,
     );
     let gleiche_achse =
-        dt_q.abs() <= ACHSE_TOLERANZ_M && de_q.abs() <= ACHSE_TOLERANZ_M && de_l > dt_l;
+        dt_q.abs() <= crate::grenzwerte::grenzwerte().ausrollen.achse_toleranz_m.wert && de_q.abs() <= crate::grenzwerte::grenzwerte().ausrollen.achse_toleranz_m.wert && de_l > dt_l;
     if !gleiche_achse {
         if fertig {
             stats.bahn_spur_bezug_veraltet = true;
@@ -41539,14 +41545,14 @@ fn korreliere_bahn(
     }
 }
 
-/// Schwellenspur: nur im Anflug aufzeichnen (darueber ist die Schwelle weit).
-const SCHWELLENSPUR_MAX_AGL_FT: f64 = 600.0;
-/// Abstand der Proben (~2,5 Hz; bei 70 m/s ≈ 28 m — die Hoehe an der Schwelle
-/// wird zwischen zwei Proben interpoliert, nicht abgelesen).
-const SCHWELLENSPUR_TAKT_MS: i64 = 400;
-/// Wie weit zurueck die Spur reicht — traegt auch langsame GA-Anfluege
-/// (Schwelle → Aufsetzen bis ~25 s) und einen Hopser.
-const SCHWELLENSPUR_SECS: i64 = 60;
+// Schwellenspur: nur im Anflug aufzeichnen (darueber ist die Schwelle weit).
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> schwellenspur_max_agl_ft (v2.1.24: 600.0)
+// Abstand der Proben (~2,5 Hz; bei 70 m/s ≈ 28 m — die Hoehe an der Schwelle
+// wird zwischen zwei Proben interpoliert, nicht abgelesen).
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> schwellenspur_takt_ms (v2.1.24: 400)
+// Wie weit zurueck die Spur reicht — traegt auch langsame GA-Anfluege
+// (Schwelle → Aufsetzen bis ~25 s) und einen Hopser.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> schwellenspur_secs (v2.1.24: 60)
 
 /// Fuehrt die Schwellenspur: nimmt die aktuelle Probe auf (wenn Anflug und
 /// Takt), und schneidet alles ab, was aelter als `SCHWELLENSPUR_SECS` ist.
@@ -41554,9 +41560,9 @@ const SCHWELLENSPUR_SECS: i64 = 60;
 /// Aufsetzen stehen und wuerden eine spaetere Landung (Touch-and-Go)
 /// verfaelschen.
 fn schwellenspur_fuehren(stats: &mut FlightStats, probe: TelemetrySample) {
-    let im_anflug = !probe.on_ground && (probe.agl_ft as f64) < SCHWELLENSPUR_MAX_AGL_FT;
+    let im_anflug = !probe.on_ground && (probe.agl_ft as f64) < crate::grenzwerte::grenzwerte().ausrollen.schwellenspur_max_agl_ft.wert;
     let takt_ok = stats.schwellen_spur.back().map_or(true, |l| {
-        (probe.at - l.at).num_milliseconds() >= SCHWELLENSPUR_TAKT_MS
+        (probe.at - l.at).num_milliseconds() >= crate::grenzwerte::grenzwerte().ausrollen.schwellenspur_takt_ms.wert
     });
     if im_anflug && takt_ok {
         stats.schwellen_spur.push_back(probe);
@@ -41564,16 +41570,16 @@ fn schwellenspur_fuehren(stats: &mut FlightStats, probe: TelemetrySample) {
     while stats
         .schwellen_spur
         .front()
-        .is_some_and(|f| (probe.at - f.at).num_seconds() > SCHWELLENSPUR_SECS)
+        .is_some_and(|f| (probe.at - f.at).num_seconds() > crate::grenzwerte::grenzwerte().ausrollen.schwellenspur_secs.wert)
     {
         stats.schwellen_spur.pop_front();
     }
 }
 
-/// Groesster Abstand zweier Proben (Laengsmaß), ueber den noch interpoliert
-/// wird. Bei ~2,5 Hz und 70 m/s liegen Proben ~28 m auseinander; eine Luecke
-/// (Sim-Pause, Aufzeichnungsloch) ueber 150 m gibt keine belastbare Hoehe.
-const TCH_MAX_KLAMMER_M: f64 = 150.0;
+// Groesster Abstand zweier Proben (Laengsmaß), ueber den noch interpoliert
+// wird. Bei ~2,5 Hz und 70 m/s liegen Proben ~28 m auseinander; eine Luecke
+// (Sim-Pause, Aufzeichnungsloch) ueber 150 m gibt keine belastbare Hoehe.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> tch_max_klammer_m (v2.1.24: 150.0)
 /// Plausibler Bereich fuer eine Ueberflughoehe an der Schwelle. Leicht
 /// negativ ist erlaubt: die Hoehe ueber Grund schwankt um die Nullmarke
 /// (der 5-s-Puffer nimmt sie ebenfalls ungeprueft).
@@ -41632,7 +41638,7 @@ fn tch_interpoliert(
         }
         if let Some((a0, h0)) = vorher.take() {
             let spanne = along - a0;
-            if spanne > 0.0 && spanne <= TCH_MAX_KLAMMER_M {
+            if spanne > 0.0 && spanne <= crate::grenzwerte::grenzwerte().ausrollen.tch_max_klammer_m.wert {
                 let anteil = (-a0 / spanne).clamp(0.0, 1.0);
                 letzter = Some(h0 + (s.agl_ft - h0) * anteil as f32);
             } else {
@@ -42095,51 +42101,51 @@ fn vref_aus_dem_flugzeug(snap: &SimSnapshot) -> Option<(f32, &'static str)> {
     Some((v as f32, quelle))
 }
 
-/// v0.16.6: per-tick rollout accumulate/finalise — extracted VERBATIM from
-/// the FSM Landing arm in `step_flight` so sampler-path (bush) landings can
-/// drive it too while the FSM never reaches Landing. The FSM Landing arm
-/// calls this at the exact position its inline code used to sit (first thing
-/// in the arm), so FSM-path behaviour is unchanged.
-///
-/// Sums haversine deltas from the last seen position until one of the three
-/// finalisation triggers fires (~40 kt exit speed / >30° heading turn-off /
-/// 5 kt full-stop — see the `ROLLOUT_*` consts), then sets
-/// `rollout_finalized` + `rollout_finalize_reason`. No-op once finalised.
-/// Survives a Tauri restart because (last_lat, last_lon, distance,
-/// finalized) persist in `PersistedFlightStats`.
-/// Kursabweichung, ab der die Ausfahrt als eingeleitet gilt.
-///
-/// **Gemessen, nicht gesetzt.** Drei Auswertungslaeufe ueber den Bestand waren
-/// noetig: ohne Trennkriterium meldeten 68,7 % der Landungen "Rad neben der
-/// Bahn", mit 20 Grad Kursabweichung 25,2 %, erst mit 10 Grad plus dem
-/// Geschwindigkeitsriegel unten 1,6 % — plausibel. Ohne die Riegel faerbt
-/// jedes normale Ausfahren die Messung ein.
-const BAHN_KURS_AUSFAHRT_GRAD: f32 = 10.0;
+// v0.16.6: per-tick rollout accumulate/finalise — extracted VERBATIM from
+// the FSM Landing arm in `step_flight` so sampler-path (bush) landings can
+// drive it too while the FSM never reaches Landing. The FSM Landing arm
+// calls this at the exact position its inline code used to sit (first thing
+// in the arm), so FSM-path behaviour is unchanged.
+//
+// Sums haversine deltas from the last seen position until one of the three
+// finalisation triggers fires (~40 kt exit speed / >30° heading turn-off /
+// 5 kt full-stop — see the `ROLLOUT_*` consts), then sets
+// `rollout_finalized` + `rollout_finalize_reason`. No-op once finalised.
+// Survives a Tauri restart because (last_lat, last_lon, distance,
+// finalized) persist in `PersistedFlightStats`.
+// Kursabweichung, ab der die Ausfahrt als eingeleitet gilt.
+//
+// **Gemessen, nicht gesetzt.** Drei Auswertungslaeufe ueber den Bestand waren
+// noetig: ohne Trennkriterium meldeten 68,7 % der Landungen "Rad neben der
+// Bahn", mit 20 Grad Kursabweichung 25,2 %, erst mit 10 Grad plus dem
+// Geschwindigkeitsriegel unten 1,6 % — plausibel. Ohne die Riegel faerbt
+// jedes normale Ausfahren die Messung ein.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_kurs_ausfahrt_grad (v2.1.24: 10.0)
 
-/// Obergrenze fuer eine Ausfahrt, die ueber der Messschwelle beginnt.
-///
-/// **Gemessen** am Bestand vom 09.10.2026 (634 Landungen mit
-/// Flugprotokoll, 624 Ausfahrten bis 80 m neben die Bahn): Median 28 kt,
-/// 95 % unter 51 kt, sieben Ausfahrten zwischen 61 und 76 kt (EDDH, VVTS,
-/// EPWA, EDDF, LIRF, LFPG, LOWW), die schnellste echte bei 87 kt (EFHK
-/// 04L). Alles darueber waren falsch zugeordnete Aufsetzpunkte, keine
-/// Ausfahrten. Wer schneller seitlich von der Bahn geht, faehrt nicht ab.
-const BAHN_AUSFAHRT_MAX_GS_KT: f32 = 90.0;
+// Obergrenze fuer eine Ausfahrt, die ueber der Messschwelle beginnt.
+//
+// **Gemessen** am Bestand vom 09.10.2026 (634 Landungen mit
+// Flugprotokoll, 624 Ausfahrten bis 80 m neben die Bahn): Median 28 kt,
+// 95 % unter 51 kt, sieben Ausfahrten zwischen 61 und 76 kt (EDDH, VVTS,
+// EPWA, EDDF, LIRF, LFPG, LOWW), die schnellste echte bei 87 kt (EFHK
+// 04L). Alles darueber waren falsch zugeordnete Aufsetzpunkte, keine
+// Ausfahrten. Wer schneller seitlich von der Bahn geht, faehrt nicht ab.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_ausfahrt_max_gs_kt (v2.1.24: 90.0)
 
-/// Kursabweichung, ab der eine schnelle Ausfahrt als BEGONNEN gilt.
-///
-/// Nicht `BAHN_KURS_AUSFAHRT_GRAD`: Bis eine Schnellabrollbahn zehn Grad
-/// Kurs erreicht, ist das Flugzeug schon zehn bis fuenfzehn Meter seitlich
-/// gerollt — Geometrie der Kurve, kein Abkommen. Bei TUA651 lag die Grenze
-/// damit an der Bahnkante.
-///
-/// **Gemessen** am Bestand vom 09.10.2026 (33.595 Proben aus 1.293
-/// Landungen, 2–15 s nach dem Aufsetzen, 70–130 kt): Der Kurs liegt beim
-/// geraden Ausrollen zu 90 % innerhalb von 1,9 Grad und zu 95 % innerhalb
-/// von 2,7 Grad der Bahnrichtung. Drei Grad liegen knapp darueber. Ein
-/// Fehlstart kostet nichts: Bestaetigt wird erst die echte Ausfahrt (zehn
-/// Grad und `BAHN_SPUR_RAND_M` neben der Kante).
-const BAHN_AUSFAHRT_BEGINN_GRAD: f32 = 3.0;
+// Kursabweichung, ab der eine schnelle Ausfahrt als BEGONNEN gilt.
+//
+// Nicht `BAHN_KURS_AUSFAHRT_GRAD`: Bis eine Schnellabrollbahn zehn Grad
+// Kurs erreicht, ist das Flugzeug schon zehn bis fuenfzehn Meter seitlich
+// gerollt — Geometrie der Kurve, kein Abkommen. Bei TUA651 lag die Grenze
+// damit an der Bahnkante.
+//
+// **Gemessen** am Bestand vom 09.10.2026 (33.595 Proben aus 1.293
+// Landungen, 2–15 s nach dem Aufsetzen, 70–130 kt): Der Kurs liegt beim
+// geraden Ausrollen zu 90 % innerhalb von 1,9 Grad und zu 95 % innerhalb
+// von 2,7 Grad der Bahnrichtung. Drei Grad liegen knapp darueber. Ein
+// Fehlstart kostet nichts: Bestaetigt wird erst die echte Ausfahrt (zehn
+// Grad und `BAHN_SPUR_RAND_M` neben der Kante).
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_ausfahrt_beginn_grad (v2.1.24: 3.0)
 
 /// Eine Ausfahrt, die UEBER der Messschwelle eingeleitet wurde.
 ///
@@ -42179,37 +42185,37 @@ struct AusfahrtKandidat {
     kante_gs_kt: Option<f64>,
 }
 
-/// Untergrenze der seitlichen Messung — Deckel fuer schnelle/normale Muster.
-///
-/// Niemand biegt mit 60 kt ab, und genau dort ist seitliches Abkommen
-/// gefaehrlich. Unterhalb wird nicht mehr gemessen — das ist der zweite
-/// Riegel gegen die Verwechslung von Abbiegen und Abkommen.
-///
-/// **Fester Deckel seit v1.7.21, keine feste Schwelle mehr.** Fuenf
-/// Landungen im Korpus (1096 Landungen, alle je gespeicherten Logs)
-/// scheiterten an `insufficient_samples` — ausnahmslos leichte einmotorige
-/// GA-Muster (PA24, C152, AC11, BE24) mit 44-56 kt Aufsetz-Grundgeschwindigkeit.
-/// Bei denen liegt die GESAMTE Ausrollstrecke unter 60 kt: das Messfenster
-/// hatte strukturell nie eine Chance, offen zu bleiben.
-///
-/// `bahn_mess_schwelle_kt` (unten) macht die Schwelle relativ zur
-/// tatsaechlichen Aufsetz-Grundgeschwindigkeit: `clamp(0.6 * aufsetz_gs, 25,
-/// 60)`. Bei >=100 kt Aufsetz-GS bleibt die Schwelle bei diesem Deckel —
-/// unveraendertes Verhalten fuer Jets/Airliner (1022 von 1027 normal
-/// bewerteten Landungen im Korpus). Der unabhaengige Kurswechsel-Detektor
-/// (`BAHN_KURS_AUSFAHRT_GRAD`) schliesst das Fenster weiterhin zusaetzlich
-/// bei jedem echten Abbiegen, unabhaengig von der Fahrt — das Absenken der
-/// Geschwindigkeitsschwelle fuer langsame Muster reisst diese zweite
-/// Sicherung nicht ein.
-const BAHN_MESS_MIN_GS_KT: f32 = 60.0;
+// Untergrenze der seitlichen Messung — Deckel fuer schnelle/normale Muster.
+//
+// Niemand biegt mit 60 kt ab, und genau dort ist seitliches Abkommen
+// gefaehrlich. Unterhalb wird nicht mehr gemessen — das ist der zweite
+// Riegel gegen die Verwechslung von Abbiegen und Abkommen.
+//
+// **Fester Deckel seit v1.7.21, keine feste Schwelle mehr.** Fuenf
+// Landungen im Korpus (1096 Landungen, alle je gespeicherten Logs)
+// scheiterten an `insufficient_samples` — ausnahmslos leichte einmotorige
+// GA-Muster (PA24, C152, AC11, BE24) mit 44-56 kt Aufsetz-Grundgeschwindigkeit.
+// Bei denen liegt die GESAMTE Ausrollstrecke unter 60 kt: das Messfenster
+// hatte strukturell nie eine Chance, offen zu bleiben.
+//
+// `bahn_mess_schwelle_kt` (unten) macht die Schwelle relativ zur
+// tatsaechlichen Aufsetz-Grundgeschwindigkeit: `clamp(0.6 * aufsetz_gs, 25,
+// 60)`. Bei >=100 kt Aufsetz-GS bleibt die Schwelle bei diesem Deckel —
+// unveraendertes Verhalten fuer Jets/Airliner (1022 von 1027 normal
+// bewerteten Landungen im Korpus). Der unabhaengige Kurswechsel-Detektor
+// (`BAHN_KURS_AUSFAHRT_GRAD`) schliesst das Fenster weiterhin zusaetzlich
+// bei jedem echten Abbiegen, unabhaengig von der Fahrt — das Absenken der
+// Geschwindigkeitsschwelle fuer langsame Muster reisst diese zweite
+// Sicherung nicht ein.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_mess_min_gs_kt (v2.1.24: 60.0)
 
-/// Boden der relativen Messfenster-Schwelle — echtes Rollen/Rangieren soll
-/// auch bei sehr langsamen Mustern nicht mehr "gewertet" werden.
-const BAHN_MESS_MIN_GS_KT_BODEN: f32 = 25.0;
+// Boden der relativen Messfenster-Schwelle — echtes Rollen/Rangieren soll
+// auch bei sehr langsamen Mustern nicht mehr "gewertet" werden.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_mess_min_gs_kt_boden (v2.1.24: 25.0)
 
-/// Faktor der Aufsetz-Grundgeschwindigkeit, mit dem die Fenster-Schwelle
-/// bei langsamen Mustern skaliert (s. `BAHN_MESS_MIN_GS_KT` oben).
-const BAHN_MESS_SCHWELLE_FAKTOR: f32 = 0.6;
+// Faktor der Aufsetz-Grundgeschwindigkeit, mit dem die Fenster-Schwelle
+// bei langsamen Mustern skaliert (s. `BAHN_MESS_MIN_GS_KT` oben).
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_mess_schwelle_faktor (v2.1.24: 0.6)
 
 /// Effektive Fensterschluss-Schwelle fuer DIESE Landung: relativ zur
 /// Aufsetz-Grundgeschwindigkeit, gedeckelt nach oben (60 kt, unveraendertes
@@ -42227,55 +42233,55 @@ fn bahn_mess_schwelle_kt(stats: &FlightStats) -> f32 {
         // werden (QS-Fund, Codex 08.09.2026: eine negative endliche GS wurde
         // bisher stillschweigend wie eine echte langsame Landung behandelt).
         Some(aufsetz_gs) if aufsetz_gs.is_finite() && aufsetz_gs > 0.0 => {
-            (BAHN_MESS_SCHWELLE_FAKTOR * aufsetz_gs)
-                .clamp(BAHN_MESS_MIN_GS_KT_BODEN, BAHN_MESS_MIN_GS_KT)
+            (crate::grenzwerte::grenzwerte().ausrollen.bahn_mess_schwelle_faktor.wert * aufsetz_gs)
+                .clamp(crate::grenzwerte::grenzwerte().ausrollen.bahn_mess_min_gs_kt_boden.wert, crate::grenzwerte::grenzwerte().ausrollen.bahn_mess_min_gs_kt.wert)
         }
-        _ => BAHN_MESS_MIN_GS_KT,
+        _ => crate::grenzwerte::grenzwerte().ausrollen.bahn_mess_min_gs_kt.wert,
     }
 }
 
-/// Schreibt die seitliche Lage und einen etwaigen Overrun fort.
-///
-/// Laeuft bei jedem Snapshot des Ausrollens. Das Messfenster schliesst sich,
-/// sobald die Ausfahrt eingeleitet ist — danach wird nichts mehr gewertet, aber
-/// der Overrun-Check laeuft weiter, weil ein Ueberschiessen des Bahnendes auch
-/// dann zaehlt.
-///
-/// Siehe `docs/spec/v1.7.0-bahndisziplin.md` §5.2.
-/// Mindestabstand zwischen zwei gespeicherten Spurpunkten, in Metern.
-///
-/// Zehn Meter sind fein genug, dass die Queransicht bei 3000 m Bahn rund
-/// dreihundert Stuetzpunkte bekommt — mehr, als ein Diagramm von 1100 px
-/// Breite aufloesen kann.
-const BAHN_SPUR_MIN_ABSTAND_M: f64 = 10.0;
+// Schreibt die seitliche Lage und einen etwaigen Overrun fort.
+//
+// Laeuft bei jedem Snapshot des Ausrollens. Das Messfenster schliesst sich,
+// sobald die Ausfahrt eingeleitet ist — danach wird nichts mehr gewertet, aber
+// der Overrun-Check laeuft weiter, weil ein Ueberschiessen des Bahnendes auch
+// dann zaehlt.
+//
+// Siehe `docs/spec/v1.7.0-bahndisziplin.md` §5.2.
+// Mindestabstand zwischen zwei gespeicherten Spurpunkten, in Metern.
+//
+// Zehn Meter sind fein genug, dass die Queransicht bei 3000 m Bahn rund
+// dreihundert Stuetzpunkte bekommt — mehr, als ein Diagramm von 1100 px
+// Breite aufloesen kann.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_spur_min_abstand_m (v2.1.24: 10.0)
 
-/// Wie stark der Querweg bei der Ausduennung zaehlt.
-///
-/// Die Queransicht ist rund zwoelffach ueberhoeht. Ein Gewicht von vier
-/// naehert das an, ohne es voll auszureizen: Bei reiner Querbewegung wird
-/// dann alle 2,5 m ein Punkt abgelegt statt alle zehn — fein genug fuer
-/// eine glatte Kurve, grob genug, dass die Ablage nicht volllaeuft.
-///
-/// Das volle Verhaeltnis waere zu fein: In der Ausfahrt kaemen dann alle
-/// achtzig Zentimeter Punkte, und `BAHN_SPUR_MAX_PUNKTE` waere nach der
-/// halben Kurve erschoepft.
-const BAHN_SPUR_QUER_GEWICHT: f64 = 4.0;
+// Wie stark der Querweg bei der Ausduennung zaehlt.
+//
+// Die Queransicht ist rund zwoelffach ueberhoeht. Ein Gewicht von vier
+// naehert das an, ohne es voll auszureizen: Bei reiner Querbewegung wird
+// dann alle 2,5 m ein Punkt abgelegt statt alle zehn — fein genug fuer
+// eine glatte Kurve, grob genug, dass die Ablage nicht volllaeuft.
+//
+// Das volle Verhaeltnis waere zu fein: In der Ausfahrt kaemen dann alle
+// achtzig Zentimeter Punkte, und `BAHN_SPUR_MAX_PUNKTE` waere nach der
+// halben Kurve erschoepft.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_spur_quer_gewicht (v2.1.24: 4.0)
 
-/// Harte Obergrenze fuer die gespeicherte Spur.
-///
-/// Greift, wenn der Mindestabstand nicht greift: beim Stehen auf der Bahn
-/// mit laufender Messung, oder wenn die Projektion springt. Ohne diese
-/// Grenze waechst der Datensatz unbeschraenkt.
-const BAHN_SPUR_MAX_PUNKTE: usize = 400;
+// Harte Obergrenze fuer die gespeicherte Spur.
+//
+// Greift, wenn der Mindestabstand nicht greift: beim Stehen auf der Bahn
+// mit laufender Messung, oder wenn die Projektion springt. Ohne diese
+// Grenze waechst der Datensatz unbeschraenkt.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_spur_max_punkte (v2.1.24: 400)
 
-/// Wie weit zurueck die Querbewegung fuer die Richtungsprobe gelesen wird.
-const BAHN_RICHTUNG_FENSTER_M: f32 = 100.0;
+// Wie weit zurueck die Querbewegung fuer die Richtungsprobe gelesen wird.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_richtung_fenster_m (v2.1.24: 100.0)
 
-/// Ab welcher Querbewegung die Richtungsprobe ueberhaupt etwas aussagt.
-///
-/// Unter zwei Metern ist der Unterschied zwischen „nach links gezogen" und
-/// „gerade geblieben" nicht messbar — dann bleibt die Seite leer.
-const BAHN_RICHTUNG_MIN_VERSATZ_M: f32 = 2.0;
+// Ab welcher Querbewegung die Richtungsprobe ueberhaupt etwas aussagt.
+//
+// Unter zwei Metern ist der Unterschied zwischen „nach links gezogen" und
+// „gerade geblieben" nicht messbar — dann bleibt die Seite leer.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_richtung_min_versatz_m (v2.1.24: 2.0)
 
 /// Bestimmt die Ausfahrtsseite aus **zwei** unabhaengigen Groessen.
 ///
@@ -42311,13 +42317,13 @@ fn bahn_raeum_seite(kurs_diff: f64, spur: &[(f32, f32)], ab_laengs_m: f64) -> Op
         .or_else(|| spur.first())?;
     let vergleich = spur
         .iter()
-        .find(|(lg, _)| *lg - basis.0 >= BAHN_RICHTUNG_FENSTER_M)
+        .find(|(lg, _)| *lg - basis.0 >= crate::grenzwerte::grenzwerte().ausrollen.bahn_richtung_fenster_m.wert)
         // Reicht die Spur nicht mehr hundert Meter weit — etwa weil das
         // Flugzeug kurz danach stand —, zaehlt ihr letzter Punkt.
         .or_else(|| spur.last().filter(|(lg, _)| *lg > basis.0))?;
 
     let bewegung = vergleich.1 - basis.1;
-    if bewegung.abs() < BAHN_RICHTUNG_MIN_VERSATZ_M {
+    if bewegung.abs() < crate::grenzwerte::grenzwerte().ausrollen.bahn_richtung_min_versatz_m.wert {
         return None;
     }
     let quer_seite = if bewegung > 0.0 { "right" } else { "left" };
@@ -42330,28 +42336,28 @@ fn bahn_raeum_seite(kurs_diff: f64, spur: &[(f32, f32)], ab_laengs_m: f64) -> Op
     }
 }
 
-/// Wie weit neben der Bahn die Spur noch aufgezeichnet wird.
-///
-/// # Warum achtzig Meter und nicht fuenfundzwanzig
-///
-/// Die erste Fassung brach bei fuenfundzwanzig Metern ab — und traf damit
-/// mitten in die Ausfahrtskurve. Gemessen an raKOnJD1XgNbP06q (EDDH 23):
-/// Das Flugzeug verlaesst die Bahn ueber 1879 m (−18,6 m), 1901 m (−46,7 m),
-/// 1907 m (−80,0 m) und rollt dann parallel zur Bahn bei −180 m weiter. Die
-/// Aufzeichnung endete beim dritten dieser Punkte, und im Diagramm sah es
-/// aus, als loese sich die Spur in Luft auf.
-///
-/// Achtzig Meter zeigen die Ausfahrt vollstaendig — bis zu dem Punkt, an dem
-/// die Kurve in den Rollweg uebergeht. Was danach kommt, ist Rollverkehr und
-/// gehoert nicht mehr zur Landung. Die Anzeige klemmt die Spur ohnehin am
-/// Bildrand; dass sie dort hinauslaeuft, IST die Aussage.
-const BAHN_SPUR_RAND_M: f64 = 80.0;
+// Wie weit neben der Bahn die Spur noch aufgezeichnet wird.
+//
+// # Warum achtzig Meter und nicht fuenfundzwanzig
+//
+// Die erste Fassung brach bei fuenfundzwanzig Metern ab — und traf damit
+// mitten in die Ausfahrtskurve. Gemessen an raKOnJD1XgNbP06q (EDDH 23):
+// Das Flugzeug verlaesst die Bahn ueber 1879 m (−18,6 m), 1901 m (−46,7 m),
+// 1907 m (−80,0 m) und rollt dann parallel zur Bahn bei −180 m weiter. Die
+// Aufzeichnung endete beim dritten dieser Punkte, und im Diagramm sah es
+// aus, als loese sich die Spur in Luft auf.
+//
+// Achtzig Meter zeigen die Ausfahrt vollstaendig — bis zu dem Punkt, an dem
+// die Kurve in den Rollweg uebergeht. Was danach kommt, ist Rollverkehr und
+// gehoert nicht mehr zur Landung. Die Anzeige klemmt die Spur ohnehin am
+// Bildrand; dass sie dort hinauslaeuft, IST die Aussage.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_spur_rand_m (v2.1.24: 80.0)
 
-/// Ab welcher Fahrt das Aufzeichnen endet.
-///
-/// Unter fuenf Knoten steht das Flugzeug praktisch — jeder weitere Punkt
-/// waere derselbe Punkt.
-const BAHN_SPUR_STOP_GS_KT: f32 = 5.0;
+// Ab welcher Fahrt das Aufzeichnen endet.
+//
+// Unter fuenf Knoten steht das Flugzeug praktisch — jeder weitere Punkt
+// waere derselbe Punkt.
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> bahn_spur_stop_gs_kt (v2.1.24: 5.0)
 
 /// Schreibt die Spur fort, ohne zu bewerten.
 ///
@@ -42478,10 +42484,10 @@ fn spur_fortschreiben(
     // Jedes dieser drei Kriterien beendet die Aufzeichnung — und mit ihr
     // den feinen Takt. Das Flag ist die einzige Stelle, an der beides
     // zusammenhaengt; deshalb wird es hier gesetzt und nirgends sonst.
-    if groundspeed_kt < BAHN_SPUR_STOP_GS_KT
-        || quer_m.abs() > halbe_breite_m + BAHN_SPUR_RAND_M
+    if groundspeed_kt < crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_stop_gs_kt.wert
+        || quer_m.abs() > halbe_breite_m + crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_rand_m.wert
         || laengs_m < -50.0
-        || stats.bahn_spur.len() >= BAHN_SPUR_MAX_PUNKTE
+        || stats.bahn_spur.len() >= crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_max_punkte.wert
     {
         stats.bahn_spur_laeuft = false;
         return;
@@ -42567,8 +42573,8 @@ fn spur_fortschreiben(
     // mehr Punkte ab, dort wo sie gebraucht werden.
     let weit_genug = stats.bahn_spur.last().is_none_or(|(lg, qr)| {
         let d_laengs = laengs_m - *lg as f64;
-        let d_quer = (quer_m - *qr as f64) * BAHN_SPUR_QUER_GEWICHT;
-        d_laengs.hypot(d_quer) >= BAHN_SPUR_MIN_ABSTAND_M
+        let d_quer = (quer_m - *qr as f64) * crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_quer_gewicht.wert;
+        d_laengs.hypot(d_quer) >= crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_min_abstand_m.wert
     });
     if weit_genug {
         stats.bahn_spur.push((laengs_m as f32, quer_m as f32));
@@ -42733,8 +42739,8 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     };
     match kurs_diff {
         Some(diff)
-            if diff.abs() > BAHN_AUSFAHRT_BEGINN_GRAD
-                && zur_bahn.abs() > BAHN_AUSFAHRT_BEGINN_GRAD =>
+            if diff.abs() > crate::grenzwerte::grenzwerte().ausrollen.bahn_ausfahrt_beginn_grad.wert
+                && zur_bahn.abs() > crate::grenzwerte::grenzwerte().ausrollen.bahn_ausfahrt_beginn_grad.wert =>
         {
             match stats.bahn_ausfahrt_kandidat.as_mut() {
                 Some(k) => {
@@ -42746,7 +42752,7 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
                     if !stats.bahn_fenster_zu
                         && stats.bahn_raeum_laengs_m.is_none()
                         && snap.groundspeed_kt >= mess_schwelle_kt
-                        && snap.groundspeed_kt <= BAHN_AUSFAHRT_MAX_GS_KT
+                        && snap.groundspeed_kt <= crate::grenzwerte::grenzwerte().ausrollen.bahn_ausfahrt_max_gs_kt.wert
                     {
                         stats.bahn_ausfahrt_kandidat = Some(AusfahrtKandidat {
                             laengs_m,
@@ -42769,11 +42775,11 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
     // schon unterwegs. Eine spaetere Bestaetigung aenderte die Note, aber
     // nicht mehr die Bahnwerte, die dort stehen.
     let bestaetigt = stats.bahn_spur_laeuft
-        && quer_m.abs() > halbe_breite_m + BAHN_SPUR_RAND_M
+        && quer_m.abs() > halbe_breite_m + crate::grenzwerte::grenzwerte().ausrollen.bahn_spur_rand_m.wert
         && stats
             .bahn_ausfahrt_kandidat
             .as_ref()
-            .is_some_and(|k| k.kurs_diff.abs() > BAHN_KURS_AUSFAHRT_GRAD as f64);
+            .is_some_and(|k| k.kurs_diff.abs() > crate::grenzwerte::grenzwerte().ausrollen.bahn_kurs_ausfahrt_grad.wert as f64);
     if bestaetigt {
         if let Some(k) = stats.bahn_ausfahrt_kandidat.take() {
             stats.bahn_fenster_zu = true;
@@ -42808,7 +42814,7 @@ fn bahndisziplin_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
 
     if stats.bahn_raeum_laengs_m.is_none() && snap.groundspeed_kt < mess_schwelle_kt {
         if let Some(diff) = kurs_diff {
-            if diff.abs() > BAHN_KURS_AUSFAHRT_GRAD {
+            if diff.abs() > crate::grenzwerte::grenzwerte().ausrollen.bahn_kurs_ausfahrt_grad.wert {
                 // Das ist eine Ausfahrt, kein Abbremsen — hier gehoert der
                 // Raeumpunkt hin. Beim Schliessen wegen zu geringer Fahrt
                 // dagegen NICHT: dort rollt das Flugzeug noch auf der Bahn.
@@ -42934,8 +42940,8 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
         // Three independent finalisation triggers — whichever
         // fires first wins. See the constants near the top of
         // this file for the rationale on each threshold.
-        let exit_speed_reached = snap.groundspeed_kt < ROLLOUT_EXIT_GS_KT && snap.on_ground;
-        let full_stop = snap.groundspeed_kt < ROLLOUT_STOP_GS_KT && snap.on_ground;
+        let exit_speed_reached = snap.groundspeed_kt < crate::grenzwerte::grenzwerte().ausrollen.rollout_exit_gs_kt.wert && snap.on_ground;
+        let full_stop = snap.groundspeed_kt < crate::grenzwerte::grenzwerte().ausrollen.rollout_stop_gs_kt.wert && snap.on_ground;
         let turned_off_runway = match stats.landing_heading_true_deg {
             Some(td_heading) => {
                 // Wrap-around-safe signed delta in (-180, 180].
@@ -42946,7 +42952,7 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
                 while diff <= -180.0 {
                     diff += 360.0;
                 }
-                diff.abs() > ROLLOUT_HEADING_DEVIATION_DEG
+                diff.abs() > crate::grenzwerte::grenzwerte().ausrollen.rollout_heading_deviation_deg.wert
             }
             None => false,
         };
@@ -43217,7 +43223,7 @@ fn abfangen_messen(
         // länger als 60 s unter 50 ft blieb, bekam gar keine Teilnote statt
         // der schlechtesten. Nach dem Pausen-Abzug gefiltert — sonst ließ eine
         // lange Pause im Abfangen die Teilnote ganz verschwinden.
-        .filter(|p| -p.t_ms <= ABFANG_FENSTER_S * 1000)
+        .filter(|p| -p.t_ms <= crate::grenzwerte::grenzwerte().landung.abfang_fenster_s.wert * 1000)
         .collect();
     landing_scoring::abfangen::messen(&punkte, vs_aufsetzen_fpm)
 }
@@ -43233,8 +43239,8 @@ fn aufsetz_bank_deg(stats: &FlightStats) -> Option<f32> {
         .map(|p| p.bank_deg)
 }
 
-/// Wie weit vor dem Aufsetzen Proben fürs Abfangen gelesen werden (s).
-const ABFANG_FENSTER_S: i64 = 180;
+// Wie weit vor dem Aufsetzen Proben fürs Abfangen gelesen werden (s).
+// Wert seit v3: bundle/grenzwerte/landung.json -> abfang_fenster_s (v2.1.24: 180)
 
 /// Millisekunden Sim-Pause zwischen `von` und `bis` (Überlappung mit den
 /// aufgezeichneten Pause-Blöcken).
@@ -43595,7 +43601,7 @@ fn spaetes_final_erkennen(
         },
         td,
         &bahn,
-        APPROACH_FLARE_CUTOFF_MS,
+        crate::grenzwerte::grenzwerte().anflug_kern.approach_flare_cutoff_ms.wert,
     )
 }
 
@@ -43853,7 +43859,7 @@ fn wegsteigen_nach_aufsetzen(stats: &FlightStats, snap: &SimSnapshot, now: DateT
 /// Triebwerke aus), und das war fuer die Pruefung ein Steigflug.
 /// Hubschrauber steigen auch ohne Fahrt weg und sind ausgenommen.
 fn wegsteigen_mit_fahrt(snap: &SimSnapshot) -> bool {
-    const MIN_FAHRT_KT: f32 = 30.0;
+    // Wert seit v3: bundle/grenzwerte/phasen_kern.json -> min_fahrt_kt (v2.1.24: 30.0)
     if !echter_steigflug_nach_aufsetzen(snap) {
         return false;
     }
@@ -43866,8 +43872,8 @@ fn wegsteigen_mit_fahrt(snap: &SimSnapshot) -> bool {
     )
     .is_rotorcraft();
     hubschrauber
-        || snap.groundspeed_kt >= MIN_FAHRT_KT
-        || snap.indicated_airspeed_kt >= MIN_FAHRT_KT
+        || snap.groundspeed_kt >= crate::grenzwerte::grenzwerte().phasen_kern.min_fahrt_kt.wert
+        || snap.indicated_airspeed_kt >= crate::grenzwerte::grenzwerte().phasen_kern.min_fahrt_kt.wert
 }
 
 /// Haltezeit fuer das Wegsteigen nach einem Aufsetzen: `true`, sobald
@@ -43880,7 +43886,7 @@ fn steigflug_gehalten(seit: &mut Option<DateTime<Utc>>, steigt: bool, now: DateT
         return false;
     }
     let beginn = *seit.get_or_insert(now);
-    (now - beginn).num_milliseconds() >= TOUCH_AND_GO_DWELL_SECS * 1_000
+    (now - beginn).num_milliseconds() >= crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_dwell_secs.wert * 1_000
 }
 
 /// Schliesst die laufende Landung ab, weil das Flugzeug wieder wegsteigt
@@ -44027,28 +44033,28 @@ fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnaps
     stats.landung_abgebrochen_phase_offen = true;
 }
 
-/// Groundspeed-Schwelle, unter der TakeoffRoll (nachhaltig) als „rollt
-/// nicht" gilt. 10 kt unter dem Vorwärts-Trigger (GS > 30 kt) → Hysterese
-/// gegen Flip-Flop an der Schwelle.
-const TAKEOFF_ROLL_ABORT_KT: f32 = 20.0;
-/// Dwell, den die GS unter der Schwelle bleiben muss, bevor demotet wird
-/// (frisst GS-Einzeltick-Glitches; braucht ≥ 2 Ticks über ≥ 3 s).
-const TAKEOFF_ROLL_ABORT_DWELL_SECS: i64 = 3;
+// Groundspeed-Schwelle, unter der TakeoffRoll (nachhaltig) als „rollt
+// nicht" gilt. 10 kt unter dem Vorwärts-Trigger (GS > 30 kt) → Hysterese
+// gegen Flip-Flop an der Schwelle.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_abort_kt (v2.1.24: 20.0)
+// Dwell, den die GS unter der Schwelle bleiben muss, bevor demotet wird
+// (frisst GS-Einzeltick-Glitches; braucht ≥ 2 Ticks über ≥ 3 s).
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_abort_dwell_secs (v2.1.24: 3)
 
-/// „Committed-Takeoff"-Schwelle (v0.21.x, Backtrack-Erkennung): Peak-GS,
-/// ab der eine Rolle zweifelsfrei eine echte Startrolle ist. Über 673
-/// GSG-Flüge erreicht JEDE echte Startrolle ≥ 52 kt Peak (min), während
-/// die 4 Backtrack-/Fehl-Trips bei ≤ 33 kt plateauisieren — 45 kt liegt
-/// sauber in der Lücke. Hat der Peak diese Marke erreicht, ist die Plateau-
-/// Rückkante deaktiviert (nur noch die GS<20-Abbruchkante greift).
-const TAKEOFF_ROLL_CONFIRM_KT: f32 = 45.0;
-/// Dwell für die Plateau-Rückkante: bleibt der Peak-GS unter
-/// `TAKEOFF_ROLL_CONFIRM_KT` UND setzt die GS keine neuen Höchstwerte mehr
-/// (Rolle entwickelt sich nicht weiter = Backtrack/fast-Taxi), so lange →
-/// zurück zu TaxiOut. Eine echte Startrolle setzt laufend neue GS-Höchst-
-/// werte → der Dwell wird nie voll (Reset bei jedem neuen Peak), unabhängig
-/// davon, wie zügig sie beschleunigt.
-const TAKEOFF_ROLL_STALL_DWELL_SECS: i64 = 12;
+// „Committed-Takeoff"-Schwelle (v0.21.x, Backtrack-Erkennung): Peak-GS,
+// ab der eine Rolle zweifelsfrei eine echte Startrolle ist. Über 673
+// GSG-Flüge erreicht JEDE echte Startrolle ≥ 52 kt Peak (min), während
+// die 4 Backtrack-/Fehl-Trips bei ≤ 33 kt plateauisieren — 45 kt liegt
+// sauber in der Lücke. Hat der Peak diese Marke erreicht, ist die Plateau-
+// Rückkante deaktiviert (nur noch die GS<20-Abbruchkante greift).
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_confirm_kt (v2.1.24: 45.0)
+// Dwell für die Plateau-Rückkante: bleibt der Peak-GS unter
+// `TAKEOFF_ROLL_CONFIRM_KT` UND setzt die GS keine neuen Höchstwerte mehr
+// (Rolle entwickelt sich nicht weiter = Backtrack/fast-Taxi), so lange →
+// zurück zu TaxiOut. Eine echte Startrolle setzt laufend neue GS-Höchst-
+// werte → der Dwell wird nie voll (Reset bei jedem neuen Peak), unabhängig
+// davon, wie zügig sie beschleunigt.
+// Wert seit v3: bundle/grenzwerte/phasen_kern.json -> takeoff_roll_stall_dwell_secs (v2.1.24: 12)
 
 /// Rückkante der TakeoffRoll-Phase — behebt den flottenweiten
 /// TAKEOFF_ROLL_STUCK (5 % der Flüge, 614-Flug-Scan 2026-07-05).
@@ -44072,9 +44078,9 @@ fn takeoff_roll_demote(
     slow_since: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
 ) -> (Option<FlightPhase>, Option<DateTime<Utc>>) {
-    if on_ground && groundspeed_kt < TAKEOFF_ROLL_ABORT_KT {
+    if on_ground && groundspeed_kt < crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_abort_kt.wert {
         let since = slow_since.unwrap_or(now);
-        if (now - since).num_seconds() >= TAKEOFF_ROLL_ABORT_DWELL_SECS {
+        if (now - since).num_seconds() >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_abort_dwell_secs.wert {
             (Some(FlightPhase::TaxiOut), None) // Dwell erfüllt → demote + Reset
         } else {
             (None, Some(since)) // Dwell läuft noch → Phase halten
@@ -44111,7 +44117,7 @@ fn takeoff_roll_stall_check(
     let new_peak = peak_kt.max(groundspeed_kt);
     // Airborne oder bereits echte Startgeschwindigkeit gesehen → committed,
     // keine Plateau-Demote mehr (die GS<20-Abbruchkante bleibt aktiv).
-    if !on_ground || new_peak >= TAKEOFF_ROLL_CONFIRM_KT {
+    if !on_ground || new_peak >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_confirm_kt.wert {
         return (None, new_peak, None);
     }
     if groundspeed_kt > peak_kt {
@@ -44120,7 +44126,7 @@ fn takeoff_roll_stall_check(
     } else {
         // Plateau unter CONFIRM_KT → Dwell zählen.
         let since = stall_since.unwrap_or(now);
-        if (now - since).num_seconds() >= TAKEOFF_ROLL_STALL_DWELL_SECS {
+        if (now - since).num_seconds() >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_stall_dwell_secs.wert {
             (Some(FlightPhase::TaxiOut), new_peak, None) // Backtrack erkannt
         } else {
             (None, new_peak, Some(since))
@@ -44212,7 +44218,7 @@ fn snapshot_position_is_usable(snap: &SimSnapshot) -> bool {
     // Landesprit. Kein Luftfahrzeug im Simulator fliegt ueber 150.000 ft oder
     // steht tiefer als 2.000 ft unter NN.
     if !snap.altitude_msl_ft.is_finite()
-        || !(SNAPSHOT_HOEHE_MIN_FT..=SNAPSHOT_HOEHE_MAX_FT).contains(&snap.altitude_msl_ft)
+        || !(crate::grenzwerte::grenzwerte().sprit.snapshot_hoehe_min_ft.wert..=crate::grenzwerte::grenzwerte().sprit.snapshot_hoehe_max_ft.wert).contains(&snap.altitude_msl_ft)
     {
         return false;
     }
@@ -44236,14 +44242,14 @@ fn tankstand_nach_landung_begrenzen(
     bodenrate_kg_pro_h: f32,
     jetzt: DateTime<Utc>,
 ) -> f32 {
-    /// Messrauschen und Rundung — kein Tankvorgang.
-    const TOLERANZ_KG: f32 = 50.0;
+    // Messrauschen und Rundung — kein Tankvorgang.
+    // Wert seit v3: bundle/grenzwerte/sprit.json -> toleranz_kg (v2.1.24: 50.0)
     let Some(ldg) = landing_kg else {
         return live_kg;
     };
     // Der letzte echte Wert, hoechstens der Landewert.
-    let referenz = vorher_kg.map_or(ldg, |v| v.min(ldg + TOLERANZ_KG));
-    if live_kg > ldg + TOLERANZ_KG {
+    let referenz = vorher_kg.map_or(ldg, |v| v.min(ldg + crate::grenzwerte::grenzwerte().sprit.toleranz_kg.wert));
+    if live_kg > ldg + crate::grenzwerte::grenzwerte().sprit.toleranz_kg.wert {
         // Neubeladung (Sim-Reload, Tankwagen) — nie.
         return referenz;
     }
@@ -44292,25 +44298,25 @@ fn bodenverbrauch_kg_pro_h(
     takeoff_at: Option<DateTime<Utc>>,
     landing_at: Option<DateTime<Utc>>,
 ) -> f32 {
-    const RUECKFALL_KG_PRO_H: f32 = 2_000.0;
+    // Wert seit v3: bundle/grenzwerte/sprit.json -> rueckfall_kg_pro_h (v2.1.24: 2_000.0)
     let (Some(block), Some(ldg), Some(ab), Some(an)) =
         (block_kg, landing_kg, takeoff_at, landing_at)
     else {
-        return RUECKFALL_KG_PRO_H;
+        return crate::grenzwerte::grenzwerte().sprit.rueckfall_kg_pro_h.wert;
     };
     let stunden = (an - ab).num_seconds() as f32 / 3600.0;
     if stunden < 0.1 || block <= ldg {
-        return RUECKFALL_KG_PRO_H;
+        return crate::grenzwerte::grenzwerte().sprit.rueckfall_kg_pro_h.wert;
     }
-    ((block - ldg) / stunden * 0.35).clamp(5.0, RUECKFALL_KG_PRO_H)
+    ((block - ldg) / stunden * 0.35).clamp(5.0, crate::grenzwerte::grenzwerte().sprit.rueckfall_kg_pro_h.wert)
 }
 
-/// Tiefster plausibler Wert (Totes Meer ~ -1.400 ft, mit Reserve).
-const SNAPSHOT_HOEHE_MIN_FT: f64 = -2_000.0;
-/// Hoechster plausibler Wert. Concorde fliegt bis FL600, Addons wie der
-/// Darkstar hoeher — 150.000 ft laesst ihnen Luft und faengt trotzdem den
-/// Messmuell (20.926.040 ft am 24.09.2026).
-const SNAPSHOT_HOEHE_MAX_FT: f64 = 150_000.0;
+// Tiefster plausibler Wert (Totes Meer ~ -1.400 ft, mit Reserve).
+// Wert seit v3: bundle/grenzwerte/sprit.json -> snapshot_hoehe_min_ft (v2.1.24: -2_000.0)
+// Hoechster plausibler Wert. Concorde fliegt bis FL600, Addons wie der
+// Darkstar hoeher — 150.000 ft laesst ihnen Luft und faengt trotzdem den
+// Messmuell (20.926.040 ft am 24.09.2026).
+// Wert seit v3: bundle/grenzwerte/sprit.json -> snapshot_hoehe_max_ft (v2.1.24: 150_000.0)
 
 /// Wie ein Positions-Sprung einzuordnen ist.
 ///
@@ -44391,16 +44397,16 @@ fn classify_segment(
     classify_segment_rate(prev, cur, alt_jump_ft, dt_secs, limits, None)
 }
 
-/// Obergrenze der Sim-Rate, mit der die erlaubte Strecke wachsen darf —
-/// dieselbe wie bei der Auto-Start-Sprungpruefung: ein Teleport ueber
-/// hunderte km darf auch bei Zeitraffer nie als Flug durchgehen.
-const SIMRATE_STRECKE_MAX: f64 = 16.0;
+// Obergrenze der Sim-Rate, mit der die erlaubte Strecke wachsen darf —
+// dieselbe wie bei der Auto-Start-Sprungpruefung: ein Teleport ueber
+// hunderte km darf auch bei Zeitraffer nie als Flug durchgehen.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> simrate_strecke_max (v2.1.24: 16.0)
 
-/// Spielraum auf die gemeldete Groundspeed bei Zeitraffer: Die GS stammt
-/// aus einer Probe, das Segment dauert mehrere Sekunden (Beschleunigung,
-/// Rundung der Sim-Rate). Wie bei der Auto-Start-Sprungpruefung (dort x2),
-/// hier enger, weil jeder Fehler dauerhaft im Logbuch steht.
-const ZEITRAFFER_GS_SPIELRAUM: f64 = 1.5;
+// Spielraum auf die gemeldete Groundspeed bei Zeitraffer: Die GS stammt
+// aus einer Probe, das Segment dauert mehrere Sekunden (Beschleunigung,
+// Rundung der Sim-Rate). Wie bei der Auto-Start-Sprungpruefung (dort x2),
+// hier enger, weil jeder Fehler dauerhaft im Logbuch steht.
+// Wert seit v3: bundle/grenzwerte/abgabe.json -> zeitraffer_gs_spielraum (v2.1.24: 1.5)
 
 /// Wie `classify_segment`, aber mit Zeitraffer `(sim_rate, groundspeed_kt)`.
 ///
@@ -44447,10 +44453,10 @@ fn classify_segment_rate(
             let normal = limits.max_speed_kt * (dt / 3600.0) + limits.slack_nm;
             match zeitraffer {
                 Some((rate, gs_kt)) if rate.is_finite() && gs_kt.is_finite() && rate > 1.0 => {
-                    let rate = rate.min(SIMRATE_STRECKE_MAX);
-                    let gs = gs_kt.clamp(0.0, RESUME_MAX_PLAUSIBEL_KT);
+                    let rate = rate.min(crate::grenzwerte::grenzwerte().abgabe.simrate_strecke_max.wert);
+                    let gs = gs_kt.clamp(0.0, crate::grenzwerte::grenzwerte().abgabe.resume_max_plausibel_kt.wert);
                     let beschleunigt =
-                        gs * ZEITRAFFER_GS_SPIELRAUM * rate * (dt / 3600.0) + limits.slack_nm;
+                        gs * crate::grenzwerte::grenzwerte().abgabe.zeitraffer_gs_spielraum.wert * rate * (dt / 3600.0) + limits.slack_nm;
                     normal.max(beschleunigt)
                 }
                 _ => normal,
@@ -44573,7 +44579,7 @@ fn finalize_landing_score_if_due(
         return;
     }
     let elapsed_secs = (now - touchdown).num_milliseconds() / 1_000;
-    if elapsed_secs <= BOUNCE_WINDOW_SECS {
+    if elapsed_secs <= crate::grenzwerte::grenzwerte().landung.bounce_window_secs.wert {
         return; // Fenster noch offen — absichtlich noch nicht finalisieren.
     }
     // GAF-707-Race (1/3): Live-Check ohne Lag — das Flugzeug ist GERADE
@@ -44582,7 +44588,7 @@ fn finalize_landing_score_if_due(
     // selben Tick, aber im `FlightPhase::Landing`-Match-Arm VOR diesem
     // Aufruf — dieser Live-Check faengt trotzdem den allerersten Tick ab,
     // an dem noch kein Pending-Latch existiert).
-    if !on_ground && agl_ft > TOUCH_AND_GO_AGL_THRESHOLD_FT {
+    if !on_ground && agl_ft > crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_agl_threshold_ft.wert {
         return;
     }
     // GAF-707-Race (1/3, Fortsetzung): eine T&G-Dwell-Bestaetigung laeuft
@@ -44815,7 +44821,7 @@ fn step_flight_at(
             ODOMETER_LIMITS,
             Some((rate, gs_kt)),
         );
-        if d_m > DISTANCE_EPSILON_M && urteil == SegmentVerdict::Flown {
+        if d_m > crate::grenzwerte::grenzwerte().phasen_kern.distance_epsilon_m.wert && urteil == SegmentVerdict::Flown {
             stats.distance_nm += d_m / 1852.0;
         }
     }
@@ -44936,9 +44942,9 @@ fn step_flight_at(
     // PIREP meldete 7 kg Verbrauch fuer 834 NM. Dasselbe traefe jeden, der am
     // Gate fuer den naechsten Flug nachtankt, bevor er einreicht.
     if live_fuel > 0.0 && stats.takeoff_at.is_none() {
-        const DEFUEL_THRESHOLD_KG: f32 = 200.0;
+        // Wert seit v3: bundle/grenzwerte/sprit.json -> defuel_threshold_kg (v2.1.24: 200.0)
         let is_defuel = prev_fuel_kg
-            .map(|prev| prev - live_fuel > DEFUEL_THRESHOLD_KG)
+            .map(|prev| prev - live_fuel > crate::grenzwerte::grenzwerte().sprit.defuel_threshold_kg.wert)
             .unwrap_or(false);
         if is_defuel {
             tracing::info!(
@@ -44984,11 +44990,11 @@ fn step_flight_at(
     //      row — single-tick glitches don't poison the flag.
     let airborne_now = !snap.on_ground && stats.block_off_at.is_some() && {
         let agl = snap.altitude_agl_ft as f32;
-        agl > WAS_AIRBORNE_AGL_FT && agl < WAS_AIRBORNE_AGL_MAX_FT
+        agl > crate::grenzwerte::grenzwerte().phasen_kern.was_airborne_agl_ft.wert && agl < crate::grenzwerte::grenzwerte().phasen_kern.was_airborne_agl_max_ft.wert
     };
     if airborne_now {
         stats.airborne_dwell_ticks = stats.airborne_dwell_ticks.saturating_add(1);
-        if stats.airborne_dwell_ticks >= WAS_AIRBORNE_DWELL_TICKS {
+        if stats.airborne_dwell_ticks >= crate::grenzwerte::grenzwerte().phasen_kern.was_airborne_dwell_ticks.wert {
             stats.was_airborne = true;
         }
     } else {
@@ -45410,7 +45416,7 @@ fn step_flight_at(
             // Heuristik zurück — sonst würden sie für immer in Pushback
             // stecken bleiben (siehe URO 913 ZWWW→EHBK 2026-05-09:
             // 9 h hängen geblieben weil pushback_state konstant 3 war).
-            const PUSHBACK_DWELL_SECS: i64 = 10;
+            // Wert seit v3: bundle/grenzwerte/phasen_kern.json -> pushback_dwell_secs (v2.1.24: 10)
             let engines_running = engines_effectively_running(&stats, snap, now);
             // v0.12.1 (Stream A LE2): gate the velocity-derived TaxiOut
             // signal on `!reload_gap_suspect` — a reload glitch tick must
@@ -45435,7 +45441,7 @@ fn step_flight_at(
                 }
                 let dwell_ok = stats
                     .pushback_stopped_at
-                    .map(|t| (now - t).num_seconds() >= PUSHBACK_DWELL_SECS)
+                    .map(|t| (now - t).num_seconds() >= crate::grenzwerte::grenzwerte().phasen_kern.pushback_dwell_secs.wert)
                     .unwrap_or(false);
                 if dwell_ok && powered_taxi {
                     stats.pushback_stopped_at = None;
@@ -45462,7 +45468,7 @@ fn step_flight_at(
                 // lang vorwärts mit eigenen Triebwerken schneller als jeder
                 // Schlepper schiebt, rollt es selbst.
                 let seit = *stats.pushback_vorwaerts_seit.get_or_insert(now);
-                if (now - seit).num_seconds() >= PUSHBACK_HAENGT_S {
+                if (now - seit).num_seconds() >= crate::grenzwerte::grenzwerte().phasen_kern.pushback_haengt_s.wert {
                     stats.pushback_vorwaerts_seit = None;
                     next_phase = FlightPhase::TaxiOut;
                 }
@@ -45898,14 +45904,14 @@ fn step_flight_at(
                 // Tight buffer-window scan (used by both paths as a
                 // fallback — AGL ≤ 250 ft filter prevents pre-flare
                 // contamination).
-                let half_window = chrono::Duration::milliseconds(TOUCHDOWN_VS_WINDOW_MS / 2);
+                let half_window = chrono::Duration::milliseconds(crate::grenzwerte::grenzwerte().landung.touchdown_vs_window_ms.wert / 2);
                 let vs_window_start = actual_td_at - half_window;
                 let vs_window_end = actual_td_at + half_window;
                 let buffered_vs_min_raw: f32 = stats
                     .snapshot_buffer
                     .iter()
                     .filter(|s| s.at >= vs_window_start && s.at <= vs_window_end)
-                    .filter(|s| s.agl_ft <= TD_AGL_MAX_AT_WINDOW_START_FT)
+                    .filter(|s| s.agl_ft <= crate::grenzwerte::grenzwerte().landung.td_agl_max_at_window_start_ft.wert)
                     .map(|s| s.vs_fpm)
                     .fold(f32::INFINITY, f32::min);
                 let buffered_vs_min = if buffered_vs_min_raw.is_finite() {
@@ -45941,7 +45947,7 @@ fn step_flight_at(
                 // bleibt das Feld leer statt falsch. (Dasselbe macht das
                 // Werkzeug von Arderos, dort mit einem 2-Sekunden-Fenster;
                 // unsere Messung sagt, dass 2 s zu kurz waeren.)
-                const SIM_REFERENZ_FENSTER_S: i64 = 4;
+                // Wert seit v3: bundle/grenzwerte/abgabe.json -> sim_referenz_fenster_s (v2.1.24: 4)
                 if stats.landing_sim_referenz_fpm.is_none() {
                     if let Some(kandidat) = negative_only(snap.touchdown_vs_fpm) {
                         let frisch = match stats.sim_referenz_vor_aufsetzen {
@@ -45950,7 +45956,7 @@ fn step_flight_at(
                         };
                         let im_fenster = stats
                             .landing_at
-                            .map(|td| (now - td).num_seconds() <= SIM_REFERENZ_FENSTER_S)
+                            .map(|td| (now - td).num_seconds() <= crate::grenzwerte::grenzwerte().abgabe.sim_referenz_fenster_s.wert)
                             .unwrap_or(true);
                         if frisch && im_fenster {
                             stats.landing_sim_referenz_fpm = Some(kandidat);
@@ -46458,9 +46464,9 @@ fn step_flight_at(
             if let Some(touchdown) = stats.landing_at {
                 let elapsed_ms = (now - touchdown).num_milliseconds();
                 let elapsed_secs = elapsed_ms / 1_000;
-                let in_vs_window = elapsed_secs <= TOUCHDOWN_WINDOW_SECS;
-                let in_g_window = elapsed_ms <= TOUCHDOWN_G_WINDOW_MS;
-                let in_bounce_window = elapsed_secs <= BOUNCE_WINDOW_SECS;
+                let in_vs_window = elapsed_secs <= crate::grenzwerte::grenzwerte().landung.touchdown_window_secs.wert;
+                let in_g_window = elapsed_ms <= crate::grenzwerte::grenzwerte().landung.touchdown_g_window_ms.wert;
+                let in_bounce_window = elapsed_secs <= crate::grenzwerte::grenzwerte().landung.bounce_window_secs.wert;
 
                 if in_vs_window {
                     // Post-touchdown peak-|V/S| refinement is a scored value, so
@@ -46519,11 +46525,11 @@ fn step_flight_at(
                     // ist kein Hopser — der 50-Hz-Pfad verlangt dasselbe.
                     if !stats.bounce_armed_above_threshold
                         && !snap.on_ground
-                        && ueber_boden > BOUNCE_AGL_THRESHOLD_FT
+                        && ueber_boden > crate::grenzwerte::grenzwerte().landung.bounce_agl_threshold_ft.wert
                     {
                         stats.bounce_armed_above_threshold = true;
                     } else if stats.bounce_armed_above_threshold
-                        && (snap.on_ground || ueber_boden < BOUNCE_AGL_RETURN_FT)
+                        && (snap.on_ground || ueber_boden < crate::grenzwerte::grenzwerte().landung.bounce_agl_return_ft.wert)
                     {
                         stats.bounce_count = stats.bounce_count.saturating_add(1);
                         stats.bounce_armed_above_threshold = false;
@@ -46592,7 +46598,7 @@ fn step_flight_at(
                 // Flugzeug spaeter doch weg, wird aus diesem Eintrag der
                 // Touch-and-Go (`landung_beim_wegsteigen_abschliessen`).
                 let rollt_ab = snap.groundspeed_kt < 30.0 && snap.on_ground;
-                if (elapsed_secs > FINAL_LANDING_VERBUCHEN_NACH_SECS || rollt_ab)
+                if (elapsed_secs > crate::grenzwerte::grenzwerte().phasen_kern.final_landing_verbuchen_nach_secs.wert || rollt_ab)
                     && stats.landing_at == Some(touchdown)
                     && stats
                         .touchdown_events
@@ -46973,9 +46979,9 @@ fn step_flight_at(
             let pending_at = stats.arrived_fallback_pending_since.get_or_insert(now);
             let elapsed = (now - *pending_at).num_seconds();
             let dwell_needed = if engines_off_path {
-                ARRIVED_FALLBACK_DWELL_SECS
+                crate::grenzwerte::grenzwerte().phasen_kern.arrived_fallback_dwell_secs.wert
             } else {
-                ARRIVED_STANDSTILL_DWELL_SECS
+                crate::grenzwerte::grenzwerte().phasen_kern.arrived_standstill_dwell_secs.wert
             };
             if elapsed >= dwell_needed {
                 // Two paths to Arrived from here:
@@ -47095,9 +47101,9 @@ fn step_flight_at(
                 // gilt ab da der Vorwärts-Dwell — die Uhr selbst läuft
                 // von ihrem einen Startpunkt weiter.
                 let dwell_needed = if enroute_reconcile_is_forward(prev_phase, v2) {
-                    ENROUTE_RECONCILE_FORWARD_DWELL_SECS
+                    crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_forward_dwell_secs.wert
                 } else {
-                    ENROUTE_RECONCILE_DWELL_SECS
+                    crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert
                 };
                 if (now - since).num_seconds() >= dwell_needed {
                     tracing::warn!(
@@ -47163,7 +47169,7 @@ fn step_flight_at(
     // Note-Finalisierung: Die sieht danach keine offene Landung mehr.
     if wegsteigen_nach_aufsetzen(&stats, snap, now) {
         let seit = *stats.touch_and_go_pending_since.get_or_insert(now);
-        if (now - seit).num_seconds() >= TOUCH_AND_GO_DWELL_SECS {
+        if (now - seit).num_seconds() >= crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_dwell_secs.wert {
             landung_beim_wegsteigen_abschliessen(&mut stats, snap, now);
         }
     } else {
@@ -49586,7 +49592,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                     stats.pending_ap_master_since = Some(now);
                 } else if let Some(since) = stats.pending_ap_master_since {
                     // Same state held for AP_DEBOUNCE_SECS → publish.
-                    if (now - since).num_seconds() >= AP_DEBOUNCE_SECS {
+                    if (now - since).num_seconds() >= crate::grenzwerte::grenzwerte().cockpit.ap_debounce_secs.wert {
                         aufgeschoben.handle(
                             app,
                             ActivityLevel::Info,
@@ -49650,7 +49656,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 stats.pending_autothrottle_since = Some(now);
             } else if let Some(since) = stats.pending_autothrottle_since {
                 // Same state held for AP_DEBOUNCE_SECS → publish.
-                if (now - since).num_seconds() >= AP_DEBOUNCE_SECS {
+                if (now - since).num_seconds() >= crate::grenzwerte::grenzwerte().cockpit.ap_debounce_secs.wert {
                     // First observation latches silently (no entry on
                     // the initial state, only on transitions).
                     if stats.last_logged_autothrottle.is_some() {
@@ -49807,7 +49813,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // Entprellen (siehe FlightStats-Kommentar): erst loggen, wenn
         // das neue Label FLAP_LOG_STABLE_SECS stabil steht — der
         // 3-Sekunden-"FULL"-Spike des iFly faellt damit durch.
-        const FLAP_LOG_STABLE_SECS: i64 = 4;
+        // Wert seit v3: bundle/grenzwerte/cockpit.json -> flap_log_stable_secs (v2.1.24: 4)
         let now = Utc::now();
         if stats.last_logged_flap_label.as_deref() == Some(label.as_str()) {
             stats.pending_flap_label = None;
@@ -49819,7 +49825,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             }
             let stabil = stats
                 .pending_flap_since
-                .map(|t| (now - t).num_seconds() >= FLAP_LOG_STABLE_SECS)
+                .map(|t| (now - t).num_seconds() >= crate::grenzwerte::grenzwerte().cockpit.flap_log_stable_secs.wert)
                 .unwrap_or(false);
             if stabil {
                 // Erste Beobachtung eines Flugs wird nicht geloggt —
@@ -50366,7 +50372,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         ) {
             if stats
                 .premium_fma
-                .update(line.clone(), now, PREMIUM_FMA_DEBOUNCE_SECS)
+                .update(line.clone(), now, crate::grenzwerte::grenzwerte().cockpit.premium_fma_debounce_secs.wert)
             {
                 aufgeschoben.handle(app, ActivityLevel::Info, format!("FMA: {line}"), None);
             }
@@ -50417,7 +50423,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         )
     {
         if let Some(line) = fmt_approach_speeds_line(snap.vapp_kt, snap.vls_kt, snap.vref_kt) {
-            let bucket = |v: Option<f64>| v.map(|x| (x / APPROACH_SPEEDS_BUCKET_KT).round() as i64);
+            let bucket = |v: Option<f64>| v.map(|x| (x / crate::grenzwerte::grenzwerte().cockpit.approach_speeds_bucket_kt.wert).round() as i64);
             let key = (
                 bucket(snap.vapp_kt),
                 bucket(snap.vls_kt),
@@ -50426,7 +50432,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             if stats.premium_approach_speeds.update_first_logs(
                 key,
                 now,
-                APPROACH_SPEEDS_DEBOUNCE_SECS,
+                crate::grenzwerte::grenzwerte().cockpit.approach_speeds_debounce_secs.wert,
             ) {
                 aufgeschoben.handle(app, ActivityLevel::Info, line, None);
             }
@@ -50444,7 +50450,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(mc) = snap.master_caution.filter(|_| !preflight_self_test_window) {
         if stats
             .premium_master_caution
-            .update(mc, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
+            .update(mc, now, crate::grenzwerte::grenzwerte().cockpit.master_annunciator_debounce_secs.wert)
         {
             if mc {
                 aufgeschoben.ohne_meldung(app, ActivityLevel::Warn, "MASTER CAUTION", None);
@@ -50461,7 +50467,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(mw) = snap.master_warning.filter(|_| !preflight_self_test_window) {
         if stats
             .premium_master_warning
-            .update(mw, now, MASTER_ANNUNCIATOR_DEBOUNCE_SECS)
+            .update(mw, now, crate::grenzwerte::grenzwerte().cockpit.master_annunciator_debounce_secs.wert)
         {
             if mw {
                 aufgeschoben.ohne_meldung(app, ActivityLevel::Error, "🔴 MASTER WARNING", None);
@@ -50486,7 +50492,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     // Borrow-Split: stats ist ein MutexGuard, Feld-Borrows splitten
     // nicht durch den Deref — also die Felder einzeln rausziehen.
     {
-        let fast_enough = snap.groundspeed_kt > REVERSER_SPOILER_MIN_GS_KT;
+        let fast_enough = snap.groundspeed_kt > crate::grenzwerte::grenzwerte().cockpit.reverser_spoiler_min_gs_kt.wert;
         let FlightStats {
             last_seen_reverser,
             reverser_logged_this_landing,
@@ -50559,7 +50565,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         if stats.premium_aircraft_phase.update(
             phase_label.clone(),
             now,
-            AIRCRAFT_PHASE_DEBOUNCE_SECS,
+            crate::grenzwerte::grenzwerte().cockpit.aircraft_phase_debounce_secs.wert,
         ) {
             aufgeschoben.handle(
                 app,
@@ -50625,7 +50631,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(oot) = snap.stab_out_of_trim {
         if stats
             .premium_stab_out_of_trim
-            .update(oot, now, STAB_TRIM_DEBOUNCE_SECS)
+            .update(oot, now, crate::grenzwerte::grenzwerte().cockpit.stab_trim_debounce_secs.wert)
             && oot
         {
             aufgeschoben.handle(
@@ -50643,7 +50649,7 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(gate) = snap.thrust_gate.as_ref() {
         if stats
             .premium_thrust_gate
-            .update(gate.clone(), now, THRUST_GATE_DEBOUNCE_SECS)
+            .update(gate.clone(), now, crate::grenzwerte::grenzwerte().cockpit.thrust_gate_debounce_secs.wert)
         {
             aufgeschoben.handle(
                 app,
@@ -50791,7 +50797,7 @@ fn below_gs_should_log(
             *clear_since = Some(now);
         }
         if let Some(since) = *clear_since {
-            if (now - since).num_seconds() >= BELOW_GS_REARM_SECS {
+            if (now - since).num_seconds() >= crate::grenzwerte::grenzwerte().cockpit.below_gs_rearm_secs.wert {
                 *logged_this_approach = false;
             }
         }
@@ -52056,7 +52062,7 @@ fn stillstand_von(p: &PersistedFlight) -> chrono::Duration {
 }
 
 fn stillstand_erlaubt_wiederaufnahme(stillstand: chrono::Duration) -> bool {
-    stillstand <= chrono::Duration::hours(RESUME_STILLSTAND_MAX_HOURS)
+    stillstand <= chrono::Duration::hours(crate::grenzwerte::grenzwerte().abgabe.resume_stillstand_max_hours.wert)
 }
 
 async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) {
@@ -52601,16 +52607,16 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
 // it fires `flight_start` for that bid. Stops re-firing for the
 // same bid until the resulting flight ends (tracked via
 // `AppState::auto_start_last_bid_id`).
-const AUTO_START_INTERVAL_SECS: u64 = 3;
-/// v0.15.13: Cooldown nach einem fehlgeschlagenen Auto-Start-`flight_start`.
-/// Bevor derselbe Bid erneut gefeuert wird, müssen so viele Sekunden vergehen.
-/// Stoppt den 3-s-Retry-Sturm (GlitchTip #10), bleibt aber selbst-korrigierend.
-const AUTO_START_FAIL_COOLDOWN_SECS: i64 = 120;
-/// How close to the departure airport (in meters) the aircraft must
-/// be to trigger auto-start. 5 km is generous enough for any major
-/// airport's stand area; tighter and we'd miss bids where the pilot
-/// spawns at a distant gate.
-const AUTO_START_PROXIMITY_M: f64 = 5_000.0;
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> auto_start_interval_secs (v2.1.24: 3)
+// v0.15.13: Cooldown nach einem fehlgeschlagenen Auto-Start-`flight_start`.
+// Bevor derselbe Bid erneut gefeuert wird, müssen so viele Sekunden vergehen.
+// Stoppt den 3-s-Retry-Sturm (GlitchTip #10), bleibt aber selbst-korrigierend.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> auto_start_fail_cooldown_secs (v2.1.24: 120)
+// How close to the departure airport (in meters) the aircraft must
+// be to trigger auto-start. 5 km is generous enough for any major
+// airport's stand area; tighter and we'd miss bids where the pilot
+// spawns at a distant gate.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> auto_start_proximity_m (v2.1.24: 5_000.0)
 
 /// Das Flugzeug, mit dem ein Bid geflogen wird. phpVMS haengt es erst mit
 /// dem SimBrief-OFP an den Bid; vorher gibt es keins.
@@ -52636,7 +52642,7 @@ fn auto_start_pause_rest(
     if *fbid != bid_id {
         return None;
     }
-    let rest = AUTO_START_FAIL_COOLDOWN_SECS - (jetzt - *am).num_seconds();
+    let rest = crate::grenzwerte::grenzwerte().cockpit.auto_start_fail_cooldown_secs.wert - (jetzt - *am).num_seconds();
     (rest > 0).then(|| (rest, code.clone()))
 }
 
@@ -52736,9 +52742,9 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
     )
 }
 
-/// So lange muss der Simulator ruhig laufen, bevor der Auto-Start ihn
-/// ueberhaupt bewertet.
-const AUTO_START_SIM_RUHE_SECS: i64 = 20;
+// So lange muss der Simulator ruhig laufen, bevor der Auto-Start ihn
+// ueberhaupt bewertet.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> auto_start_sim_ruhe_secs (v2.1.24: 20)
 /// Hinweis-Code, solange der Simulator noch nicht zur Ruhe gekommen ist
 /// (Banner-Schluessel `bids.auto_start_skip.sim_not_ready`).
 const AUTO_START_SIM_WARTET: &str = "sim_not_ready";
@@ -52762,9 +52768,9 @@ fn auto_start_fehler_ist_kein_fehler(code: &str) -> bool {
 #[cfg(test)]
 #[path = "tests_lib/auto_start_sperre_tests.rs"]
 mod auto_start_sperre_tests;
-/// Weiter als das zwischen zwei Takten (3 s) ist kein Rollen, sondern
-/// Laden, Teleport oder Flughafenwechsel.
-const AUTO_START_SPRUNG_M: f64 = 1_000.0;
+// Weiter als das zwischen zwei Takten (3 s) ist kein Rollen, sondern
+// Laden, Teleport oder Flughafenwechsel.
+// Wert seit v3: bundle/grenzwerte/cockpit.json -> auto_start_sprung_m (v2.1.24: 1_000.0)
 
 /// Raeumt den Wartegrund des Resume-Gates weg, egal wie das Gate endet —
 /// scharfgeschaltet, Flug abgebrochen, nicht mehr aktiv, oder ein Ausgang,
@@ -52819,7 +52825,7 @@ fn luecke_aufschlagen(
     // Die Sprung-Pruefung bekommt nur eine BEKANNTE Luecke verlaengert, und
     // nur um die ruhige Endphase.
     if let Some(bisher) = st.resume_luecke_secs {
-        st.resume_luecke_secs = Some(bisher + gewartet.min(AUTO_START_SIM_RUHE_SECS + 10));
+        st.resume_luecke_secs = Some(bisher + gewartet.min(crate::grenzwerte::grenzwerte().cockpit.auto_start_sim_ruhe_secs.wert + 10));
     }
 }
 
@@ -52949,11 +52955,11 @@ impl SimRuhe {
         // durchgehen zu lassen, und der Auto-Start feuerte ohne echte Ruhe
         // (Codex-QS 24.09.2026).
         let sekunden = if snap.on_ground { None } else { sekunden };
-        let erlaubt_m = sekunden.map_or(AUTO_START_SPRUNG_M, |sekunden| {
-            let gs_kt = f64::from(snap.groundspeed_kt.max(0.0)).min(RESUME_MAX_PLAUSIBEL_KT);
+        let erlaubt_m = sekunden.map_or(crate::grenzwerte::grenzwerte().cockpit.auto_start_sprung_m.wert, |sekunden| {
+            let gs_kt = f64::from(snap.groundspeed_kt.max(0.0)).min(crate::grenzwerte::grenzwerte().abgabe.resume_max_plausibel_kt.wert);
             let rate = f64::from(snap.simulation_rate).clamp(1.0, 16.0);
             let unterwegs_m = gs_kt * 0.514_444 * sekunden * rate * 2.0;
-            AUTO_START_SPRUNG_M.max(unterwegs_m)
+            crate::grenzwerte::grenzwerte().cockpit.auto_start_sprung_m.wert.max(unterwegs_m)
         });
         // Dazu der vorige Takt: Ein zeitbeschleunigter Flug bewegt sich
         // GLEICHMAESSIG, jeder Takt etwa gleich weit — ein Teleport ist ein
@@ -52967,7 +52973,7 @@ impl SimRuhe {
         // Beschleunigung bei `RESUME_MAX_PLAUSIBEL_KT`, in 2 s rund 11 km):
         // Ein Teleport ueber hunderte Kilometer wird so nie „gleichmaessig",
         // auch nicht, wenn ihm ein gleich grosser folgt.
-        let fliegbar_m = sekunden.map_or(0.0, |s| RESUME_MAX_PLAUSIBEL_KT * 0.514_444 * s * 16.0);
+        let fliegbar_m = sekunden.map_or(0.0, |s| crate::grenzwerte::grenzwerte().abgabe.resume_max_plausibel_kt.wert * 0.514_444 * s * 16.0);
         // Nur bei dichten Takten: Nach einer langen Unterbrechung (Ruhezustand,
         // App Nap) wuechse der Deckel sonst mit, und ein zweiter Teleport
         // gleicher Groesse gaelte als gleichmaessig (Cloud-QS 24.09.2026).
@@ -53014,9 +53020,10 @@ impl SimRuhe {
         }
         let seit = *self.seit.get_or_insert(jetzt);
         let ruhig = (jetzt - seit).num_seconds();
-        (ruhig < AUTO_START_SIM_RUHE_SECS).then(|| {
+        (ruhig < crate::grenzwerte::grenzwerte().cockpit.auto_start_sim_ruhe_secs.wert).then(|| {
+            let auto_start_sim_ruhe_secs = crate::grenzwerte::grenzwerte().cockpit.auto_start_sim_ruhe_secs.wert;
             format!(
-                "Der Simulator läuft erst {ruhig} s {SIM_RUHE_ZAEHLSTAND} {AUTO_START_SIM_RUHE_SECS} s."
+                "Der Simulator läuft erst {ruhig} s {SIM_RUHE_ZAEHLSTAND} {auto_start_sim_ruhe_secs} s."
             )
         })
     }
@@ -53355,7 +53362,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
         let mut sim_ruhe = SimRuhe::default();
         let mut protokoll = HinweisProtokoll::default();
         loop {
-            tokio::time::sleep(Duration::from_secs(AUTO_START_INTERVAL_SECS)).await;
+            tokio::time::sleep(Duration::from_secs(crate::grenzwerte::grenzwerte().cockpit.auto_start_interval_secs.wert)).await;
             let state = app.state::<AppState>();
             // No-op when disabled — the watcher itself runs forever now
             // (spawned once at app start), the toggle just gates the
@@ -53959,7 +53966,7 @@ fn bid_matches_current_state(
     phpvms_pos: Option<(f64, f64)>,
 ) -> bool {
     match distance_to_airport_any_source(&bid.flight.dpt_airport_id, snap, phpvms_pos) {
-        Some(dist) => dist <= AUTO_START_PROXIMITY_M,
+        Some(dist) => dist <= crate::grenzwerte::grenzwerte().cockpit.auto_start_proximity_m.wert,
         None => false,
     }
 }

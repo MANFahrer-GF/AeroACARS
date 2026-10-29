@@ -39,7 +39,7 @@
             peak = p;
             stall = s;
         }
-        assert!(peak >= TAKEOFF_ROLL_CONFIRM_KT, "Peak hat CONFIRM erreicht");
+        assert!(peak >= crate::grenzwerte::grenzwerte().phasen_kern.takeoff_roll_confirm_kt.wert, "Peak hat CONFIRM erreicht");
         // Committed: ein späterer GS-Dip demotet NICHT mehr über diese Kante
         // (dafür ist die GS<20-Abbruchkante zuständig).
         let (d, _p, _s) =

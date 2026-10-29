@@ -2494,7 +2494,7 @@
         // Ueberroll-Zusicherung verschwaende (externe QS, Runde 3,
         // Klasse 8).
         assert!(
-            dt_q.abs() <= ACHSE_TOLERANZ_M,
+            dt_q.abs() <= crate::grenzwerte::grenzwerte().ausrollen.achse_toleranz_m.wert,
             "die Vorrichtung liegt nicht mehr auf derselben Achse ({dt_q} m quer) — \
              dieser Test prueft das VERSCHIEBEN; fuer das Verwerfen gibt es eigene"
         );
@@ -2870,7 +2870,7 @@
             neu.threshold_lon,
         );
         assert!(
-            (dq.abs() - 3.0).abs() < 0.2 && dq.abs() <= ACHSE_TOLERANZ_M,
+            (dq.abs() - 3.0).abs() < 0.2 && dq.abs() <= crate::grenzwerte::grenzwerte().ausrollen.achse_toleranz_m.wert,
             "die Vorrichtung versetzt nicht um ~3 m quer: {dq}"
         );
         stats.runway_match = Some(neu);
@@ -2941,8 +2941,8 @@
         assert!(
             dt_q > 3.5
                 && de_q < -3.5
-                && dt_q.abs() <= ACHSE_TOLERANZ_M
-                && de_q.abs() <= ACHSE_TOLERANZ_M,
+                && dt_q.abs() <= crate::grenzwerte::grenzwerte().ausrollen.achse_toleranz_m.wert
+                && de_q.abs() <= crate::grenzwerte::grenzwerte().ausrollen.achse_toleranz_m.wert,
             "die Vorrichtung dreht nicht ({dt_q} / {de_q}) — dann prueft dieser Test die Konstante"
         );
         // Die Definition der Korrektur, aus den GEMESSENEN Achsen:
@@ -4051,9 +4051,10 @@
         const LTBJ_THR_LAT: f64 = 38.306_598_663_330_08;
         const LTBJ_THR_LON: f64 = 27.152_700_424_194_336;
         let icao = correlate_airport_icao("LTBK", LTBJ_THR_LAT, LTBJ_THR_LON);
+        let correlate_airport_ambiguity_nm = crate::grenzwerte::grenzwerte().ausrollen.correlate_airport_ambiguity_nm.wert;
         assert_eq!(
             icao, "LTBK",
-            "near-tie within {CORRELATE_AIRPORT_AMBIGUITY_NM} nm must keep the planned arr"
+            "near-tie within {correlate_airport_ambiguity_nm} nm must keep the planned arr"
         );
     }
 
@@ -5473,7 +5474,7 @@
                 &mut stats,
                 &snap,
                 "EDDF",
-                t0 + chrono::Duration::seconds(DIVERT_PREFETCH_STABLE_SECS - 1)
+                t0 + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_stable_secs.wert - 1)
             ),
             None
         );
@@ -5482,7 +5483,7 @@
             &mut stats,
             &snap,
             "EDDF",
-            t0 + chrono::Duration::seconds(DIVERT_PREFETCH_STABLE_SECS),
+            t0 + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_stable_secs.wert),
         );
         assert_eq!(fired.as_deref(), Some("EDDP"));
         // Idempotent — a subsequent tick does NOT re-fire.
@@ -5491,7 +5492,7 @@
                 &mut stats,
                 &snap,
                 "EDDF",
-                t0 + chrono::Duration::seconds(DIVERT_PREFETCH_STABLE_SECS + 5)
+                t0 + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_stable_secs.wert + 5)
             ),
             None
         );
@@ -5570,7 +5571,7 @@
             .expect("EDDF is in the table")
             / 1852.0;
         assert!(
-            dist_nmi >= DIVERT_PREFETCH_PLANNED_DIVERGE_NM,
+            dist_nmi >= crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_planned_diverge_nm.wert,
             "EDDP must be a genuine divergence from EDDF (dist={dist_nmi} nm)"
         );
 
@@ -5585,7 +5586,7 @@
             &mut stats,
             &snap,
             "EDDF",
-            t0 + chrono::Duration::seconds(DIVERT_PREFETCH_STABLE_SECS),
+            t0 + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_stable_secs.wert),
         );
         assert_eq!(
             fired.as_deref(),

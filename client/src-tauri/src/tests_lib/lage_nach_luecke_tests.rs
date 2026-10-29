@@ -68,7 +68,7 @@
         let jetzt = sim(45.7490, 16.0800, 32_000.0, 31_600.0, false, 5_800.0);
         assert!(matches!(
             lage_abweichung(&gaf278_vorher(), &jetzt, utc("2026-10-24T18:07:13Z"), false),
-            Some(LageAbweichung::ZuWeitWeg { erlaubt_nm, .. }) if erlaubt_nm == RESUME_DRIFT_CLEAN_NM
+            Some(LageAbweichung::ZuWeitWeg { erlaubt_nm, .. }) if erlaubt_nm == crate::grenzwerte::grenzwerte().abgabe.resume_drift_clean_nm.wert
         ));
     }
 

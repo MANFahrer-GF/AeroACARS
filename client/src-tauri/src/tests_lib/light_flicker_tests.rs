@@ -76,7 +76,7 @@
         }
         // Ruhe, dann ein einzelner Schaltvorgang.
         assert_eq!(
-            flicker_verdict(&mut st, "Landing", at(20 * 3 + FLICKER_WINDOW_SECS + 5)),
+            flicker_verdict(&mut st, "Landing", at(20 * 3 + crate::grenzwerte::grenzwerte().cockpit.flicker_window_secs.wert + 5)),
             FlickerVerdict::Log
         );
     }

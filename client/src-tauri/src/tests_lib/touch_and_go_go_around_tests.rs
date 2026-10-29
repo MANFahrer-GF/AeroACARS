@@ -33,7 +33,7 @@
         let out = check_go_around(
             &mut stats,
             &climb,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+            now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 1),
         );
         assert!(matches!(out, Some(FlightPhase::Climb)), "phase still leaves the approach");
         assert_eq!(stats.go_around_count, 0, "no runway ahead — not a go-around");
@@ -55,7 +55,7 @@
         let now = t0();
         let climb = snap_at(700.0, 1200.0, false);
         check_go_around(&mut stats, &climb, now);
-        let out = check_go_around(&mut stats, &climb, now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1));
+        let out = check_go_around(&mut stats, &climb, now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 1));
         assert!(matches!(out, Some(FlightPhase::Climb)));
         assert_eq!(stats.go_around_count, 0);
     }
@@ -131,7 +131,7 @@
         let out2 = check_go_around(
             &mut stats,
             &climb,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+            now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 1),
         );
         assert!(matches!(out2, Some(FlightPhase::Climb)));
         assert_eq!(stats.go_around_count, 1);
@@ -344,7 +344,7 @@
         assert!(check_go_around(
             &mut stats,
             &hoch,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 5)
+            now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 5)
         )
         .is_none());
         assert_eq!(stats.go_around_count, 0);
@@ -370,7 +370,7 @@
         let out = check_go_around(
             &mut stats,
             &hoch,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+            now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 1),
         );
         assert!(matches!(out, Some(FlightPhase::Climb)));
     }
@@ -389,7 +389,7 @@
         let out = check_go_around(
             &mut stats,
             &hoch,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+            now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 1),
         );
         assert!(matches!(out, Some(FlightPhase::Climb)));
     }
@@ -410,7 +410,7 @@
         assert!(check_go_around(
             &mut stats,
             &gelaende_fall,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 5)
+            now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 5)
         )
         .is_none());
     }
@@ -427,7 +427,7 @@
         let out = check_go_around(
             &mut stats,
             &weak,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+            now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 1),
         );
         assert!(out.is_none());
         assert_eq!(stats.go_around_count, 0);
@@ -464,7 +464,7 @@
         let out = check_go_around(
             &mut stats,
             &blip,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+            now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 1),
         );
         // lowest > 1500 ft → detector is gated off entirely.
         assert!(out.is_none());
@@ -482,7 +482,7 @@
         let out = check_go_around(
             &mut stats,
             &climb,
-            now + chrono::Duration::seconds(GO_AROUND_DWELL_SECS + 1),
+            now + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.go_around_dwell_secs.wert + 1),
         );
         assert!(out.is_none());
         assert_eq!(stats.go_around_count, 0);

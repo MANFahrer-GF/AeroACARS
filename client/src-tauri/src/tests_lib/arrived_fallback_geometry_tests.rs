@@ -46,7 +46,7 @@
             stats.block_off_at = Some(Utc::now() - chrono::Duration::minutes(90));
             stats.was_airborne = true;
             stats.arrived_fallback_pending_since =
-                Some(Utc::now() - chrono::Duration::seconds(ARRIVED_FALLBACK_DWELL_SECS + 1));
+                Some(Utc::now() - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.arrived_fallback_dwell_secs.wert + 1));
         }
         // parked, engines off, on the ground — see SimSnapshot::default()
         let snap = SimSnapshot {

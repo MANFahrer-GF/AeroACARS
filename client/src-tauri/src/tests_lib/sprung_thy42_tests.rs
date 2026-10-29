@@ -299,7 +299,7 @@
         assert!(leichter_hopser_im_streamer(1000, 2.0), "Grenze eingeschlossen");
         // Codex-QS 22.10.2026: genau 5 ft ist wie in der 50-Hz-Auswertung kein leichter Hopser.
         assert!(!leichter_hopser_im_streamer(2000, 5.0), "5 ft gehört nicht mehr zum leichten Hopser");
-        assert_eq!(BOUNCE_LIGHT_MIN_AGL_FT, 2.0);
-        assert_eq!(BOUNCE_LIGHT_MIN_DAUER_MS, 1000);
-        assert_eq!(BOUNCE_AGL_THRESHOLD_FT as f32, crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert);
+        assert_eq!(crate::grenzwerte::grenzwerte().landung.bounce_light_min_agl_ft.wert, 2.0);
+        assert_eq!(crate::grenzwerte::grenzwerte().landung.bounce_light_min_dauer_ms.wert, 1000);
+        assert_eq!(crate::grenzwerte::grenzwerte().landung.bounce_agl_threshold_ft.wert as f32, crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert);
     }

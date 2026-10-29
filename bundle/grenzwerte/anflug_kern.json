@@ -1,0 +1,22 @@
+{
+  "approach_vs_plausibility_cap_fpm": {"wert": 10000.0, "einheit": "fpm", "quelle": "client/src-tauri/src/lib.rs:8812 (v2.1.24)"},
+  "approach_bank_plausibility_cap_deg": {"wert": 90.0, "einheit": "deg", "quelle": "client/src-tauri/src/lib.rs:8815 (v2.1.24)"},
+  "final_platz_nm": {"wert": 5.0, "einheit": "nm", "quelle": "client/src-tauri/src/lib.rs:9096 (v2.1.24)"},
+  "hat_agl_plausibel_ft": {"wert": 1200.0, "einheit": "ft", "quelle": "client/src-tauri/src/lib.rs:9118 (v2.1.24)"},
+  "hat_agl_vertraut_ft": {"wert": 600.0, "einheit": "ft", "quelle": "client/src-tauri/src/lib.rs:9122 (v2.1.24)"},
+  "approach_stability_agl_cap_ft": {"wert": 1500.0, "einheit": "ft", "quelle": "client/src-tauri/src/lib.rs:10014 (v2.1.24)"},
+  "approach_flare_cutoff_ms": {"wert": 3000, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:10015 (v2.1.24)"},
+  "stability_min_samples": {"wert": 10, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:10026 (v2.1.24)"},
+  "sampler_stability_window_secs": {"wert": 180, "einheit": "s", "quelle": "client/src-tauri/src/lib.rs:10038 (v2.1.24)"},
+  "max_vs_dev_floor_ft": {"wert": 50.0, "einheit": "ft", "quelle": "client/src-tauri/src/lib.rs:10062 (v2.1.24)"},
+  "flaps_unreadable_max_ias_kt": {"wert": 160.0, "einheit": "kt", "quelle": "client/src-tauri/src/lib.rs:10071 (v2.1.24)"},
+  "flaps_implausible_below": {"wert": 0.25, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:10077 (v2.1.24)"},
+  "flaps_landing_min": {"wert": 0.7, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:10081 (v2.1.24)"},
+  "stabilisiert_ueber_vref_kt": {"wert": 20.0, "einheit": "kt", "quelle": "client/src-tauri/src/lib.rs:10090 (v2.1.24)"},
+  "sink_toleranz_ms": {"wert": 10000, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:10725 (v2.1.24)"},
+  "da_sink_toleranz_ms": {"wert": 5000, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:10731 (v2.1.24)"},
+  "da_vref_toleranz_kt": {"wert": 15.0, "einheit": "kt", "quelle": "client/src-tauri/src/lib.rs:10735 (v2.1.24)"},
+  "sink_gs_bezug_kt": {"wert": 145.0, "einheit": "kt", "quelle": "client/src-tauri/src/lib.rs:10748 (v2.1.24)"},
+  "sink_max_luecke_ms": {"wert": 4000, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:10811 (v2.1.24)"},
+  "min_bezugsgeschwindigkeit_kt": {"wert": 25.0, "einheit": "kt", "quelle": "client/src-tauri/src/lib.rs:24003 (v2.1.24)"}
+}

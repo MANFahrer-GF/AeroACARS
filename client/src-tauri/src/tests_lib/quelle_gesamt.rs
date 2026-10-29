@@ -27,7 +27,12 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// (VS_FLOOR_FPM, BOUNCE_FORENSIC/SCORED_MIN_AGL_FT, BEWERTUNGS_FENSTER_VOR/NACH_MS;
 /// Werte gleich, Test `grenzwerte_aufsetzen_wie_2_1_24`) — plus Bereich
 /// Ankunft: `arrival::ON_FIELD_*`/`NEAREST_SEARCH_RADIUS_NM` -> `grenzwerte().ankunft.*`
-/// (Werte gleich, Test `grenzwerte_ankunft_wie_2_1_24`).
+/// (Werte gleich, Test `grenzwerte_ankunft_wie_2_1_24`) — plus die fachlichen
+/// Konstanten von `lib.rs` selbst (Etappe 1b, Bereiche phasen_kern, landung,
+/// anflug_kern, ausrollen, sprit, abgabe, cockpit; je Bereich ein Test
+/// `grenzwerte_<bereich>_wie_2_1_24`): `const`-Zeilen durch Verweise ersetzt,
+/// Verwendungen auf `grenzwerte().<bereich>.*` umgestellt, zwei abgeleitete
+/// Konstanten (ROLLOUT_TICK_MIN_GS_KT, MSFS_FLARE_AGL_MAX_FT) als Funktion.
 #[test]
 fn zerlegung_ist_nur_verschoben() {
     use sha2::{Digest, Sha256};
@@ -38,4 +43,4 @@ fn zerlegung_ist_nur_verschoben() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs-Zerlegung hat Programmtext veraendert");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "845067f8a435794ee058a65a212d0d4844cfea6d7a2cea4cde2b5b5c840c0b96";
+const HASH_VOR_DER_ZERLEGUNG: &str = "f759164cceff378ffa2c1e6e3afae17ddbebc398599de6d861abd6353028c901";

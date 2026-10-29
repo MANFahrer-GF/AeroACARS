@@ -165,7 +165,7 @@
         st.pending_td_at = Some(t);
         assert!(aufsetzen_wird_geprueft(&st, t + chrono::Duration::milliseconds(1_100)));
         assert!(
-            !aufsetzen_wird_geprueft(&st, t + chrono::Duration::seconds(AUFSETZ_PRUEFUNG_ABWARTEN_S)),
+            !aufsetzen_wird_geprueft(&st, t + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().landung.aufsetz_pruefung_abwarten_s.wert)),
             "ein haengender Kandidat sperrt nicht fuer immer"
         );
     }

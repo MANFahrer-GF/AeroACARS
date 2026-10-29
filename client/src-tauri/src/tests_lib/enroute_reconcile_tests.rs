@@ -367,7 +367,7 @@
             );
             stats.enroute_divergence_since = Some((
                 FlightPhase::Cruise,
-                Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 500),
+                Utc::now() - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 500),
             ));
         }
         // Seit 17.10.2026: kein Zug durch den Versöhner, sondern die
@@ -423,7 +423,7 @@
     #[test]
     fn stuck_climb_with_v2_in_the_approach_reconciles_after_dwell() {
         // Climb→Descent ist VORWÄRTS im Bogen → der kurze Dwell gilt.
-        let (flight, snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_FORWARD_DWELL_SECS + 1));
+        let (flight, snap) = stuck_climb_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_forward_dwell_secs.wert + 1));
         {
             // QS-Runde 1: Timer-Hygiene-Assertions nicht-vakuös machen —
             // die Timer ECHT armieren, damit ihr Clear beweisbar am
@@ -454,7 +454,7 @@
 
     #[test]
     fn does_not_fire_before_dwell_elapsed() {
-        let (flight, snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_FORWARD_DWELL_SECS - 10));
+        let (flight, snap) = stuck_climb_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_forward_dwell_secs.wert - 10));
         let result = step_flight(&flight, &snap);
         assert_eq!(result, None);
         let stats = flight.stats.lock().unwrap();
@@ -526,7 +526,7 @@
         }
 
         // Vorwärts-Dwell überschritten, Rückwärts-Dwell nicht → kein Zug.
-        let (flight, snap) = descent_stuck_flight(ENROUTE_RECONCILE_FORWARD_DWELL_SECS + 1);
+        let (flight, snap) = descent_stuck_flight(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_forward_dwell_secs.wert + 1);
         let result = step_flight(&flight, &snap);
         assert_eq!(
             result, None,
@@ -535,7 +535,7 @@
         assert_eq!(flight.stats.lock().unwrap().phase, FlightPhase::Approach);
 
         // Rückwärts-Dwell voll → jetzt zieht v2 die festgefahrene v1.
-        let (flight, snap) = descent_stuck_flight(ENROUTE_RECONCILE_DWELL_SECS + 1);
+        let (flight, snap) = descent_stuck_flight(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 1);
         let result = step_flight(&flight, &snap);
         assert_eq!(result, Some(FlightPhase::Climb));
     }
@@ -922,7 +922,7 @@
             );
             stats.enroute_divergence_since = Some((
                 FlightPhase::Climb,
-                Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 100),
+                Utc::now() - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 100),
             ));
         }
         let result = step_flight(&flight, &snap);
@@ -938,7 +938,7 @@
         // QS-Befund (Pause-Loch): die Uhr ist Wanduhr; eine Sim-Pause
         // unter der Reload-Gap-Schwelle (Cruise: bis 150 s!) liefe sonst
         // voll in den Dwell. Pause unterbricht die Beobachtung → Reset.
-        let (flight, mut snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_FORWARD_DWELL_SECS + 1));
+        let (flight, mut snap) = stuck_climb_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_forward_dwell_secs.wert + 1));
         snap.paused = true;
         let result = step_flight(&flight, &snap);
         assert_eq!(result, None);
@@ -957,7 +957,7 @@
     fn fires_exactly_at_the_dwell_boundary() {
         // >= — die Grenze selbst muss feuern (QS-Runde 1: Mutation >= → >
         // überlebte die Suite; dieser Test tötet sie).
-        let (flight, snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_FORWARD_DWELL_SECS));
+        let (flight, snap) = stuck_climb_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_forward_dwell_secs.wert));
         let result = step_flight(&flight, &snap);
         assert_eq!(result, Some(FlightPhase::Approach));
     }
@@ -981,7 +981,7 @@
         // steht zwar noch auf Descent, aber ohne aktuelle Fenster-Evidenz
         // (`Insufficient`) darf der Versöhner weder feuern noch die Uhr
         // weiterlaufen lassen.
-        let (flight, snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_DWELL_SECS + 100));
+        let (flight, snap) = stuck_climb_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 100));
         {
             let mut stats = flight.stats.lock().unwrap();
             stats.shadow_engine = phase_v2::ShadowPhaseEngine::default();
@@ -1006,7 +1006,7 @@
         // sie (irgendwann, mit damals anderem v2-Wert) für das
         // festgefahrene Climb gestartet — v2 zeigt inzwischen Approach.
         // Der abgelaufene Dwell muss auf v2s AKTUELLE Phase ziehen.
-        let (flight, snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_DWELL_SECS + 1));
+        let (flight, snap) = stuck_climb_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 1));
         let result = step_flight(&flight, &snap);
         assert_eq!(
             result,
@@ -1026,7 +1026,7 @@
             let mut stats = flight.stats.lock().unwrap();
             stats.enroute_divergence_since = Some((
                 FlightPhase::Cruise,
-                Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 500),
+                Utc::now() - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 500),
             ));
         }
         let result = step_flight(&flight, &snap);
@@ -1046,7 +1046,7 @@
         // von v2s Reiseband-Phase) feuert diesen Tick. Der Versöhner —
         // obwohl sein Dwell längst um wäre — darf den Normalpfad weder
         // übersteuern noch seine Uhr behalten.
-        let (flight, mut snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_DWELL_SECS + 100));
+        let (flight, mut snap) = stuck_climb_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 100));
         snap.vertical_speed_fpm = -50.0;
         snap.altitude_agl_ft = 6000.0;
         snap.altitude_msl_ft = 7000.0;
@@ -1066,7 +1066,7 @@
 
     #[test]
     fn reload_glitch_tick_neither_fires_nor_keeps_the_clock() {
-        let (flight, snap) = stuck_climb_flight(Some(ENROUTE_RECONCILE_DWELL_SECS + 100));
+        let (flight, snap) = stuck_climb_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 100));
         {
             // 60 s Lücke seit dem letzten Tick — weit über dem Reload-
             // Verdacht (2.5 × 10 s Climb-Intervall).
@@ -1127,7 +1127,7 @@
             );
             stats.enroute_divergence_since = Some((
                 FlightPhase::Climb,
-                Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 1),
+                Utc::now() - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 1),
             ));
         }
         let result = step_flight(&flight, &snap);
@@ -1180,7 +1180,7 @@
             );
             stats.enroute_divergence_since = Some((
                 FlightPhase::Climb,
-                Utc::now() - chrono::Duration::seconds(ENROUTE_RECONCILE_DWELL_SECS + 100),
+                Utc::now() - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.enroute_reconcile_dwell_secs.wert + 100),
             ));
         }
         let result = step_flight(&flight, &snap);

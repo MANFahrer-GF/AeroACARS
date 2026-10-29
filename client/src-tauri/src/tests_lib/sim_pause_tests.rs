@@ -184,8 +184,8 @@
         // Schwellen muessen in aufsteigender Reihenfolge stehen,
         // sonst greifen die match-Arms in apply_pause_resume nicht
         // in der erwarteten Reihenfolge.
-        assert!(RESUME_DRIFT_TOAST_NM < RESUME_DRIFT_WARN_NM);
-        assert!(RESUME_DRIFT_WARN_NM < RESUME_DRIFT_EXTREME_NM);
+        assert!(crate::grenzwerte::grenzwerte().abgabe.resume_drift_toast_nm.wert < crate::grenzwerte::grenzwerte().abgabe.resume_drift_warn_nm.wert);
+        assert!(crate::grenzwerte::grenzwerte().abgabe.resume_drift_warn_nm.wert < crate::grenzwerte::grenzwerte().abgabe.resume_drift_extreme_nm.wert);
     }
 
     #[test]
@@ -195,9 +195,9 @@
         //   1-50 NM  Info "repositioniert X nm"
         //   50-200   Warn
         //   > 200    Warn "Sehr grosse Reposition"
-        assert_eq!(RESUME_DRIFT_TOAST_NM, 1.0);
-        assert_eq!(RESUME_DRIFT_WARN_NM, 50.0);
-        assert_eq!(RESUME_DRIFT_EXTREME_NM, 200.0);
+        assert_eq!(crate::grenzwerte::grenzwerte().abgabe.resume_drift_toast_nm.wert, 1.0);
+        assert_eq!(crate::grenzwerte::grenzwerte().abgabe.resume_drift_warn_nm.wert, 50.0);
+        assert_eq!(crate::grenzwerte::grenzwerte().abgabe.resume_drift_extreme_nm.wert, 200.0);
     }
 
     // ─── PauseSegment: serde-Roundtrip damit Persistence haelt ───

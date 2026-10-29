@@ -1111,7 +1111,7 @@
             v.len()
         };
         assert!(
-            distinct >= MSFS_FLARE_MIN_DISTINCT_AGL,
+            distinct >= crate::grenzwerte::grenzwerte().landung.msfs_flare_min_distinct_agl.wert,
             "whole-window distinct ({distinct}) is above Gate 1a — only Gate 1c catches it"
         );
     }
@@ -1155,8 +1155,8 @@
         // Prove the bucket COUNT alone would NOT have caught it: the end-fit
         // window has ≥ MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL distinct buckets,
         // so only the SPAN backstop rejects here.
-        let end_lo = (edge_ms - 100) - MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
-        let end_hi = (edge_ms - 100) + MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS;
+        let end_lo = (edge_ms - 100) - crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
+        let end_hi = (edge_ms - 100) + crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
         let mut end_buckets: Vec<i64> = s
             .iter()
             .filter(|x| {
@@ -1168,7 +1168,7 @@
         end_buckets.sort_unstable();
         end_buckets.dedup();
         assert!(
-            end_buckets.len() >= MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL,
+            end_buckets.len() >= crate::grenzwerte::grenzwerte().landung.msfs_flare_min_end_fit_distinct_agl.wert,
             "end window has ≥4 distinct buckets ({}) — only the span backstop catches this",
             end_buckets.len()
         );

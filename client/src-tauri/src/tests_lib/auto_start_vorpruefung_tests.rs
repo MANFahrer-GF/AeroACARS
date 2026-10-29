@@ -35,14 +35,14 @@
         assert_eq!(
             auto_start_pause_rest(5719, Some(&f), jetzt),
             Some((
-                AUTO_START_FAIL_COOLDOWN_SECS - 20,
+                crate::grenzwerte::grenzwerte().cockpit.auto_start_fail_cooldown_secs.wert - 20,
                 "not_at_departure".to_string()
             ))
         );
         assert_eq!(auto_start_pause_rest(5720, Some(&f), jetzt), None);
         assert_eq!(auto_start_pause_rest(5719, None, jetzt), None);
         let alt = (
-            jetzt - chrono::Duration::seconds(AUTO_START_FAIL_COOLDOWN_SECS),
+            jetzt - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().cockpit.auto_start_fail_cooldown_secs.wert),
             5719,
             "x".to_string(),
         );
@@ -204,7 +204,7 @@
         let t0 = Utc::now();
         let mut r = SimRuhe::default();
         assert!(r.pruefen(&sim(18.04, -63.11, false, "C24R"), t0).is_some());
-        let t = t0 + chrono::Duration::seconds(AUTO_START_SIM_RUHE_SECS);
+        let t = t0 + chrono::Duration::seconds(crate::grenzwerte::grenzwerte().cockpit.auto_start_sim_ruhe_secs.wert);
         assert_eq!(r.pruefen(&sim(18.0401, -63.1101, false, "C24R"), t), None);
     }
 

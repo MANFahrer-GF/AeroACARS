@@ -42,7 +42,7 @@
     #[test]
     fn der_puffer_deckt_das_aufsetzfenster() {
         assert!(
-            BILDRATE_PUFFER_SECS * 1000 > TOUCHDOWN_BUFFER_SECS * 1000 + TOUCHDOWN_POST_WINDOW_MS,
+            BILDRATE_PUFFER_SECS * 1000 > crate::grenzwerte::grenzwerte().landung.touchdown_buffer_secs.wert * 1000 + crate::grenzwerte::grenzwerte().landung.touchdown_post_window_ms.wert,
             "Bildraten-Puffer kuerzer als Vorlauf plus Nachlauf"
         );
     }

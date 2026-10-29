@@ -101,7 +101,7 @@
 
     #[test]
     fn does_not_fire_before_dwell_elapsed() {
-        let flight = armed_flight(Some(ARRIVED_FALLBACK_DWELL_SECS - 3));
+        let flight = armed_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.arrived_fallback_dwell_secs.wert - 3));
         let snap = arrived_conditions_snap();
         let result = step_flight(&flight, &snap);
         assert_eq!(result, None);
@@ -119,7 +119,7 @@
 
     #[test]
     fn fires_once_dwell_elapsed() {
-        let flight = armed_flight(Some(ARRIVED_FALLBACK_DWELL_SECS + 1));
+        let flight = armed_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.arrived_fallback_dwell_secs.wert + 1));
         let snap = arrived_conditions_snap();
         let result = step_flight(&flight, &snap);
         assert_eq!(result, Some(FlightPhase::Arrived));
@@ -130,7 +130,7 @@
     fn fires_exactly_at_the_dwell_boundary() {
         // elapsed >= dwell_needed — the boundary itself must fire, not just
         // strictly-greater.
-        let flight = armed_flight(Some(ARRIVED_FALLBACK_DWELL_SECS));
+        let flight = armed_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.arrived_fallback_dwell_secs.wert));
         let snap = arrived_conditions_snap();
         let result = step_flight(&flight, &snap);
         assert_eq!(result, Some(FlightPhase::Arrived));
@@ -138,7 +138,7 @@
 
     #[test]
     fn an_interrupting_tick_resets_the_dwell_timer() {
-        let flight = armed_flight(Some(ARRIVED_FALLBACK_DWELL_SECS + 1));
+        let flight = armed_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.arrived_fallback_dwell_secs.wert + 1));
         let mut snap_engine_on = arrived_conditions_snap();
         snap_engine_on.engines_running = 1; // stray "still running" sample
 
@@ -171,7 +171,7 @@
         // engines_running is stuck NONZERO, so engines_off_path is false
         // and only standstill_path (no engines_running requirement) can
         // fire — gated by the much longer ARRIVED_STANDSTILL_DWELL_SECS.
-        let flight = armed_flight(Some(ARRIVED_FALLBACK_DWELL_SECS + 1));
+        let flight = armed_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.arrived_fallback_dwell_secs.wert + 1));
         let mut snap = arrived_conditions_snap();
         snap.aircraft_profile = sim_core::AircraftProfile::ContrailFa50;
         snap.engines_running = 3; // stuck nonzero — the documented FA50 bug
@@ -188,7 +188,7 @@
         {
             let mut stats = flight.stats.lock().unwrap();
             stats.arrived_fallback_pending_since =
-                Some(Utc::now() - chrono::Duration::seconds(ARRIVED_STANDSTILL_DWELL_SECS + 1));
+                Some(Utc::now() - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.arrived_standstill_dwell_secs.wert + 1));
         }
         let result = step_flight(&flight, &snap);
         assert_eq!(result, Some(FlightPhase::Arrived));
@@ -216,7 +216,7 @@
             snap.fuel_total_kg = 1_200.0;
             (flight, snap)
         };
-        let (flight, snap) = bereit(3, ARRIVED_STANDSTILL_DWELL_SECS + 1);
+        let (flight, snap) = bereit(3, crate::grenzwerte::grenzwerte().phasen_kern.arrived_standstill_dwell_secs.wert + 1);
         assert_eq!(
             step_flight(&flight, &snap),
             Some(FlightPhase::Arrived),
@@ -228,7 +228,7 @@
             "Abstell-Marke bei laufenden Triebwerken gerastet"
         );
 
-        let (flight, snap) = bereit(0, ARRIVED_FALLBACK_DWELL_SECS + 1);
+        let (flight, snap) = bereit(0, crate::grenzwerte::grenzwerte().phasen_kern.arrived_fallback_dwell_secs.wert + 1);
         assert_eq!(
             step_flight(&flight, &snap),
             Some(FlightPhase::Arrived),
@@ -253,7 +253,7 @@
         // stay None (standstill_path's own threshold isn't met), tick 2
         // must fire immediately once engines_off_path becomes active,
         // proving the accumulated time carried over rather than restarting.
-        let flight = armed_flight(Some(ARRIVED_FALLBACK_DWELL_SECS + 1));
+        let flight = armed_flight(Some(crate::grenzwerte::grenzwerte().phasen_kern.arrived_fallback_dwell_secs.wert + 1));
         let mut snap = arrived_conditions_snap();
         snap.aircraft_profile = sim_core::AircraftProfile::ContrailFa50;
         snap.engines_running = 3; // this tick: only standstill_path qualifies

@@ -67,7 +67,7 @@
         let prev = paused_snapshot(50.0331, 8.5622, 360.0, 3000.0, true);
         let cur = sim_snapshot(50.0331, 8.5622, 360.0, 12000.0, true);
         let d = compute_resume_discontinuity(&prev, &cur, None, None);
-        assert!(d.fuel_delta_kg > RESUME_FUEL_JUMP_IMPOSSIBLE_KG);
+        assert!(d.fuel_delta_kg > crate::grenzwerte::grenzwerte().abgabe.resume_fuel_jump_impossible_kg.wert);
         assert!(d.both_grounded);
         assert!(!is_impossible_discontinuity(&d));
     }
@@ -95,7 +95,7 @@
         // gleicher Fuel-Stand.
         let cur = sim_snapshot(55.0, 8.0, 35000.0, 5000.0, false);
         let d = compute_resume_discontinuity(&prev, &cur, None, None);
-        assert!(d.drift_nm > RESUME_DRIFT_EXTREME_NM);
+        assert!(d.drift_nm > crate::grenzwerte::grenzwerte().abgabe.resume_drift_extreme_nm.wert);
         assert!(is_impossible_discontinuity(&d));
     }
 
@@ -585,7 +585,7 @@
         luecke_aufschlagen(&mut st, Some(t0), t0 + chrono::Duration::seconds(380));
         assert_eq!(
             st.resume_luecke_secs,
-            Some(30 + AUTO_START_SIM_RUHE_SECS + 10)
+            Some(30 + crate::grenzwerte::grenzwerte().cockpit.auto_start_sim_ruhe_secs.wert + 10)
         );
         assert_eq!(st.resume_luecke_max_secs, Some(410));
         // 37 nm in der so gerechneten Luecke sind nicht fliegbar.
@@ -655,10 +655,10 @@
         let mut snap = sim_snapshot(50.0, 8.0, 100_000.0, 5_000.0, false);
         assert!(snapshot_position_is_usable(&snap));
         // Die Grenze selbst als Paar — eine versehentlich tiefere fiele auf.
-        snap.altitude_msl_ft = SNAPSHOT_HOEHE_MAX_FT;
+        snap.altitude_msl_ft = crate::grenzwerte::grenzwerte().sprit.snapshot_hoehe_max_ft.wert;
         assert!(snapshot_position_is_usable(&snap));
-        assert_eq!(SNAPSHOT_HOEHE_MAX_FT, 150_000.0);
-        snap.altitude_msl_ft = SNAPSHOT_HOEHE_MAX_FT + 1.0;
+        assert_eq!(crate::grenzwerte::grenzwerte().sprit.snapshot_hoehe_max_ft.wert, 150_000.0);
+        snap.altitude_msl_ft = crate::grenzwerte::grenzwerte().sprit.snapshot_hoehe_max_ft.wert + 1.0;
         assert!(!snapshot_position_is_usable(&snap));
     }
 

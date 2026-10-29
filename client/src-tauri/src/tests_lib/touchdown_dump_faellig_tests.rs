@@ -3,12 +3,12 @@
     #[test]
     fn kein_dump_vor_dem_fenster_ohne_klettern() {
         assert!(!touchdown_dump_faellig(0, 0.0));
-        assert!(!touchdown_dump_faellig(TOUCHDOWN_POST_WINDOW_MS - 1, 5.0));
+        assert!(!touchdown_dump_faellig(crate::grenzwerte::grenzwerte().landung.touchdown_post_window_ms.wert - 1, 5.0));
     }
 
     #[test]
     fn dump_nach_dem_vollen_fenster_auch_ohne_klettern() {
-        assert!(touchdown_dump_faellig(TOUCHDOWN_POST_WINDOW_MS, 0.0));
+        assert!(touchdown_dump_faellig(crate::grenzwerte::grenzwerte().landung.touchdown_post_window_ms.wert, 0.0));
     }
 
     /// Der eigentliche Fix: ein Bounce, der WEIT VOR den vollen 10 s wieder
@@ -22,7 +22,7 @@
     fn fruehes_klettern_ueber_die_tg_schwelle_macht_den_dump_sofort_faellig() {
         assert!(touchdown_dump_faellig(
             1_500,
-            TOUCH_AND_GO_AGL_THRESHOLD_FT + 1.0
+            crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_agl_threshold_ft.wert + 1.0
         ));
     }
 
@@ -32,6 +32,6 @@
         // Klettern darueber.
         assert!(!touchdown_dump_faellig(
             1_500,
-            TOUCH_AND_GO_AGL_THRESHOLD_FT
+            crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_agl_threshold_ft.wert
         ));
     }

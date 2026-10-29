@@ -222,8 +222,8 @@
         // pinned die Werte explizit. Aenderung der Konstanten ist eine
         // Spec-Aenderung — dieser Test schlaegt fehl wenn jemand die
         // Werte still-und-leise verschiebt.
-        assert_eq!(RUNWAY_TRUST_MAX_CENTERLINE_OFFSET_M, 200.0);
-        assert_eq!(RUNWAY_TRUST_MIN_FLOAT_DISTANCE_M, -100.0);
+        assert_eq!(crate::grenzwerte::grenzwerte().ausrollen.runway_trust_max_centerline_offset_m.wert, 200.0);
+        assert_eq!(crate::grenzwerte::grenzwerte().ausrollen.runway_trust_min_float_distance_m.wert, -100.0);
     }
 
     // ─── Bounce-Threshold-Konstanten (touchdown_v2) ─────────────────────
@@ -273,10 +273,10 @@
         // und BOUNCE_SCORED_MIN_AGL_FT (touchdown_v2.rs) gemeinsam
         // anpassen — KEINE der beiden Konstanten in Isolation aendern.
         assert_eq!(
-            BOUNCE_AGL_THRESHOLD_FT as f32,
+            crate::grenzwerte::grenzwerte().landung.bounce_agl_threshold_ft.wert as f32,
             crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert,
             "Streamer-Threshold ({} ft) muss gleich v2-SCORED-Threshold ({} ft) sein",
-            BOUNCE_AGL_THRESHOLD_FT,
+            crate::grenzwerte::grenzwerte().landung.bounce_agl_threshold_ft.wert,
             crate::grenzwerte::grenzwerte().aufsetzen.bounce_scored_min_agl_ft.wert,
         );
     }
@@ -286,5 +286,5 @@
         // Sanity: nach dem Hopser muss der Flieger wieder TIEFER als
         // RETURN sinken (5 ft). Wenn RETURN >= THRESHOLD waere, koennte
         // der Detector nie firen.
-        assert!(BOUNCE_AGL_RETURN_FT < BOUNCE_AGL_THRESHOLD_FT);
+        assert!(crate::grenzwerte::grenzwerte().landung.bounce_agl_return_ft.wert < crate::grenzwerte::grenzwerte().landung.bounce_agl_threshold_ft.wert);
     }
