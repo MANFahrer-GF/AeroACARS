@@ -103,7 +103,7 @@ jobs:
   vorab:
     name: Als Vorabstand auf live ablegen (nur Vorab-Piloten, P-3.13)
     needs: bauen
-    if: needs.bauen.outputs.signiert == 'ja' && github.ref == 'refs/heads/main'
+    if: needs.bauen.outputs.signiert == 'ja' && github.ref == 'refs/heads/v3'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
