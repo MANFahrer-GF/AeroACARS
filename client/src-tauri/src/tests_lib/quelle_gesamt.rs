@@ -56,6 +56,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `bewertung::tests::modul_rechnet_wie_das_crate`, `bewertung-host`
 /// (60 Faelle Byte fuer Byte). Nativ bleibt nur `normalize_derived_scores`
 /// fuer 2.x-Datensaetze der Fassung 18–20.
+/// — plus P-4.50/P-4.33: `SCORE_ALGORITHMUS_VERSION` = 27 (Test
+/// `bewertung::tests::fassung_gleich_modul`) und `bewertung_status` an
+/// PIREP, Landungsdatensatz (aus dem Modulergebnis) und Touchdown-Nutzlast
+/// (`None`, sie traegt die Klassen-Note).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -66,4 +70,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "1add7b6a09af243bbb97b2590d5bf3c94a76ad711b22616bb99fbf1bc8387b84";
+const HASH_VOR_DER_ZERLEGUNG: &str = "f87c9f7a5770781d12cc37bb11bca6b509314d4a495f9d718978b1a2d705a8dc";

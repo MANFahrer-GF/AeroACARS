@@ -22032,6 +22032,7 @@ fn build_pirep_payload(
         // (Baender 60/70/80/90 %), keine toleranzbereinigte Zweitgroesse
         // mehr — siehe `sub_rollout_v2`.
         score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
+        bewertung_status: Some(crate::bewertung::status_text(&bewertet).to_string()),
         client_health: build_client_health_report(&stats),
         // Lernpaket AP4/AP5 (Entscheid Thomas 29.09.2026): Forensik ohne
         // Note, im finalen Stand — `apply_finalized_runway_correlation` lief
@@ -24745,7 +24746,11 @@ fn muster_fuer_landung<'a>(stats: &'a FlightStats, buchung_icao: &'a str) -> Opt
 /// Kurswechsel ein Schlenker zur anderen Seite als der endgueltige
 /// Kantenuebertritt, endet `scoring_cutoff_m` am Uebertritt (siehe
 /// `bahn_felder`).
-const SCORE_ALGORITHMUS_VERSION: u8 = 26;
+///
+/// 27 (3.0, P-4.50): erste Fassung im WASM-Bewertungsmodul; dieselbe Zahl
+/// steht im Modul (`landing_scoring::wasm::FASSUNG`) und kommt mit jeder
+/// Ausgabe — Test `bewertung::tests::fassung_gleich_modul`.
+const SCORE_ALGORITHMUS_VERSION: u8 = 27;
 
 /// Die beiden Ziele einer Landung — geplant und eingereicht.
 ///
@@ -26350,6 +26355,7 @@ where
         // v1.6.7: bump 7→8 — Minderverbrauch bis 15 % voll bepunktet;
         // Bahn-Auslastung auf die echte genutzte Strecke umgestellt.
         score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
+        bewertung_status: Some(crate::bewertung::status_text(&bewertet).to_string()),
         // Lernpaket AP4/AP5 (29.09.2026): reine Forensik, nur lokal.
         anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
         anflug_ruhe: stats.anflug_forensik.ruhe.clone(),
@@ -39030,6 +39036,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // voll bepunktet; Bahn-Auslastung auf die echte
                                 // genutzte Strecke umgestellt.
                                 score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
+                                bewertung_status: None,
                                 // ── v1.7.0 Bahndisziplin ─────────────────
                                 //
                                 // Dieselbe Ableitung wie fuer die Anzeige im

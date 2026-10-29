@@ -1112,6 +1112,10 @@ pub struct TouchdownPayload {
     /// LE11.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score_algorithm_version: Option<u8>,
+    /// v3 (P-4.33): woher die Note kam — `endgueltig` (Modul des Pakets),
+    /// `vorlaeufig` (eingebautes Modul), `modulfehler` (beide gescheitert).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bewertung_status: Option<String>,
 
     // ── v1.7.0 Bahndisziplin ─────────────────────────────────────────
     //
@@ -1703,6 +1707,10 @@ pub struct PirepPayload {
     /// docs/spec/v0.10.0-runway-utilization-score.md LE11.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_algorithm_version: Option<u8>,
+    /// v3 (P-4.33): woher die Note kam — `endgueltig` (Modul des Pakets),
+    /// `vorlaeufig` (eingebautes Modul), `modulfehler` (beide gescheitert).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bewertung_status: Option<String>,
 
     /// v0.20 (Process-Integrity). Deliberately its OWN namespace, separate
     /// from `accident_kind`/`accident_reasons` above: those describe an

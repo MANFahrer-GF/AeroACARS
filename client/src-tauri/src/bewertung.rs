@@ -55,6 +55,16 @@ fn rechnen(host: &Host, json: &str) -> Result<Ausgabe, String> {
     serde_json::from_str::<Ausgabe>(&aus).map_err(|_| format!("Ausgabe ungueltig: {}", aus.chars().take(200).collect::<String>()))
 }
 
+/// Text fuer `bewertung_status` (P-4.33): `endgueltig`, `vorlaeufig` oder
+/// `modulfehler` (keine Note, weil beide Module scheiterten).
+pub(crate) fn status_text(b: &Option<(Ausgabe, Status)>) -> &'static str {
+    match b {
+        Some((_, Status::Endgueltig)) => "endgueltig",
+        Some((_, Status::Vorlaeufig)) => "vorlaeufig",
+        None => "modulfehler",
+    }
+}
+
 /// Bewertet eine Landung im Modul. `None` = `modulfehler` (beide Module
 /// gescheitert) — dann gibt es keine Note.
 pub(crate) fn bewerten(landung: &LandingScoringInput) -> Option<(Ausgabe, Status)> {
@@ -89,5 +99,16 @@ mod tests {
         assert_eq!(a.teilnoten, subs);
         assert_eq!(a.gesamt, landing_scoring::aggregate_master_score(&subs));
         assert_eq!(a.fassung, 27);
+        assert_eq!(status_text(&Some((a, status))), "endgueltig");
+        assert_eq!(status_text(&None), "modulfehler");
+    }
+
+    /// P-4.50: Die Fassung, die der Client schreibt, ist die des eingebauten
+    /// Moduls.
+    #[test]
+    fn fassung_gleich_modul() {
+        let (a, _) = bewerten(&LandingScoringInput::default()).expect("Modul rechnet");
+        assert_eq!(u32::from(crate::SCORE_ALGORITHMUS_VERSION), a.fassung);
+        assert_eq!(a.fassung, landing_scoring::wasm::FASSUNG);
     }
 }

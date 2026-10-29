@@ -888,6 +888,10 @@ pub struct LandingRecord {
     /// deserialisierbar (None).
     #[serde(default)]
     pub score_algorithm_version: Option<u8>,
+    /// v3 (P-4.33): woher die Note kam — `endgueltig` (Modul des Pakets),
+    /// `vorlaeufig` (eingebautes Modul), `modulfehler` (beide gescheitert).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bewertung_status: Option<String>,
 
     // ─── Lernpaket AP4/AP5 (29.09.2026) — Anflug-Forensik ohne Note ──
     //
