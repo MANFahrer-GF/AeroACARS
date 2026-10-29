@@ -56,6 +56,12 @@ jobs:
       - name: cargo test (workspace, inkl. sim-msfs)
         working-directory: client/src-tauri
         run: cargo test --workspace
+      # P-4.32: Rechenzeit je Bewertungsaufruf auf dem Windows-Laeufer
+      # (Median/p99/Max ueber den Selbsttest-Korpus, Grenze 1 s je Aufruf).
+      - name: Rechenzeit Bewertungsmodul (P-4.32)
+        working-directory: client/src-tauri
+        shell: bash
+        run: cargo test --release -p bewertung-host --test selbsttest_korpus -- --ignored --nocapture rechenzeit_je_aufruf | tee -a "$GITHUB_STEP_SUMMARY"
       - name: cargo clippy (informativ — Baseline erst pruefen, dann ggf. -D warnings)
         working-directory: client/src-tauri
         run: cargo clippy --workspace --all-targets

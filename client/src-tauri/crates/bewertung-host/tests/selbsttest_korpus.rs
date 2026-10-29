@@ -106,3 +106,28 @@ fn je_simulator_mindestens_20_und_alle_sonderfaelle() {
         assert!(namen.iter().any(|x| x.contains(fall)), "Sonderfall {fall} fehlt");
     }
 }
+
+/// Rechenzeit je Bewertungsaufruf (P-4.32, P-12.09): jeder Korpus-Fall
+/// 20-mal ueber den Host (neue Instanz je Aufruf, wie im Client). Grenze
+/// 1 s je Aufruf. Laeuft in der CI auf dem Windows-Laeufer (`--ignored`,
+/// Release-Bau wie die ausgelieferte App).
+#[test]
+#[ignore]
+fn rechenzeit_je_aufruf() {
+    let host = Host::neu(MODUL).unwrap();
+    let mut zeiten: Vec<u128> = Vec::new();
+    for _ in 0..20 {
+        for (_, fall) in faelle() {
+            let eingabe: Eingabe = serde_json::from_value(fall["eingabe"].clone()).unwrap();
+            let ein = serde_json::to_string(&eingabe).unwrap();
+            let t0 = std::time::Instant::now();
+            host.bewerten(&ein, VIEL).unwrap();
+            zeiten.push(t0.elapsed().as_micros());
+        }
+    }
+    zeiten.sort_unstable();
+    let bei = |q: f64| zeiten[((zeiten.len() - 1) as f64 * q).round() as usize];
+    let max = *zeiten.last().unwrap();
+    println!("RECHENZEIT n={} median={} us p99={} us max={} us (Grenze 1000000 us)", zeiten.len(), bei(0.5), bei(0.99), max);
+    assert!(max < 1_000_000, "P-4.32: {max} us > 1 s");
+}
