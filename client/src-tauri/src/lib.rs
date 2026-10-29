@@ -8664,47 +8664,18 @@ impl From<ApiError> for UiError {
 /// von 8) lief durchs Airbus-Prozentraster und hiess "1+F"; die
 /// Standard-Landung "Flaps 30" hiess "3".
 fn raster_flap_label(num_positions: u8, index: u8, icao: Option<&str>) -> Option<&'static str> {
-    const B737: [&str; 9] = ["UP", "1", "2", "5", "10", "15", "25", "30", "40"];
-    const B777: [&str; 7] = ["UP", "1", "5", "15", "20", "25", "30"];
-    // Airbus-Hebel zeigt „0“, nicht „UP“ (Thomas, 29.09.2026) — gilt fuer
-    // MSFS und X-Plane gleich.
-    const AIRBUS: [&str; 5] = ["0", "1", "2", "3", "FULL"];
-    // Airbus mit 1+F als eigener Raste: Fenix A32x meldet im Flug 5 Rasten,
-    // Index 0..=5 = 0/1/1+F/2/3/FULL (Flug-Logs 28.09.2026). Vorher stand
-    // im Aktivitaetslog "Raste 2/5". Nur fuer Airbus-Muster — 5 Rasten hat
-    // z. B. auch der CRJ (0/1/8/20/30/45).
-    const AIRBUS_1F: [&str; 6] = ["0", "1", "1+F", "2", "3", "FULL"];
-    match num_positions {
-        8 => B737.get(index as usize).copied(),
-        6 => B777.get(index as usize).copied(),
-        5 if icao.is_some_and(ist_airbus_mit_1f) => AIRBUS_1F.get(index as usize).copied(),
-        4 => AIRBUS.get(index as usize).copied(),
-        _ => None,
-    }
-}
-
-/// Airbus-Muster mit der Klappenstellung 1+F (A32x, A330, A340, A350).
-fn ist_airbus_mit_1f(icao: &str) -> bool {
-    matches!(
-        icao.trim().to_ascii_uppercase().as_str(),
-        "A318"
-            | "A319"
-            | "A320"
-            | "A321"
-            | "A19N"
-            | "A20N"
-            | "A21N"
-            | "A332"
-            | "A333"
-            | "A338"
-            | "A339"
-            | "A342"
-            | "A343"
-            | "A345"
-            | "A346"
-            | "A359"
-            | "A35K"
-    )
+    // Raster je Familie in `tabellen/klappen.json` (P-3.54); erste passende
+    // Zeile gewinnt. `nur_muster` haelt 5 Rasten fuer Airbus mit 1+F frei
+    // (5 Rasten hat z. B. auch der CRJ).
+    let muster = icao.map(|m| m.trim().to_ascii_uppercase());
+    laufzeit_paket::stand()
+        .klappen
+        .iter()
+        .find(|r| {
+            r.rasten == num_positions
+                && (r.nur_muster.is_empty() || muster.as_deref().is_some_and(|m| r.nur_muster.iter().any(|x| x == m)))
+        })
+        .and_then(|r| r.stufen.get(index as usize).map(String::as_str))
 }
 
 #[cfg(test)]

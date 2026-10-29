@@ -1,0 +1,80 @@
+{
+ "format": 1,
+ "notiz": [
+  "Klappen-Beschriftung aus Rastenzahl (flap_num_positions, ohne UP) und Index; erste passende Zeile gewinnt, sonst die alte Prozent-Heuristik.",
+  "Anlass: iFly-Flug 11.08.2026 — Flaps 5 lief durchs Airbus-Prozentraster und hiess 1+F. Airbus-Hebel zeigt 0, nicht UP (Thomas, 29.09.2026).",
+  "Fenix A32x meldet 5 Rasten, Index 0..=5 = 0/1/1+F/2/3/FULL (Flug-Logs 28.09.2026); nur fuer Airbus-Muster — 5 Rasten hat z. B. auch der CRJ."
+ ],
+ "raster": [
+  {
+   "name": "B737",
+   "rasten": 8,
+   "stufen": [
+    "UP",
+    "1",
+    "2",
+    "5",
+    "10",
+    "15",
+    "25",
+    "30",
+    "40"
+   ]
+  },
+  {
+   "name": "B777",
+   "rasten": 6,
+   "stufen": [
+    "UP",
+    "1",
+    "5",
+    "15",
+    "20",
+    "25",
+    "30"
+   ]
+  },
+  {
+   "name": "AIRBUS_1F",
+   "rasten": 5,
+   "nur_muster": [
+    "A318",
+    "A319",
+    "A320",
+    "A321",
+    "A19N",
+    "A20N",
+    "A21N",
+    "A332",
+    "A333",
+    "A338",
+    "A339",
+    "A342",
+    "A343",
+    "A345",
+    "A346",
+    "A359",
+    "A35K"
+   ],
+   "stufen": [
+    "0",
+    "1",
+    "1+F",
+    "2",
+    "3",
+    "FULL"
+   ]
+  },
+  {
+   "name": "AIRBUS",
+   "rasten": 4,
+   "stufen": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "FULL"
+   ]
+  }
+ ]
+}

@@ -23,7 +23,7 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -32,6 +32,8 @@ const CPDLC: &str = "tabellen/cpdlc.json";
 const FLOTTE: &str = "tabellen/flotte.json";
 const SPURWEITEN: &str = "tabellen/spurweiten.json";
 const VREF: &str = "tabellen/vref.json";
+const HOEHENGRUPPEN: &str = "tabellen/hoehengruppen.json";
+const KLAPPEN: &str = "tabellen/klappen.json";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
@@ -56,8 +58,12 @@ pub(crate) struct AktiverStand {
     pub flotte: crate::aircraft_category::Flotte,
     /// Spurweiten/Spannweiten und Vref-Bezugswerte (`landing-scoring`, ueber
     /// angemeldete Quellen).
-    pub spurweiten: &'static [(&'static str, f64, f64)],
-    pub vref: &'static [(&'static str, f64, f64, landing_scoring::vref::Status)],
+    pub spurweiten: &'static [landing_scoring::spurweite::Zeile],
+    pub vref: &'static [landing_scoring::vref::Zeile],
+    /// FAA-Hoehengruppen G1–G4 je Muster (`runway_assessment`).
+    pub hoehengruppen: crate::runway_assessment::Hoehengruppen,
+    /// Klappen-Beschriftung je Rastenzahl (`raster_flap_label`).
+    pub klappen: Vec<KlappenRaster>,
     /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
     pub ui: Vec<(&'static str, &'static str)>,
 }
@@ -88,6 +94,8 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         cpdlc: hoppie_protocol::elements_data::tabelle_lesen(text(CPDLC)?)?,
         flotte: crate::aircraft_category::flotte_lesen(text(FLOTTE)?)?,
         spurweiten: landing_scoring::spurweite::lesen(text(SPURWEITEN)?)?,
+        hoehengruppen: crate::runway_assessment::hoehengruppen_lesen(text(HOEHENGRUPPEN)?)?,
+        klappen: klappen_lesen(text(KLAPPEN)?)?,
         vref: landing_scoring::vref::lesen(text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -104,6 +112,8 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         cpdlc: hoppie_protocol::elements_data::tabelle_lesen(eingebauter_text(CPDLC)?)?,
         flotte: crate::aircraft_category::flotte_lesen(eingebauter_text(FLOTTE)?)?,
         spurweiten: landing_scoring::spurweite::lesen(eingebauter_text(SPURWEITEN)?)?,
+        hoehengruppen: crate::runway_assessment::hoehengruppen_lesen(eingebauter_text(HOEHENGRUPPEN)?)?,
+        klappen: klappen_lesen(eingebauter_text(KLAPPEN)?)?,
         vref: landing_scoring::vref::lesen(eingebauter_text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -112,6 +122,46 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
 /// Legt den Stand fuer diesen Lauf fest. `false`, wenn schon einer gilt.
 fn uebernehmen(s: AktiverStand) -> bool {
     STAND.set(s).is_ok()
+}
+
+/// Eine Zeile aus `tabellen/klappen.json`: Beschriftung der Klappenstufen
+/// fuer eine Rastenzahl (ohne UP gezaehlt), optional nur fuer bestimmte Muster.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct KlappenRaster {
+    #[allow(dead_code)]
+    name: String,
+    pub rasten: u8,
+    #[serde(default)]
+    pub nur_muster: Vec<String>,
+    pub stufen: Vec<String>,
+}
+
+/// Liest `tabellen/klappen.json` (fail-closed): je Zeile genau `rasten + 1`
+/// Stufen, Muster in Grossbuchstaben.
+pub(crate) fn klappen_lesen(json: &str) -> Result<Vec<KlappenRaster>, String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Datei {
+        format: u32,
+        #[serde(default)]
+        #[allow(dead_code)]
+        notiz: Vec<String>,
+        raster: Vec<KlappenRaster>,
+    }
+    let d: Datei = serde_json::from_str(json).map_err(|e| format!("{KLAPPEN}: {e}"))?;
+    if d.format != 1 {
+        return Err(format!("{KLAPPEN}: Format {} unbekannt", d.format));
+    }
+    for r in &d.raster {
+        if r.stufen.len() != r.rasten as usize + 1 || r.stufen.iter().any(String::is_empty) {
+            return Err(format!("{KLAPPEN}: {} braucht {} Stufen", r.name, r.rasten as usize + 1));
+        }
+        if r.nur_muster.iter().any(|m| m.is_empty() || *m != m.trim().to_ascii_uppercase()) {
+            return Err(format!("{KLAPPEN}: {} Muster ungueltig", r.name));
+        }
+    }
+    Ok(d.raster)
 }
 
 /// Eine Datei des geltenden Stands fuer die Oberflaeche (nur [`UI_DATEIEN`]).
@@ -431,6 +481,8 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
     for (pfad, pruefen) in [
         (SPURWEITEN, landing_scoring::spurweite::pruefen as fn(&str) -> Result<(), String>),
         (VREF, landing_scoring::vref::pruefen),
+        (HOEHENGRUPPEN, |t| crate::runway_assessment::hoehengruppen_lesen(t).map(|_| ())),
+        (KLAPPEN, |t| klappen_lesen(t).map(|_| ())),
     ] {
         let roh = p.datei(pfad).map_err(|e| e.to_string())?;
         pruefen(std::str::from_utf8(&roh).map_err(|e| format!("{pfad}: {e}"))?)?;
@@ -503,6 +555,41 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert_eq!(eingebaute_datei(VREF).unwrap(), landing_scoring::vref::EINGEBAUT.as_bytes());
         assert_eq!(stand().spurweiten.len(), landing_scoring::spurweite::lesen(landing_scoring::spurweite::EINGEBAUT).unwrap().len());
         assert_eq!(stand().vref.len(), landing_scoring::vref::lesen(landing_scoring::vref::EINGEBAUT).unwrap().len());
+    }
+
+    fn abdruck(text: &str) -> (u64, usize) {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in text.bytes() {
+            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+        (h, text.len())
+    }
+
+    /// Hoehengruppen und Klappenraster wie 2.1.24: vor dem Entfernen der
+    /// alten Funktionen fuer 450 Kennungen und alle Rastenfaelle (0..=12 x
+    /// 0..=12) einmal gegen sie verglichen (gleich; verkuerzte G2-Liste bzw.
+    /// geaenderte Stufe -> 5 Tests rot). Abdruck der gelesenen Tabellen;
+    /// bewusste Aenderung: mit Begruendung nachziehen.
+    #[test]
+    fn hoehengruppen_und_klappen_wie_2_1_24() {
+        let h = format!("{:?}", crate::runway_assessment::hoehengruppen_lesen(eingebauter_text(HOEHENGRUPPEN).unwrap()).unwrap());
+        let k = format!("{:?}", klappen_lesen(eingebauter_text(KLAPPEN).unwrap()).unwrap());
+        assert_eq!((abdruck(&h), abdruck(&k)), ((3041705867902806275, 1612), (14911868732692658409, 571)));
+    }
+
+    #[test]
+    fn klappen_und_hoehengruppen_regelverstoss_ist_ein_lesefehler() {
+        let k: serde_json::Value = serde_json::from_str(eingebauter_text(KLAPPEN).unwrap()).unwrap();
+        let mut zu_wenig = k.clone();
+        zu_wenig["raster"][0]["stufen"].as_array_mut().unwrap().pop();
+        assert!(klappen_lesen(&zu_wenig.to_string()).is_err());
+        let h: serde_json::Value = serde_json::from_str(eingebauter_text(HOEHENGRUPPEN).unwrap()).unwrap();
+        let mut klein = h.clone();
+        klein["gruppen"][0]["praefix"][0] = "b74".into();
+        assert!(crate::runway_assessment::hoehengruppen_lesen(&klein.to_string()).is_err());
+        let mut fallend = h;
+        fallend["gleitpfad_zu_rad_ft"]["G4"] = 5.0.into();
+        assert!(crate::runway_assessment::hoehengruppen_lesen(&fallend.to_string()).is_err());
     }
 
     #[test]

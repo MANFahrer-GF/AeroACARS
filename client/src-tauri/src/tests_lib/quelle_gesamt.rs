@@ -37,6 +37,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// — plus Etappe 1b (Flotte): EINE neue Zeile im `generate_handler!`,
 /// `laufzeit_paket::paket_datei` (lesender Befehl fuer die Oberflaeche, nur
 /// die feste Liste `UI_DATEIEN`, Test `paket_datei_gibt_nur_freigegebene_dateien`).
+/// — plus Etappe 1b (Klappenraster): `raster_flap_label` liest die Raster aus
+/// `tabellen/klappen.json` statt aus vier lokalen `const`; `ist_airbus_mit_1f`
+/// entfaellt (Liste dort als `nur_muster`). Abdruck `hoehengruppen_und_klappen_wie_2_1_24`,
+/// Verhalten `raster_flap_label_tests` unveraendert gruen.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -47,4 +51,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "2cf955ce520b8df413e99908efc22b705d323f9cb741c003a04659e8a7312af2";
+const HASH_VOR_DER_ZERLEGUNG: &str = "9fb00daeb52944f17cb682edd8f2d04a2d16c4e07a1a49f3505b5ea60a6b16f5";

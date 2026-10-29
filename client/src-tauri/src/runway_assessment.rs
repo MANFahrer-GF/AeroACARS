@@ -215,11 +215,12 @@ pub enum Hoehengruppe {
 impl Hoehengruppe {
     /// Naeherungsweiser Abstand Gleitpfad→Rad (FAA, Tabelle 1-3-1).
     pub fn gleitpfad_zu_rad_ft(self) -> f64 {
+        let ft = &crate::laufzeit_paket::stand().hoehengruppen.gleitpfad_zu_rad_ft;
         match self {
-            Hoehengruppe::G1 => 10.0,
-            Hoehengruppe::G2 => 15.0,
-            Hoehengruppe::G3 => 20.0,
-            Hoehengruppe::G4 => 25.0,
+            Hoehengruppe::G1 => ft.g1,
+            Hoehengruppe::G2 => ft.g2,
+            Hoehengruppe::G3 => ft.g3,
+            Hoehengruppe::G4 => ft.g4,
         }
     }
     pub fn nummer(self) -> u8 {
@@ -232,6 +233,61 @@ impl Hoehengruppe {
     }
 }
 
+/// `tabellen/hoehengruppen.json` (P-3.54).
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Hoehengruppen {
+    #[allow(dead_code)]
+    format: u32,
+    #[serde(default)]
+    #[allow(dead_code)]
+    notiz: Vec<String>,
+    gruppen: Vec<GruppeDatei>,
+    sonst: Hoehengruppe,
+    ohne_kennung: Hoehengruppe,
+    gleitpfad_zu_rad_ft: AbstandDatei,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GruppeDatei {
+    gruppe: Hoehengruppe,
+    praefix: Vec<String>,
+    exakt: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AbstandDatei {
+    #[serde(rename = "G1")]
+    g1: f64,
+    #[serde(rename = "G2")]
+    g2: f64,
+    #[serde(rename = "G3")]
+    g3: f64,
+    #[serde(rename = "G4")]
+    g4: f64,
+}
+
+/// Liest `tabellen/hoehengruppen.json` (fail-closed): Format 1, Kennungen in
+/// Grossbuchstaben, keine leere Kennung, Abstaende > 0 und steigend.
+pub(crate) fn hoehengruppen_lesen(json: &str) -> Result<Hoehengruppen, String> {
+    let t: Hoehengruppen = serde_json::from_str(json).map_err(|e| format!("tabellen/hoehengruppen.json: {e}"))?;
+    if t.format != 1 {
+        return Err(format!("tabellen/hoehengruppen.json: Format {} unbekannt", t.format));
+    }
+    for k in t.gruppen.iter().flat_map(|g| g.praefix.iter().chain(&g.exakt)) {
+        if k.is_empty() || *k != k.trim().to_ascii_uppercase() {
+            return Err(format!("tabellen/hoehengruppen.json: Kennung {k:?} ungueltig"));
+        }
+    }
+    let a = &t.gleitpfad_zu_rad_ft;
+    if !(a.g1 > 0.0 && a.g1 < a.g2 && a.g2 < a.g3 && a.g3 < a.g4 && a.g4.is_finite()) {
+        return Err("tabellen/hoehengruppen.json: gleitpfad_zu_rad_ft nicht steigend".into());
+    }
+    Ok(t)
+}
+
 /// Muster (ICAO-Kennung) → Hoehengruppe.
 ///
 /// Die FAA-Tabelle nennt nur Beispiele. Die uebrigen Muster sind nach
@@ -242,52 +298,20 @@ impl Hoehengruppe {
 /// eher zu hoch eingeschaetzt). Ohne Kennung Gruppe 3 als Mitte.
 pub fn hoehengruppe(icao: Option<&str>) -> Hoehengruppe {
     let Some(roh) = icao else {
-        return Hoehengruppe::G3;
+        return crate::laufzeit_paket::stand().hoehengruppen.ohne_kennung;
     };
     let k = roh.trim().to_ascii_uppercase();
     if k.is_empty() {
-        return Hoehengruppe::G3;
+        return crate::laufzeit_paket::stand().hoehengruppen.ohne_kennung;
     }
-    // Praefixe (Familien) und exakte Kennungen getrennt: kurze Praefixe wie
-    // "C17" oder "C5" traefen sonst die Cessna 172 bzw. Citation 550.
-    const G4: &[&str] = &[
-        "B74", "B76", "B77", "B78", "A30", "A33", "A34", "A35", "A38", "MD11", "DC10", "L101",
-        "IL96", "IL86", "A124", "A225", "KC10",
-    ];
-    // BLCF = 747 Dreamlifter, A3ST = Beluga, CONC = Concorde.
-    // Alle Beispiele der FAA-Tabelle 1-3-1 sind exakt ihrer dort genannten
-    // Gruppe zugeordnet (Codex-Befund 1: C-17 und B-52 stehen in Gruppe 3,
-    // nicht 4). B-1 = "B1", E-4 = "E4B", VC-25 = B742.
-    const G4_EXAKT: &[&str] = &["A310", "C5", "C5M", "B1", "E4B", "BLCF", "A3ST", "CONC"];
-    const G3: &[&str] = &["B75", "B72", "B70", "IL76", "IL62", "K35R", "DC8"];
-    // FAA Gruppe 3: B-52, C-135, C-141, C-17, E-3, P-3, E-8, C-32.
-    const G3_EXAKT: &[&str] = &[
-        "B52", "C135", "C141", "C17", "E3TF", "E3CF", "P3", "E8", "C32", "T154", "T204", "A400",
-    ];
-    const G2: &[&str] = &[
-        "B73", "B37M", "B38M", "B39M", "B3XM", "A31", "A32", "A19N", "A20N", "A21N", "BCS1",
-        "BCS3", "MD8", "MD9", "DC9", "B712", "F28", "F70", "F100", "E17", "E19", "E29", "E75",
-        "CRJ", "AT4", "AT7", "DH8", "B46", "RJ70", "RJ85", "RJ1H", "SU95", "E145", "E135", "E140",
-        "SF34", "SB20", "JS41", "D328", "AN24", "AN26", "BA11", "F27", "F50", "DHC7", "C919",
-        "AJ27",
-    ];
-    // C30J = C-130J, P8 = Poseidon (737-Basis).
-    // FAA Gruppe 2: F-28, B-737, C-9, DC-9, C-130, T-43, B-2.
-    const G2_EXAKT: &[&str] = &["C130", "C30J", "Y12", "P8", "B2", "C9", "T43"];
-    let passt = |praefix: &[&str], exakt: &[&str]| {
-        exakt.contains(&k.as_str()) || praefix.iter().any(|p| k.starts_with(p))
-    };
-    // G4 zuerst: A310 (Grossraum) steht exakt dort, "A31" (A318/A319) erst
-    // in G2.
-    if passt(G4, G4_EXAKT) {
-        Hoehengruppe::G4
-    } else if passt(G3, G3_EXAKT) {
-        Hoehengruppe::G3
-    } else if passt(G2, G2_EXAKT) {
-        Hoehengruppe::G2
-    } else {
-        Hoehengruppe::G1
-    }
+    // Praefixe (Familien) und exakte Kennungen getrennt; Listen und
+    // Reihenfolge stehen in `tabellen/hoehengruppen.json` (P-3.54).
+    let t = &crate::laufzeit_paket::stand().hoehengruppen;
+    t.gruppen
+        .iter()
+        .find(|g| g.exakt.contains(&k) || g.praefix.iter().any(|p| k.starts_with(p.as_str())))
+        .map_or(t.sonst, |g| g.gruppe)
+
 }
 
 // FAA: Raeder mindestens 20 ft ueber der Schwelle.
