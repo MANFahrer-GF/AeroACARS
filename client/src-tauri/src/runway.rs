@@ -67,27 +67,14 @@ fn eingebaut_text(pfad: &str) -> &'static str {
     std::str::from_utf8(bytes).unwrap_or_else(|_| panic!("{pfad} kein UTF-8"))
 }
 
-/// v3 (Etappe 1a): Welche OurAirports-Fassung gilt — die aus dem
-/// Laufzeit-Paket oder die eingebaute. Entschieden wird beim ersten Zugriff
-/// auf eine Bahntabelle; danach ist sie fest fuer den ganzen Programmlauf.
-static OURAIRPORTS: std::sync::OnceLock<(&'static str, &'static str)> = std::sync::OnceLock::new();
-
-fn ourairports() -> &'static (&'static str, &'static str) {
-    OURAIRPORTS.get_or_init(|| (eingebaut_runways_csv(), eingebaut_airports_csv()))
-}
-
+/// v3: OurAirports aus dem geltenden Stand des Laufzeit-Pakets (eine Sperre
+/// fuer alle Paketdaten, `laufzeit_paket::stand`).
 fn runways_csv() -> &'static str {
-    ourairports().0
+    crate::laufzeit_paket::stand().runways
 }
 
 fn airports_csv() -> &'static str {
-    ourairports().1
-}
-
-/// Setzt OurAirports aus dem Laufzeit-Paket. `false`, wenn schon eine
-/// Bahntabelle gelesen wurde — dann gilt fuer diesen Lauf die eingebaute.
-pub(crate) fn ourairports_setzen(runways: &'static str, airports: &'static str) -> bool {
-    OURAIRPORTS.set((runways, airports)).is_ok()
+    crate::laufzeit_paket::stand().airports
 }
 
 /// Mean Earth radius (meters) — same value used by the haversine formula
@@ -172,10 +159,10 @@ pub fn projiziere_auf_bahn(
     (laengs_m, quer_m)
 }
 
-/// "On the centerline" tolerance for the side classification. 2 m matches
-/// what BeatMyLanding uses and roughly the precision of the SimConnect
-/// position fix at low altitude.
-const CENTERLINE_TOLERANCE_M: f64 = 2.0;
+// "On the centerline" tolerance for the side classification. 2 m matches
+// what BeatMyLanding uses and roughly the precision of the SimConnect
+// position fix at low altitude.
+// Wert seit v3: bundle/grenzwerte/bahnzuordnung.json -> centerline_tolerance_m (v2.1.24: 2.0)
 
 /// One row of the parsed CSV. We only keep the fields we use, all already
 /// validated as non-empty during parse so downstream code can `.unwrap_or`
@@ -645,8 +632,8 @@ pub fn geometry_implied_displacement_ft(
     // 11,6 m). Unter `MIN_PLAUSIBEL_M` ist das Messrauschen, kein echter
     // Versatz — der kleinste ECHTE Versatz in der 40-Bahnen-Stichprobe
     // lag bei 98 ft (30 m), mit klarem Abstand nach oben.
-    const MIN_PLAUSIBEL_M: f64 = 20.0;
-    if implied_m <= MIN_PLAUSIBEL_M || implied_m >= laenge_m * 0.5 {
+    // Wert seit v3: bundle/grenzwerte/bahnzuordnung.json -> min_plausibel_m (v2.1.24: 20.0)
+    if implied_m <= crate::grenzwerte::grenzwerte().bahnzuordnung.min_plausibel_m.wert || implied_m >= laenge_m * 0.5 {
         return 0;
     }
     (implied_m / 0.3048).round() as i32
@@ -794,22 +781,22 @@ fn row_is_internally_impossible(r: &RunwayRow) -> bool {
     end_to_end_m > plausible_m
 }
 
-/// A runway this far from its airport's published reference point is not that
-/// airport's runway (UUMU has one in Belgorod, 319 nm away; 12WV has one in
-/// Florida, 480 nm).
-///
-/// It must stay well clear of legitimate sprawl: measured over all 29,410
-/// thresholds that have a reference point, 99 % are within 1.71 nm and the
-/// largest genuine outlier is EHAM's Polderbaan at 3.77 nm. The corrupt ones do
-/// not sit just past the edge — they are hundreds or thousands of nautical miles
-/// out. 10 nm sits in the empty gap between the two populations.
-///
-/// Note this canNOT be used to detect KCLE's corruption: its bad threshold is
-/// 4.0 nm from the field — *inside* the legitimate band, and closer in than
-/// EHAM's Polderbaan. That is why corruption is identified by
-/// `row_is_internally_impossible` and the reference point is used only to decide
-/// WHICH end of a broken row is the bad one.
-const RUNWAY_MISPLACED_NM: f64 = 10.0;
+// A runway this far from its airport's published reference point is not that
+// airport's runway (UUMU has one in Belgorod, 319 nm away; 12WV has one in
+// Florida, 480 nm).
+//
+// It must stay well clear of legitimate sprawl: measured over all 29,410
+// thresholds that have a reference point, 99 % are within 1.71 nm and the
+// largest genuine outlier is EHAM's Polderbaan at 3.77 nm. The corrupt ones do
+// not sit just past the edge — they are hundreds or thousands of nautical miles
+// out. 10 nm sits in the empty gap between the two populations.
+//
+// Note this canNOT be used to detect KCLE's corruption: its bad threshold is
+// 4.0 nm from the field — *inside* the legitimate band, and closer in than
+// EHAM's Polderbaan. That is why corruption is identified by
+// `row_is_internally_impossible` and the reference point is used only to decide
+// WHICH end of a broken row is the bad one.
+// Wert seit v3: bundle/grenzwerte/bahnzuordnung.json -> runway_misplaced_nm (v2.1.24: 10.0)
 
 /// Repair — and where that's impossible, discard — thresholds that OurAirports
 /// has in the wrong place.
@@ -844,7 +831,7 @@ const RUNWAY_MISPLACED_NM: f64 = 10.0;
 /// the larger coordinate — and at WAJI declared the GOOD threshold the outlier,
 /// moving a working airport 5.2 nm from itself.
 fn repair_corrupt_thresholds(rows: &mut Vec<RunwayRow>) {
-    let misplaced_m = RUNWAY_MISPLACED_NM * 1852.0;
+    let misplaced_m = crate::grenzwerte::grenzwerte().bahnzuordnung.runway_misplaced_nm.wert * 1852.0;
     let mut repaired = 0_u32;
     let mut dropped = 0_u32;
 
@@ -1460,7 +1447,7 @@ pub fn lookup_runway(lat: f64, lon: f64, aircraft_heading_true_deg: f32) -> Opti
 
         let centerline_distance_abs_ft = xtd_m.abs() * 3.280_839_895;
 
-        let side = if xtd_m.abs() < CENTERLINE_TOLERANCE_M {
+        let side = if xtd_m.abs() < crate::grenzwerte::grenzwerte().bahnzuordnung.centerline_tolerance_m.wert {
             "CENTER"
         } else if xtd_m > 0.0 {
             "RIGHT"
@@ -1708,7 +1695,7 @@ pub fn lookup_runway_in_nav(
             projiziere_auf_bahn(threshold_lat, threshold_lon, end_lat, end_lon, lat, lon);
         let along_ft = along_signed_m * 3.280_839_895;
         let centerline_distance_abs_ft = xtd_m.abs() * 3.280_839_895;
-        let side = if xtd_m.abs() < CENTERLINE_TOLERANCE_M {
+        let side = if xtd_m.abs() < crate::grenzwerte::grenzwerte().bahnzuordnung.centerline_tolerance_m.wert {
             "CENTER"
         } else if xtd_m > 0.0 {
             "RIGHT"
@@ -1831,17 +1818,17 @@ pub fn along_track_m_signed(
 
 // ---- Live-Bahnvorhersage im Endanflug (#msfs-hud) -------------------------
 
-/// Maximale Kursabweichung zwischen Flugzeug und Bahn, damit eine Bahn
-/// überhaupt als Anflugziel in Frage kommt. 30° lässt ein Aufschalten aus
-/// dem Base-Leg heraus noch zu, schließt Gegenanflug (180°) und Queranflug
-/// (90°) aber sicher aus.
-const PREDICT_MAX_HEADING_DIFF_DEG: f32 = 30.0;
-/// Ab welcher Entfernung zur Schwelle gar nicht erst vorhergesagt wird
-/// (15 NM). Weiter draußen ist die Bahnwahl bei Parallelbahnen ohnehin
-/// noch nicht entschieden.
-const PREDICT_MAX_THRESHOLD_DISTANCE_M: f64 = 27_780.0;
-/// Maximaler seitlicher Versatz zur verlängerten Mittellinie (2 NM).
-const PREDICT_MAX_CENTERLINE_OFFSET_M: f64 = 3_704.0;
+// Maximale Kursabweichung zwischen Flugzeug und Bahn, damit eine Bahn
+// überhaupt als Anflugziel in Frage kommt. 30° lässt ein Aufschalten aus
+// dem Base-Leg heraus noch zu, schließt Gegenanflug (180°) und Queranflug
+// (90°) aber sicher aus.
+// Wert seit v3: bundle/grenzwerte/bahnzuordnung.json -> predict_max_heading_diff_deg (v2.1.24: 30.0)
+// Ab welcher Entfernung zur Schwelle gar nicht erst vorhergesagt wird
+// (15 NM). Weiter draußen ist die Bahnwahl bei Parallelbahnen ohnehin
+// noch nicht entschieden.
+// Wert seit v3: bundle/grenzwerte/bahnzuordnung.json -> predict_max_threshold_distance_m (v2.1.24: 27_780.0)
+// Maximaler seitlicher Versatz zur verlängerten Mittellinie (2 NM).
+// Wert seit v3: bundle/grenzwerte/bahnzuordnung.json -> predict_max_centerline_offset_m (v2.1.24: 3_704.0)
 
 /// Vorhergesagte Landebahn, solange der Flug noch in der Luft ist.
 ///
@@ -1889,7 +1876,7 @@ pub fn predict_landing_runway(
     let mut best: Option<(PredictedRunway, f64)> = None;
 
     for rw in runways {
-        if heading_diff(heading_true_deg, rw.true_course as f32) > PREDICT_MAX_HEADING_DIFF_DEG {
+        if heading_diff(heading_true_deg, rw.true_course as f32) > crate::grenzwerte::grenzwerte().bahnzuordnung.predict_max_heading_diff_deg.wert {
             continue;
         }
 
@@ -1897,7 +1884,7 @@ pub fn predict_landing_runway(
         let (e_lat, e_lon) = (rw.far_end.lat, rw.far_end.lon);
 
         let d_threshold = haversine_m(t_lat, t_lon, lat, lon);
-        if d_threshold > PREDICT_MAX_THRESHOLD_DISTANCE_M {
+        if d_threshold > crate::grenzwerte::grenzwerte().bahnzuordnung.predict_max_threshold_distance_m.wert {
             continue;
         }
 
@@ -1905,7 +1892,7 @@ pub fn predict_landing_runway(
         let theta_ac = initial_bearing_rad(t_lat, t_lon, lat, lon);
         let xtd_m = ((d_threshold / EARTH_RADIUS_M).sin() * (theta_ac - theta_ab).sin()).asin()
             * EARTH_RADIUS_M;
-        if xtd_m.abs() > PREDICT_MAX_CENTERLINE_OFFSET_M {
+        if xtd_m.abs() > crate::grenzwerte::grenzwerte().bahnzuordnung.predict_max_centerline_offset_m.wert {
             continue;
         }
 

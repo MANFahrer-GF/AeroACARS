@@ -25,25 +25,66 @@ const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1"];
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
 
-struct Geladen {
-    id: RuntimeBundleId,
-    /// Bei `EingebautStattPin`: PIREP und Stand des offenen Flugs, dessen
-    /// Stand lokal fehlte. Gilt nur fuer genau diesen Flug.
-    pin: Option<(String, RuntimeBundleId)>,
+/// Alles, was aus dem Laufzeit-Paket kommt, als EIN Stand (P-3.02): Er wird
+/// genau einmal je Programmlauf festgelegt — vollstaendig aus dem Paket oder
+/// vollstaendig eingebaut, nie gemischt. `runway.rs` und `grenzwerte.rs`
+/// lesen nur hieraus (Advisor 29.10.: zwei getrennte Sperren konnten mischen).
+pub(crate) struct AktiverStand {
+    pub id: RuntimeBundleId,
+    pub runways: &'static str,
+    pub airports: &'static str,
+    pub grenzwerte: crate::grenzwerte::Grenzwerte,
 }
 
-static GELADEN: OnceLock<Geladen> = OnceLock::new();
+static STAND: OnceLock<AktiverStand> = OnceLock::new();
+
+/// PIREP und Stand eines offenen Flugs, dessen Stand in diesem Lauf NICHT gilt
+/// (fehlte lokal oder kam zu spaet). Gilt nur fuer genau diesen Flug (P-3.31).
+static PIN: OnceLock<(String, RuntimeBundleId)> = OnceLock::new();
+
+/// Der geltende Stand. Wer liest, bevor `starten` lief (z. B. Tests), legt
+/// damit den eingebauten Stand fest.
+pub(crate) fn stand() -> &'static AktiverStand {
+    STAND.get_or_init(|| eingebauter_stand().expect("eingebauter Stand lesbar (Test eingebauter_stand_besteht_den_selbsttest)"))
+}
+
+fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
+    let text = |pfad: &str| -> Result<&'static str, String> {
+        let bytes = p.datei(pfad).map_err(|e| e.to_string())?;
+        Ok(Box::leak(String::from_utf8(bytes).map_err(|e| format!("{pfad}: {e}"))?.into_boxed_str()))
+    };
+    Ok(AktiverStand {
+        id: p.id.clone(),
+        runways: text(RUNWAYS)?,
+        airports: text(AIRPORTS)?,
+        grenzwerte: crate::grenzwerte::lesen(|x| p.datei(x).ok())?,
+    })
+}
+
+fn eingebauter_stand() -> Result<AktiverStand, String> {
+    let p = eingebaut().paket().map_err(|e| e.to_string())?;
+    Ok(AktiverStand {
+        id: p.id,
+        runways: crate::runway::eingebaut_runways_csv(),
+        airports: crate::runway::eingebaut_airports_csv(),
+        grenzwerte: crate::grenzwerte::lesen(|x| eingebaute_datei(x).map(<[u8]>::to_vec))?,
+    })
+}
+
+/// Legt den Stand fuer diesen Lauf fest. `false`, wenn schon einer gilt.
+fn uebernehmen(s: AktiverStand) -> bool {
+    STAND.set(s).is_ok()
+}
 
 /// Die Kennung, die der Flug `pirep_id` traegt: der Stand dieses Laufs.
-/// Ausnahme: Fehlte beim Start der Stand des wiederaufgenommenen Flugs, behaelt
-/// GENAU dieser Flug seine Kennung, damit er spaeter mit dem richtigen Stand
-/// bewertet werden kann (P-3.31); jeder spaetere Flug im selben Lauf traegt
-/// den tatsaechlich geladenen Stand.
+/// Ausnahme: Galt beim Start der Stand des wiederaufgenommenen Flugs nicht,
+/// behaelt GENAU dieser Flug seine Kennung, damit er spaeter mit dem richtigen
+/// Stand bewertet werden kann (P-3.31); jeder spaetere Flug im selben Lauf
+/// traegt den tatsaechlich geltenden Stand.
 pub(crate) fn flug_pin(pirep_id: &str) -> Option<RuntimeBundleId> {
-    let g = GELADEN.get()?;
-    match &g.pin {
+    match PIN.get() {
         Some((pirep, pin)) if pirep == pirep_id => Some(pin.clone()),
-        _ => Some(g.id.clone()),
+        _ => Some(stand().id.clone()),
     }
 }
 
@@ -143,36 +184,27 @@ fn starten_einmal(app_daten: &Path) {
             }
         }
     };
-    // Der Flug traegt die Kennung des Stands, der WIRKLICH gilt: Ein Paket
-    // gilt nur als Ganzes (P-3.02). Erst alles lesen, dann alles setzen; laesst
-    // sich ein Teil nicht anwenden, gilt der eingebaute Stand (Codex 29.10.).
-    let text = |pfad: &str| -> Option<&'static str> {
-        let bytes = paket.datei(pfad).ok()?;
-        Some(Box::leak(String::from_utf8(bytes).ok()?.into_boxed_str()))
-    };
-    let grenzwerte = crate::grenzwerte::lesen(|p| paket.datei(p).ok());
-    let gesetzt = match (text(RUNWAYS), text(AIRPORTS), grenzwerte) {
-        (Some(rw), Some(ap), Ok(g)) => {
-            crate::runway::ourairports_setzen(rw, ap) & crate::grenzwerte::setzen(g)
-        }
-        _ => false,
-    };
-    // Ist der geladene Stand selbst der eingebaute, gelten seine Tabellen auch
-    // dann, wenn sie schon gelesen waren — der Pin des Flugs bleibt erhalten
-    // (Windows-CI 29.10.: paralleler Test hatte die Tabellen schon gelesen).
-    let ist_eingebaut = eingebaut.paket().map(|p| p.id == paket.id).unwrap_or(false);
-    let (id, herkunft) = if gesetzt || ist_eingebaut {
-        (paket.id, herkunft)
-    } else {
-        tracing::warn!(stand = %paket.id, "Laufzeit-Paket: OurAirports nicht anwendbar, eingebauter Stand gilt");
-        match eingebaut.paket() {
-            Ok(p) => (p.id, Herkunft::Eingebaut),
-            Err(_) => return,
+    // Erst den ganzen Stand lesen, dann EINMAL festlegen (P-3.02). Laesst
+    // sich ein Teil nicht lesen, gilt der eingebaute Stand.
+    let neu = match stand_aus_paket(&paket) {
+        Ok(neu) => Some(neu),
+        Err(e) => {
+            tracing::warn!(stand = %paket.id, error = %e, "Laufzeit-Paket: Stand nicht anwendbar, eingebauter Stand gilt");
+            eingebauter_stand().ok()
         }
     };
-    tracing::info!(stand = %id, ?herkunft, "Laufzeit-Paket geladen");
-    let pin = matches!(herkunft, Herkunft::EingebautStattPin).then_some(pin).flatten();
-    let _ = GELADEN.set(Geladen { id, pin });
+    if let Some(neu) = neu {
+        if !uebernehmen(neu) {
+            tracing::warn!("Laufzeit-Paket: ein Stand galt schon (vorher gelesen), er bleibt");
+        }
+    }
+    let wirksam = stand().id.clone();
+    if let Some((pirep, pin)) = pin {
+        if pin != wirksam {
+            let _ = PIN.set((pirep, pin));
+        }
+    }
+    tracing::info!(stand = %wirksam, ?herkunft, "Laufzeit-Paket geladen");
 }
 
 /// Holt einen neueren Stand von live und installiert ihn; aktiv wird er erst
@@ -185,7 +217,7 @@ pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf) {
     if flug_offen(&app_daten) {
         // Kein Update im Flug — aber fehlte beim Start der Stand des offenen
         // Flugs, genau diesen nachholen (P-3.31).
-        if let Some((_, pin)) = GELADEN.get().and_then(|g| g.pin.clone()) {
+        if let Some((_, pin)) = PIN.get().cloned() {
             tauri::async_runtime::spawn(async move {
                 match pin_nachholen(&app_daten, &pin).await {
                     Ok(()) => tracing::info!(stand = %pin, "Laufzeit-Paket: Stand des offenen Flugs nachgeholt"),
@@ -253,7 +285,7 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
     for d in ablage.fehlende(&m) {
         geholt.insert(d.sha256.clone(), holen(format!("{}{}", a.blobs, d.sha256)).await?.to_vec());
     }
-    let pins: Vec<u64> = [GELADEN.get().map(|g| g.id.generation), GELADEN.get().and_then(|g| g.pin.as_ref()).map(|(_, p)| p.generation)]
+    let pins: Vec<u64> = [Some(stand().id.generation), PIN.get().map(|(_, p)| p.generation)]
         .into_iter()
         .flatten()
         .collect();
@@ -353,6 +385,20 @@ mod tests {
         assert_eq!(selbsttest(&eingebaut().paket().unwrap()), Ok(()));
     }
 
+    /// Nie gemischt (P-3.02): Gilt schon ein Stand, wird ein zweiter
+    /// vollstaendig abgewiesen — Grenzwerte UND Bahntabellen bleiben.
+    #[test]
+    fn ein_stand_gilt_ganz_oder_gar_nicht() {
+        let vorher = stand();
+        let mut anders = eingebauter_stand().unwrap();
+        anders.grenzwerte.phasen.window_secs.wert = 5.0;
+        anders.runways = "\"id\"";
+        assert!(!uebernehmen(anders));
+        assert_eq!(crate::grenzwerte::grenzwerte().phasen.window_secs.wert, 60.0);
+        assert!(std::ptr::eq(stand(), vorher));
+        assert_ne!(stand().runways, "\"id\"");
+    }
+
     #[test]
     fn eingebauter_stand_ist_ein_gueltiges_paket_mit_ourairports() {
         let p = eingebaut().paket().expect("eingebauter Stand");
@@ -378,10 +424,7 @@ mod tests {
         .unwrap();
         // Wie auf Windows beobachtet: Ein anderer Teil hat die Bahntabellen
         // schon gelesen, bevor `starten` laeuft. Der Pin darf trotzdem bleiben.
-        let _ = crate::runway::ourairports_setzen(
-            crate::runway::eingebaut_runways_csv(),
-            crate::runway::eingebaut_airports_csv(),
-        );
+        let _ = stand();
         starten(&dir);
         assert_eq!(flug_pin("x"), Some(pin.clone()));
         // Ein spaeterer Flug im selben Lauf flog mit dem eingebauten Stand.

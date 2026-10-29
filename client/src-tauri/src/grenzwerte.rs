@@ -8,8 +8,6 @@
 //! eingebaute Stand (fail-closed, P-3.21). Neue Felder brauchen eine neue
 //! Faehigkeit `grenzwerte-n` (P-2.15).
 
-use std::sync::OnceLock;
-
 use serde::Deserialize;
 
 /// Ein Wert mit Einheit und Herkunft im Code von v2.1.24 (P-3.55). Gelesen
@@ -448,6 +446,26 @@ pub(crate) struct Abgabe {
     pub sim_referenz_fenster_s: Grenzwert<i64>,
 }
 
+/// `runway.rs`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Bahnzuordnung {
+    pub centerline_tolerance_m: Grenzwert<f64>,
+    pub min_plausibel_m: Grenzwert<f64>,
+    pub runway_misplaced_nm: Grenzwert<f64>,
+    pub predict_max_heading_diff_deg: Grenzwert<f32>,
+    pub predict_max_threshold_distance_m: Grenzwert<f64>,
+    pub predict_max_centerline_offset_m: Grenzwert<f64>,
+}
+
+/// `szenerie_bahn.rs`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Szenerie {
+    pub querabstand_hoechst_m: Grenzwert<f64>,
+    pub laengsversatz_hoechst_m: Grenzwert<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Grenzwerte {
     pub staende: Staende,
@@ -466,27 +484,18 @@ pub(crate) struct Grenzwerte {
     pub ausrollen: Ausrollen,
     pub sprit: Sprit,
     pub abgabe: Abgabe,
+    pub bahnzuordnung: Bahnzuordnung,
+    pub szenerie: Szenerie,
 }
 
 /// Bereich -> Datei im Paket (Pruefliste fuer Tests).
 #[cfg(test)]
-pub(crate) const DATEIEN: &[&str] = &["grenzwerte/staende.json", "grenzwerte/phasen.json", "grenzwerte/aufsetzen.json", "grenzwerte/ankunft.json", "grenzwerte/spaetes_final.json", "grenzwerte/ausfahrten.json", "grenzwerte/replay.json", "grenzwerte/bahnbewertung.json", "grenzwerte/anflug.json", "grenzwerte/cockpit.json", "grenzwerte/phasen_kern.json", "grenzwerte/landung.json", "grenzwerte/anflug_kern.json", "grenzwerte/ausrollen.json", "grenzwerte/sprit.json", "grenzwerte/abgabe.json"];
+pub(crate) const DATEIEN: &[&str] = &["grenzwerte/staende.json", "grenzwerte/phasen.json", "grenzwerte/aufsetzen.json", "grenzwerte/ankunft.json", "grenzwerte/spaetes_final.json", "grenzwerte/ausfahrten.json", "grenzwerte/replay.json", "grenzwerte/bahnbewertung.json", "grenzwerte/anflug.json", "grenzwerte/cockpit.json", "grenzwerte/phasen_kern.json", "grenzwerte/landung.json", "grenzwerte/anflug_kern.json", "grenzwerte/ausrollen.json", "grenzwerte/sprit.json", "grenzwerte/abgabe.json", "grenzwerte/bahnzuordnung.json", "grenzwerte/szenerie.json"];
 
-static GRENZWERTE: OnceLock<Grenzwerte> = OnceLock::new();
-
-/// Die geltenden Grenzwerte. Ohne Laufzeit-Paket (z. B. in Tests) die
-/// eingebauten.
+/// Die geltenden Grenzwerte: aus dem Stand des Laufzeit-Pakets (eine Sperre
+/// fuer alle Paketdaten, `laufzeit_paket::stand`).
 pub(crate) fn grenzwerte() -> &'static Grenzwerte {
-    GRENZWERTE.get_or_init(|| {
-        lesen(|p| crate::laufzeit_paket::eingebaute_datei(p).map(<[u8]>::to_vec))
-            .expect("eingebaute Grenzwerte lesbar (Test grenzwerte_eingebaut_lesbar)")
-    })
-}
-
-/// Setzt die Grenzwerte aus dem Laufzeit-Paket. `false`, wenn schon welche
-/// gelesen wurden.
-pub(crate) fn setzen(g: Grenzwerte) -> bool {
-    GRENZWERTE.set(g).is_ok()
+    &crate::laufzeit_paket::stand().grenzwerte
 }
 
 /// Liest alle Bereiche ueber `datei(pfad)`.
@@ -515,6 +524,8 @@ pub(crate) fn lesen(datei: impl Fn(&str) -> Option<Vec<u8>>) -> Result<Grenzwert
         ausrollen: bereich(&datei, "grenzwerte/ausrollen.json")?,
         sprit: bereich(&datei, "grenzwerte/sprit.json")?,
         abgabe: bereich(&datei, "grenzwerte/abgabe.json")?,
+        bahnzuordnung: bereich(&datei, "grenzwerte/bahnzuordnung.json")?,
+        szenerie: bereich(&datei, "grenzwerte/szenerie.json")?,
     })
 }
 
@@ -935,6 +946,24 @@ mod tests {
         assert_eq!(g.simrate_strecke_max.wert, 16.0); // lib.rs:44397
         assert_eq!(g.zeitraffer_gs_spielraum.wert, 1.5); // lib.rs:44403
         assert_eq!(g.sim_referenz_fenster_s.wert, 4); // lib.rs:45944
+    }
+
+    #[test]
+    fn grenzwerte_bahnzuordnung_wie_2_1_24() {
+        let g = &grenzwerte().bahnzuordnung;
+        assert_eq!(g.centerline_tolerance_m.wert, 2.0); // runway.rs:165
+        assert_eq!(g.min_plausibel_m.wert, 20.0); // runway.rs:635
+        assert_eq!(g.runway_misplaced_nm.wert, 10.0); // runway.rs:799
+        assert_eq!(g.predict_max_heading_diff_deg.wert, 30.0); // runway.rs:1825
+        assert_eq!(g.predict_max_threshold_distance_m.wert, 27_780.0); // runway.rs:1829
+        assert_eq!(g.predict_max_centerline_offset_m.wert, 3_704.0); // runway.rs:1831
+    }
+
+    #[test]
+    fn grenzwerte_szenerie_wie_2_1_24() {
+        let g = &grenzwerte().szenerie;
+        assert_eq!(g.querabstand_hoechst_m.wert, 100.0); // szenerie_bahn.rs:55
+        assert_eq!(g.laengsversatz_hoechst_m.wert, 400.0); // szenerie_bahn.rs:66
     }
 
     #[test]

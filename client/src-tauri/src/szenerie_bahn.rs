@@ -39,31 +39,31 @@
 use aeroacars_mqtt::navdata::{NavAirport, NavRunway};
 use sim_xplane::szenerie::{SzenerieBahn, SzenerieFlughafen};
 
-/// Wie weit die Szenerie-Bahn QUER zur Navdaten-Achse liegen darf,
-/// damit es dieselbe Bahn sein kann.
-///
-/// Hundert Meter sind grosszügig für Vermessungsunterschiede und zu eng
-/// für eine Nachbarbahn: Parallelbahnen liegen nach ICAO mindestens
-/// 210 m auseinander, in der Praxis meist deutlich mehr.
-///
-/// ⚠ Bis v1.7.12 stand hier ein Punkt-zu-Punkt-Abstand der Schwellen mit
-/// 200 m. Der ist bei MSFS auf drei Annahmen gebaut (Mitte, Kurs, Laenge
-/// — die Schwellen werden daraus gerechnet) und schlug am 30./31.08.2026
-/// an DREI Plaetzen fehl (EDDF 25L, YBWW 12, YBCG 14), ohne zu sagen,
-/// welche der drei nicht stimmte. Der Querabstand haengt nur an der
-/// Mitte; die Begruendung steht bei `querabstand_m`.
-const QUERABSTAND_HOECHST_M: f64 = 100.0;
+// Wie weit die Szenerie-Bahn QUER zur Navdaten-Achse liegen darf,
+// damit es dieselbe Bahn sein kann.
+//
+// Hundert Meter sind grosszügig für Vermessungsunterschiede und zu eng
+// für eine Nachbarbahn: Parallelbahnen liegen nach ICAO mindestens
+// 210 m auseinander, in der Praxis meist deutlich mehr.
+//
+// ⚠ Bis v1.7.12 stand hier ein Punkt-zu-Punkt-Abstand der Schwellen mit
+// 200 m. Der ist bei MSFS auf drei Annahmen gebaut (Mitte, Kurs, Laenge
+// — die Schwellen werden daraus gerechnet) und schlug am 30./31.08.2026
+// an DREI Plaetzen fehl (EDDF 25L, YBWW 12, YBCG 14), ohne zu sagen,
+// welche der drei nicht stimmte. Der Querabstand haengt nur an der
+// Mitte; die Begruendung steht bei `querabstand_m`.
+// Wert seit v3: bundle/grenzwerte/szenerie.json -> querabstand_hoechst_m (v2.1.24: 100.0)
 
-/// Wie weit die Mitte der Szenerie-Bahn LÄNGS der Achse von der Mitte
-/// der Navdaten-Bahn abliegen darf.
-///
-/// Vierhundert Meter: Der grösste Versatz, der bei derselben Bahn
-/// entstehen kann, kommt von einer versetzten Schwelle — sie verschiebt
-/// den Navdaten-Mittelpunkt um die HÄLFTE des Versatzes. Der grösste im
-/// Bestand gemessene Versatz sind 573 m (TJPS 12), also 287 m. Eine Bahn
-/// am anderen Ende liegt dagegen mindestens eine halbe Bahnlänge weit
-/// weg — bei der kürzesten Piste im Bestand 550 m.
-const LAENGSVERSATZ_HOECHST_M: f64 = 400.0;
+// Wie weit die Mitte der Szenerie-Bahn LÄNGS der Achse von der Mitte
+// der Navdaten-Bahn abliegen darf.
+//
+// Vierhundert Meter: Der grösste Versatz, der bei derselben Bahn
+// entstehen kann, kommt von einer versetzten Schwelle — sie verschiebt
+// den Navdaten-Mittelpunkt um die HÄLFTE des Versatzes. Der grösste im
+// Bestand gemessene Versatz sind 573 m (TJPS 12), also 287 m. Eine Bahn
+// am anderen Ende liegt dagegen mindestens eine halbe Bahnlänge weit
+// weg — bei der kürzesten Piste im Bestand 550 m.
+// Wert seit v3: bundle/grenzwerte/szenerie.json -> laengsversatz_hoechst_m (v2.1.24: 400.0)
 
 // ⚠ Hier stand einmal ein Riegel auf die Kursabweichung (45°).
 //
@@ -228,7 +228,7 @@ fn passende_szenerie_bahn<'a>(
             (nav.far_end.lat, nav.far_end.lon),
             mitte,
         );
-        if quer > QUERABSTAND_HOECHST_M || laengs > LAENGSVERSATZ_HOECHST_M {
+        if quer > crate::grenzwerte::grenzwerte().szenerie.querabstand_hoechst_m.wert || laengs > crate::grenzwerte::grenzwerte().szenerie.laengsversatz_hoechst_m.wert {
             continue;
         }
         return (Some(b), true);
