@@ -40,7 +40,7 @@ pub fn rang(p: FlightPhase) -> u8 {
 
 /// Der Flugzustand eines Ticks. Der Host füllt ihn aus dem SimSnapshot und
 /// dem aktiven Flug.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Tick {
     /// Echtzeit in UTC-Epoch-Sekunden — nur für Abstände und Verzögerungen,
     /// nicht für Tageszeiten (die kommen aus dem Plan).
@@ -91,7 +91,7 @@ pub struct Tick {
 }
 
 /// Was der Planer vom Flug einmal zu Beginn wissen muss.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Flugdaten {
     pub flugart: Option<Flugart>,
     pub geplante_flugzeit_min: Option<u32>,
@@ -162,7 +162,7 @@ fn ausloese_rang(slot: Slot) -> u8 {
 }
 
 /// Wann eine fällige Ansage verfällt, wenn sie bis dahin nicht lief.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Verfall {
     /// Sobald diese Phase (oder eine spätere) erreicht ist.
     AbPhase(FlightPhase),
@@ -170,7 +170,7 @@ pub enum Verfall {
     Um(i64),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Faellig {
     pub slot: Slot,
     pub verfall: Verfall,
@@ -181,7 +181,7 @@ pub struct Faellig {
 
 /// Warum der Planer eine Ansage nicht meldet, obwohl sie dran gewesen wäre —
 /// die Seite zeigt sie in „Bisher“, statt dass sie still fehlt (beta.6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Entfall {
     /// Zu nah am Sinkflug.
@@ -192,7 +192,7 @@ pub enum Entfall {
 
 /// Stand der Sinkflug-Ansage des Kapitäns: Die Kabine folgt mit Abstand
 /// zu ihrem wirklichen Ende, nicht zur Planung (Codex beta.6).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 enum KapitaenSinkflug {
     #[default]
     Offen,
@@ -208,7 +208,7 @@ enum KapitaenSinkflug {
 /// wirklich gespielten (EWG 221: ohne Service kam beim Sinkflug „Der
 /// Service ist beendet“ in die Schlange). Wie [`KapitaenSinkflug`] meldet
 /// der Host das Ende.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 enum Service {
     #[default]
     Offen,
@@ -250,7 +250,10 @@ enum Service {
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.anschnall_aus_stabil_s (v2.1.24: 10)
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.anschnall_aus_sinken_fpm (v2.1.24: -1_000.0)
 
-#[derive(Debug, Default)]
+/// v3 Etappe 4 (P-3.58): vollstaendig (de)serialisierbar — Voraussetzung,
+/// um den Planer als Modul mit Zustand von aussen zu betreiben. Test
+/// `rundlauf_aendert_nichts`.
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Planer {
     flug: Flugdaten,
     gemeldet: HashSet<Slot>,

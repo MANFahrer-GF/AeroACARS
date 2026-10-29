@@ -46,6 +46,12 @@ fn fliegen(datei: &str, flugzeit_min: u32, reise_ft: u32) -> (Daten, Ablauf) {
 }
 
 fn fliegen_mit(datei: &str, flugzeit_min: u32, reise_ft: u32, zweiter_service: Option<bool>) -> (Daten, Ablauf) {
+    fliegen_rundlauf(datei, flugzeit_min, reise_ft, zweiter_service, false)
+}
+
+/// `rundlauf`: nach jedem Takt den Planer sichern und wiederherstellen
+/// (v3 Etappe 4: Planer mit Zustand von aussen betreiben, P-3.58).
+fn fliegen_rundlauf(datei: &str, flugzeit_min: u32, reise_ft: u32, zweiter_service: Option<bool>, rundlauf: bool) -> (Daten, Ablauf) {
     let d: Daten = serde_json::from_str(datei).expect("Testdaten");
     // Wie der Host: Planer mit `fortsetzen` aus der ersten Phase.
     let erste = d.ticks.first().map(|x| x.1).expect("Takte");
@@ -115,6 +121,11 @@ fn fliegen_mit(datei: &str, flugzeit_min: u32, reise_ft: u32, zweiter_service: O
         }
         let _ = w.verfallene_abholen();
         let _ = p.entfallene_abholen();
+        if rundlauf {
+            let wieder: Planer = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+            assert!(wieder == p, "Rundlauf veraendert den Planer bei t={t}");
+            p = wieder;
+        }
     }
     let mut zeilen: Vec<_> = gespielt.iter().collect();
     zeilen.sort_by_key(|(_, t)| **t);
@@ -224,4 +235,24 @@ fn dlh454_zweiter_service_trotz_fruehem_sinkflug() {
     let ende = *a.gespielt.get(&Slot::EndeService).expect("Ende des Service kam");
     assert!(ende < a.gespielt[&Slot::KapitaenSinkflug], "vor dem Kapitän");
     assert!(ende > zweiter, "nach dem zweiten Service");
+}
+
+/// v3 Etappe 4 (P-3.58): Den Planer nach jedem Takt sichern und
+/// wiederherstellen aendert keinen Flug — gleiche Ansagen zur gleichen Zeit.
+#[test]
+fn rundlauf_aendert_nichts() {
+    for (datei, min, ft, zweiter) in [
+        (include_str!("daten/ltu181.json"), 165, 36_000, None),
+        (include_str!("daten/dlh16.json"), 100, 37_000, None),
+        (include_str!("daten/dlh418.json"), 500, 37_000, None),
+        (include_str!("daten/qaf446.json"), 600, 38_000, None),
+        (include_str!("daten/afr218.json"), 600, 37_000, Some(true)),
+        (include_str!("daten/dlh454.json"), 600, 38_000, Some(true)),
+    ] {
+        let (_, normal) = fliegen_rundlauf(datei, min, ft, zweiter, false);
+        let (_, rund) = fliegen_rundlauf(datei, min, ft, zweiter, true);
+        assert_eq!(normal.gespielt, rund.gespielt);
+        assert_eq!(normal.gemeldet, rund.gemeldet);
+        assert!(!normal.gespielt.is_empty());
+    }
 }
