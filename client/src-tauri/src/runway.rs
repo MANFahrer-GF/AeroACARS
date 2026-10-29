@@ -26,7 +26,11 @@ use std::sync::OnceLock;
 /// unverändertes Spalten-Schema — 1:1 Drop-in). Update-Rezept: Datei neu
 /// laden, hier ersetzen, `cargo test --lib runway::` laufen lassen (einige
 /// Tests hängen an echten Koordinaten für konkrete Flughäfen).
-pub(crate) const EINGEBAUT_RUNWAYS_CSV: &str = include_str!("../../../bundle/ourairports/runways.csv");
+/// v3 (Etappe 1b): eingebaute Fassung aus der einzigen Liste in
+/// `laufzeit_paket` (Inhalt von `bundle/`), nicht ein zweites Mal eingebettet.
+pub(crate) fn eingebaut_runways_csv() -> &'static str {
+    eingebaut_text("ourairports/runways.csv")
+}
 
 /// Embedded snapshot of the ourairports **airports** table (ident, type,
 /// reference point). Same source, same public domain, same refresh cadence.
@@ -44,7 +48,7 @@ pub(crate) const EINGEBAUT_RUNWAYS_CSV: &str = include_str!("../../../bundle/our
 /// thresholds can be *identified* rather than guessed at, and every airport has
 /// a position even when its runways don't.
 ///
-/// Zuletzt aktualisiert: 2026-08-06. **Anders als `EINGEBAUT_RUNWAYS_CSV` KEIN
+/// Zuletzt aktualisiert: 2026-08-06. **Anders als `eingebaut_runways_csv()` KEIN
 /// Rohformat** — `airports_by_ident()` liest positionell nur die ersten 4
 /// Spalten (`ident,type,latitude_deg,longitude_deg`), das rohe
 /// `https://ourairports.com/data/airports.csv` hat aber ~19 Spalten in
@@ -54,7 +58,14 @@ pub(crate) const EINGEBAUT_RUNWAYS_CSV: &str = include_str!("../../../bundle/our
 /// 2026 bereits einmal geändert, `icao_code` kam neu dazu), Header
 /// `ident,type,latitude_deg,longitude_deg` beibehalten, dann hier ersetzen
 /// und `cargo test --lib runway::` laufen lassen.
-pub(crate) const EINGEBAUT_AIRPORTS_CSV: &str = include_str!("../../../bundle/ourairports/airports.csv");
+pub(crate) fn eingebaut_airports_csv() -> &'static str {
+    eingebaut_text("ourairports/airports.csv")
+}
+
+fn eingebaut_text(pfad: &str) -> &'static str {
+    let bytes = crate::laufzeit_paket::eingebaute_datei(pfad).unwrap_or_else(|| panic!("{pfad} nicht eingebaut"));
+    std::str::from_utf8(bytes).unwrap_or_else(|_| panic!("{pfad} kein UTF-8"))
+}
 
 /// v3 (Etappe 1a): Welche OurAirports-Fassung gilt — die aus dem
 /// Laufzeit-Paket oder die eingebaute. Entschieden wird beim ersten Zugriff
@@ -62,7 +73,7 @@ pub(crate) const EINGEBAUT_AIRPORTS_CSV: &str = include_str!("../../../bundle/ou
 static OURAIRPORTS: std::sync::OnceLock<(&'static str, &'static str)> = std::sync::OnceLock::new();
 
 fn ourairports() -> &'static (&'static str, &'static str) {
-    OURAIRPORTS.get_or_init(|| (EINGEBAUT_RUNWAYS_CSV, EINGEBAUT_AIRPORTS_CSV))
+    OURAIRPORTS.get_or_init(|| (eingebaut_runways_csv(), eingebaut_airports_csv()))
 }
 
 fn runways_csv() -> &'static str {

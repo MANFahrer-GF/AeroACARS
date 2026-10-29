@@ -8,7 +8,50 @@ fn main() {
     // (siehe src/discord_rpc.rs refresh_app_id) — daher KEIN env-changed-Trigger
     // fuer AEROACARS_DISCORD_APP_ID. Bewusst.
     produktion_zusammensetzen();
+    eingebautes_paket_auflisten();
     tauri_build::build()
+}
+
+/// v3 (Etappe 1b): Der eingebaute Stand des Laufzeit-Pakets ist genau der
+/// Inhalt von `bundle/` (Gesamtkonzept: keine zweite Wahrheit). Hier entsteht
+/// die einzige Liste `(pfad, bytes)`; `laufzeit_paket.rs` bindet sie ein, und
+/// jeder, der eine eingebaute Datei braucht (z. B. `runway.rs`), liest daraus.
+fn eingebautes_paket_auflisten() {
+    let wurzel = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("../../bundle")
+        .canonicalize()
+        .expect("bundle/");
+    println!("cargo:rerun-if-changed={}", wurzel.display());
+    let mut dateien = Vec::new();
+    fn sammeln(wurzel: &std::path::Path, ordner: &std::path::Path, aus: &mut Vec<(String, std::path::PathBuf)>) {
+        for e in std::fs::read_dir(ordner).expect("bundle/ lesbar").flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let pfad = e.path();
+            if pfad.is_dir() {
+                sammeln(wurzel, &pfad, aus);
+            } else if pfad.is_file() {
+                let rel: Vec<String> = pfad
+                    .strip_prefix(wurzel)
+                    .unwrap()
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                aus.push((rel.join("/"), pfad));
+            }
+        }
+    }
+    sammeln(&wurzel, &wurzel, &mut dateien);
+    dateien.sort();
+    let mut code = String::from("pub(crate) const DATEIEN: &[(&str, &[u8])] = &[\n");
+    for (rel, pfad) in &dateien {
+        code.push_str(&format!("    ({rel:?}, include_bytes!({:?})),\n", pfad.display().to_string()));
+    }
+    code.push_str("];\n");
+    let ziel = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("eingebautes_paket.rs");
+    std::fs::write(ziel, code).expect("eingebautes_paket.rs");
 }
 
 /// v3 (Etappe 0): `lib.rs` wird in Dateien zerlegt. Die Text-Waechter

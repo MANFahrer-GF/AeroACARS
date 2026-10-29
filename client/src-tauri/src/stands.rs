@@ -43,30 +43,30 @@ pub struct ParkingStand {
     pub flaeche: bool,
 }
 
-/// Wie nah (Meter) der Stillstand an einer Parkposition liegen muss,
-/// damit er als Block-On zählt. Kalibriert am RYR-1142-Beweisflug:
-/// echte Parkposition 17 m vom OSM-Punkt, Nachbar-Stand 34 m,
-/// der fehlgedeutete H4-Halt 423 m. 60 m fängt Szenerie-Versatz ab
-/// und bleibt weit unter der Rollweg-Distanz.
-pub const STAND_CAPTURE_RADIUS_M: f64 = 60.0;
+// Wie nah (Meter) der Stillstand an einer Parkposition liegen muss,
+// damit er als Block-On zählt. Kalibriert am RYR-1142-Beweisflug:
+// echte Parkposition 17 m vom OSM-Punkt, Nachbar-Stand 34 m,
+// der fehlgedeutete H4-Halt 423 m. 60 m fängt Szenerie-Versatz ab
+// und bleibt weit unter der Rollweg-Distanz.
+// Wert seit v3: bundle/grenzwerte/staende.json -> stand_capture_radius_m (v2.1.24: 60.0)
 
-/// Radius für die NAMENS-Zuordnung. War in der v1.6.1-QS testweise auf
-/// 30 m verengt (Sorge: falscher Nachbar-Name auf einer ungetaggten
-/// Position). REVERTIERT nach dem ersten Live-Tag mit echten Daten:
-/// LGAV-Ankunft (13.08.2026), Stand C37 war der naechstliegende Punkt
-/// UEBERHAUPT (kein naeherer unbenannter Kandidat), aber 40,2 m entfernt
-/// — mit 30 m blieb arr_gate leer, obwohl die Zuordnung eindeutig war.
-/// Der Schutz vor Fehlbenennung kommt seit der v1.6.2-QS nicht mehr aus
-/// dem Radius, sondern aus `STAND_NAME_VORSPRUNG_M`: liegt ein UNBENANNTER
-/// Stand klar naeher, steht der Flieger dort und der benannte Nachbar
-/// bekommt den Namen nicht. Damit gilt beides — LGAV/C37 wird benannt,
-/// und am dichten Vorfeld wandert kein Nachbarname ins PIREP.
-pub const STAND_NAME_RADIUS_M: f64 = 60.0;
+// Radius für die NAMENS-Zuordnung. War in der v1.6.1-QS testweise auf
+// 30 m verengt (Sorge: falscher Nachbar-Name auf einer ungetaggten
+// Position). REVERTIERT nach dem ersten Live-Tag mit echten Daten:
+// LGAV-Ankunft (13.08.2026), Stand C37 war der naechstliegende Punkt
+// UEBERHAUPT (kein naeherer unbenannter Kandidat), aber 40,2 m entfernt
+// — mit 30 m blieb arr_gate leer, obwohl die Zuordnung eindeutig war.
+// Der Schutz vor Fehlbenennung kommt seit der v1.6.2-QS nicht mehr aus
+// dem Radius, sondern aus `STAND_NAME_VORSPRUNG_M`: liegt ein UNBENANNTER
+// Stand klar naeher, steht der Flieger dort und der benannte Nachbar
+// bekommt den Namen nicht. Damit gilt beides — LGAV/C37 wird benannt,
+// und am dichten Vorfeld wandert kein Nachbarname ins PIREP.
+// Wert seit v3: bundle/grenzwerte/staende.json -> stand_name_radius_m (v2.1.24: 60.0)
 
-/// Wieviel naeher ein unbenannter Stand liegen muss, damit er den benannten
-/// Namen verwirft. Kleine Unterschiede sind Szenerie-Rauschen; erst ein
-/// klarer Vorsprung heisst „der Flieger steht woanders".
-const STAND_NAME_VORSPRUNG_M: f64 = 10.0;
+// Wieviel naeher ein unbenannter Stand liegen muss, damit er den benannten
+// Namen verwirft. Kleine Unterschiede sind Szenerie-Rauschen; erst ein
+// klarer Vorsprung heisst „der Flieger steht woanders".
+// Wert seit v3: bundle/grenzwerte/staende.json -> stand_name_vorsprung_m (v2.1.24: 10.0)
 
 /// Parkpositionen aus dem `airport_ground`-GeoJSON ziehen.
 ///
@@ -294,7 +294,7 @@ pub fn benannter_stand_bei(
         .iter()
         .filter(|s| s.name.is_some())
         .map(|s| (s, abstand_m(s, lat, lon)))
-        .filter(|(_, d)| *d <= STAND_NAME_RADIUS_M)
+        .filter(|(_, d)| *d <= crate::grenzwerte::grenzwerte().staende.stand_name_radius_m.wert)
         .min_by(|a, b| a.1.total_cmp(&b.1))?;
     // Steht ein UNBENANNTER Stand naeher, gehoert der Flieger dorthin — dann
     // ist der benannte Nachbar der falsche Name (QS-Befund v1.6.2: der weite
@@ -302,28 +302,28 @@ pub fn benannter_stand_bei(
     // normal sind, den Nachbarnamen ins PIREP wandern). Ein leeres Feld ist
     // besser als ein falscher Stand.
     let naechster = nearest(stands, lat, lon)?;
-    if naechster.1 + STAND_NAME_VORSPRUNG_M < benannt.1 {
+    if naechster.1 + crate::grenzwerte::grenzwerte().staende.stand_name_vorsprung_m.wert < benannt.1 {
         return None;
     }
     Some(benannt)
 }
 
 /// Der Stand, AN dem das Flugzeug gerade steht — `Some` nur innerhalb
-/// von [`STAND_CAPTURE_RADIUS_M`].
+/// von `grenzwerte().staende.stand_capture_radius_m`.
 pub fn stand_at(stands: &[ParkingStand], lat: f64, lon: f64) -> Option<&ParkingStand> {
     match nearest(stands, lat, lon) {
-        Some((s, d)) if d <= STAND_CAPTURE_RADIUS_M => Some(s),
+        Some((s, d)) if d <= crate::grenzwerte::grenzwerte().staende.stand_capture_radius_m.wert => Some(s),
         _ => None,
     }
 }
 
-/// Wie nah (Meter) ein Halt an einer Rollweg-Mittellinie liegen muss, damit
-/// er als „auf dem Rollweg“ gilt. Kalibriert an 30 Tagen Feldflügen
-/// (27.10.2026, 444 Halte mit Standdaten): die drei falschen Block-Ons
-/// (EDDN, ENZV, KIAD) lagen 0,6–2,0 m neben der Mittellinie, echte
-/// Ankünfte fast immer weit darüber — nur an kleinen Plätzen, wo die
-/// Parkposition auf dem Rollweg gemappt ist, auch darunter.
-pub const ROLLWEG_MITTELLINIE_M: f64 = 3.0;
+// Wie nah (Meter) ein Halt an einer Rollweg-Mittellinie liegen muss, damit
+// er als „auf dem Rollweg“ gilt. Kalibriert an 30 Tagen Feldflügen
+// (27.10.2026, 444 Halte mit Standdaten): die drei falschen Block-Ons
+// (EDDN, ENZV, KIAD) lagen 0,6–2,0 m neben der Mittellinie, echte
+// Ankünfte fast immer weit darüber — nur an kleinen Plätzen, wo die
+// Parkposition auf dem Rollweg gemappt ist, auch darunter.
+// Wert seit v3: bundle/grenzwerte/staende.json -> rollweg_mittellinie_m (v2.1.24: 3.0)
 
 /// Rollweg-Mittellinien (`taxiway`-Linien) aus demselben
 /// `airport_ground`-GeoJSON wie [`parse_stands`]. Rollgassen auf dem

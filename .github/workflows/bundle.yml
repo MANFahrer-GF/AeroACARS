@@ -3,8 +3,10 @@
 #
 # Ablauf: Änderung unter bundle/ -> bauen + testen -> signieren (nur mit
 # Secret BUNDLE_MINISIGN_KEY) -> auf live als Vorabstand ablegen (nur
-# Vorab-Piloten, P-3.13; Secret LIVE_BUNDLE_SSH_KEY) -> Freigabe durch Thomas
-# im Environment bundle-produktion -> Zeiger fuer alle umschalten.
+# Vorab-Piloten, P-3.13; Secret LIVE_BUNDLE_VORAB_SSH_KEY) -> Freigabe durch
+# Thomas im Environment bundle-produktion -> Zeiger fuer alle umschalten
+# (Secret LIVE_BUNDLE_FREIGABE_SSH_KEY nur im Environment). Auf live beschraenkt
+# scripts/bundle/ssh-befehl.sh jeden Schluessel auf seine Stufe.
 # Ausnahme P-9.43: Laeufe vom OurAirports-Wochenlauf, die sich vom
 # veroeffentlichten Stand nur in ourairports/ unterscheiden, gehen ueber das
 # Environment bundle-ourairports (ohne Pflicht-Pruefer).
@@ -60,7 +62,7 @@ jobs:
             --generation "${{ steps.gen.outputs.generation }}" \
             --erstellt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --repo-commit "${{ github.sha }}" \
-            --requires ourairports-1
+            --requires ourairports-1,grenzwerte-1
       - name: Signieren
         id: signieren
         env:
@@ -104,19 +106,16 @@ jobs:
     if: needs.bauen.outputs.signiert == 'ja' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: scripts/bundle
       - uses: actions/download-artifact@v4
         with:
           name: laufzeit-paket-g${{ needs.bauen.outputs.generation }}
           path: paket
       - name: Hochladen und als Vorabstand ablegen
         env:
-          SSH_KEY: ${{ secrets.LIVE_BUNDLE_SSH_KEY }}
+          SSH_KEY: ${{ secrets.LIVE_BUNDLE_VORAB_SSH_KEY }}
           G: ${{ needs.bauen.outputs.generation }}
         run: |
-          if [ -z "$SSH_KEY" ]; then echo "Kein LIVE_BUNDLE_SSH_KEY"; exit 1; fi
+          if [ -z "$SSH_KEY" ]; then echo "Kein LIVE_BUNDLE_VORAB_SSH_KEY"; exit 1; fi
           umask 077
           printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/id"
           SSH="ssh -i $RUNNER_TEMP/id -p 2222 -o StrictHostKeyChecking=accept-new"
@@ -126,8 +125,9 @@ jobs:
           # ersetzt auch eine frueher halb hochgeladene Datei gleichen Namens.
           rsync -a --checksum -e "$SSH" paket/blobs/ "$ZIEL:blobs/"
           rsync -a -e "$SSH" paket/manifest.json paket/manifest.json.minisig "$ZIEL:tmp-gen-$G/"
-          rsync -a -e "$SSH" scripts/bundle/veroeffentlichen.sh "$ZIEL:"
-          $SSH "$ZIEL" sh veroeffentlichen.sh vorab "$G"
+          # Der Vorab-Schluessel ist auf live per erzwungenem Befehl auf
+          # Hochladen + "vorab" beschraenkt (scripts/bundle/ssh-befehl.sh).
+          $SSH "$ZIEL" veroeffentlichen vorab "$G"
           rm -f "$RUNNER_TEMP/id"
 
   freigeben:
@@ -138,10 +138,12 @@ jobs:
     steps:
       - name: Zeiger umschalten
         env:
-          SSH_KEY: ${{ secrets.LIVE_BUNDLE_SSH_KEY }}
+          # Nur als Secret DIESES Environments hinterlegt, auf live auf
+          # "freigeben" beschraenkt — ohne Freigabe nicht erreichbar.
+          SSH_KEY: ${{ secrets.LIVE_BUNDLE_FREIGABE_SSH_KEY }}
           G: ${{ needs.bauen.outputs.generation }}
         run: |
           umask 077
           printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/id"
-          ssh -i "$RUNNER_TEMP/id" -p 2222 -o StrictHostKeyChecking=accept-new bundle@live.kant.ovh sh veroeffentlichen.sh freigeben "$G"
+          ssh -i "$RUNNER_TEMP/id" -p 2222 -o StrictHostKeyChecking=accept-new bundle@live.kant.ovh veroeffentlichen freigeben "$G"
           rm -f "$RUNNER_TEMP/id"

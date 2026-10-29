@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 const PRUEFSCHLUESSEL: &[&str] = &[];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -56,24 +56,28 @@ fn kontext() -> Kontext {
     }
 }
 
+mod eingebettet {
+    // Erzeugt von build.rs aus dem Inhalt von bundle/ — die einzige Liste.
+    include!(concat!(env!("OUT_DIR"), "/eingebautes_paket.rs"));
+}
+
+/// Eine Datei des eingebauten Stands (Inhalt von `bundle/` beim Bau).
+pub(crate) fn eingebaute_datei(pfad: &str) -> Option<&'static [u8]> {
+    eingebettet::DATEIEN.iter().find(|(p, _)| *p == pfad).map(|(_, b)| *b)
+}
+
 /// Der eingebaute Stand: Generation 0 aus den Dateien im Programm (P-3.22).
 fn eingebaut() -> Eingebaut {
-    let dateien: HashMap<String, Vec<u8>> = [
-        (RUNWAYS, crate::runway::EINGEBAUT_RUNWAYS_CSV),
-        (AIRPORTS, crate::runway::EINGEBAUT_AIRPORTS_CSV),
-    ]
-    .into_iter()
-    .map(|(p, t)| (p.to_string(), t.as_bytes().to_vec()))
-    .collect();
-    let files: Vec<_> = [RUNWAYS, AIRPORTS]
+    let dateien: HashMap<String, Vec<u8>> =
+        eingebettet::DATEIEN.iter().map(|(p, b)| (p.to_string(), b.to_vec())).collect();
+    let files: Vec<_> = eingebettet::DATEIEN
         .iter()
-        .map(|p| {
-            let b = &dateien[*p];
+        .map(|(p, b)| {
             serde_json::json!({
                 "path": p,
                 "sha256": runtime_bundle::hex(&Sha256::digest(b)),
                 "size": b.len(),
-                "kind": "ourairports",
+                "kind": p.split('/').next().unwrap_or(""),
             })
         })
         .collect();
@@ -139,14 +143,18 @@ fn starten_einmal(app_daten: &Path) {
             }
         }
     };
-    // Der Flug traegt die Kennung des Stands, der WIRKLICH gilt: Laesst sich
-    // OurAirports aus dem Paket nicht setzen, gilt der eingebaute (Codex 29.10.).
+    // Der Flug traegt die Kennung des Stands, der WIRKLICH gilt: Ein Paket
+    // gilt nur als Ganzes (P-3.02). Erst alles lesen, dann alles setzen; laesst
+    // sich ein Teil nicht anwenden, gilt der eingebaute Stand (Codex 29.10.).
     let text = |pfad: &str| -> Option<&'static str> {
         let bytes = paket.datei(pfad).ok()?;
         Some(Box::leak(String::from_utf8(bytes).ok()?.into_boxed_str()))
     };
-    let gesetzt = match (text(RUNWAYS), text(AIRPORTS)) {
-        (Some(rw), Some(ap)) => crate::runway::ourairports_setzen(rw, ap),
+    let grenzwerte = crate::grenzwerte::lesen(|p| paket.datei(p).ok());
+    let gesetzt = match (text(RUNWAYS), text(AIRPORTS), grenzwerte) {
+        (Some(rw), Some(ap), Ok(g)) => {
+            crate::runway::ourairports_setzen(rw, ap) & crate::grenzwerte::setzen(g)
+        }
         _ => false,
     };
     // Ist der geladene Stand selbst der eingebaute, gelten seine Tabellen auch
@@ -228,7 +236,13 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
     let holen = |pfad: String| {
         let client = client.clone();
         async move {
-            let r = client.get(format!("{basis}{pfad}")).send().await.map_err(|e| e.to_string())?;
+            // Mit Token: Vorabstaende gibt es auch ueber die Nummer nur fuer
+            // Vorab-Piloten (P-3.13).
+            let mut anfrage = client.get(format!("{basis}{pfad}"));
+            if let Some(token) = crate::live_zugang::pilot_token() {
+                anfrage = anfrage.bearer_auth(token);
+            }
+            let r = anfrage.send().await.map_err(|e| e.to_string())?;
             r.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())
         }
     };
@@ -275,7 +289,13 @@ async fn pin_nachholen(app_daten: &Path, pin: &RuntimeBundleId) -> Result<(), St
     let holen = |pfad: String| {
         let client = client.clone();
         async move {
-            let r = client.get(format!("{basis}{pfad}")).send().await.map_err(|e| e.to_string())?;
+            // Mit Token: Vorabstaende gibt es auch ueber die Nummer nur fuer
+            // Vorab-Piloten (P-3.13).
+            let mut anfrage = client.get(format!("{basis}{pfad}"));
+            if let Some(token) = crate::live_zugang::pilot_token() {
+                anfrage = anfrage.bearer_auth(token);
+            }
+            let r = anfrage.send().await.map_err(|e| e.to_string())?;
             r.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())
         }
     };
@@ -308,6 +328,7 @@ async fn pin_nachholen(app_daten: &Path, pin: &RuntimeBundleId) -> Result<(), St
 /// Ein Stand, dessen OurAirports-Dateien nicht das erwartete Format haben,
 /// wird nicht aktiviert (P-3.21).
 fn selbsttest(p: &Paket) -> Result<(), String> {
+    crate::grenzwerte::lesen(|pfad| p.datei(pfad).ok())?;
     for (pfad, kopf) in [
         (RUNWAYS, "\"id\",\"airport_ref\",\"airport_ident\""),
         (AIRPORTS, "ident,type,latitude_deg,longitude_deg"),
@@ -336,8 +357,11 @@ mod tests {
     fn eingebauter_stand_ist_ein_gueltiges_paket_mit_ourairports() {
         let p = eingebaut().paket().expect("eingebauter Stand");
         assert_eq!(p.id.generation, 0);
-        assert_eq!(p.datei(RUNWAYS).unwrap(), crate::runway::EINGEBAUT_RUNWAYS_CSV.as_bytes());
-        assert_eq!(p.datei(AIRPORTS).unwrap(), crate::runway::EINGEBAUT_AIRPORTS_CSV.as_bytes());
+        assert_eq!(p.datei(RUNWAYS).unwrap(), crate::runway::eingebaut_runways_csv().as_bytes());
+        assert_eq!(p.datei(AIRPORTS).unwrap(), crate::runway::eingebaut_airports_csv().as_bytes());
+        for d in crate::grenzwerte::DATEIEN {
+            assert!(p.datei(d).is_ok(), "{d} fehlt im eingebauten Stand");
+        }
     }
 
     /// Fehlt der Stand eines offenen Flugs, laeuft das Programm mit dem
@@ -355,8 +379,8 @@ mod tests {
         // Wie auf Windows beobachtet: Ein anderer Teil hat die Bahntabellen
         // schon gelesen, bevor `starten` laeuft. Der Pin darf trotzdem bleiben.
         let _ = crate::runway::ourairports_setzen(
-            crate::runway::EINGEBAUT_RUNWAYS_CSV,
-            crate::runway::EINGEBAUT_AIRPORTS_CSV,
+            crate::runway::eingebaut_runways_csv(),
+            crate::runway::eingebaut_airports_csv(),
         );
         starten(&dir);
         assert_eq!(flug_pin("x"), Some(pin.clone()));

@@ -19,7 +19,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `runtime_bundle_id` in `PersistedFlight`, Eintrag
 /// `laufzeit_paket::flug_pin(&flight.pirep_id)` in `save_active_flight`,
 /// eine Zeile am Anfang von `.setup` mit `starten` und
-/// `aktualisieren_im_hintergrund`) — nur Zusaetze, keine Zeile entfernt.
+/// `aktualisieren_im_hintergrund`) — nur Zusaetze, keine Zeile entfernt —
+/// plus Etappe 1b (Grenzwerte): `mod grenzwerte` und EINE geaenderte Zeile,
+/// `stands::ROLLWEG_MITTELLINIE_M` -> `grenzwerte().staende.rollweg_mittellinie_m.wert`
+/// (Wert gleich, Test `grenzwerte_staende_wie_2_1_24`).
 #[test]
 fn zerlegung_ist_nur_verschoben() {
     use sha2::{Digest, Sha256};
@@ -30,4 +33,4 @@ fn zerlegung_ist_nur_verschoben() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs-Zerlegung hat Programmtext veraendert");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "6c2e713be4c454959a1e6ceeb886339ee1bc6972ed454b6f8c25167e1a45c75f";
+const HASH_VOR_DER_ZERLEGUNG: &str = "8590c61dde14bd924ee47a4a7a76a640230b2cf7733d28a988583dad5ae7d18e";

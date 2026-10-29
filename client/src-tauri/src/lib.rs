@@ -33,6 +33,7 @@ mod fenster;
 mod hauptfaden_waechter;
 mod navdata_cache;
 mod replay_erkennung;
+mod grenzwerte;
 mod laufzeit_paket;
 mod runway;
 mod runway_assessment;
@@ -46713,7 +46714,7 @@ fn step_flight_at(
                         .as_deref()
                         .filter(|_| stats.arr_rollwege_icao.as_deref() == Some(at_icao_norm.as_str()))
                         .and_then(|r| stands::rollweg_abstand_m(r, snap.lat, snap.lon))
-                        .is_some_and(|d| d <= stands::ROLLWEG_MITTELLINIE_M);
+                        .is_some_and(|d| d <= grenzwerte::grenzwerte().staende.rollweg_mittellinie_m.wert);
                     if !stats.blocks_on_kandidat.as_ref().is_some_and(|k| kandidat_hier(k, snap.lat, snap.lon)) {
                         stats.blocks_on_kandidat = None;
                     }
