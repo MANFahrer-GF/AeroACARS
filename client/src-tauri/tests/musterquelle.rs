@@ -28,7 +28,7 @@
 //! `stats.aufgeloestes_muster`. Eine eigene `.or(...)`-Kette daneben ist
 //! genau der Zustand, aus dem dieser Befund entstanden ist.
 
-use std::fs;
+mod gemeinsam;
 
 /// Der Rumpf einer Funktion ab ihrer Signatur, grob über Klammerbilanz.
 fn rumpf(text: &str, ab: usize) -> String {
@@ -85,7 +85,7 @@ const AUSNAHMEN: &[(&str, &str)] = &[
 
 #[test]
 fn niemand_baut_seine_eigene_musterkette() {
-    let quelle = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let quelle = gemeinsam::lib_quelle();
 
     // Die verräterische Form: `flight.aircraft_icao` als Quelle für den
     // Typ, ohne dass die gemeinsame Auflösung im Spiel ist.
@@ -154,7 +154,7 @@ fn niemand_baut_seine_eigene_musterkette() {
 
 #[test]
 fn die_gemeinsame_aufloesung_wird_ueberhaupt_benutzt() {
-    let quelle = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let quelle = gemeinsam::lib_quelle();
     assert!(
         quelle.contains("muster_aufloesen("),
         "die gemeinsame Auflösung wird nirgends aufgerufen"
@@ -199,7 +199,7 @@ fn die_gemeinsame_aufloesung_wird_ueberhaupt_benutzt() {
 /// Umbauen still verschwindet.
 #[test]
 fn leere_navdaten_felder_bleiben_abgeriegelt() {
-    let quelle = std::fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let quelle = gemeinsam::lib_quelle();
 
     let mut fehlt: Vec<&str> = Vec::new();
 
@@ -257,7 +257,7 @@ fn leere_navdaten_felder_bleiben_abgeriegelt() {
 /// Ab hier baut nur `scoring_eingang` diese Struktur.
 #[test]
 fn nur_eine_stelle_baut_die_bewertungs_eingabe() {
-    let quelle = std::fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let quelle = gemeinsam::lib_quelle();
 
     // Testmodule bauen ihre Eingaben absichtlich von Hand. Sie stehen
     // hinter `#[cfg(test)]` — davon gibt es in dieser Datei mehrere, also

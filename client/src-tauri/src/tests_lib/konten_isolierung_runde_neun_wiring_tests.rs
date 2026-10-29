@@ -121,8 +121,9 @@
              laesst sich nicht mehr umdrehen"
         );
         // Und sie muss beim Einreihen ueberhaupt erst hineinkommen.
+        // v3 (Etappe 0): `QueuedPirep` steht jetzt in `pirep_queue.rs`.
         assert!(
-            SRC.contains("pub landung: Option<serde_json::Value>"),
+            include_str!("../pirep_queue.rs").contains("pub landung: Option<serde_json::Value>"),
             "QueuedPirep traegt die Landung nicht mehr"
         );
         assert!(

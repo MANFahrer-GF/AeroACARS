@@ -29,6 +29,8 @@
 //! Diese Pruefung schliesst sie: Der Nachtrag muss dort stehen, wo der
 //! Bahntreffer entsteht.
 
+mod gemeinsam;
+
 use std::fs;
 
 /// Der Quelltext ohne Zeilenkommentare.
@@ -215,7 +217,7 @@ fn rumpf<'a>(text: &'a str, signatur: &str) -> &'a str {
 
 #[test]
 fn der_nachtrag_haengt_dort_wo_der_bahntreffer_entsteht() {
-    let quelle = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let quelle = gemeinsam::lib_quelle();
     // ⚠ Seit v1.7.15 steht der Kern in `korreliere_bahn`.
     //
     // `correlate_touchdown_runway` bestimmt nur noch die Position und
@@ -261,7 +263,7 @@ fn der_nachtrag_haengt_dort_wo_der_bahntreffer_entsteht() {
 /// nebeneinanderlegt.
 #[test]
 fn der_nachtrag_baut_keine_zweite_spur_logik() {
-    let quelle = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let quelle = gemeinsam::lib_quelle();
     // Seit dem fortlaufenden Abschoepfen reicht `spur_aus_puffer_nachtragen`
     // nur noch weiter. Geprueft wird die Stelle, die die Arbeit macht —
     // die Absicht des Waechters ist dieselbe geblieben: EINE Ausduennung,
@@ -309,7 +311,7 @@ fn der_nachtrag_baut_keine_zweite_spur_logik() {
 /// sei vorläufig, und der Zwischenstand, er sei fertig.
 #[test]
 fn der_zwischenstand_gibt_sich_nicht_als_endgueltig_aus() {
-    let quelle = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let quelle = gemeinsam::lib_quelle();
 
     let mut vorlaeufig = 0;
     let mut endgueltig = 0;
@@ -382,7 +384,7 @@ fn der_zwischenstand_gibt_sich_nicht_als_endgueltig_aus() {
 
 #[test]
 fn der_puffer_wird_fortlaufend_abgeschoepft_nicht_nur_einmal() {
-    let q = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let q = gemeinsam::lib_quelle();
     let tick = rumpf(&q, "fn bahndisziplin_tick(");
     assert!(
         tick.contains("spur_aus_puffer_abschoepfen("),
@@ -397,7 +399,7 @@ fn erst_der_puffer_dann_der_aktuelle_wert() {
     // Der Puffer traegt die Werte ZWISCHEN dem letzten Tick und jetzt.
     // Kaemen sie danach, liefen die Punkte rueckwaerts und die Zeichnung
     // zeigte einen Zickzack, den es nie gab.
-    let q = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let q = gemeinsam::lib_quelle();
     let tick = rumpf(&q, "fn bahndisziplin_tick(");
     let puffer = tick
         .find("spur_aus_puffer_abschoepfen(")
@@ -418,7 +420,7 @@ fn der_merker_verhindert_das_doppelte_durchrechnen() {
     // durchgerechnet. Falsche Punkte gaebe das nicht (der Mindestabstand
     // faengt das ab), aber es waere Arbeit fuer nichts, fuenfmal je
     // Sekunde.
-    let q = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let q = gemeinsam::lib_quelle();
     let f = rumpf(&q, "fn spur_aus_puffer_abschoepfen(");
     assert!(
         f.contains("bahn_spur_bis"),
@@ -435,7 +437,7 @@ fn der_nachtrag_geht_denselben_weg() {
     // Zwei Wege in dieselbe Ablage waeren zwei Stellen, an denen die
     // Reihenfolge kaputtgehen kann. Der Nachtrag ist deshalb nur noch
     // ein Aufruf des Abschoepfens.
-    let q = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let q = gemeinsam::lib_quelle();
     let f = rumpf(&q, "fn spur_aus_puffer_nachtragen(");
     assert!(
         f.contains("spur_aus_puffer_abschoepfen("),
@@ -456,7 +458,7 @@ fn der_nachtrag_geht_denselben_weg() {
 /// sie bauen nur verschiedene Werte hinein.
 #[test]
 fn die_bahn_herkunft_entsteht_nur_einmal() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let bau = format!("{}::{} {{", "aeroacars_mqtt", "BahnHerkunftWire");
     // ⚠ Nur die Struktur-Literale, nicht die Signatur: `-> …Wire {`
     // enthaelt dieselbe Zeichenfolge und haette den Waechter um eins
@@ -517,7 +519,7 @@ fn die_bahn_herkunft_entsteht_nur_einmal() {
 /// Bahntreffer der vorigen Runde.
 #[test]
 fn das_drittel_wird_bei_jeder_zuordnung_nachgefuehrt() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let kern = rumpf(&quelle, "fn korreliere_bahn(");
     let ruf = format!("{}(stats);", "drittel_nachfuehren");
     assert!(
@@ -552,7 +554,7 @@ fn das_drittel_wird_bei_jeder_zuordnung_nachgefuehrt() {
 /// nebeneinander waere folgenlos.
 #[test]
 fn die_revision_liegt_vor_dem_versand_auf_der_platte() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     // ⚠ Die LETZTE Fundstelle — das ist der Streamer.
     //
     // Die frueher im Text stehende gehoert zu `finalize_filed_pirep`,
@@ -626,7 +628,7 @@ fn die_revision_liegt_vor_dem_versand_auf_der_platte() {
 /// und Noten — die Touchdown-Zeile blieb auf der alten Geometrie.
 #[test]
 fn das_navdaten_upgrade_geht_denselben_weg() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let kern = rumpf(&quelle, "fn bahn_upgrade_anwenden(");
     for (was, nadel) in [
         ("das Drittel nachgefuehrt", "drittel_nachfuehren(stats);"),
@@ -668,7 +670,7 @@ fn das_navdaten_upgrade_geht_denselben_weg() {
 /// folgenlos zurueckdrehen kann.
 #[test]
 fn die_sperre_des_streamers_vergleicht_die_revision() {
-    let quelle: String = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"))
+    let quelle: String = nur_code(&gemeinsam::lib_quelle())
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
@@ -711,7 +713,7 @@ fn die_sperre_des_streamers_vergleicht_die_revision() {
 /// nicht der Aufruf.
 #[test]
 fn das_drittel_wird_nur_an_einer_stelle_gesetzt() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let produktion = produktionsteil(&quelle);
     // ⚠ OHNE Bindungsnamen: Der Streamer bindet `st`, andere Stellen
     // `stats`. Eine Nadel mit `stats.` uebersaehe `st.landing_touchdown_zone =`
@@ -765,7 +767,7 @@ fn das_drittel_wird_nur_an_einer_stelle_gesetzt() {
 /// selben `Some(handle) =>`-Arm, und in dem Zweig steht kein `continue`.
 #[test]
 fn die_sperre_faellt_erst_nach_dem_versand() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let versand = format!("{}::{}(", "nachtrag_queue", "senden");
     let stelle = quelle.rfind(&versand).expect("Streamer-Versand");
 
@@ -837,7 +839,7 @@ fn blockende(text: &str, auf: usize) -> usize {
 /// der `(true, false)`-Arm meldet ueber `tracing::warn!`.
 #[test]
 fn beim_einreichen_faellt_die_fahne_erst_mit_handle() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let trichter = rumpf(&quelle, "fn finalize_filed_pirep(");
     let arm_ok = trichter
         .find("(true, true) =>")
@@ -872,7 +874,7 @@ fn beim_einreichen_faellt_die_fahne_erst_mit_handle() {
 /// v1.7.14.
 #[test]
 fn der_spur_block_entsteht_nur_einmal() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let produktion = produktionsteil(&quelle);
     let bau = format!("{}(&self, final_: bool)", "fn wire");
     assert_eq!(
@@ -921,7 +923,7 @@ fn der_spur_block_entsteht_nur_einmal() {
 /// stellt `None` wieder her; jede Lesestelle muss sie nehmen.
 #[test]
 fn der_gequeute_nachtrag_kommt_ueber_aus_json() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let produktion = produktionsteil(&quelle);
     let typ = "TouchdownRolloutFinalizedPayload";
     assert_eq!(
@@ -965,7 +967,7 @@ fn der_gequeute_nachtrag_kommt_ueber_aus_json() {
 /// = false` steht NACH dem Aufruf (im Ok-Zweig), nicht davor.
 #[test]
 fn ohne_handle_geht_der_nachtrag_in_die_ablage() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let trichter = rumpf(&quelle, "fn finalize_filed_pirep(");
     let arm = trichter
         .find("(true, false) =>")
@@ -1000,7 +1002,7 @@ fn ohne_handle_geht_der_nachtrag_in_die_ablage() {
 /// Korrektur, die beim naechsten Versuch nicht mehr gebaut wurde.
 #[test]
 fn im_fehlerzweig_faellt_die_fahne_erst_nach_dem_einreihen() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let ende = rumpf(&quelle, "async fn flight_end(");
     let einreihen = ende
         .find("pirep_queue::enqueue(&app, &queued)")
@@ -1025,7 +1027,7 @@ fn im_fehlerzweig_faellt_die_fahne_erst_nach_dem_einreihen() {
 /// — VOR dem Client-Riegel, denn ein Nachtrag braucht nur MQTT.
 #[test]
 fn der_worker_leert_die_ablage_vor_dem_client_riegel() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let worker = rumpf(&quelle, "fn spawn_pirep_queue_worker(");
     let drain = worker
         .find("nachtrag_queue::drain(")
@@ -1055,7 +1057,7 @@ fn der_worker_leert_die_ablage_vor_dem_client_riegel() {
 /// Ablage VOR dem Senden und das Loeschen NACH dem `.await` der Meldung.
 #[test]
 fn jeder_nachtrag_geht_ueber_die_ablage() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let produktion = produktionsteil(&quelle);
     assert_eq!(
         produktion.matches(".touchdown_rollout_finalized(").count(),
@@ -1201,7 +1203,7 @@ fn die_zustellung_ist_das_puback() {
 /// (High 3).
 #[test]
 fn ohne_ablage_wird_nicht_gesendet_und_die_sperre_bleibt() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let produktion = produktionsteil(&quelle);
     let senden = rumpf(&produktion, "pub fn senden(");
     let ablage = senden.find("enqueue(").expect("`senden` legt nicht ab");
@@ -1240,7 +1242,7 @@ fn ohne_ablage_wird_nicht_gesendet_und_die_sperre_bleibt() {
     // `let _ = revision;` haette den alten Test gruen gelassen (bei der
     // Gegenprobe zu Runde 14 aufgefallen). Weil `nur_code` Zeichenketten
     // leert, wird die Rohquelle gelesen — nur fuer diese eine Nadel.
-    let roh = fs::read_to_string("src/lib.rs").expect("lib.rs");
+    let roh = gemeinsam::lib_quelle();
     let name_roh = rumpf(&roh, "pub fn dateiname(");
     assert!(
         name_roh.contains("-r{"),
@@ -1267,7 +1269,7 @@ fn ohne_ablage_wird_nicht_gesendet_und_die_sperre_bleibt() {
 /// einreicht.
 #[test]
 fn beim_einreichen_liegt_die_ablage_vor_fahne_und_einreichen() {
-    let quelle = nur_code(&fs::read_to_string("src/lib.rs").expect("lib.rs"));
+    let quelle = nur_code(&gemeinsam::lib_quelle());
     let trichter = rumpf(&quelle, "fn finalize_filed_pirep(");
     let arm = trichter
         .find("(true, true) =>")
