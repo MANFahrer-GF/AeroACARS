@@ -2478,14 +2478,11 @@ mod plugin2_loopback_tests {
             warte(Duration::from_secs(15), || ad.snapshot().is_none()),
             "veralteter Schnappschuss blieb stehen"
         );
-        // Und es wird wieder HALLO gesagt.
-        let hallos = stand
-            .lock()
-            .anfragen
-            .iter()
-            .filter(|a| a.starts_with("HALLO"))
-            .count();
-        assert!(hallos >= 2, "{hallos}");
+        // Und es wird wieder HALLO gesagt. Darauf warten statt sofort zu
+        // zaehlen: Unter Windows kam das zweite HALLO in der CI manchmal erst
+        // kurz nach dem geleerten Schnappschuss an (29.10.2026, 1 statt 2).
+        let hallos = || stand.lock().anfragen.iter().filter(|a| a.starts_with("HALLO")).count();
+        assert!(warte(Duration::from_secs(15), || hallos() >= 2), "{}", hallos());
 
         ad.stop();
         stop.store(true, Ordering::SeqCst);

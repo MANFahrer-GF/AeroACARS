@@ -6,11 +6,11 @@
 #   sh scripts/bundle/bewertung-bauen.sh --pruefen  # bauen, mit Ablage vergleichen
 set -eu
 # Feste Toolchain: andere rustc-Fassungen erzeugen andere Bytes.
-export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.96.0}"
+export RUSTUP_TOOLCHAIN=1.96.0
 WURZEL=$(cd "$(dirname "$0")/../.." && pwd)
 ZIEL="${CARGO_TARGET_DIR:-$WURZEL/client/src-tauri/target}/bewertung-wasm"
 CARGO_HOME_PFAD="${CARGO_HOME:-$HOME/.cargo}"
-RUSTFLAGS="--remap-path-prefix=$WURZEL=/aeroacars --remap-path-prefix=$CARGO_HOME_PFAD=/cargo -C debuginfo=0" \
+RUSTFLAGS="--remap-path-prefix=$WURZEL=/aeroacars --remap-path-prefix=$CARGO_HOME_PFAD=/cargo -C debuginfo=0 -C codegen-units=1" \
   CARGO_TARGET_DIR="$ZIEL" \
   cargo build --manifest-path "$WURZEL/client/src-tauri/Cargo.toml" -p bewertung-wasm \
   --target wasm32-unknown-unknown --release --locked

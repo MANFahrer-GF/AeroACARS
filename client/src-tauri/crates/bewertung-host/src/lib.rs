@@ -87,6 +87,12 @@ impl Host {
             .map_err(|e| Fehler::Abbruch(e.to_string()))?;
         let r = bewerte.call(&mut store, (ptr, n)).map_err(|e| abbruch(&mut store, e))?;
         let (aus_ptr, aus_len) = ((r >> 32) as usize, (r & 0xffff_ffff) as usize);
+        // Erst pruefen, dann anlegen: Die Laenge kommt vom Modul, ein
+        // fehlerhaftes Modul koennte sonst Gigabytes im Client anfordern
+        // (Codex 29.10.).
+        if aus_ptr.checked_add(aus_len).is_none_or(|ende| ende > speicher.data_size(&store)) {
+            return Err(Fehler::Ausgabe);
+        }
         let mut aus = vec![0u8; aus_len];
         speicher
             .read(&store, aus_ptr, &mut aus)
@@ -161,6 +167,17 @@ mod tests {
         let host = Host::neu(MODUL).unwrap();
         let json = serde_json::to_string(&faelle()[0]).unwrap();
         assert_eq!(host.bewerten(&json, 10), Err(Fehler::Fuel));
+    }
+
+    /// Codex 29.10.: Ein Modul, das eine riesige Ausgabelaenge meldet, darf
+    /// im Client keinen Speicher in dieser Groesse anlegen.
+    #[test]
+    fn ausgabe_ausserhalb_des_speichers_wird_abgewiesen() {
+        let wat = r#"(module (memory (export "memory") 1)
+            (func (export "alloc") (param i32) (result i32) i32.const 16)
+            (func (export "bewerte") (param i32 i32) (result i64) i64.const 0x00000010FFFFFFF0))"#;
+        let host = Host::neu(&wat::parse_str(wat).unwrap()).unwrap();
+        assert_eq!(host.bewerten("{}", VIEL), Err(Fehler::Ausgabe));
     }
 
     #[test]
