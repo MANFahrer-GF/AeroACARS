@@ -114,8 +114,10 @@ pub(crate) fn datei<R: Runtime>(app: &AppHandle<R>, pfad: &str) -> Result<Datei,
                 csp: csp_aus_konfiguration(app),
             }),
             Err(e) => {
-                DEFEKT.store(true, Ordering::SeqCst);
-                tracing::error!(datei = %im_paket, error = %e, "Oberflaeche: Paket defekt, ab jetzt eingebauter Stand");
+                if macht_defekt(p, &im_paket) {
+                    DEFEKT.store(true, Ordering::SeqCst);
+                    tracing::error!(datei = %im_paket, error = %e, "Oberflaeche: Paket defekt, ab jetzt eingebauter Stand");
+                }
                 Err(format!("{im_paket}: {e}"))
             }
         };
@@ -132,6 +134,15 @@ pub(crate) fn datei<R: Runtime>(app: &AppHandle<R>, pfad: &str) -> Result<Datei,
         csp: asset.csp_header.or_else(|| csp_aus_konfiguration(app)),
         bytes: asset.bytes,
     })
+}
+
+/// Defekt ist das Paket, wenn eine Datei aus seinem Manifest nicht lesbar ist
+/// (Hash, Platte) oder wenn Inhalt der Oberflaeche fehlt, auf den eine Seite
+/// verweist (HTML, Skript, Stil, WASM). Nicht: Anfragen, die der Browser von
+/// sich aus stellt (`favicon.ico` bei WebView2, Messung P-8.03 29.10.2026).
+fn macht_defekt(p: &Paket, im_paket: &str) -> bool {
+    p.manifest.datei(im_paket).is_some()
+        || matches!(im_paket.rsplit_once('.').map(|(_, e)| e), Some("html" | "js" | "mjs" | "css" | "wasm"))
 }
 
 /// Fehlerseite (P-8.01): ohne Skript, damit sie unter der CSP immer zeichnet.
@@ -278,6 +289,17 @@ mod tests {
         let p = paket_aus(&[("ui/index.html", b"<p>x</p>")]);
         assert_eq!(p.datei("ui/index.html").unwrap(), b"<p>x</p>");
         assert!(p.datei("ui/fehlt.js").is_err());
+    }
+
+    /// Fehlt ein Skript, ist das Paket defekt; fragt WebView2 von sich aus
+    /// nach `favicon.ico`, nicht (Windows-Messung 29.10.2026).
+    #[test]
+    fn nur_fehlender_inhalt_macht_defekt() {
+        let p = paket_aus(&[("ui/index.html", b"<p>x</p>")]);
+        assert!(macht_defekt(&p, "ui/assets/index-abc.js"));
+        assert!(macht_defekt(&p, "ui/index.html"));
+        assert!(!macht_defekt(&p, "ui/favicon.ico"));
+        assert!(!macht_defekt(&p, "ui/robots.txt"));
     }
 
     #[test]

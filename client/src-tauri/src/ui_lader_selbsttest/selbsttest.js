@@ -9,6 +9,10 @@ const warte = (ms) => new Promise((r) => setTimeout(r, ms));
 const fehler = (e) => String(e && e.message ? e.message : e);
 
 async function messen() {
+  // Wie WebView2 von sich aus: eine fehlende Nebendatei darf das Paket NICHT
+  // auf den eingebauten Stand umschalten (Messung 29.10.2026).
+  erg.favicon_status = (await fetch("/favicon.ico")).status;
+
   // CSP: Inline-Skript, eval und fremder Host abgewiesen
   erg.inline_script_blockiert = window.__inline !== 1;
   try { (0, eval)("1+1"); erg.eval_blockiert = false; } catch { erg.eval_blockiert = true; }
