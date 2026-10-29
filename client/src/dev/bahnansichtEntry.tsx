@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 import { RunwayDiagramV2 } from "../components/RunwayDiagramV2";
 import { mapTouchdownPayloadToV2Props } from "./bahnansicht/payloadMapper";
 import { applyTheme } from "../theme";

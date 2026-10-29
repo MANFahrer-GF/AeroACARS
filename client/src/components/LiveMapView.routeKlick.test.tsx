@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 
 const h = vi.hoisted(() => ({
   marker: [] as Array<{ el: HTMLElement }>,

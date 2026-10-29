@@ -36,7 +36,7 @@ vi.mock("../lib/ipc", () => ({
   },
 }));
 
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 import {
   VdgsPlatte,
   ampel,
@@ -634,8 +634,8 @@ describe("Wunsch-TOBT, ASRT, Grund, Platz ohne CDM (2.0.11)", () => {
   });
 
   it("hat die neuen Texte in allen Sprachen", async () => {
-    const en = (await import("../locales/en/common.json")).default;
-    const itL = (await import("../locales/it/common.json")).default;
+    const en = (await import("../../../bundle/texte/en.json")).default;
+    const itL = (await import("../../../bundle/texte/it.json")).default;
     for (const k of ["kein_cdm_platz", "tobt_angefragt", "tobt_angefragt_grund", "asrt", "tobt_wunsch"]) {
       for (const l of [deCommon, en, itL]) {
         expect((l.cdm.band as Record<string, string>)[k], k).toBeTruthy();

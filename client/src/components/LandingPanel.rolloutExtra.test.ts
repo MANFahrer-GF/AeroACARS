@@ -15,7 +15,7 @@ import {
 } from "./LandungsBewertung";
 import { rolloutLdaMeters } from "../lib/runwayGeometry";
 import type { LandingRecord, LandingRunwayMatch } from "./LandingPanel";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 
 // Mini-t: interpoliert {{x}}-Platzhalter gegen die echten DE-Texte.
 function t(key: string, opts?: Record<string, string | number>): string {

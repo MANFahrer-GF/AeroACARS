@@ -35,7 +35,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import { UpdateButton } from "./UpdateButton";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import pkg from "../../package.json";

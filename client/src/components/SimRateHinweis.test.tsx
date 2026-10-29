@@ -4,7 +4,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vite
 import { act, cleanup, render, screen } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 import { SimRateHinweis } from "./SimRateHinweis";
 import { simRateWeichtAb, simRateText } from "../hooks/useSimRateHinweis";
 

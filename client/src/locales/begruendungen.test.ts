@@ -21,9 +21,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import de from "./de/common.json";
-import en from "./en/common.json";
-import italienisch from "./it/common.json";
+import de from "../../../bundle/texte/de.json";
+import en from "../../../bundle/texte/en.json";
+import italienisch from "../../../bundle/texte/it.json";
 
 const BEWERTER = resolve(
   process.cwd(),

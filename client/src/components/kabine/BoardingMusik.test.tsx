@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { act, render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../../locales/de/common.json";
+import deCommon from "../../../../bundle/texte/de.json";
 
 const aufrufe: { cmd: string; args?: Record<string, unknown> }[] = [];
 const anfang = [

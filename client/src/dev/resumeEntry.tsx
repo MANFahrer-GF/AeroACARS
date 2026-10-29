@@ -6,7 +6,7 @@ import "./resumeGefunden";
 import { createRoot } from "react-dom/client";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 import { ResumeFlightBanner } from "../components/ResumeFlightBanner";
 import type { ActiveFlightInfo } from "../types";
 import { applyTheme } from "../theme";

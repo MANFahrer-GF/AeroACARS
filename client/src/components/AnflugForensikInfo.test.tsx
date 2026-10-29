@@ -213,7 +213,7 @@ describe("AnflugForensikInfo", () => {
     expect(schub).toEqual(["kein_n1", "zu_kurz"]);
     for (const code of ["de", "en", "it"]) {
       const daten = JSON.parse(
-        fs.readFileSync(path.join(WURZEL, "src/locales", code, "common.json"), "utf-8"),
+        fs.readFileSync(path.join(WURZEL, "../bundle/texte", `${code}.json`), "utf-8"),
       );
       const af = daten.landing.anflug_forensik;
       for (const q of quellen) expect(af.quelle[q], `${code}: quelle.${q}`).toBeTruthy();

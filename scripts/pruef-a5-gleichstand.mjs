@@ -121,7 +121,7 @@ function main() {
   //    PDF-Berichts (`report_*`) — der existiert nur dort, das ist richtig.
   const benoetigt = [...benoetigteSchluessel()].filter((k) => k.startsWith("landing.sprit."));
   for (const sprache of ["de", "en", "it"]) {
-    const c = JSON.parse(teilbaum(resolve(CLIENT, "locales", sprache, "common.json"))) ?? {};
+    const c = JSON.parse(teilbaum(resolve(CLIENT, "..", "..", "bundle", "texte", `${sprache}.json`))) ?? {};
     const w = JSON.parse(teilbaum(resolve(WEBAPP, "locales", sprache, "common.json"))) ?? {};
     for (const k of Object.keys(w)) {
       if (kanon(w[k]) !== kanon(c[k])) {

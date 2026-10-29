@@ -20,15 +20,15 @@ import "@testing-library/jest-dom";
 // einmal, vor allen Tests, mit Deutsch als Sprache.
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
-import enCommon from "../locales/en/common.json";
+import deCommon from "../../../bundle/texte/de.json";
+import enCommon from "../../../bundle/texte/en.json";
 // ⚠ Italienisch gehoert hierher, auch wenn kein Test es heute braucht.
 // Fehlt eine Sprache, faellt i18next lautlos auf `fallbackLng` zurueck:
 // Ein Test, der italienischen Text prueft, bekaeme deutschen — und
 // waere gruen. Genau darauf bin ich am 27.08.2026 hereingefallen, als
 // die Vorschau des Pflicht-Riegels den italienischen Block auf Deutsch
 // zeigte und ich den Fehler zuerst in der Komponente suchte.
-import itCommon from "../locales/it/common.json";
+import itCommon from "../../../bundle/texte/it.json";
 
 if (!i18next.isInitialized) {
   void i18next.use(initReactI18next).init({

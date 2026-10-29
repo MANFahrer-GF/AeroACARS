@@ -12,9 +12,9 @@
 // damit dieser Test ab sofort scharf ist, statt dauerhaft rot zu stehen.
 
 import { describe, expect, it } from "vitest";
-import de from "./de/common.json";
-import en from "./en/common.json";
-import italienisch from "./it/common.json";
+import de from "../../../bundle/texte/de.json";
+import en from "../../../bundle/texte/en.json";
+import italienisch from "../../../bundle/texte/it.json";
 
 /**
  * Vollständigkeits-Ausnahmen — derzeit **leer**, und das soll so bleiben.

@@ -26,7 +26,7 @@ import type { LandingProfilePoint, LandingRecord } from "./LandingPanel";
 // v0.7.8 Phase 4 QS-Fix: i18n-Setup fuer Render-Tests damit
 // useTranslation() funktioniert. Echte DE-Keys werden geladen damit
 // Tests die Spec-Wortlaute pruefen koennen.
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 
 beforeAll(async () => {
   if (!i18next.isInitialized) {

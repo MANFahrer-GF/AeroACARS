@@ -292,7 +292,7 @@ describe("Neue Beschriftungen nur mit Zeichen aus B612 Mono", () => {
     );
     const fehlt: string[] = [];
     for (const l of ["de", "en", "it"]) {
-      const d = JSON.parse(readFileSync(`src/locales/${l}/common.json`, "utf8"));
+      const d = JSON.parse(readFileSync(`../bundle/texte/${l}.json`, "utf8"));
       const texte: string[] = [
         ...Object.values(d.runway_v2.b as Record<string, string>),
         ...Object.entries(d.landing.flag as Record<string, string>)

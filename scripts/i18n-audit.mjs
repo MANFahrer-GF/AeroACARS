@@ -23,7 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const LOCALES_DIR = path.join(ROOT, "client", "src", "locales");
+const LOCALES_DIR = path.join(ROOT, "bundle", "texte");
 const SRC_DIR = path.join(ROOT, "client", "src");
 const LOCALES = ["en", "de", "it"];
 const REFERENCE = "en"; // Master-Locale: EN ist source-of-truth
@@ -57,7 +57,7 @@ function flattenKeys(obj, prefix = "") {
 const localeFiles = {};
 const localeKeys = {};
 for (const loc of LOCALES) {
-  const filePath = path.join(LOCALES_DIR, loc, "common.json");
+  const filePath = path.join(LOCALES_DIR, `${loc}.json`);
   if (!fs.existsSync(filePath)) {
     console.error(`${ANSI.red}❌ Missing locale file: ${filePath}${ANSI.reset}`);
     process.exit(1);

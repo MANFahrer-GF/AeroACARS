@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { render, screen } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 import { fmtNm } from "./LogbookView";
 import { FlightProfile } from "./FlightProfile";
 

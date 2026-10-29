@@ -24,7 +24,7 @@ import { resolve } from "node:path";
 import { UpdateGate } from "./UpdateGate";
 import type { UseUpdateCheckerResult } from "../hooks/useUpdateChecker";
 import type { FlightPhase } from "../types";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 
 beforeAll(async () => {
   if (!i18next.isInitialized) {

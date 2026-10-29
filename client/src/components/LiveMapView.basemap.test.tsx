@@ -16,7 +16,7 @@ import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vite
 import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 
 // This test predates the Livemap-4a chrome rewrite, which added real i18n
 // copy to LiveMapView — real i18next (same setup as CpdlcPanel.test.tsx),

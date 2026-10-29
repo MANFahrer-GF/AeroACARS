@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { render, cleanup, act } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 import { MOCK_LANDING_OPTIONS } from "../dev/mockLandingRecords";
 
 const invokeMock = vi.fn();

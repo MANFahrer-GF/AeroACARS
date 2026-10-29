@@ -8,9 +8,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import de from "../locales/de/common.json";
-import en from "../locales/en/common.json";
-import it_ from "../locales/it/common.json";
+import de from "../../../bundle/texte/de.json";
+import en from "../../../bundle/texte/en.json";
+import it_ from "../../../bundle/texte/it.json";
 
 const quelle = readFileSync(
   resolve(__dirname, "../../src-tauri/crates/landing-scoring/src/lib.rs"),

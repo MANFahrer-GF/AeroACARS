@@ -16,7 +16,7 @@ describe("Flugkarte: Gleichstand Webapp ↔ AeroACARS", () => {
     const h = createHash("sha256");
     for (const f of ["flugkarte.ts", "flugakteTypen.ts", "flugkarte.css"]) h.update(readFileSync(`src/flugkarte/${f}`));
     h.update(JSON.stringify(JSON.parse(readFileSync("src/flugkarte/stil-dunkel.json", "utf8"))));
-    for (const l of ["de", "en", "it"]) h.update(JSON.stringify(JSON.parse(readFileSync(`src/locales/${l}/common.json`, "utf8")).flugkarte));
+    for (const l of ["de", "en", "it"]) h.update(JSON.stringify(JSON.parse(readFileSync(`../bundle/texte/${l}.json`, "utf8")).flugkarte));
     expect(h.digest("hex")).toBe(FINGERABDRUCK);
   });
 });

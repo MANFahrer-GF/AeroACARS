@@ -74,7 +74,7 @@ function main() {
   // Und die Sprachdateien müssen ihn tragen — sonst ist „gesehen" wertlos.
   const fehlend = [];
   for (const sprache of ["de", "en", "it"]) {
-    const datei = resolve(CLIENT, "locales", sprache, "common.json");
+    const datei = resolve(CLIENT, "..", "..", "bundle", "texte", `${sprache}.json`);
     const baum = JSON.parse(readFileSync(datei, "utf-8"));
     for (const p of PROBEN) {
       let k = baum;

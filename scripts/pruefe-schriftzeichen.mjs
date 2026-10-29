@@ -557,7 +557,7 @@ for (const name of Object.keys(vorratDaten.schriften)) {
 const sprachdateien = {};
 for (const s of SPRACHEN) {
   sprachdateien[s] = JSON.parse(
-    readFileSync(new URL(`client/src/locales/${s}/common.json`, WURZEL), "utf8"),
+    readFileSync(new URL(`bundle/texte/${s}.json`, WURZEL), "utf8"),
   );
 }
 

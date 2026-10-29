@@ -27,7 +27,7 @@ export interface SubScore {
 
 // ─── Lokalisierungs-Tabellen (deutsch, Pilot-facing) ────────────────
 //
-// Die i18n-Schlüssel im Client (locales/de/common.json unter
+// Die i18n-Schlüssel im Client (bundle/texte/de.json unter
 // `landing.rat.*` und `landing.tip.*`) MÜSSEN inhaltlich mit diesen
 // Strings hier übereinstimmen — das Webapp rendert ohne i18next direkt
 // aus dieser Tabelle, der Client geht über react-i18next. Beide enden
@@ -39,7 +39,7 @@ export const RATIONALE_LABELS: Record<string, string> = {
   // but never added here — this file's own header comment demands they
   // stay 1:1 with the aeroacars-live webapp mirror, which renders
   // straight from this table with no i18next fallback. Text mirrors
-  // locales/de/common.json's landing.rat.*/landing.tip.* keys verbatim.
+  // bundle/texte/de.json's landing.rat.*/landing.tip.* keys verbatim.
   possible_float: "Sehr weich aufgesetzt — mögliches langes Abfangen",
   firm_positive_touchdown: "Fest, positiv aufgesetzt",
   smooth_touchdown: "Butterweich aufgesetzt",

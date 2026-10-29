@@ -18,9 +18,9 @@
 import { describe, expect, it } from "vitest";
 // `with { type: "json" }` waere sauberer, aber die Vitest-Version hier
 // liefert JSON-Importe als Modulobjekt mit `default`. Beides abfangen.
-import deRaw from "../locales/de/common.json";
-import enRaw from "../locales/en/common.json";
-import itRaw from "../locales/it/common.json";
+import deRaw from "../../../bundle/texte/de.json";
+import enRaw from "../../../bundle/texte/en.json";
+import itRaw from "../../../bundle/texte/it.json";
 
 const auspacken = (m: unknown): Record<string, unknown> =>
   (m as { default?: Record<string, unknown> })?.default ??

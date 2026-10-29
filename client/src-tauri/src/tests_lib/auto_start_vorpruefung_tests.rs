@@ -142,9 +142,9 @@
         assert_eq!(codes.len(), faelle.len(), "jeder Fall eigener Code");
         codes.insert(AUTO_START_SIM_WARTET);
         for (sprache, json) in [
-            ("de", include_str!("../../../src/locales/de/common.json")),
-            ("en", include_str!("../../../src/locales/en/common.json")),
-            ("it", include_str!("../../../src/locales/it/common.json")),
+            ("de", include_str!("../../../../bundle/texte/de.json")),
+            ("en", include_str!("../../../../bundle/texte/en.json")),
+            ("it", include_str!("../../../../bundle/texte/it.json")),
         ] {
             let v: serde_json::Value = serde_json::from_str(json).expect("Locale-JSON");
             for code in &codes {

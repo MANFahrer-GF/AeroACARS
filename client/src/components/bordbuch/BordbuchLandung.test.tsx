@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { render, renderHook, screen, cleanup, waitFor, act } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../../locales/de/common.json";
+import deCommon from "../../../../bundle/texte/de.json";
 import type { Eintrag, Punkt } from "../../lib/bordbuch";
 
 beforeAll(async () => {
@@ -199,7 +199,7 @@ describe("Bordbuch im Landungs-Tab", () => {
 
 describe("„nicht gesehen“-Zeile für jede Regel", () => {
   it("jede Regel hat eine Erklärung (außer Rolltempo, das rechnet selbst)", async () => {
-    const de = (await import("../../locales/de/common.json")).default as { bordbuch: { regel: Record<string, string>; gesehen: Record<string, string> } };
+    const de = (await import("../../../../bundle/texte/de.json")).default as { bordbuch: { regel: Record<string, string>; gesehen: Record<string, string> } };
     for (const regel of Object.keys(de.bordbuch.regel)) {
       if (regel.startsWith("rolltempo")) continue;
       expect(de.bordbuch.gesehen[regel], regel).toBeTruthy();

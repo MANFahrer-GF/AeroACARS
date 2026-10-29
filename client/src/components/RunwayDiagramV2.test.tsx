@@ -9,8 +9,8 @@ import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { render, cleanup, screen } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
-import enCommon from "../locales/en/common.json";
+import deCommon from "../../../bundle/texte/de.json";
+import enCommon from "../../../bundle/texte/en.json";
 import { DEFAULT_SKIN, type V2Skin } from "./runwayV2Skin";
 
 const skinBox = vi.hoisted(() => ({ current: null as V2Skin | null }));

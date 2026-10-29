@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import de from "../../locales/de/common.json";
-import en from "../../locales/en/common.json";
-import it_ from "../../locales/it/common.json";
+import de from "../../../../bundle/texte/de.json";
+import en from "../../../../bundle/texte/en.json";
+import it_ from "../../../../bundle/texte/it.json";
 import katalogJson from "./vorschauKatalog.json";
 import { ereignisseAus } from "./ereignisse";
 import { csvText } from "./csv";

@@ -137,7 +137,7 @@ describe("Abnahme-Korrekturen", () => {
 
   it("kein Text prüft die Konfiguration „bei 1000 ft“ (de/en/it)", () => {
     for (const l of ["de", "en", "it"]) {
-      const roh = readFileSync(resolve(__dirname, "..", "locales", l, "common.json"), "utf-8");
+      const roh = readFileSync(resolve(__dirname, "../../../bundle/texte", `${l}.json`), "utf-8");
       expect(roh).not.toMatch(/Landekonfiguration bei 1000 ft|landing configuration at 1000 ft|configurazione d.atterraggio a 1000 ft|Klappen bei 1000 ft|flaps not in landing position at 1000 ft/i);
     }
   });

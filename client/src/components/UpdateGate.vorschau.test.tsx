@@ -17,9 +17,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { UpdateGate } from "./UpdateGate";
 import type { UseUpdateCheckerResult } from "../hooks/useUpdateChecker";
-import deCommon from "../locales/de/common.json";
-import enCommon from "../locales/en/common.json";
-import itCommon from "../locales/it/common.json";
+import deCommon from "../../../bundle/texte/de.json";
+import enCommon from "../../../bundle/texte/en.json";
+import itCommon from "../../../bundle/texte/it.json";
 
 const AN = process.env.VORSCHAU === "1";
 

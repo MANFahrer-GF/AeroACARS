@@ -174,9 +174,9 @@ fn wert_text_pruefen(schluessel: &str, werte: &std::collections::BTreeMap<String
     static SPRACHEN: OnceLock<Vec<(&'static str, serde_json::Value)>> = OnceLock::new();
     let sprachen = SPRACHEN.get_or_init(|| {
         [
-            ("de", include_str!("../../../../src/locales/de/common.json")),
-            ("en", include_str!("../../../../src/locales/en/common.json")),
-            ("it", include_str!("../../../../src/locales/it/common.json")),
+            ("de", include_str!("../../../../../bundle/texte/de.json")),
+            ("en", include_str!("../../../../../bundle/texte/en.json")),
+            ("it", include_str!("../../../../../bundle/texte/it.json")),
         ]
         .into_iter()
         .map(|(l, roh)| (l, serde_json::from_str(roh).expect("Sprachdatei lesbar")))

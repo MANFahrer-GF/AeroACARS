@@ -8,7 +8,7 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import "./i18n";
+import { texteAusPaketLaden } from "./i18n";
 import { flotteAusPaketLaden } from "./lib/aircraftIcon";
 import "./App.css";
 import { applyTheme, getInitialTheme } from "./theme";
@@ -40,7 +40,10 @@ initSentry(typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0");
 // Laufzeit-Paket: Flottentabelle des geltenden Stands (P-3.53). Bis sie da
 // ist, gilt der eingebaute Stand — der ist inhaltsgleich, solange kein
 // neuerer Stand geladen wurde.
-if (isTauri) void flotteAusPaketLaden();
+if (isTauri) {
+  void flotteAusPaketLaden();
+  void texteAusPaketLaden();
+}
 
 // Initial-Consent-Sync zum Rust-Backend (Default = false). Damit folgt
 // der Backend-Atomic dem gespeicherten Pilot-Choice ohne dass der User

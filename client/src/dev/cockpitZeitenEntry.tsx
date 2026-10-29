@@ -6,7 +6,7 @@ import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 import { FahrplanBand } from "../components/FahrplanBand";
 import { InfoStrip } from "../components/InfoStrip";
 import type { ActiveFlightInfo, SimSnapshot } from "../types";

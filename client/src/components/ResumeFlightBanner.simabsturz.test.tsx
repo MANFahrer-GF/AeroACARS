@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 
 const tauriInvoke = vi.hoisted(() => {
   (globalThis as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};

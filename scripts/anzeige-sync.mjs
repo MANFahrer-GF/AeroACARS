@@ -263,7 +263,11 @@ function blaetter(baum, pfad) {
 }
 
 function sprachdatei(wurzel, sprache) {
-  const p = resolve(wurzel, "locales", sprache, "common.json");
+  // Client-Texte liegen seit 3.0 im Laufzeit-Paket (bundle/texte/<sprache>.json).
+  const p =
+    wurzel === CLIENT
+      ? resolve(CLIENT, "..", "..", "bundle", "texte", `${sprache}.json`)
+      : resolve(wurzel, "locales", sprache, "common.json");
   return existsSync(p) ? JSON.parse(readFileSync(p, "utf-8")) : null;
 }
 

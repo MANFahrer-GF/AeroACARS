@@ -23,7 +23,7 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -33,7 +33,7 @@ const FLOTTE: &str = "tabellen/flotte.json";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
-const UI_DATEIEN: &[&str] = &[FLOTTE];
+const UI_DATEIEN: &[&str] = &[FLOTTE, "texte/de.json", "texte/en.json", "texte/it.json"];
 
 /// Alles, was aus dem Laufzeit-Paket kommt, als EIN Stand (P-3.02): Er wird
 /// genau einmal je Programmlauf festgelegt — vollstaendig aus dem Paket oder
@@ -481,6 +481,10 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     #[test]
     fn paket_datei_gibt_nur_freigegebene_dateien() {
         assert_eq!(paket_datei(FLOTTE.into()).unwrap().as_bytes(), eingebaute_datei(FLOTTE).unwrap());
+        for sprache in ["de", "en", "it"] {
+            let text = paket_datei(format!("texte/{sprache}.json")).unwrap();
+            assert!(serde_json::from_str::<serde_json::Value>(text).unwrap().is_object());
+        }
         assert!(paket_datei(CPDLC.into()).is_err());
         assert!(paket_datei("../geheim".into()).is_err());
     }

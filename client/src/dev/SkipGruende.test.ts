@@ -140,7 +140,7 @@ describe("Skip-Gründe der Landebewertung", () => {
     const fehlend: string[] = [];
     for (const spr of ["de", "en", "it"]) {
       const roh = readFileSync(
-        resolve(__dirname, "..", "locales", spr, "common.json"),
+        resolve(__dirname, "../../../bundle/texte", `${spr}.json`),
         "utf-8",
       );
       const sub = (JSON.parse(roh) as { landing?: { sub?: Record<string, string> } })

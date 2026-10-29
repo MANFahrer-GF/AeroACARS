@@ -36,7 +36,7 @@ function rustQuellen(): string {
 
 function sprache(code: string): Record<string, unknown> {
   return JSON.parse(
-    fs.readFileSync(path.join(WURZEL, "src/locales", code, "common.json"), "utf-8"),
+    fs.readFileSync(path.join(WURZEL, "../bundle/texte", `${code}.json`), "utf-8"),
   );
 }
 

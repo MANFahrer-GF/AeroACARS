@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
-import deCommon from "../locales/de/common.json";
+import deCommon from "../../../bundle/texte/de.json";
 // Der Einstellungs-Bereich fragt beim Aufbau den Client ab (Sim-Status,
 // Hoppie, Speicher). Fuer diesen Test zaehlt nur der Chat-Abschnitt —
 // also antwortet die Bruecke schlicht mit nichts, statt ins Leere zu
