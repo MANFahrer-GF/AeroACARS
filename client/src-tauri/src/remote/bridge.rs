@@ -219,6 +219,18 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        // Laufzeit-Paket (3.0): Flottentabelle und Texte des geltenden Stands
+        // auch fuer die LAN-Oberflaeche — nur lesen, nur die feste Liste.
+        "paket_datei" => {
+            #[derive(Deserialize)]
+            struct A {
+                pfad: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_string_err(crate::laufzeit_paket::paket_datei(a.pfad)),
+                Err(e) => Err(e),
+            }
+        }
         // „Flugzeug vermessen" (28.09.2026) — auch vom Tablet aus: im Cockpit
         // schalten, am iPad „Erledigt" tippen. Jeder Befehl nennt die
         // Sitzung, damit ein verspäteter Befehl eine neuere nicht anfasst.

@@ -1,6 +1,7 @@
 import i18n from "i18next";
 import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
+import { invoke } from "../lib/ipc";
 
 import enCommon from "../../../bundle/texte/en.json";
 import deCommon from "../../../bundle/texte/de.json";
@@ -54,7 +55,6 @@ if (typeof localStorage !== "undefined" && !localStorage.getItem(STORAGE_KEY)) {
 /** Laufzeit-Paket (P-3.56): Texte des geltenden Stands ueber die eingebauten
  *  legen. Fehlt der Befehl (Fernbedienung, Test), bleibt der eingebaute Stand. */
 export async function texteAusPaketLaden(): Promise<void> {
-  const { invoke } = await import("../lib/ipc");
   for (const sprache of SUPPORTED_LANGUAGES) {
     try {
       const text = await invoke<string>("paket_datei", { pfad: `texte/${sprache}.json` });

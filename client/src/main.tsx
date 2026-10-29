@@ -37,12 +37,16 @@ import type { ActiveFlightInfo } from "./types";
 // Network-Call wenn DSN nicht in Build-Time-Env gesetzt war.
 initSentry(typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0");
 
-// Laufzeit-Paket: Flottentabelle des geltenden Stands (P-3.53). Bis sie da
-// ist, gilt der eingebaute Stand — der ist inhaltsgleich, solange kein
-// neuerer Stand geladen wurde.
-if (isTauri) {
-  void flotteAusPaketLaden();
-  void texteAusPaketLaden();
+// Laufzeit-Paket (P-3.53, P-3.56): Flottentabelle und Texte des geltenden
+// Stands kommen VOR dem ersten Zeichnen — sonst blieben bereits gezeichnete
+// Beschriftungen und Kartensymbole auf dem eingebauten Stand (Codex 29.10.).
+// Haengt der Abruf, wird nach PAKET_WARTEN_MS mit dem eingebauten gezeichnet.
+const PAKET_WARTEN_MS = 2000;
+function paketLaden(): Promise<void> {
+  return Promise.race([
+    Promise.all([flotteAusPaketLaden(), texteAusPaketLaden()]).then(() => undefined),
+    new Promise<void>((fertig) => setTimeout(fertig, PAKET_WARTEN_MS)),
+  ]);
 }
 
 // Initial-Consent-Sync zum Rust-Backend (Default = false). Damit folgt
@@ -418,6 +422,18 @@ function Root() {
   const [bootstrapping, setBootstrapping] = useState(
     () => !isTauri && !hasRemoteToken(),
   );
+  // LAN-Oberflaeche: Paketstand erst nach der Freischaltung abrufbar (Token).
+  const [paketDa, setPaketDa] = useState(isTauri);
+  useEffect(() => {
+    if (isTauri || !unlocked) return;
+    let cancelled = false;
+    void paketLaden().then(() => {
+      if (!cancelled) setPaketDa(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [unlocked]);
 
   useEffect(() => {
     if (isTauri) return;
@@ -447,6 +463,7 @@ function Root() {
     if (bootstrapping) return null;
     return <RemotePinGate onAuthenticated={() => setUnlocked(true)} />;
   }
+  if (!paketDa) return null;
 
   return (
     <GsgSkinProvider>
@@ -457,7 +474,7 @@ function Root() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+const zeichnen = () => ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <Sentry.ErrorBoundary
       fallback={({ resetError }) => (
@@ -482,3 +499,8 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     </Sentry.ErrorBoundary>
   </React.StrictMode>,
 );
+
+// Tauri: Paketstand vor dem ersten Zeichnen (siehe paketLaden). Die
+// LAN-Oberflaeche wartet in `Root` nach der Freischaltung.
+if (isTauri) void paketLaden().then(zeichnen);
+else zeichnen();
