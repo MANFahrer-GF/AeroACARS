@@ -73,77 +73,65 @@ impl AircraftCategory {
     }
 }
 
-/// Rotorcraft ICAO type designators (ICAO Doc 8643). Ported 1:1 from the
-/// frontend `HELI_ICAOS` set.
-fn is_heli_icao(code: &str) -> bool {
-    matches!(
-        code,
-        "EC20"
-            | "EC30"
-            | "EC35"
-            | "EC45"
-            | "EC55"
-            | "EC75"
-            | "AS50"
-            | "AS55"
-            | "AS65"
-            | "AS32"
-            | "AS3B"
-            | "B06"
-            | "B06T"
-            | "B212"
-            | "B412"
-            | "B429"
-            | "B407"
-            | "B505"
-            | "R22"
-            | "R44"
-            | "R66"
-            | "S61"
-            | "S70"
-            | "S76"
-            | "S92"
-            | "H125"
-            | "H135"
-            | "H145"
-            | "H155"
-            | "H160"
-            | "H175"
-            | "H215"
-            | "H225"
-            | "MI8"
-            | "MI17"
-            | "MI24"
-            | "MI26"
-            | "MI28"
-            | "CH47"
-            | "CH53"
-            | "UH60"
-            | "UH72"
-            | "A109"
-            | "A119"
-            | "A139"
-            | "A149"
-            | "A169"
-            | "A189"
-    )
+/// Flotten-/Kategorietabelle `tabellen/flotte.json` (P-3.53): eine Tabelle
+/// fuer Rust und Oberflaeche. Rust braucht daraus nur Hubschrauber und reine
+/// Wasserflugzeuge; die Kartenkategorien liest die Oberflaeche.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Flotte {
+    format: u32,
+    #[serde(default)]
+    #[allow(dead_code)]
+    notiz: Vec<String>,
+    kategorien: Kategorien,
+    /// Predominantly water-operating ICAO types (flying boats / amphibians
+    /// that are always or near-always on floats/hull). Deliberately small:
+    /// dual-use types that are commonly wheeled (DHC2/DHC6/C208) are NOT
+    /// here — for those the live float / water-rudder flags decide.
+    wasser: Vec<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    wasser_notiz: std::collections::BTreeMap<String, String>,
 }
 
-/// Predominantly water-operating ICAO types (flying boats / amphibians that
-/// are always or near-always on floats/hull). Deliberately small and
-/// conservative: dual-use types that are commonly wheeled (DHC2/DHC6/C208)
-/// are NOT here — for those we rely on the live float / water-rudder gear
-/// flags, so a wheeled DHC-2 is never mis-tagged as a seaplane.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Kategorien {
+    heavy: Vec<String>,
+    heli: Vec<String>,
+    turboprop: Vec<String>,
+    light: Vec<String>,
+}
+
+/// Liest `tabellen/flotte.json` (fail-closed): Format 1, Kennungen in
+/// Grossbuchstaben, kein Typ in zwei Kategorien, kein Hubschrauber unter
+/// `wasser`.
+pub(crate) fn flotte_lesen(json: &str) -> Result<Flotte, String> {
+    let f: Flotte = serde_json::from_str(json).map_err(|e| format!("tabellen/flotte.json: {e}"))?;
+    if f.format != 1 {
+        return Err(format!("tabellen/flotte.json: Format {} unbekannt", f.format));
+    }
+    let k = &f.kategorien;
+    let mut gesehen = std::collections::HashSet::new();
+    for code in k.heavy.iter().chain(&k.heli).chain(&k.turboprop).chain(&k.light).chain(&f.wasser) {
+        if code.is_empty() || *code != code.trim().to_ascii_uppercase() {
+            return Err(format!("tabellen/flotte.json: Kennung {code:?} nicht in Grossbuchstaben"));
+        }
+        if !gesehen.insert(code.as_str()) {
+            return Err(format!("tabellen/flotte.json: {code} doppelt"));
+        }
+    }
+    Ok(f)
+}
+
+/// Rotorcraft ICAO type designators (ICAO Doc 8643), aus dem Paket.
+fn is_heli_icao(code: &str) -> bool {
+    crate::laufzeit_paket::stand().flotte.kategorien.heli.iter().any(|c| c == code)
+}
+
+/// Reine Wasserflugzeug-Typen, aus dem Paket (siehe [`Flotte::wasser`]).
 fn is_seaplane_icao(code: &str) -> bool {
-    matches!(
-        code,
-        "SEAB"            // Republic RC-3 Seabee
-            | "LA4"       // Lake LA-4
-            | "G21"       // Grumman G-21 Goose
-            | "G44"       // Grumman G-44 Widgeon
-            | "G73"       // Grumman G-73 Mallard
-            | "PBY" // Consolidated PBY Catalina
-    )
+    crate::laufzeit_paket::stand().flotte.wasser.iter().any(|c| c == code)
 }
 
 /// ICAO-only category (fallback when the sim exposes no live gear-type
@@ -219,6 +207,22 @@ pub fn resolve_category(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flottentabelle_regelverstoss_ist_ein_lesefehler() {
+        let gut: serde_json::Value =
+            serde_json::from_str(crate::laufzeit_paket::eingebaute_datei_text("tabellen/flotte.json")).unwrap();
+        assert!(super::flotte_lesen(&gut.to_string()).is_ok());
+        let mut doppelt = gut.clone();
+        doppelt["wasser"].as_array_mut().unwrap().push("H145".into());
+        assert!(super::flotte_lesen(&doppelt.to_string()).is_err());
+        let mut klein = gut.clone();
+        klein["kategorien"]["heavy"][0] = "a388".into();
+        assert!(super::flotte_lesen(&klein.to_string()).is_err());
+        let mut fremd = gut;
+        fremd["kategorien"]["jumbo"] = serde_json::json!([]);
+        assert!(super::flotte_lesen(&fremd.to_string()).is_err());
+    }
+
     use super::*;
 
     #[test]

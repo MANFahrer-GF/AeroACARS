@@ -23,12 +23,17 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
 const XPLANE_PROFILE: &str = "profile/xplane.json";
 const CPDLC: &str = "tabellen/cpdlc.json";
+const FLOTTE: &str = "tabellen/flotte.json";
+
+/// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
+/// Liste, nur lesen, nur aus dem geltenden Stand.
+const UI_DATEIEN: &[&str] = &[FLOTTE];
 
 /// Alles, was aus dem Laufzeit-Paket kommt, als EIN Stand (P-3.02): Er wird
 /// genau einmal je Programmlauf festgelegt — vollstaendig aus dem Paket oder
@@ -44,6 +49,11 @@ pub(crate) struct AktiverStand {
     pub xplane_profile: &'static [sim_xplane::XplaneAircraftProfile],
     /// Hoppie-/CPDLC-Elementtabelle, ebenso ueber eine angemeldete Quelle.
     pub cpdlc: &'static [hoppie_protocol::elements::ElementSpec],
+    /// Flotten-/Kategorietabelle (Rust-Teil; die Oberflaeche liest dieselbe
+    /// Datei ueber `paket_datei`).
+    pub flotte: crate::aircraft_category::Flotte,
+    /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
+    pub ui: Vec<(&'static str, &'static str)>,
 }
 
 static STAND: OnceLock<AktiverStand> = OnceLock::new();
@@ -70,6 +80,8 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         grenzwerte: crate::grenzwerte::lesen(|x| p.datei(x).ok())?,
         xplane_profile: sim_xplane::profile_lesen(text(XPLANE_PROFILE)?)?,
         cpdlc: hoppie_protocol::elements_data::tabelle_lesen(text(CPDLC)?)?,
+        flotte: crate::aircraft_category::flotte_lesen(text(FLOTTE)?)?,
+        ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
     })
 }
 
@@ -82,12 +94,25 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         grenzwerte: crate::grenzwerte::lesen(|x| eingebaute_datei(x).map(<[u8]>::to_vec))?,
         xplane_profile: sim_xplane::profile_lesen(eingebauter_text(XPLANE_PROFILE)?)?,
         cpdlc: hoppie_protocol::elements_data::tabelle_lesen(eingebauter_text(CPDLC)?)?,
+        flotte: crate::aircraft_category::flotte_lesen(eingebauter_text(FLOTTE)?)?,
+        ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
     })
 }
 
 /// Legt den Stand fuer diesen Lauf fest. `false`, wenn schon einer gilt.
 fn uebernehmen(s: AktiverStand) -> bool {
     STAND.set(s).is_ok()
+}
+
+/// Eine Datei des geltenden Stands fuer die Oberflaeche (nur [`UI_DATEIEN`]).
+#[tauri::command]
+pub(crate) fn paket_datei(pfad: String) -> Result<&'static str, String> {
+    stand()
+        .ui
+        .iter()
+        .find(|(d, _)| *d == pfad)
+        .map(|(_, t)| *t)
+        .ok_or_else(|| format!("{pfad}: nicht freigegeben"))
 }
 
 /// Die Kennung, die der Flug `pirep_id` traegt: der Stand dieses Laufs.
@@ -117,6 +142,11 @@ mod eingebettet {
 }
 
 /// Eine Datei des eingebauten Stands (Inhalt von `bundle/` beim Bau).
+#[cfg(test)]
+pub(crate) fn eingebaute_datei_text(pfad: &str) -> &'static str {
+    eingebauter_text(pfad).unwrap()
+}
+
 fn eingebauter_text(pfad: &str) -> Result<&'static str, String> {
     std::str::from_utf8(eingebaute_datei(pfad).ok_or(pfad)?).map_err(|e| format!("{pfad}: {e}"))
 }
@@ -384,6 +414,11 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
     crate::grenzwerte::lesen(|pfad| p.datei(pfad).ok())?;
     let profile = p.datei(XPLANE_PROFILE).map_err(|e| e.to_string())?;
     sim_xplane::profile_pruefen(std::str::from_utf8(&profile).map_err(|e| e.to_string())?)?;
+    let flotte = p.datei(FLOTTE).map_err(|e| e.to_string())?;
+    crate::aircraft_category::flotte_lesen(std::str::from_utf8(&flotte).map_err(|e| e.to_string())?)?;
+    for d in UI_DATEIEN {
+        p.datei(d).map_err(|e| e.to_string())?;
+    }
     let cpdlc = p.datei(CPDLC).map_err(|e| e.to_string())?;
     hoppie_protocol::elements_data::tabelle_pruefen(std::str::from_utf8(&cpdlc).map_err(|e| e.to_string())?)?;
     for (pfad, kopf) in [
@@ -441,6 +476,13 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     fn eingebaute_cpdlc_tabelle_ist_die_des_crates() {
         assert_eq!(eingebaute_datei(CPDLC).unwrap(), hoppie_protocol::elements_data::EINGEBAUT.as_bytes());
         assert_eq!(stand().cpdlc.len(), hoppie_protocol::elements_data::tabelle_lesen(hoppie_protocol::elements_data::EINGEBAUT).unwrap().len());
+    }
+
+    #[test]
+    fn paket_datei_gibt_nur_freigegebene_dateien() {
+        assert_eq!(paket_datei(FLOTTE.into()).unwrap().as_bytes(), eingebaute_datei(FLOTTE).unwrap());
+        assert!(paket_datei(CPDLC.into()).is_err());
+        assert!(paket_datei("../geheim".into()).is_err());
     }
 
     #[test]

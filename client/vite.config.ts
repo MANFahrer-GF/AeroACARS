@@ -69,6 +69,8 @@ export default defineConfig(async () => ({
           port: 1421,
         }
       : undefined,
+    // Eingebauter Paketstand liegt ausserhalb von client/ (`../bundle`).
+    fs: { allow: [".", "../bundle"] },
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],

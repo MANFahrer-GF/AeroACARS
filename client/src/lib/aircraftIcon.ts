@@ -5,62 +5,48 @@
 // Kein 1:1-Realismus — 5 Silhouetten (Heavy / Medium / Light / Turboprop / Heli).
 // Unbekannte Codes → "medium". Quelle der Heuristik: ICAO Doc 8643.
 
+import flotteEingebaut from "../../../bundle/tabellen/flotte.json";
+import { invoke } from "./ipc";
+
 export type AircraftCategory = "heavy" | "medium" | "light" | "turboprop" | "heli";
 
-const HEAVY_ICAOS = new Set([
-  "A332", "A333", "A338", "A339",
-  "A342", "A343", "A345", "A346",
-  "A359", "A35K",
-  "A388",
-  "B741", "B742", "B743", "B744", "B748", "B74S", "B74F", "B74R",
-  "B752", "B753", "B762", "B763", "B764", "B772", "B773", "B77L", "B77W", "B778", "B779",
-  "B788", "B789", "B78X",
-  "MD11", "DC10", "L101", "IL96", "A124",
-]);
+// Typlisten aus der Flottentabelle des Laufzeit-Pakets (P-3.53, eine Tabelle
+// fuer Rust und Oberflaeche). Eingebaut ist die Datei aus `bundle/`; beim Start
+// ersetzt `flotteAusPaketLaden()` sie durch den geltenden Stand.
+type Kategorien = Record<"heavy" | "heli" | "turboprop" | "light", string[]>;
 
-const TURBOPROP_ICAOS = new Set([
-  "AT43", "AT45", "AT46", "AT72", "AT75", "AT76",
-  "DH8A", "DH8B", "DH8C", "DH8D",
-  "JS31", "JS32", "JS41",
-  "SF34", "SF50", "SB20",
-  "BE20", "BE9L", "BE99", "BE10", "BE40",
-  "C208", "C20T", "C30J", "C295", "C212",
-  "DHC6", "DHC7",
-  "PC12", "PC6T",
-  "TBM7", "TBM8", "TBM9", "TBM10",
-  "AN24", "AN26", "AN30", "AN32",
-  "L410",
-  "DA42", "DA62",
-]);
+let HEAVY_ICAOS = new Set<string>();
+let TURBOPROP_ICAOS = new Set<string>();
+let HELI_ICAOS = new Set<string>();
+let LIGHT_ICAOS = new Set<string>();
 
-const HELI_ICAOS = new Set([
-  "EC20", "EC30", "EC35", "EC45", "EC55", "EC75",
-  "AS50", "AS55", "AS65", "AS32", "AS3B",
-  "B06", "B06T", "B212", "B412", "B429", "B407", "B505",
-  "R22", "R44", "R66",
-  "S61", "S70", "S76", "S92",
-  "H125", "H135", "H145", "H155", "H160", "H175", "H215", "H225",
-  "MI8", "MI17", "MI24", "MI26", "MI28",
-  "CH47", "CH53",
-  "UH60", "UH72",
-  "A109", "A119", "A139", "A149", "A169", "A189",
-]);
+/** Uebernimmt `tabellen/flotte.json`; `false` (und nichts geaendert), wenn die
+ *  Form nicht stimmt. */
+export function flotteUebernehmen(datei: unknown): boolean {
+  const k = (datei as { kategorien?: Partial<Kategorien> } | null)?.kategorien;
+  const listen = ["heavy", "heli", "turboprop", "light"] as const;
+  if (!k || !listen.every((n) => Array.isArray(k[n]) && k[n]!.every((c) => typeof c === "string"))) {
+    return false;
+  }
+  HEAVY_ICAOS = new Set(k.heavy);
+  HELI_ICAOS = new Set(k.heli);
+  TURBOPROP_ICAOS = new Set(k.turboprop);
+  LIGHT_ICAOS = new Set(k.light);
+  return true;
+}
 
-const LIGHT_ICAOS = new Set([
-  "C150", "C152", "C162", "C172", "C175", "C177", "C180", "C182", "C185", "C188",
-  "C205", "C206", "C207", "C210", "C337", "C310", "C320", "C340", "C402", "C404",
-  "C414", "C421", "C425", "C441",
-  "P28A", "P28R", "P28T", "P32R", "P32T", "P46T", "PA46",
-  "BE33", "BE35", "BE36", "BE55", "BE58", "BE60",
-  "BE76", "BE77", "BE19", "BE23", "BE24",
-  "DA20", "DA40", "M20P", "M20T", "M20J", "M20K", "M20R",
-  "GLAS", "SR20", "SR22", "SR2T",
-  "DR40",
-  "TB10", "TB20", "TB21",
-  "PA22", "PA23", "PA24", "PA25", "PA28", "PA30", "PA31", "PA32", "PA34", "PA38", "PA42", "PA44",
-  "GP4",
-  "RV4", "RV6", "RV7", "RV8", "RV9", "RV10", "RV12", "RV14",
-]);
+flotteUebernehmen(flotteEingebaut);
+
+/** Holt die Flottentabelle des geltenden Paketstands; bleibt sonst beim
+ *  eingebauten Stand (z. B. Fernbedienung ohne Paketbefehl). */
+export async function flotteAusPaketLaden(): Promise<void> {
+  try {
+    const text = await invoke<string>("paket_datei", { pfad: "tabellen/flotte.json" });
+    flotteUebernehmen(JSON.parse(text));
+  } catch {
+    /* eingebauter Stand bleibt */
+  }
+}
 
 export function icaoCategory(icao: string | null | undefined): AircraftCategory {
   if (!icao) return "medium";

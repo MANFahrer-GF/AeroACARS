@@ -34,6 +34,9 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `grenzwerte_<bereich>_wie_2_1_24`): `const`-Zeilen durch Verweise ersetzt,
 /// Verwendungen auf `grenzwerte().<bereich>.*` umgestellt, zwei abgeleitete
 /// Konstanten (ROLLOUT_TICK_MIN_GS_KT, MSFS_FLARE_AGL_MAX_FT) als Funktion.
+/// — plus Etappe 1b (Flotte): EINE neue Zeile im `generate_handler!`,
+/// `laufzeit_paket::paket_datei` (lesender Befehl fuer die Oberflaeche, nur
+/// die feste Liste `UI_DATEIEN`, Test `paket_datei_gibt_nur_freigegebene_dateien`).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -44,4 +47,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "f759164cceff378ffa2c1e6e3afae17ddbebc398599de6d861abd6353028c901";
+const HASH_VOR_DER_ZERLEGUNG: &str = "2cf955ce520b8df413e99908efc22b705d323f9cb741c003a04659e8a7312af2";
