@@ -101,13 +101,22 @@ fn pin_des_offenen_flugs(app_daten: &Path) -> Option<(String, RuntimeBundleId)> 
     Some((pirep, serde_json::from_value(v.get("runtime_bundle_id")?.clone()).ok()?))
 }
 
+/// Offen ist ein Flug, solange seine Datei existiert — auch eine alte
+/// 2.x-Datei ohne Kennung oder eine kaputte (Codex 29.10.).
+fn flug_offen(app_daten: &Path) -> bool {
+    app_daten.join(crate::ACTIVE_FLIGHT_FILE).exists()
+}
+
 /// Laedt den Stand fuer diesen Lauf und gibt OurAirports an `runway.rs`.
 /// Muss vor jedem Zugriff auf die Bahntabellen laufen. Scheitert alles,
 /// gilt der eingebaute Stand — das Programm startet immer.
 pub(crate) fn starten(app_daten: &Path) {
-    if GELADEN.get().is_some() {
-        return;
-    }
+    // Einmalig auch bei gleichzeitigen Aufrufern (Codex 29.10.).
+    static EINMAL: std::sync::Once = std::sync::Once::new();
+    EINMAL.call_once(|| starten_einmal(app_daten));
+}
+
+fn starten_einmal(app_daten: &Path) {
     let pin = pin_des_offenen_flugs(app_daten);
     let eingebaut = eingebaut();
     let ergebnis = Ablage::oeffnen(app_daten.join("laufzeit-paket"))
@@ -130,25 +139,35 @@ pub(crate) fn starten(app_daten: &Path) {
             }
         }
     };
+    // Der Flug traegt die Kennung des Stands, der WIRKLICH gilt: Laesst sich
+    // OurAirports aus dem Paket nicht setzen, gilt der eingebaute (Codex 29.10.).
     let text = |pfad: &str| -> Option<&'static str> {
         let bytes = paket.datei(pfad).ok()?;
         Some(Box::leak(String::from_utf8(bytes).ok()?.into_boxed_str()))
     };
-    if let (Some(rw), Some(ap)) = (text(RUNWAYS), text(AIRPORTS)) {
-        if !crate::runway::ourairports_setzen(rw, ap) {
-            tracing::warn!("Laufzeit-Paket: Bahntabellen waren schon geladen, eingebaute gelten");
+    let gesetzt = match (text(RUNWAYS), text(AIRPORTS)) {
+        (Some(rw), Some(ap)) => crate::runway::ourairports_setzen(rw, ap),
+        _ => false,
+    };
+    let (id, herkunft) = if gesetzt {
+        (paket.id, herkunft)
+    } else {
+        tracing::warn!(stand = %paket.id, "Laufzeit-Paket: OurAirports nicht anwendbar, eingebauter Stand gilt");
+        match eingebaut.paket() {
+            Ok(p) => (p.id, Herkunft::Eingebaut),
+            Err(_) => return,
         }
-    }
-    tracing::info!(stand = %paket.id, ?herkunft, "Laufzeit-Paket geladen");
+    };
+    tracing::info!(stand = %id, ?herkunft, "Laufzeit-Paket geladen");
     let pin = matches!(herkunft, Herkunft::EingebautStattPin).then_some(pin).flatten();
-    let _ = GELADEN.set(Geladen { id: paket.id, pin });
+    let _ = GELADEN.set(Geladen { id, pin });
 }
 
 /// Holt einen neueren Stand von live und installiert ihn; aktiv wird er erst
 /// beim naechsten Programmstart (P-3.20). Nicht bei offenem Flug, nicht ohne
 /// Pruefschluessel (dann bestuende ohnehin kein Stand die Pruefung).
 pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf) {
-    if PRUEFSCHLUESSEL.is_empty() || pin_des_offenen_flugs(&app_daten).is_some() {
+    if PRUEFSCHLUESSEL.is_empty() || flug_offen(&app_daten) {
         return;
     }
     tauri::async_runtime::spawn(async move {
@@ -202,7 +221,12 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
         .into_iter()
         .flatten()
         .collect();
+    let daten = app_daten.to_path_buf();
     tokio::task::spawn_blocking(move || {
+        // Erneut unmittelbar davor: Ein Flug kann waehrend des Ladens begonnen haben.
+        if flug_offen(&daten) {
+            return Ok(None);
+        }
         let id = ablage
             .installieren(
                 Eingang { manifest: &manifest, signatur: &signatur },

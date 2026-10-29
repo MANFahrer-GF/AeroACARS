@@ -4,6 +4,9 @@
 # Ablauf: Änderung unter bundle/ -> bauen + testen -> signieren (nur mit
 # Secret BUNDLE_MINISIGN_KEY) -> Freigabe durch Thomas im Environment
 # bundle-produktion -> auf live hochladen (nur mit Secret LIVE_BUNDLE_SSH_KEY).
+# Ausnahme P-9.43: Laeufe vom OurAirports-Wochenlauf, die sich vom
+# veroeffentlichten Stand nur in ourairports/ unterscheiden, gehen ueber das
+# Environment bundle-ourairports (ohne Pflicht-Pruefer).
 # Fehlen die Secrets, endet der Lauf nach Bauen und Testen; nichts wird
 # veröffentlicht. Der private Paketschlüssel existiert nur als Secret.
 
@@ -14,6 +17,11 @@ on:
     branches: [v3, main]
     paths: ['bundle/**', 'client/src-tauri/crates/runtime-bundle/**', '.github/workflows/bundle.yml']
   workflow_dispatch:
+    inputs:
+      nur_ourairports:
+        description: 'Vom OurAirports-Wochenlauf: ohne Einzelfreigabe, falls nur ourairports/ abweicht (P-9.43)'
+        type: boolean
+        default: false
 
 concurrency:
   group: laufzeit-paket
@@ -29,6 +37,7 @@ jobs:
     outputs:
       generation: ${{ steps.gen.outputs.generation }}
       signiert: ${{ steps.signieren.outputs.signiert }}
+      umgebung: ${{ steps.umgebung.outputs.umgebung }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -68,6 +77,33 @@ jobs:
           minisign -S -s "$RUNNER_TEMP/paket.key" -m paket/manifest.json -t "AeroACARS Laufzeit-Paket g${{ steps.gen.outputs.generation }}" < /dev/null
           rm -f "$RUNNER_TEMP/paket.key"
           echo "signiert=ja" >> "$GITHUB_OUTPUT"
+      - name: Freigabeweg waehlen (P-3.12, P-9.43)
+        id: umgebung
+        env:
+          NUR_OA: ${{ inputs.nur_ourairports }}
+        # Ohne Einzelfreigabe nur, wenn der Lauf vom Wochenlauf kommt UND sich
+        # das Paket vom veroeffentlichten Stand auf live ausschliesslich in
+        # ourairports/ unterscheidet. Sonst immer Freigabe durch Thomas.
+        run: |
+          UMGEBUNG=bundle-produktion
+          if [ "$NUR_OA" = "true" ]; then
+            if python3 -I - <<'PY'
+          import json, sys, urllib.request
+          neu = {d["path"]: d["sha256"] for d in json.load(open("paket/manifest.json"))["files"]}
+          try:
+              basis = "https://live.kant.ovh"
+              a = json.load(urllib.request.urlopen(basis + "/api/bundle/current", timeout=30))
+              alt = {d["path"]: d["sha256"] for d in json.load(urllib.request.urlopen(basis + a["manifest"], timeout=30))["files"]}
+          except Exception as e:
+              print("kein veroeffentlichter Stand lesbar:", e); sys.exit(1)
+          andere = sorted(p for p in set(neu) | set(alt) if not p.startswith("ourairports/") and neu.get(p) != alt.get(p))
+          print("ausserhalb ourairports/ geaendert:", andere or "nichts")
+          sys.exit(1 if andere else 0)
+          PY
+            then UMGEBUNG=bundle-ourairports; fi
+          fi
+          echo "umgebung=$UMGEBUNG" >> "$GITHUB_OUTPUT"
+          echo "Freigabeweg: $UMGEBUNG"
       - uses: actions/upload-artifact@v4
         with:
           name: laufzeit-paket-g${{ steps.gen.outputs.generation }}
@@ -79,8 +115,11 @@ jobs:
     needs: bauen
     if: needs.bauen.outputs.signiert == 'ja' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: bundle-produktion
+    environment: ${{ needs.bauen.outputs.umgebung }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/bundle
       - uses: actions/download-artifact@v4
         with:
           name: laufzeit-paket-g${{ needs.bauen.outputs.generation }}
@@ -95,14 +134,12 @@ jobs:
           printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/id"
           SSH="ssh -i $RUNNER_TEMP/id -p 2222 -o StrictHostKeyChecking=accept-new"
           ZIEL=bundle@live.kant.ovh
-          # Nur steigende Generation: springt die Laufnummer zurueck (Workflow
-          # umbenannt/neu), wuerden alle Clients den Stand ablehnen.
-          AKTIV=$($SSH "$ZIEL" "cat aktuell.json 2>/dev/null || echo '{}'" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("generation",0))')
-          if [ "$G" -le "$AKTIV" ]; then echo "Generation $G <= aktiv $AKTIV — Abbruch"; exit 1; fi
-          # Erst Dateien und Stand, ganz zuletzt der Zeiger: Ein Abbruch
-          # dazwischen laesst den alten Stand aktiv. --checksum ersetzt auch
+          # Erst Dateien in einen Zwischenordner; Generationspruefung, Anlegen von
+          # gen/<G> und Zeigerwechsel danach in EINEM Schritt unter flock auf
+          # live (scripts/bundle/veroeffentlichen.sh). --checksum ersetzt auch
           # eine frueher halb hochgeladene Datei gleichen Namens.
           rsync -a --checksum -e "$SSH" paket/blobs/ "$ZIEL:blobs/"
           rsync -a -e "$SSH" paket/manifest.json paket/manifest.json.minisig "$ZIEL:tmp-gen-$G/"
-          $SSH "$ZIEL" "test ! -e gen/$G && mv tmp-gen-$G gen/$G && printf '{\"generation\":%s}' $G > aktuell.json.neu && mv aktuell.json.neu aktuell.json"
+          rsync -a -e "$SSH" scripts/bundle/veroeffentlichen.sh "$ZIEL:"
+          $SSH "$ZIEL" sh veroeffentlichen.sh "$G"
           rm -f "$RUNNER_TEMP/id"

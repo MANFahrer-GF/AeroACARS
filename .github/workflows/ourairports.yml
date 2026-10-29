@@ -1,0 +1,55 @@
+# AeroACARS 3.0 — OurAirports-Wochenlauf (Pflichtenheft P-9.40 bis P-9.43).
+#
+# Montags 04:00 UTC: neuen Stand von github.com/davidmegginson/ourairports-data
+# holen, umsetzen, gegen die geeichten Schwellen pruefen
+# (scripts/ourairports/aktualisieren.py). Kein Unterschied: Ende. Halt: der
+# Lauf schlaegt mit Bericht fehl (GitHub meldet es Thomas). Bestanden: Commit
+# auf den Zweig und Paketlauf mit nur_ourairports=true — der darf ohne
+# Einzelfreigabe hinaus, wenn sich das Paket vom veroeffentlichten Stand
+# wirklich nur in ourairports/ unterscheidet (prueft bundle.yml).
+
+name: OurAirports
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ourairports
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  aktualisieren:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Schwellen-Tests
+        run: python3 -I -m unittest discover -s scripts/ourairports
+      - name: Neuen Stand holen und pruefen
+        id: lauf
+        run: |
+          COMMIT=$(curl -fsSL https://api.github.com/repos/davidmegginson/ourairports-data/commits/main | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          set +e
+          python3 -I scripts/ourairports/aktualisieren.py --ziel bundle/ourairports --commit "$COMMIT" \
+            --gsg scripts/ourairports/gsg-flughaefen.txt --bericht "$RUNNER_TEMP/bericht.md"
+          RC=$?
+          set -e
+          if [ -f "$RUNNER_TEMP/bericht.md" ]; then cat "$RUNNER_TEMP/bericht.md" >> "$GITHUB_STEP_SUMMARY"; fi
+          exit $RC
+      - name: Commit und Paketlauf
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- bundle/ourairports; then echo "kein Unterschied"; exit 0; fi
+          git config user.name "aeroacars-ci"
+          git config user.email "ci@aeroacars.invalid"
+          git add bundle/ourairports
+          git commit -m "chore(ourairports): Stand ${{ steps.lauf.outputs.commit }}"
+          git push
+          gh workflow run bundle.yml --ref "${GITHUB_REF_NAME}" -f nur_ourairports=true
