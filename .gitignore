@@ -166,3 +166,6 @@ client/demo-dist/
 
 # Druckvorschau des Landungs-Berichts (wird bei Bedarf gebaut)
 client/bericht-dist/
+
+# Python-Zwischenstaende (scripts/)
+__pycache__/
