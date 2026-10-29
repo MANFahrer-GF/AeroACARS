@@ -2003,7 +2003,11 @@ mod landing_store_tests {
         assert!(store.stand().expect("leer").ends_with("-leer"));
         store.upsert(rec("A", &ts(100), &ts(100))).expect("schreiben");
         let eins = store.stand().expect("stand");
-        assert_eq!(store.stand().expect("stand"), eins, "ohne Schreiben gleich");
+        // Der Schreibzaehler (erster Teil) ist prozessweit — parallel laufende
+        // Tests duerfen ihn erhoehen (Windows-CI 29.10.: 5 -> 6). Ohne eigenes
+        // Schreiben muss Groesse und Aenderungszeit DIESER Datei gleich sein.
+        let datei = |s: String| s.split_once('-').map(|(_, rest)| rest.to_string());
+        assert_eq!(datei(store.stand().expect("stand")), datei(eins.clone()), "ohne Schreiben gleich");
         store.upsert(rec("B", &ts(200), &ts(200))).expect("schreiben");
         assert_ne!(store.stand().expect("stand"), eins, "neue Landung");
         let zwei = store.stand().expect("stand");
