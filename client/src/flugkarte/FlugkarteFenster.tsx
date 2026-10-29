@@ -3,9 +3,9 @@
 // Holt die Flugakte über den Tauri-Befehl `flugakte_laden` vom Live-Server
 // (Pilot-Route, nur eigene Flüge) und zeigt sie mit dem Baustein flugkarte.ts —
 // demselben, den der Admin in der Webapp sieht (Thomas 28.10.2026: „eine Sicht“).
-// Baustein, flugakteTypen.ts, flugkarte.css, stil-dunkel.json und die Texte
-// unter `flugkarte.*` sind Kopien aus aeroacars-live; flugkarteGleichstand.test.ts
-// wacht darüber, dass sie gleich bleiben.
+// v3 (Etappe 5, P-8.21): Der Baustein lebt nur hier und kommt mit der Oberfläche
+// ins Laufzeit-Paket; die Admin-Webapp lädt ihn als Seite ui/flugkarte/ aus dem
+// freigegebenen Paket (seite/). Keine Kopie in aeroacars-live mehr.
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../lib/ipc";

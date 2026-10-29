@@ -313,7 +313,8 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
     map.on("data", beiDaten);
     map.once("idle", fertig);
     beiDaten();
-    map.resize(); fit("all", false);
+    // den schon gewaehlten Ausschnitt behalten (Klick waehrend „Karte wird geladen“, Pruefung 29.10.)
+    map.resize(); fit(fitKey, false);
     map.getContainer().querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show");
   });
   map.on("rotate", () => refresh());

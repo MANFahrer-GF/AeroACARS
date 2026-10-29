@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AeroACARS Flugkarte</title>
+  </head>
+  <body>
+    <div class="flugkarte-fenster">
+      <div class="flugkarte-hinweis" id="hinweis"></div>
+      <label class="flugkarte-hinweis" id="wahl" hidden>
+        <span id="wahl-text"></span>
+        <input type="file" id="datei" accept=".json,application/json" />
+      </label>
+      <div class="flugkarte-inhalt" id="karte"></div>
+    </div>
+    <script type="module" src="./seite.ts"></script>
+  </body>
+</html>

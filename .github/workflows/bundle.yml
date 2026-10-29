@@ -79,6 +79,7 @@ jobs:
           cp -R dist "$GITHUB_WORKSPACE/bundle/ui"
           test -f "$GITHUB_WORKSPACE/bundle/ui/index.html"
           test -f "$GITHUB_WORKSPACE/bundle/ui/hud/panel.js"
+          test -f "$GITHUB_WORKSPACE/bundle/ui/flugkarte/index.html"
       - name: Generation festlegen
         id: gen
         # Steigt mit jedem Lauf dieses Workflows; 0 ist der eingebaute Stand.

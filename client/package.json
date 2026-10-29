@@ -9,7 +9,7 @@
     "dev": "vite",
     "bericht": "node ../scripts/bericht-bauen.mjs",
     "bericht:pdf": "node ../scripts/bericht-bauen.mjs && node ../scripts/bericht-drucken.mjs && python3 ../scripts/bericht-messen.py",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.flugkarte.config.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run --passWithNoTests",
