@@ -1134,8 +1134,8 @@
             }
         }
         assert!(
-            body_of(SRC, "fn pirep_bewertete_teile(").contains("canonical_landing_bewertung("),
-            "der PIREP-Aufbau holt seine Bewertung ueber die Kanonik",
+            body_of(SRC, "fn pirep_bewertete_teile(").contains("pirep_rechnung_bilden("),
+            "der PIREP-Aufbau holt seine Bewertung aus der Rechnung der Einreichung",
         );
     }
 

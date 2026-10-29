@@ -91,6 +91,12 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// → Feld `landung_bewertung`, gelesen von Meldung und
 /// `touchdown_payload_note`, abgeraeumt mit Touch-and-Go und verworfenem
 /// Score); Tests mit Aufrufzaehler in `sofortnote_abnehmer_tests`.
+/// — plus Codex 29.10., zweite Runde: je Einreichung EINE Modulrechnung
+/// (`PirepRechnung` = Eingabe + Ergebnis, gebildet in `pirep_bewertete_teile`,
+/// festgehalten in `pirep_rechnung`); `build_pirep_payload`,
+/// `build_landing_record` (neuer Parameter `rechnung`) und die
+/// Eingabe-Dokumente (`eingabe_teile`) lesen sie ueber
+/// `einreichungs_rechnung`; `landungs_bewertung_aus` leitet das Urteil ab.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -101,4 +107,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "143e9a62a611ad73ad7092d6af57770e8ede57f5bb0178e96427e5df051a0be1";
+const HASH_VOR_DER_ZERLEGUNG: &str = "781a8b58eeb8abce370aedcfa8c59f182a5d7d2b366c5aaba089469831585225";

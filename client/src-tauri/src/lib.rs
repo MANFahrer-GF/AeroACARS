@@ -7023,6 +7023,9 @@ struct FlightStats {
     /// beim Einreichen selbst — mit Ausrollen und bestaetigtem Ausweichziel.
     /// Nicht persistiert.
     landung_bewertung: Option<LandungsBewertung>,
+    /// Die Modulrechnung der laufenden Einreichung ([`PirepRechnung`]),
+    /// gesetzt von [`pirep_bewertete_teile`]. Nicht persistiert.
+    pirep_rechnung: Option<PirepRechnung>,
     /// Laeuft die Spuraufzeichnung gerade?
     ///
     /// Steuert den Aufzeichnungstakt (`adaptive_tick_interval_v2`). Ohne
@@ -12418,6 +12421,7 @@ fn landing_get_current(app: AppHandle, state: tauri::State<'_, AppState>) -> Opt
         // geplantes Ziel. Ein mid-flight erkannter Divert greift weiterhin
         // über stats.divert_hint im Trust-Check.
         &flight.arr_airport,
+        None,
         airport_lookup,
     )
 }
@@ -21785,26 +21789,9 @@ fn build_pirep_payload(
     // dann sowohl als sub_scores ins Payload als auch
     // als landing_score (gewichteter Aggregate) nutzen.
     let actual_burn = actual_burn_for_record(&stats);
-    let mut scoring_input = scoring_eingang(
-        &stats,
-        muster_fuer_landung(&stats, &flight.aircraft_icao),
-        Some(Ausweichziel {
-            eingereicht: effective_arr_icao,
-            geplant: planned_arr_icao,
-        }),
-        flight.plan_strecke_nm,
-    );
-    // v0.10.0 (#runway-utilization-score): LDA-basierter
-    // Bahn-Auslastungs-Score. Markiert weiter unten am
-    // PirepPayload via score_algorithm_version (siehe SCORE_ALGORITHMUS_VERSION)
-    // (v0.12.0: Float-Toleranz-Refinement;
-    //  v0.16.21: MSFS touchdown V/S SimVar-lag g-force-gated de-lag;
-    //  v0.20.x: Bahnauslastung-QS — Float-Toleranz 15→20 % LDA, Banding
-    //  30/50/70/90 → 40/60/80/95; Sinkraten-Score von monotoner
-    //  "weicher=besser"-Kurve auf Ziel-Korridor 90-250 fpm umgestellt).
-    fill_v2_rollout_fields(&mut scoring_input, &stats, effective_arr_icao);
-    // v3 (P-4.31): Bewertung nur im WASM-Modul.
-    let bewertet = crate::bewertung::bewerten(&scoring_input);
+    // Codex-Befund zu P-4.40: die Rechnung dieser Einreichung, nicht eine
+    // eigene (siehe `einreichungs_rechnung`).
+    let bewertet = einreichungs_rechnung(flight, &stats, effective_arr_icao).ergebnis;
     let payload_sub_scores = bewertet.as_ref().map(|(a, _)| a.teilnoten.clone()).unwrap_or_default();
     let aggregate_master = bewertet.as_ref().and_then(|(a, _)| a.gesamt);
     // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse — sie kennt
@@ -24204,9 +24191,19 @@ fn canonical_landing_bewertung(
         &flight.arr_airport,
         flight.plan_strecke_nm,
     );
-    let status = crate::bewertung::status_text(&bewertet);
+    landungs_bewertung_aus(stats, &bewertet)
+}
+
+/// Urteil, Status und Fassung aus einer Modulrechnung. `None`, solange es
+/// keinen Aufsetzer gibt.
+fn landungs_bewertung_aus(
+    stats: &FlightStats,
+    bewertet: &Option<(landing_scoring::wasm::Ausgabe, crate::bewertung::Status)>,
+) -> Option<LandungsBewertung> {
+    stats.landing_score?;
+    let status = crate::bewertung::status_text(bewertet);
     let fassung = bewertet.as_ref().map(|(a, _)| a.fassung);
-    let verdict = bewertet.and_then(|(a, _)| a.gesamt).map(|m| {
+    let verdict = bewertet.as_ref().and_then(|(a, _)| a.gesamt).map(|m| {
         let (label, numeric) = (aggregate_score_label(m), m as i32);
         LandingVerdict {
             numeric,
@@ -24215,6 +24212,44 @@ fn canonical_landing_bewertung(
         }
     });
     Some(LandungsBewertung { verdict, status, fassung })
+}
+
+/// Die EINE Modulrechnung einer Einreichung: Eingabe und Ergebnis zusammen
+/// (Codex-Befund zu P-4.40). phpVMS-Score, Feld und Notiz, MQTT-PIREP,
+/// Landungsdatensatz und das Eingabe-Dokument an live lesen sie — das
+/// Dokument traegt damit genau die Eingabe, zu der sein `ergebnis` gehoert.
+#[derive(Debug, Clone)]
+pub(crate) struct PirepRechnung {
+    /// Der eingereichte Ankunftsflughafen, mit dem gerechnet wurde.
+    pub arr: String,
+    pub eingabe: landing_scoring::LandingScoringInput,
+    pub ergebnis: Option<(landing_scoring::wasm::Ausgabe, crate::bewertung::Status)>,
+}
+
+fn pirep_rechnung_bilden(flight: &ActiveFlight, stats: &FlightStats, effective_arr_icao: &str) -> PirepRechnung {
+    let eingabe = landungs_bewertungseingabe(
+        flight,
+        stats,
+        muster_fuer_landung(stats, &flight.aircraft_icao),
+        effective_arr_icao,
+    );
+    let ergebnis = crate::bewertung::bewerten(&eingabe);
+    PirepRechnung { arr: effective_arr_icao.to_string(), eingabe, ergebnis }
+}
+
+/// Die Rechnung dieser Einreichung (festgehalten von
+/// [`pirep_bewertete_teile`]); nur bei anderem Ankunftsflughafen oder ohne
+/// vorangegangenen Aufbau wird neu gerechnet.
+///
+/// Datensatz und MQTT-PIREP entstehen erst nach dem Senden an phpVMS. Sie
+/// beschreiben dieselbe Einreichung, also dieselbe Rechnung: Neu gerechnet
+/// koennte ein kurzer Modulausfall dort „vorlaeufig“ schreiben, wo phpVMS
+/// „endgueltig“ bekam.
+fn einreichungs_rechnung(flight: &ActiveFlight, stats: &FlightStats, effective_arr_icao: &str) -> PirepRechnung {
+    match &stats.pirep_rechnung {
+        Some(r) if r.arr == effective_arr_icao => r.clone(),
+        _ => pirep_rechnung_bilden(flight, stats, effective_arr_icao),
+    }
 }
 
 /// Note, Buchstabe und Herkunft fuer den Touchdown-Payload (live/Discord):
@@ -25973,6 +26008,8 @@ fn build_landing_record<F>(
     // Banner). Für Nicht-Diverts ist effective == geplant (kein Verhaltens-
     // unterschied).
     effective_arr_icao: &str,
+    // Die Rechnung der Einreichung; `None` = selbst rechnen (Live-Vorschau).
+    rechnung: Option<&PirepRechnung>,
     airport_lookup: F,
 ) -> Option<LandingRecord>
 where
@@ -26011,9 +26048,12 @@ where
     // Zahl aus Aggregate) — fuer Pilot verwirrend.
     // Fallback auf Touchdown-Klassifikation wenn keine Sub-Scores
     // berechnet werden konnten (Edge-Case Schutz).
-    let scoring_input = landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao);
-    // v3 (P-4.31): Bewertung nur im WASM-Modul.
-    let bewertet = crate::bewertung::bewerten(&scoring_input);
+    // v3 (P-4.31): Bewertung nur im WASM-Modul. Beim Einreichen die EINE
+    // Rechnung der Einreichung (Codex-Befund zu P-4.40).
+    let bewertet = match rechnung {
+        Some(r) => r.ergebnis.clone(),
+        None => crate::bewertung::bewerten(&landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao)),
+    };
     let computed_sub_scores = bewertet.as_ref().map(|(a, _)| a.teilnoten.clone()).unwrap_or_default();
     let aggregate_master = bewertet.as_ref().and_then(|(a, _)| a.gesamt);
     // Lernpaket AP2: nur wenn die Gesamtnote tatsaechlich gedeckelt ist,
@@ -26518,6 +26558,46 @@ where
 ///
 /// ⚠ Aufrufer dürfen `flight.stats` dabei NICHT halten — die Sperre ist nicht
 /// wiedereintrittsfähig, der Aufruf bliebe für immer stehen.
+/// Ein Eingabe-Dokument: Art, Eingabe, Fenster und — fuer die Landung — das
+/// Ergebnis der Einreichung. `None` = noch zu rechnen (Touch-and-Go).
+type EingabeTeil = (
+    landungs_eingabe::Art,
+    landing_scoring::LandingScoringInput,
+    Vec<TouchdownWindowSample>,
+    Option<Option<(landing_scoring::wasm::Ausgabe, crate::bewertung::Status)>>,
+);
+
+/// Die Eingabe-Dokumente einer Einreichung (P-7.02, P-4.13): erst die
+/// eingefrorenen Touch-and-Go (seq 1 …), dann die letzte Landung. Ohne
+/// Fenster kein Dokument — der Server verlangt mindestens eine Probe (nach
+/// einem Neustart ist es leer). Die Landung traegt Eingabe UND Ergebnis der
+/// Rechnung der Einreichung: Der Server rechnet mit genau dieser Eingabe nach.
+fn eingabe_teile(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    mit_landung: bool,
+    rechnung: PirepRechnung,
+) -> Vec<EingabeTeil> {
+    let mut teile: Vec<EingabeTeil> = stats
+        .aufsetzer_eingefroren
+        .iter()
+        .map(|(e, f)| (landungs_eingabe::Art::TouchAndGo, e.clone(), f.clone(), None))
+        .collect();
+    if mit_landung {
+        if stats.landung_fenster.is_empty() {
+            tracing::info!(pirep_id = %flight.pirep_id, "kein Aufsetzfenster im Speicher — kein Eingabe-Dokument der Landung");
+        } else {
+            teile.push((
+                landungs_eingabe::Art::Landung,
+                rechnung.eingabe,
+                stats.landung_fenster.clone(),
+                Some(rechnung.ergebnis),
+            ));
+        }
+    }
+    teile
+}
+
 fn record_landing_for_filed_flight(
     app: &AppHandle,
     flight: &ActiveFlight,
@@ -26592,6 +26672,9 @@ fn record_landing_for_filed_flight(
         });
         let aircraft_icao = aufgeloest.as_deref();
 
+        // Codex-Befund zu P-4.40: die Rechnung dieser Einreichung — dieselbe,
+        // die phpVMS bekam. Datensatz und Dokument lesen sie.
+        let rechnung = einreichungs_rechnung(flight, stats, effective_arr_icao);
         let record = build_landing_record(
             flight,
             stats,
@@ -26599,29 +26682,12 @@ fn record_landing_for_filed_flight(
             aircraft_icao,
             aircraft_title,
             effective_arr_icao,
+            Some(&rechnung),
             airport_lookup,
         );
         // v3 (P-7.02): Eingabe und Fenster derselben Landung (dieselbe
-        // Eingabe wie der Datensatz). Ohne Fenster kein Dokument — der Server
-        // verlangt mindestens eine Probe (nach einem Neustart ist es leer).
-        // P-4.13: erst die eingefrorenen Touch-and-Go (seq 1 …), dann die
-        // letzte Landung.
-        let mut teile: Vec<(landungs_eingabe::Art, landing_scoring::LandingScoringInput, Vec<TouchdownWindowSample>)> = stats
-            .aufsetzer_eingefroren
-            .iter()
-            .map(|(e, f)| (landungs_eingabe::Art::TouchAndGo, e.clone(), f.clone()))
-            .collect();
-        if record.is_some() {
-            if stats.landung_fenster.is_empty() {
-                tracing::info!(pirep_id = %flight.pirep_id, "kein Aufsetzfenster im Speicher — kein Eingabe-Dokument der Landung");
-            } else {
-                teile.push((
-                    landungs_eingabe::Art::Landung,
-                    landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao),
-                    stats.landung_fenster.clone(),
-                ));
-            }
-        }
+        // Rechnung wie der Datensatz), siehe `eingabe_teile`.
+        let teile = eingabe_teile(flight, stats, record.is_some(), rechnung);
         (record, teile)
     };
     let (record, teile) = record;
@@ -26629,8 +26695,14 @@ fn record_landing_for_filed_flight(
     let konto = crate::live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
     if let (Some(konto), Ok(daten)) = (konto, app.path().app_data_dir()) {
         let mut abgelegt = false;
-        for (i, (art, eingabe, fenster)) in teile.iter().enumerate() {
+        for (i, (art, eingabe, fenster, ergebnis)) in teile.iter().enumerate() {
             let seq = i as u32 + 1;
+            // Touch-and-Go: eigene Landung, eigene Rechnung — ausserhalb der
+            // Sperre. Die Landung bringt ihr Ergebnis aus der Einreichung mit.
+            let ergebnis = match ergebnis {
+                Some(e) => e.clone(),
+                None => crate::bewertung::bewerten(eingabe),
+            };
             let doc = landungs_eingabe::dokument(
                 &flight.pirep_id,
                 seq,
@@ -26638,7 +26710,7 @@ fn record_landing_for_filed_flight(
                 laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
                 eingabe,
                 fenster,
-                &crate::bewertung::bewerten(eingabe),
+                &ergebnis,
             );
             match landungs_eingabe::einreihen(&daten, &konto, &flight.pirep_id, seq, &doc) {
                 Ok(_) => abgelegt = true,
@@ -28956,7 +29028,7 @@ async fn flight_end(
         let effective_arr = divert_to.as_deref().unwrap_or(&flight.arr_airport);
         // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse.
         // Codex-Befund P-4.40: Score, Feld und Notiz aus EINER Bewertung.
-        let (score, mut fields, mut notes) = pirep_bewertete_teile(&flight, &stats, effective_arr);
+        let (score, mut fields, mut notes) = pirep_bewertete_teile(&flight, &mut stats, effective_arr);
         let distance_nm = stats.distance_nm;
         // phpVMS does its own divert bookkeeping — but only if the PIREP carries
         // this custom field. `PirepService::handleDiversion()` looks it up by the
@@ -30000,7 +30072,7 @@ async fn flight_end_manual(
         // manuellen Filen `100` in der Spalte, waehrend Custom-Field und
         // Landungs-Tab "B (acceptable) — 78/100" zeigten.
         // Codex-Befund P-4.40: Score, Feld und Notiz aus EINER Bewertung.
-        let (score, mut fields, mut notes) = pirep_bewertete_teile(&flight, &stats, effective_arr);
+        let (score, mut fields, mut notes) = pirep_bewertete_teile(&flight, &mut stats, effective_arr);
         // Same rule as the regular path: the divert airport travels in the
         // custom field phpVMS keys on (slug `diversion-airport`), never in
         // `arr_airport_id`. One semantic for both filing paths.
@@ -47658,10 +47730,15 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
 /// „vorlaeufig“). Beide Einreichwege bauen deshalb hier.
 fn pirep_bewertete_teile(
     flight: &ActiveFlight,
-    stats: &FlightStats,
+    stats: &mut FlightStats,
     effective_arr_icao: &str,
 ) -> (Option<i32>, HashMap<String, String>, String) {
-    let bewertung = canonical_landing_bewertung(flight, stats, effective_arr_icao);
+    // Frisch je Einreichung; Datensatz, MQTT-PIREP und Dokument lesen sie
+    // danach aus `stats.pirep_rechnung`.
+    let rechnung = pirep_rechnung_bilden(flight, stats, effective_arr_icao);
+    let bewertung = landungs_bewertung_aus(stats, &rechnung.ergebnis);
+    stats.pirep_rechnung = Some(rechnung);
+    let stats = &*stats;
     (
         bewertung.and_then(|b| b.verdict).map(|v| v.numeric),
         build_pirep_fields_mit(flight, stats, effective_arr_icao, bewertung.as_ref()),

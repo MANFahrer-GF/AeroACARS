@@ -164,8 +164,8 @@
 
     /// Derselbe Aufbau wie beim Einreichen (`pirep_bewertete_teile`).
     fn feld_und_notiz(f: &ActiveFlight) -> (Option<String>, String) {
-        let st = f.stats.lock().unwrap();
-        let (_, felder, notiz) = pirep_bewertete_teile(f, &st, "YYYY");
+        let mut st = f.stats.lock().unwrap();
+        let (_, felder, notiz) = pirep_bewertete_teile(f, &mut st, "YYYY");
         (felder.get("Landing Score").cloned(), notiz)
     }
 
@@ -175,9 +175,9 @@
     fn pirep_aufbau_eine_bewertung() {
         let f = fixture();
         mit_landung(&f);
-        let st = f.stats.lock().unwrap();
+        let mut st = f.stats.lock().unwrap();
         aufrufe_zuruecksetzen();
-        let (score, felder, notiz) = pirep_bewertete_teile(&f, &st, "YYYY");
+        let (score, felder, notiz) = pirep_bewertete_teile(&f, &mut st, "YYYY");
         assert_eq!(aufrufe(), 1, "eine Bewertung je PIREP-Aufbau");
         let score = score.expect("Note");
         assert!(felder["Landing Score"].contains(&format!("{score}/100")), "{felder:?}");
@@ -214,6 +214,47 @@
         assert_eq!(feld, None, "Feld leer");
         assert!(!notiz.contains("Grade "), "{notiz}");
         assert!(notiz.contains("Bewertung     nicht bewertet (Modulfehler)"), "{notiz}");
+    }
+
+    /// Codex-Befund zu P-4.40, zweite Runde: je Einreichung EINE
+    /// Modulrechnung fuer alle Abnehmer — phpVMS (Feld, Notiz), MQTT-PIREP,
+    /// Landungsdatensatz und Eingabe-Dokument. Datensatz, PIREP und Dokument
+    /// entstehen erst nach dem Senden; faellt das Paketmodul nur beim Aufbau
+    /// aus, muessen sie trotzdem dasselbe „vorlaeufig“ tragen wie phpVMS. Das
+    /// Dokument traegt genau die Eingabe, zu der sein Ergebnis gehoert.
+    #[test]
+    fn einreichung_eine_rechnung_fuer_alle_abnehmer() {
+        let f = fixture();
+        mit_landung(&f);
+        f.stats.lock().unwrap().landung_fenster =
+            vec![TouchdownWindowSample::from(TelemetrySample::default())];
+        aufrufe_zuruecksetzen();
+        let (_, felder, notiz) = {
+            let _w = erzwingen(Erzwungen::PaketKaputt);
+            let mut st = f.stats.lock().unwrap();
+            pirep_bewertete_teile(&f, &mut st, "YYYY")
+        };
+        // Ab hier rechnet das Paketmodul wieder.
+        let payload = build_pirep_payload(&f, &api_client::FileBody::default(), "YYYY", "YYYY");
+        let st = f.stats.lock().unwrap();
+        let rechnung = einreichungs_rechnung(&f, &st, "YYYY");
+        let record = build_landing_record(&f, &st, None, Some("A321"), None, "YYYY", Some(&rechnung), |_| None)
+            .expect("Datensatz");
+        let teile = eingabe_teile(&f, &st, true, rechnung.clone());
+        let (art, eingabe, fenster, ergebnis) = teile.last().expect("Dokument der Landung");
+        let ergebnis = ergebnis.clone().expect("Ergebnis der Einreichung");
+        let doc = crate::landungs_eingabe::dokument("test-pirep", 1, *art, None, eingabe, fenster, &ergebnis);
+
+        assert_eq!(aufrufe(), 1, "eine Modulrechnung je Einreichung");
+        assert!(felder.contains_key("Landing Score"), "{felder:?}");
+        assert!(notiz.contains("Bewertung     vorläufig"), "{notiz}");
+        assert_eq!(payload.bewertung_status.as_deref(), Some("vorlaeufig"), "MQTT-PIREP");
+        assert_eq!(record.bewertung_status.as_deref(), Some("vorlaeufig"), "Datensatz");
+        assert_eq!(doc["ergebnis"]["bewertung_status"], "vorlaeufig", "Dokument");
+        // Eingabe und Ergebnis des Dokuments aus derselben Rechnung.
+        assert_eq!(eingabe, &rechnung.eingabe);
+        assert_eq!(ergebnis, rechnung.ergebnis);
+        assert_eq!(doc["eingabe"]["eingang"]["landung"], serde_json::to_value(&rechnung.eingabe).unwrap());
     }
 
     // ── Abgabe-Sperre: haengt nicht vom Modul ab ────────────────────────
