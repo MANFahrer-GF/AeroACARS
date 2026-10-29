@@ -69,6 +69,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// (Tests `landungs_eingabe::tests`).
 /// — plus Codex 29.10. zum Upload: Dokument nur mit Aufsetzfenster,
 /// Bewertung dafuer ausserhalb der Sperre, Warteschlange je Konto.
+/// — plus P-4.13: Feld `aufsetzer_eingefroren`, `aufsetzer_einfrieren` vor
+/// beiden Aufrufen von `landung_beim_wegsteigen_abschliessen`; beim Abgeben
+/// je Aufsetzer ein Dokument (seq 1 …, Touch-and-Go vor der Landung); Tests
+/// `aufsetzer_einfrieren_tests`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -79,4 +83,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "f718edc4dace9635840d26774409adbabe0f173831cf97fc11269f97e5d04a0a";
+const HASH_VOR_DER_ZERLEGUNG: &str = "09a75628621167b262485a2efec5f1ccecb0341fdc30e84ec28eb143d65bac9d";

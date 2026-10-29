@@ -33,12 +33,15 @@ const SCHEMA: u32 = 1;
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Art {
     Landung,
+    /// P-4.13: Aufsetzen mit Wegsteigen (eingefroren vor dem Zuruecksetzen).
+    TouchAndGo,
 }
 
 impl Art {
     fn text(self) -> &'static str {
         match self {
             Art::Landung => "landung",
+            Art::TouchAndGo => "touch_and_go",
         }
     }
 }

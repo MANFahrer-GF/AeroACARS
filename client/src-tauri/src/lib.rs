@@ -5784,6 +5784,10 @@ struct FlightStats {
     /// v3 (P-4.11, P-7.02): Aufsetzfenster der letzten Landung (17 Kanaele)
     /// fuer das Eingabe-Dokument an live. Nur im Speicher.
     landung_fenster: Vec<TouchdownWindowSample>,
+    /// v3 (P-4.13): Eingabe und Fenster jedes Touch-and-Go, eingefroren VOR
+    /// dem Zuruecksetzen der Landungsfelder; beim Abgeben je ein Dokument
+    /// (seq 1 …), die letzte Landung bekommt die naechste Nummer.
+    aufsetzer_eingefroren: Vec<(landing_scoring::LandingScoringInput, Vec<TouchdownWindowSample>)>,
     /// v1.6.12 — die letzten Telemetrieproben fuer die Replay-Erkennung.
     ///
     /// Der Aufsetzpuffer taugt dafuer nicht: er reicht nur 2,5 s vor den
@@ -26511,41 +26515,49 @@ fn record_landing_for_filed_flight(
         // v3 (P-7.02): Eingabe und Fenster derselben Landung (dieselbe
         // Eingabe wie der Datensatz). Ohne Fenster kein Dokument — der Server
         // verlangt mindestens eine Probe (nach einem Neustart ist es leer).
-        let teile = record
-            .as_ref()
-            .filter(|_| !stats.landung_fenster.is_empty())
-            .map(|_| {
-                (
+        // P-4.13: erst die eingefrorenen Touch-and-Go (seq 1 …), dann die
+        // letzte Landung.
+        let mut teile: Vec<(landungs_eingabe::Art, landing_scoring::LandingScoringInput, Vec<TouchdownWindowSample>)> = stats
+            .aufsetzer_eingefroren
+            .iter()
+            .map(|(e, f)| (landungs_eingabe::Art::TouchAndGo, e.clone(), f.clone()))
+            .collect();
+        if record.is_some() {
+            if stats.landung_fenster.is_empty() {
+                tracing::info!(pirep_id = %flight.pirep_id, "kein Aufsetzfenster im Speicher — kein Eingabe-Dokument der Landung");
+            } else {
+                teile.push((
+                    landungs_eingabe::Art::Landung,
                     landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao),
                     stats.landung_fenster.clone(),
-                )
-            });
-        if record.is_some() && teile.is_none() {
-            tracing::info!(pirep_id = %flight.pirep_id, "kein Aufsetzfenster im Speicher — kein Eingabe-Dokument");
+                ));
+            }
         }
         (record, teile)
     };
     let (record, teile) = record;
-    // Bewertung fuer das Dokument AUSSERHALB der Sperre der Flugdaten.
-    let dokument = teile.map(|(eingabe, fenster)| {
-        let ergebnis = crate::bewertung::bewerten(&eingabe);
-        landungs_eingabe::dokument(
-            &flight.pirep_id,
-            1,
-            landungs_eingabe::Art::Landung,
-            laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
-            &eingabe,
-            &fenster,
-            &ergebnis,
-        )
-    });
+    // Bewertung fuer die Dokumente AUSSERHALB der Sperre der Flugdaten.
     let konto = crate::live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
-    if let (Some(doc), Some(konto), Ok(daten)) = (dokument, konto, app.path().app_data_dir()) {
-        match landungs_eingabe::einreihen(&daten, &konto, &flight.pirep_id, 1, &doc) {
-            Ok(_) => {
-                tauri::async_runtime::spawn(landungs_eingabe::nachsenden(daten));
+    if let (Some(konto), Ok(daten)) = (konto, app.path().app_data_dir()) {
+        let mut abgelegt = false;
+        for (i, (art, eingabe, fenster)) in teile.iter().enumerate() {
+            let seq = i as u32 + 1;
+            let doc = landungs_eingabe::dokument(
+                &flight.pirep_id,
+                seq,
+                *art,
+                laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
+                eingabe,
+                fenster,
+                &crate::bewertung::bewerten(eingabe),
+            );
+            match landungs_eingabe::einreihen(&daten, &konto, &flight.pirep_id, seq, &doc) {
+                Ok(_) => abgelegt = true,
+                Err(e) => tracing::warn!(error = %e, seq, "Eingabe-Dokument nicht ablegbar"),
             }
-            Err(e) => tracing::warn!(error = %e, "Eingabe-Dokument nicht ablegbar"),
+        }
+        if abgelegt {
+            tauri::async_runtime::spawn(landungs_eingabe::nachsenden(daten));
         }
     }
 
@@ -28400,6 +28412,9 @@ mod rearm_background_task_guards_tests;
 #[cfg(test)]
 #[path = "tests_lib/positions_idempotenz_tests.rs"]
 mod positions_idempotenz_tests;
+#[cfg(test)]
+#[path = "tests_lib/aufsetzer_einfrieren_tests.rs"]
+mod aufsetzer_einfrieren_tests;
 
 /// File the active PIREP with computed final stats. Refuses to file if any
 /// of the minimum-quality checks in `validate_for_filing` fail — the UI then
@@ -35789,6 +35804,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // Aufprall Sekunden nach einem Hopser (JGXrGwlwa4aOGZpn,
                     // siehe `touchdown_dump_faellig`) — der Dump selbst faellt
                     // weiter sofort bei 100 ft.
+                    aufsetzer_einfrieren(&flight, &mut s, &snap);
                     landung_beim_wegsteigen_abschliessen(&mut s, &snap, jetzt);
                     tracing::info!(
                         pirep_id = %flight.pirep_id,
@@ -43954,6 +43970,21 @@ fn steigflug_gehalten(seit: &mut Option<DateTime<Utc>>, steigt: bool, now: DateT
 /// JGXrGwlwa4aOGZpn) und von `step_flight_at` (nach der Haltezeit, wenn kein
 /// Sampler laeuft). Wer zuerst kommt, schliesst ab; danach ist keine Landung
 /// mehr offen.
+/// v3 (P-4.13): Eingabe-Dokument eines Touch-and-Go einfrieren, bevor
+/// `landung_beim_wegsteigen_abschliessen` die Landungsfelder zuruecksetzt.
+/// Ohne Fenster nichts (der Server verlangt mindestens eine Probe).
+fn aufsetzer_einfrieren(flight: &ActiveFlight, stats: &mut FlightStats, snap: &SimSnapshot) {
+    if stats.landung_fenster.is_empty() {
+        return;
+    }
+    let muster = stats.aufgeloestes_muster.clone().or_else(|| {
+        sim_core::muster_aufloesen(snap.aircraft_icao.as_deref(), &flight.aircraft_icao, snap.aircraft_title.as_deref())
+    });
+    let eingabe = landungs_bewertungseingabe(flight, stats, muster.as_deref(), &flight.arr_airport);
+    let fenster = std::mem::take(&mut stats.landung_fenster);
+    stats.aufsetzer_eingefroren.push((eingabe, fenster));
+}
+
 fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
     // Nach dem Abrollen ist die Landung fertig. Ein Slew, ein Neuladen oder
     // ein Versetzen in die Hoehe danach ist kein Touch-and-Go — hier und
@@ -47215,6 +47246,7 @@ fn step_flight_at(
     if wegsteigen_nach_aufsetzen(&stats, snap, now) {
         let seit = *stats.touch_and_go_pending_since.get_or_insert(now);
         if (now - seit).num_seconds() >= crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_dwell_secs.wert {
+            aufsetzer_einfrieren(flight, &mut stats, snap);
             landung_beim_wegsteigen_abschliessen(&mut stats, snap, now);
         }
     } else {
