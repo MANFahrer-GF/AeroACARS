@@ -1,0 +1,24 @@
+# AeroACARS 3.0 — Ausloeser fuer den OurAirports-Wochenlauf (P-9.40 bis P-9.43).
+#
+# `schedule` feuert nur auf dem Standardzweig (main). Der Wochenlauf selbst
+# (.github/workflows/ourairports.yml) liegt auf v3; dieser Workflow stoesst
+# ihn montags 04:00 UTC dort an. Sonst nichts.
+
+name: OurAirports-Ausloeser
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  ausloesen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wochenlauf auf v3 starten
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ourairports.yml --ref v3 --repo "$GITHUB_REPOSITORY"
