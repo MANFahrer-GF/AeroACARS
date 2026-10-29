@@ -31,7 +31,7 @@
 
 use crate::cpdlc::ResponseRequirement;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Direction {
     Uplink,
     Downlink,
@@ -42,7 +42,7 @@ pub enum Direction {
 /// nothing extra — every placeholder in the real table maps to exactly
 /// one of these, so the composer UI (Phase 2/3) can render the right
 /// typed input for each without a fallback "unknown" case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PlaceholderKind {
     Altitude,
     Speed,
@@ -124,15 +124,15 @@ pub enum ElementError {
 /// catalog. Order only matters for [`find`]'s first-match semantics,
 /// and the two sources never share an id (see the module docs).
 pub fn um_table() -> impl Iterator<Item = &'static ElementSpec> {
-    crate::elements_data::HOPPIE_UM_TABLE
+    crate::elements_data::elemente()
         .iter()
-        .chain(crate::elements_data::GOLD_UM_TABLE.iter())
+        .filter(|e| e.direction == Direction::Uplink)
 }
 
 pub fn dm_table() -> impl Iterator<Item = &'static ElementSpec> {
-    crate::elements_data::HOPPIE_DM_TABLE
+    crate::elements_data::elemente()
         .iter()
-        .chain(crate::elements_data::GOLD_DM_TABLE.iter())
+        .filter(|e| e.direction == Direction::Downlink)
 }
 
 /// Look up an [`ElementSpec`] by id across both directions' tables.

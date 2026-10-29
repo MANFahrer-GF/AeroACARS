@@ -62,7 +62,7 @@ jobs:
             --generation "${{ steps.gen.outputs.generation }}" \
             --erstellt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --repo-commit "${{ github.sha }}" \
-            --requires ourairports-1,grenzwerte-1,xplane-profile-1
+            --requires ourairports-1,grenzwerte-1,xplane-profile-1,cpdlc-1
       - name: Signieren
         id: signieren
         env:

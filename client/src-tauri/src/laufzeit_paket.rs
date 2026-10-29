@@ -23,11 +23,12 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
 const XPLANE_PROFILE: &str = "profile/xplane.json";
+const CPDLC: &str = "tabellen/cpdlc.json";
 
 /// Alles, was aus dem Laufzeit-Paket kommt, als EIN Stand (P-3.02): Er wird
 /// genau einmal je Programmlauf festgelegt — vollstaendig aus dem Paket oder
@@ -41,6 +42,8 @@ pub(crate) struct AktiverStand {
     /// X-Plane-Flugzeugprofile; `sim-xplane` liest sie ueber die beim Start
     /// angemeldete Quelle von hier (keine eigene Sperre im Crate).
     pub xplane_profile: &'static [sim_xplane::XplaneAircraftProfile],
+    /// Hoppie-/CPDLC-Elementtabelle, ebenso ueber eine angemeldete Quelle.
+    pub cpdlc: &'static [hoppie_protocol::elements::ElementSpec],
 }
 
 static STAND: OnceLock<AktiverStand> = OnceLock::new();
@@ -66,6 +69,7 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         airports: text(AIRPORTS)?,
         grenzwerte: crate::grenzwerte::lesen(|x| p.datei(x).ok())?,
         xplane_profile: sim_xplane::profile_lesen(text(XPLANE_PROFILE)?)?,
+        cpdlc: hoppie_protocol::elements_data::tabelle_lesen(text(CPDLC)?)?,
     })
 }
 
@@ -76,9 +80,8 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         runways: crate::runway::eingebaut_runways_csv(),
         airports: crate::runway::eingebaut_airports_csv(),
         grenzwerte: crate::grenzwerte::lesen(|x| eingebaute_datei(x).map(<[u8]>::to_vec))?,
-        xplane_profile: sim_xplane::profile_lesen(
-            std::str::from_utf8(eingebaute_datei(XPLANE_PROFILE).ok_or(XPLANE_PROFILE)?).map_err(|e| e.to_string())?,
-        )?,
+        xplane_profile: sim_xplane::profile_lesen(eingebauter_text(XPLANE_PROFILE)?)?,
+        cpdlc: hoppie_protocol::elements_data::tabelle_lesen(eingebauter_text(CPDLC)?)?,
     })
 }
 
@@ -114,6 +117,10 @@ mod eingebettet {
 }
 
 /// Eine Datei des eingebauten Stands (Inhalt von `bundle/` beim Bau).
+fn eingebauter_text(pfad: &str) -> Result<&'static str, String> {
+    std::str::from_utf8(eingebaute_datei(pfad).ok_or(pfad)?).map_err(|e| format!("{pfad}: {e}"))
+}
+
 pub(crate) fn eingebaute_datei(pfad: &str) -> Option<&'static [u8]> {
     eingebettet::DATEIEN.iter().find(|(p, _)| *p == pfad).map(|(_, b)| *b)
 }
@@ -175,6 +182,7 @@ pub(crate) fn starten(app_daten: &Path) {
 fn starten_einmal(app_daten: &Path) {
     // Vor allem anderen: X-Plane-Profile kommen ab jetzt aus DIESEM Stand.
     sim_xplane::profile_quelle_setzen(|| stand().xplane_profile);
+    hoppie_protocol::elements_data::tabelle_quelle_setzen(|| stand().cpdlc);
     let pin = pin_des_offenen_flugs(app_daten);
     let eingebaut = eingebaut();
     let ergebnis = Ablage::oeffnen(app_daten.join("laufzeit-paket"))
@@ -376,6 +384,8 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
     crate::grenzwerte::lesen(|pfad| p.datei(pfad).ok())?;
     let profile = p.datei(XPLANE_PROFILE).map_err(|e| e.to_string())?;
     sim_xplane::profile_pruefen(std::str::from_utf8(&profile).map_err(|e| e.to_string())?)?;
+    let cpdlc = p.datei(CPDLC).map_err(|e| e.to_string())?;
+    hoppie_protocol::elements_data::tabelle_pruefen(std::str::from_utf8(&cpdlc).map_err(|e| e.to_string())?)?;
     for (pfad, kopf) in [
         (RUNWAYS, "\"id\",\"airport_ref\",\"airport_ident\""),
         (AIRPORTS, "ident,type,latitude_deg,longitude_deg"),
@@ -425,6 +435,12 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     fn eingebaute_xplane_profile_sind_die_des_crates() {
         assert_eq!(eingebaute_datei(XPLANE_PROFILE).unwrap(), sim_xplane::PROFILE_EINGEBAUT.as_bytes());
         assert_eq!(stand().xplane_profile.len(), sim_xplane::profile_lesen(sim_xplane::PROFILE_EINGEBAUT).unwrap().len());
+    }
+
+    #[test]
+    fn eingebaute_cpdlc_tabelle_ist_die_des_crates() {
+        assert_eq!(eingebaute_datei(CPDLC).unwrap(), hoppie_protocol::elements_data::EINGEBAUT.as_bytes());
+        assert_eq!(stand().cpdlc.len(), hoppie_protocol::elements_data::tabelle_lesen(hoppie_protocol::elements_data::EINGEBAUT).unwrap().len());
     }
 
     #[test]

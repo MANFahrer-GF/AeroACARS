@@ -1,0 +1,2630 @@
+{
+  "format": 1,
+  "notiz": [
+    "UM/DM-Elemente nach ICAO GOLD, uebertragen aus skiselkov/libcpdlc cpdlc_msg_infos[] (src/cpdlc_infos.c, MIT); dazu die Hoppie-eigenen Logon-/Logoff-Zeilen ohne GOLD-Entsprechung.",
+    "Reihenfolge: Hoppie-UM, GOLD-UM, Hoppie-DM, GOLD-DM (erste passende Zeile gewinnt). Platzhalter @1, @2 ... sind die eigene Syntax des Clients."
+  ],
+  "elemente": [
+    {
+      "id": "UM_LOGON_ACCEPTED",
+      "direction": "Uplink",
+      "template": "LOGON ACCEPTED",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM0",
+      "direction": "Uplink",
+      "template": "UNABLE",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM1",
+      "direction": "Uplink",
+      "template": "STANDBY",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM2",
+      "direction": "Uplink",
+      "template": "REQUEST DEFERRED",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM3",
+      "direction": "Uplink",
+      "template": "ROGER",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM4",
+      "direction": "Uplink",
+      "template": "AFFIRM",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM5",
+      "direction": "Uplink",
+      "template": "NEGATIVE",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM6",
+      "direction": "Uplink",
+      "template": "EXPECT @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM7",
+      "direction": "Uplink",
+      "template": "EXPECT CLIMB AT @1",
+      "placeholders": [
+        "Time"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM8",
+      "direction": "Uplink",
+      "template": "EXPECT CLIMB AT @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM9",
+      "direction": "Uplink",
+      "template": "EXPECT DESCENT AT @1",
+      "placeholders": [
+        "Time"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM10",
+      "direction": "Uplink",
+      "template": "EXPECT DESCENT AT @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM11",
+      "direction": "Uplink",
+      "template": "EXPECT CRUISE CLIMB AT @1",
+      "placeholders": [
+        "Time"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM12",
+      "direction": "Uplink",
+      "template": "EXPECT CRUISE CLIMB AT @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM13",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT CLIMB TO @2",
+      "placeholders": [
+        "Time",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM14",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT CLIMB TO @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM15",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT DESCENT TO @2",
+      "placeholders": [
+        "Time",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM16",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT DESCENT TO @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM17",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT CRUISE CLIMB TO @2",
+      "placeholders": [
+        "Time",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM18",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT CRUISE CLIMB TO @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM19",
+      "direction": "Uplink",
+      "template": "MAINTAIN @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM20",
+      "direction": "Uplink",
+      "template": "CLIMB TO AND MAINTAIN @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM21",
+      "direction": "Uplink",
+      "template": "AT @1 CLIMB TO AND MAINTAIN @2",
+      "placeholders": [
+        "Time",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM22",
+      "direction": "Uplink",
+      "template": "AT @1 CLIMB TO AND MAINTAIN @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM23",
+      "direction": "Uplink",
+      "template": "DESCEND TO AND MAINTAIN @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM24",
+      "direction": "Uplink",
+      "template": "AT @1 DESCEND TO AND MAINTAIN @2",
+      "placeholders": [
+        "Time",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM25",
+      "direction": "Uplink",
+      "template": "AT @1 DESCEND TO AND MAINTAIN @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM26",
+      "direction": "Uplink",
+      "template": "CLIMB TO REACH @1 BY @2",
+      "placeholders": [
+        "Altitude",
+        "Time"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM27",
+      "direction": "Uplink",
+      "template": "CLIMB TO REACH @1 BY @2",
+      "placeholders": [
+        "Altitude",
+        "Position"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM28",
+      "direction": "Uplink",
+      "template": "DESCEND TO REACH @1 BY @2",
+      "placeholders": [
+        "Altitude",
+        "Time"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM29",
+      "direction": "Uplink",
+      "template": "DESCEND TO REACH @1 BY @2",
+      "placeholders": [
+        "Altitude",
+        "Position"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM30",
+      "direction": "Uplink",
+      "template": "MAINTAIN BLOCK @1 TO @2",
+      "placeholders": [
+        "Altitude",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM31",
+      "direction": "Uplink",
+      "template": "CLIMB TO AND MAINTAIN BLOCK @1 TO @2",
+      "placeholders": [
+        "Altitude",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM32",
+      "direction": "Uplink",
+      "template": "DESCEND TO AND MAINTAIN BLOCK @1 TO @2",
+      "placeholders": [
+        "Altitude",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM33",
+      "direction": "Uplink",
+      "template": "CRUISE @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM34",
+      "direction": "Uplink",
+      "template": "CRUISE CLIMB TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM35",
+      "direction": "Uplink",
+      "template": "CRUISE CLIMB ABOVE @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM36",
+      "direction": "Uplink",
+      "template": "EXPEDITE CLIMB TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM37",
+      "direction": "Uplink",
+      "template": "EXPEDITE DESCEND TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM38",
+      "direction": "Uplink",
+      "template": "IMMEDIATELY CLIMB TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM39",
+      "direction": "Uplink",
+      "template": "IMMEDIATELY DESCEND TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM40",
+      "direction": "Uplink",
+      "template": "IMMEDIATELY STOP CLIMB AT @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM41",
+      "direction": "Uplink",
+      "template": "IMMEDIATELY STOP DESCENT AT @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM42",
+      "direction": "Uplink",
+      "template": "EXPECT TO CROSS @1 AT @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM43",
+      "direction": "Uplink",
+      "template": "EXPECT TO CROSS @1 AT @2 OR ABOVE",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM44",
+      "direction": "Uplink",
+      "template": "EXPECT TO CROSS @1 AT @2 OR BELOW",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM45",
+      "direction": "Uplink",
+      "template": "EXPECT TO CROSS @1 AT AND MAINTAIN @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM46",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM47",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT OR ABOVE @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM48",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT OR BELOW @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM49",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT AND MAINTAIN @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM50",
+      "direction": "Uplink",
+      "template": "CROSS @1 BETWEEN @2 AND @3",
+      "placeholders": [
+        "Position",
+        "Altitude",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM51",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT @2",
+      "placeholders": [
+        "Position",
+        "Time"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM52",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT OR BEFORE @2",
+      "placeholders": [
+        "Position",
+        "Time"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM53",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT OR AFTER @2",
+      "placeholders": [
+        "Position",
+        "Time"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM54",
+      "direction": "Uplink",
+      "template": "CROSS @1 BETWEEN @2 AND @3",
+      "placeholders": [
+        "Position",
+        "Time",
+        "Time"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM55",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT @2",
+      "placeholders": [
+        "Position",
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM56",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT OR LESS THAN @2",
+      "placeholders": [
+        "Position",
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM57",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT OR GREATER THAN @2",
+      "placeholders": [
+        "Position",
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM58",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT @2 AT @3",
+      "placeholders": [
+        "Position",
+        "Time",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM59",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT OR BEFORE @2 AT @3",
+      "placeholders": [
+        "Position",
+        "Time",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM60",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT OR AFTER @2 AT @3",
+      "placeholders": [
+        "Position",
+        "Time",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM61",
+      "direction": "Uplink",
+      "template": "CROSS @1 AT AND MAINTAIN @2 AT @3",
+      "placeholders": [
+        "Position",
+        "Altitude",
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM62",
+      "direction": "Uplink",
+      "template": "AT @1 CROSS @2 AT AND MAINTAIN @3",
+      "placeholders": [
+        "Time",
+        "Position",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM63",
+      "direction": "Uplink",
+      "template": "AT @1 CROSS @2 AT AND MAINTAIN @3 AT @4",
+      "placeholders": [
+        "Time",
+        "Position",
+        "Altitude",
+        "Speed"
+      ],
+      "response": "WilcoUnable",
+      "notiz": [
+        "Patched: libcpdlc's .text lacked the 4th (speed) placeholder its .args declares; phrasing mirrors sibling UM61."
+      ]
+    },
+    {
+      "id": "UM64",
+      "direction": "Uplink",
+      "template": "OFFSET @1 @2 OF ROUTE",
+      "placeholders": [
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM65",
+      "direction": "Uplink",
+      "template": "AT @1 OFFSET @2 @3 OF ROUTE",
+      "placeholders": [
+        "Position",
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM66",
+      "direction": "Uplink",
+      "template": "AT @1 OFFSET @2 @3 OF ROUTE",
+      "placeholders": [
+        "Time",
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM67",
+      "direction": "Uplink",
+      "template": "PROCEED BACK ON ROUTE",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM68",
+      "direction": "Uplink",
+      "template": "REJOIN ROUTE BY @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM69",
+      "direction": "Uplink",
+      "template": "REJOIN ROUTE BY @1",
+      "placeholders": [
+        "Time"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM70",
+      "direction": "Uplink",
+      "template": "EXPECT BACK ON ROUTE BY @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM71",
+      "direction": "Uplink",
+      "template": "EXPECT BACK ON ROUTE BY @1",
+      "placeholders": [
+        "Time"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM72",
+      "direction": "Uplink",
+      "template": "RESUME OWN NAVIGATION",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM73",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "PdcData"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM74",
+      "direction": "Uplink",
+      "template": "PROCEED DIRECT TO @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM75",
+      "direction": "Uplink",
+      "template": "WHEN ABLE PROCEED DIRECT TO @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM76",
+      "direction": "Uplink",
+      "template": "AT @1 PROCEED DIRECT TO @2",
+      "placeholders": [
+        "Time",
+        "Position"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM77",
+      "direction": "Uplink",
+      "template": "AT @1 PROCEED DIRECT TO @2",
+      "placeholders": [
+        "Position",
+        "Position"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM78",
+      "direction": "Uplink",
+      "template": "AT @1 PROCEED DIRECT TO @2",
+      "placeholders": [
+        "Altitude",
+        "Position"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM79",
+      "direction": "Uplink",
+      "template": "CLEARED TO @1 VIA @2",
+      "placeholders": [
+        "Position",
+        "Route"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM80",
+      "direction": "Uplink",
+      "template": "CLEARED @1",
+      "placeholders": [
+        "Route"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM81",
+      "direction": "Uplink",
+      "template": "CLEARED @1",
+      "placeholders": [
+        "Procedure"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM82",
+      "direction": "Uplink",
+      "template": "CLEARED TO DEVIATE UP TO @1 @2",
+      "placeholders": [
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM83",
+      "direction": "Uplink",
+      "template": "AT @1 CLEARED @2",
+      "placeholders": [
+        "Position",
+        "Route"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM84",
+      "direction": "Uplink",
+      "template": "AT @1 CLEARED @2",
+      "placeholders": [
+        "Position",
+        "Procedure"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM85",
+      "direction": "Uplink",
+      "template": "EXPECT @1",
+      "placeholders": [
+        "Route"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM86",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT @2",
+      "placeholders": [
+        "Position",
+        "Route"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM87",
+      "direction": "Uplink",
+      "template": "EXPECT DIRECT TO @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM88",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT DIRECT TO @2",
+      "placeholders": [
+        "Position",
+        "Position"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM89",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT DIRECT TO @2",
+      "placeholders": [
+        "Time",
+        "Position"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM90",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT DIRECT TO @2",
+      "placeholders": [
+        "Altitude",
+        "Position"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM91",
+      "direction": "Uplink",
+      "template": "HOLD AT @1 MAINTAIN @2 INBOUND TRACK @3 @4 TURN @5 LEG",
+      "placeholders": [
+        "Position",
+        "Altitude",
+        "Degrees",
+        "LateralDirection",
+        "LegType"
+      ],
+      "response": "WilcoUnable",
+      "notiz": [
+        "Patched: libcpdlc's .text lacked 3 trailing placeholders its .args declares; standard holding-pattern phrasing."
+      ]
+    },
+    {
+      "id": "UM92",
+      "direction": "Uplink",
+      "template": "HOLD AT @1 AS PUBLISHED MAINTAIN @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM93",
+      "direction": "Uplink",
+      "template": "EXPECT FURTHER CLEARANCE AT @1",
+      "placeholders": [
+        "Time"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM94",
+      "direction": "Uplink",
+      "template": "TURN @1 HEADING @2",
+      "placeholders": [
+        "LateralDirection",
+        "Degrees"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM95",
+      "direction": "Uplink",
+      "template": "TURN @1 GROUND TRACK @2",
+      "placeholders": [
+        "LateralDirection",
+        "Degrees"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM96",
+      "direction": "Uplink",
+      "template": "FLY PRESENT HEADING",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM97",
+      "direction": "Uplink",
+      "template": "AT @1 FLY HEADING @2",
+      "placeholders": [
+        "Position",
+        "Degrees"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM98",
+      "direction": "Uplink",
+      "template": "IMMEDIATELY TURN @1 HEADING @2",
+      "placeholders": [
+        "LateralDirection",
+        "Degrees"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM99",
+      "direction": "Uplink",
+      "template": "EXPECT @1",
+      "placeholders": [
+        "Procedure"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM100",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT @2",
+      "placeholders": [
+        "Time",
+        "Speed"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM101",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT @2",
+      "placeholders": [
+        "Position",
+        "Speed"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM102",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT @2",
+      "placeholders": [
+        "Altitude",
+        "Speed"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM103",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT @2 TO @3",
+      "placeholders": [
+        "Time",
+        "Speed",
+        "Speed"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM104",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT @2 TO @3",
+      "placeholders": [
+        "Position",
+        "Speed",
+        "Speed"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM105",
+      "direction": "Uplink",
+      "template": "AT @1 EXPECT @2 TO @3",
+      "placeholders": [
+        "Altitude",
+        "Speed",
+        "Speed"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM106",
+      "direction": "Uplink",
+      "template": "MAINTAIN @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM107",
+      "direction": "Uplink",
+      "template": "MAINTAIN PRESENT SPEED",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM108",
+      "direction": "Uplink",
+      "template": "MAINTAIN @1 OR GREATER",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM109",
+      "direction": "Uplink",
+      "template": "MAINTAIN @1 OR LESS",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM110",
+      "direction": "Uplink",
+      "template": "MAINTAIN @1 TO @2",
+      "placeholders": [
+        "Speed",
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM111",
+      "direction": "Uplink",
+      "template": "INCREASE SPEED TO @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM112",
+      "direction": "Uplink",
+      "template": "INCREASE SPEED TO @1 OR GREATER",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM113",
+      "direction": "Uplink",
+      "template": "REDUCE SPEED TO @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM114",
+      "direction": "Uplink",
+      "template": "REDUCE SPEED TO @1 OR LESS",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM115",
+      "direction": "Uplink",
+      "template": "DO NOT EXCEED @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM116",
+      "direction": "Uplink",
+      "template": "RESUME NORMAL SPEED",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM117",
+      "direction": "Uplink",
+      "template": "CONTACT @1 @2",
+      "placeholders": [
+        "IcaoName",
+        "Frequency"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM118",
+      "direction": "Uplink",
+      "template": "AT @1 CONTACT @2 @3",
+      "placeholders": [
+        "Position",
+        "IcaoName",
+        "Frequency"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM119",
+      "direction": "Uplink",
+      "template": "AT @1 CONTACT @2 @3",
+      "placeholders": [
+        "Time",
+        "IcaoName",
+        "Frequency"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM120",
+      "direction": "Uplink",
+      "template": "MONITOR @1 @2",
+      "placeholders": [
+        "IcaoName",
+        "Frequency"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM121",
+      "direction": "Uplink",
+      "template": "AT @1 MONITOR @2 @3",
+      "placeholders": [
+        "Position",
+        "IcaoName",
+        "Frequency"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM122",
+      "direction": "Uplink",
+      "template": "AT @1 CONTACT @2 @3",
+      "placeholders": [
+        "Time",
+        "IcaoName",
+        "Frequency"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM123",
+      "direction": "Uplink",
+      "template": "SQUAWK @1",
+      "placeholders": [
+        "Squawk"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM124",
+      "direction": "Uplink",
+      "template": "STOP SQUAWK",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM125",
+      "direction": "Uplink",
+      "template": "SQUAWK ALTITUDE",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM126",
+      "direction": "Uplink",
+      "template": "STOP ALTITUDE SQUAWK",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM127",
+      "direction": "Uplink",
+      "template": "REPORT BACK ON ROUTE",
+      "placeholders": [],
+      "response": "Roger"
+    },
+    {
+      "id": "UM128",
+      "direction": "Uplink",
+      "template": "REPORT LEAVING @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM129",
+      "direction": "Uplink",
+      "template": "REPORT LEVEL @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM130",
+      "direction": "Uplink",
+      "template": "REPORT PASSING @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM131",
+      "direction": "Uplink",
+      "template": "REPORT REMAINING FUEL AND SOULS ON BOARD",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM132",
+      "direction": "Uplink",
+      "template": "CONFIRM POSITION",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM133",
+      "direction": "Uplink",
+      "template": "CONFIRM ALTITUDE",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM134",
+      "direction": "Uplink",
+      "template": "CONFIRM SPEED",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM135",
+      "direction": "Uplink",
+      "template": "CONFIRM ASSIGNED ALTITUDE",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM136",
+      "direction": "Uplink",
+      "template": "CONFIRM ASSIGNED SPEED",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM137",
+      "direction": "Uplink",
+      "template": "CONFIRM ASSIGNED ROUTE",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM138",
+      "direction": "Uplink",
+      "template": "CONFIRM TIME OVER REPORTED WAYPOINT",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM139",
+      "direction": "Uplink",
+      "template": "CONFIRM REPORTED WAYPOINT",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM140",
+      "direction": "Uplink",
+      "template": "CONFIRM NEXT WAYPOINT",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM141",
+      "direction": "Uplink",
+      "template": "CONFIRM NEXT WAYPOINT ETA",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM142",
+      "direction": "Uplink",
+      "template": "CONFIRM ENSUING WAYPOINT",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM143",
+      "direction": "Uplink",
+      "template": "CONFIRM REQUEST",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM144",
+      "direction": "Uplink",
+      "template": "CONFIRM SQUAWK",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM145",
+      "direction": "Uplink",
+      "template": "CONFIRM HEADING",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM146",
+      "direction": "Uplink",
+      "template": "CONFIRM GROUND TRACK",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM147",
+      "direction": "Uplink",
+      "template": "REQUEST POSITION REPORT",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM148",
+      "direction": "Uplink",
+      "template": "WHEN CAN YOU ACCEPT @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM149",
+      "direction": "Uplink",
+      "template": "CAN YOU ACCEPT @1 AT @2",
+      "placeholders": [
+        "Altitude",
+        "Position"
+      ],
+      "response": "AffirmNegative"
+    },
+    {
+      "id": "UM150",
+      "direction": "Uplink",
+      "template": "CAN YOU ACCEPT @1 AT @2",
+      "placeholders": [
+        "Altitude",
+        "Time"
+      ],
+      "response": "AffirmNegative"
+    },
+    {
+      "id": "UM151",
+      "direction": "Uplink",
+      "template": "WHEN CAN YOU ACCEPT @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM152",
+      "direction": "Uplink",
+      "template": "WHEN CAN YOU ACCEPT @1 @2 OFFSET",
+      "placeholders": [
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM153",
+      "direction": "Uplink",
+      "template": "ALTIMETER @1",
+      "placeholders": [
+        "AltimeterSetting"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM154",
+      "direction": "Uplink",
+      "template": "RADAR SERVICES TERMINATED",
+      "placeholders": [],
+      "response": "Roger"
+    },
+    {
+      "id": "UM155",
+      "direction": "Uplink",
+      "template": "RADAR CONTACT @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM156",
+      "direction": "Uplink",
+      "template": "RADAR CONTACT LOST",
+      "placeholders": [],
+      "response": "Roger"
+    },
+    {
+      "id": "UM157",
+      "direction": "Uplink",
+      "template": "CHECK STUCK MICROPHONE @1",
+      "placeholders": [
+        "Frequency"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM158",
+      "direction": "Uplink",
+      "template": "ATIS @1",
+      "placeholders": [
+        "AtisCode"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM159",
+      "direction": "Uplink",
+      "template": "ERROR @1",
+      "placeholders": [
+        "ErrorInfo"
+      ],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM160",
+      "direction": "Uplink",
+      "template": "NEXT DATA AUTHORITY @1",
+      "placeholders": [
+        "IcaoId"
+      ],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM161",
+      "direction": "Uplink",
+      "template": "END SERVICE",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM162",
+      "direction": "Uplink",
+      "template": "SERVICE UNAVAILABLE",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM163",
+      "direction": "Uplink",
+      "template": "@1 @2",
+      "placeholders": [
+        "IcaoId",
+        "Tp4Table"
+      ],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM164",
+      "direction": "Uplink",
+      "template": "WHEN READY",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM165",
+      "direction": "Uplink",
+      "template": "THEN",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM166",
+      "direction": "Uplink",
+      "template": "DUE TO TRAFFIC",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM167",
+      "direction": "Uplink",
+      "template": "DUE TO AIRSPACE RESTRICTION",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM168",
+      "direction": "Uplink",
+      "template": "DISREGARD",
+      "placeholders": [],
+      "response": "Roger"
+    },
+    {
+      "id": "UM169",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM170",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM171",
+      "direction": "Uplink",
+      "template": "CLIMB AT @1 MINIMUM",
+      "placeholders": [
+        "VerticalRate"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM172",
+      "direction": "Uplink",
+      "template": "CLIMB AT @1 MAXIMUM",
+      "placeholders": [
+        "VerticalRate"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM173",
+      "direction": "Uplink",
+      "template": "DESCEND AT @1 MINIMUM",
+      "placeholders": [
+        "VerticalRate"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM174",
+      "direction": "Uplink",
+      "template": "DESCEND AT @1 MAXIMUM",
+      "placeholders": [
+        "VerticalRate"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM175",
+      "direction": "Uplink",
+      "template": "REPORT REACHING @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM176",
+      "direction": "Uplink",
+      "template": "MAINTAIN OWN SEPARATION AND VMC",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM177",
+      "direction": "Uplink",
+      "template": "AT PILOTS DISCRETION",
+      "placeholders": [],
+      "response": "Roger"
+    },
+    {
+      "id": "UM179",
+      "direction": "Uplink",
+      "template": "SQUAWK IDENT",
+      "placeholders": [],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM180",
+      "direction": "Uplink",
+      "template": "REPORT REACHING BLOCK @1 TO @2",
+      "placeholders": [
+        "Altitude",
+        "Altitude"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM181",
+      "direction": "Uplink",
+      "template": "REPORT DISTANCE @1 @2",
+      "placeholders": [
+        "ToFrom",
+        "Position"
+      ],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM182",
+      "direction": "Uplink",
+      "template": "CONFIRM ATIS CODE",
+      "placeholders": [],
+      "response": "NoResponseExpected"
+    },
+    {
+      "id": "UM183",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "UM187",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "UM194",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "UM195",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM196",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM197",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM198",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "WilcoUnable"
+    },
+    {
+      "id": "UM199",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "UM201",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "UM202",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "UM203",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "Roger"
+    },
+    {
+      "id": "UM204",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "UM205",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "AffirmNegative"
+    },
+    {
+      "id": "UM206",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "UM207",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "UM208",
+      "direction": "Uplink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM_REQUEST_LOGON",
+      "direction": "Downlink",
+      "template": "REQUEST LOGON",
+      "placeholders": [],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM_LOGOFF",
+      "direction": "Downlink",
+      "template": "LOGOFF",
+      "placeholders": [],
+      "response": "NotRequired",
+      "notiz": [
+        "Ends the CPDLC session with the current facility. Sent on",
+        "disconnect and on app shutdown — leaving a session open means the",
+        "controller still shows the aircraft as connected, and messages",
+        "keep queueing server-side until they all land at once on the next",
+        "start. Wire form per the reference clients: `/data2/{MIN}//N/LOGOFF`."
+      ]
+    },
+    {
+      "id": "DM0",
+      "direction": "Downlink",
+      "template": "WILCO",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM1",
+      "direction": "Downlink",
+      "template": "UNABLE",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM2",
+      "direction": "Downlink",
+      "template": "STANDBY",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM3",
+      "direction": "Downlink",
+      "template": "ROGER",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM4",
+      "direction": "Downlink",
+      "template": "AFFIRM",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM5",
+      "direction": "Downlink",
+      "template": "NEGATIVE",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM6",
+      "direction": "Downlink",
+      "template": "REQUEST @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM7",
+      "direction": "Downlink",
+      "template": "REQUEST BLOCK @1 TO @2",
+      "placeholders": [
+        "Altitude",
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM8",
+      "direction": "Downlink",
+      "template": "REQUEST CRUISE CLIMB TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM9",
+      "direction": "Downlink",
+      "template": "REQUEST CLIMB TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM10",
+      "direction": "Downlink",
+      "template": "REQUEST DESCENT TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM11",
+      "direction": "Downlink",
+      "template": "AT @1 REQUEST CLIMB TO @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM12",
+      "direction": "Downlink",
+      "template": "AT @1 REQUEST DESCENT TO @2",
+      "placeholders": [
+        "Position",
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM13",
+      "direction": "Downlink",
+      "template": "AT @1 REQUEST CLIMB TO @2",
+      "placeholders": [
+        "Time",
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM14",
+      "direction": "Downlink",
+      "template": "AT @1 REQUEST DESCENT TO @2",
+      "placeholders": [
+        "Time",
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM15",
+      "direction": "Downlink",
+      "template": "REQUEST OFFSET @1 @2 OF ROUTE",
+      "placeholders": [
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM16",
+      "direction": "Downlink",
+      "template": "AT @1 REQUEST OFFSET @2 @3 OF ROUTE",
+      "placeholders": [
+        "Position",
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "AnyRequired",
+      "notiz": [
+        "Patched: libcpdlc's .text lacked the trailing direction placeholder; phrasing mirrors sibling UM64."
+      ]
+    },
+    {
+      "id": "DM17",
+      "direction": "Downlink",
+      "template": "AT @1 REQUEST OFFSET @2 @3 OF ROUTE",
+      "placeholders": [
+        "Time",
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "AnyRequired",
+      "notiz": [
+        "Patched: libcpdlc's .text lacked the trailing direction placeholder; phrasing mirrors sibling UM64."
+      ]
+    },
+    {
+      "id": "DM18",
+      "direction": "Downlink",
+      "template": "REQUEST @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM19",
+      "direction": "Downlink",
+      "template": "REQUEST @1 TO @2",
+      "placeholders": [
+        "Speed",
+        "Speed"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM20",
+      "direction": "Downlink",
+      "template": "REQUEST VOICE CONTACT",
+      "placeholders": [],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM21",
+      "direction": "Downlink",
+      "template": "REQUEST VOICE CONTACT ON @1",
+      "placeholders": [
+        "Frequency"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM22",
+      "direction": "Downlink",
+      "template": "REQUEST DIRECT TO @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM23",
+      "direction": "Downlink",
+      "template": "REQUEST @1",
+      "placeholders": [
+        "Procedure"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM24",
+      "direction": "Downlink",
+      "template": "REQUEST @1",
+      "placeholders": [
+        "Route"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM25",
+      "direction": "Downlink",
+      "template": "REQUEST CLEARANCE",
+      "placeholders": [],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM26",
+      "direction": "Downlink",
+      "template": "REQUEST WEATHER DEVIATION TO @1 VIA @2",
+      "placeholders": [
+        "Position",
+        "Route"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM27",
+      "direction": "Downlink",
+      "template": "REQUEST WEATHER DEVIATION UP TO @1 @2",
+      "placeholders": [
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "AnyRequired",
+      "notiz": [
+        "Patched: libcpdlc's .text lacked the trailing direction placeholder; phrasing mirrors sibling UM82."
+      ]
+    },
+    {
+      "id": "DM28",
+      "direction": "Downlink",
+      "template": "LEAVING @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM29",
+      "direction": "Downlink",
+      "template": "CLIMBING TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM30",
+      "direction": "Downlink",
+      "template": "DESCENDING TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM31",
+      "direction": "Downlink",
+      "template": "PASSING @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM32",
+      "direction": "Downlink",
+      "template": "PASSING @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM33",
+      "direction": "Downlink",
+      "template": "PRESENT POSITION @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM34",
+      "direction": "Downlink",
+      "template": "PRESENT SPEED @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM35",
+      "direction": "Downlink",
+      "template": "PRESENT HEADING @1",
+      "placeholders": [
+        "Degrees"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM36",
+      "direction": "Downlink",
+      "template": "PRESENT GROUND TRACK @1",
+      "placeholders": [
+        "Degrees"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM37",
+      "direction": "Downlink",
+      "template": "LEVEL @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM38",
+      "direction": "Downlink",
+      "template": "ASSIGNED ALTITUDE @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM39",
+      "direction": "Downlink",
+      "template": "ASSIGNED SPEED @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM40",
+      "direction": "Downlink",
+      "template": "ASSIGNED ROUTE @1",
+      "placeholders": [
+        "Route"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM41",
+      "direction": "Downlink",
+      "template": "BACK ON ROUTE",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM42",
+      "direction": "Downlink",
+      "template": "NEXT WAYPOINT @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM43",
+      "direction": "Downlink",
+      "template": "NEXT WAYPOINT @1",
+      "placeholders": [
+        "Time"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM44",
+      "direction": "Downlink",
+      "template": "ENSUING WAYPOINT @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM45",
+      "direction": "Downlink",
+      "template": "REPORTED WAYPOINT @1",
+      "placeholders": [
+        "Position"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM46",
+      "direction": "Downlink",
+      "template": "REPORTED WAYPOINT @1",
+      "placeholders": [
+        "Time"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM47",
+      "direction": "Downlink",
+      "template": "SQUAWKING @1",
+      "placeholders": [
+        "Squawk"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM48",
+      "direction": "Downlink",
+      "template": "POSITION REPORT @1",
+      "placeholders": [
+        "PositionReport"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM49",
+      "direction": "Downlink",
+      "template": "WHEN CAN WE EXPECT @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM50",
+      "direction": "Downlink",
+      "template": "WHEN CAN WE EXPECT @1 TO @2",
+      "placeholders": [
+        "Speed",
+        "Speed"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM51",
+      "direction": "Downlink",
+      "template": "WHEN CAN WE EXPECT BACK ON ROUTE",
+      "placeholders": [],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM52",
+      "direction": "Downlink",
+      "template": "WHEN CAN WE EXPECT LOWER ALTITUDE",
+      "placeholders": [],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM53",
+      "direction": "Downlink",
+      "template": "WHEN CAN WE EXPECT HIGHER ALTITUDE",
+      "placeholders": [],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM54",
+      "direction": "Downlink",
+      "template": "WHEN CAN WE EXPECT CRUISE CLIMB TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM55",
+      "direction": "Downlink",
+      "template": "PAN PAN PAN",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM56",
+      "direction": "Downlink",
+      "template": "MAYDAY MAYDAY MAYDAY",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM57",
+      "direction": "Downlink",
+      "template": "@1 OF FUEL REMAINING AND @2 PERSONS ON BOARD",
+      "placeholders": [
+        "TimeDuration",
+        "PersonsOnBoard"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM58",
+      "direction": "Downlink",
+      "template": "CANCEL EMERGENCY",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM59",
+      "direction": "Downlink",
+      "template": "DIVERTING TO @1 VIA @2",
+      "placeholders": [
+        "Position",
+        "Route"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM60",
+      "direction": "Downlink",
+      "template": "OFFSETTING @1 @2 OF ROUTE",
+      "placeholders": [
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM61",
+      "direction": "Downlink",
+      "template": "DESCENDING TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM62",
+      "direction": "Downlink",
+      "template": "ERROR @1",
+      "placeholders": [
+        "ErrorInfo"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM63",
+      "direction": "Downlink",
+      "template": "NOT CURRENT DATA AUTHORITY",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM64",
+      "direction": "Downlink",
+      "template": "@1",
+      "placeholders": [
+        "IcaoId"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM65",
+      "direction": "Downlink",
+      "template": "DUE TO WEATHER",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM66",
+      "direction": "Downlink",
+      "template": "DUE TO AIRCRAFT PERFORMANCE",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM67",
+      "direction": "Downlink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM67b",
+      "direction": "Downlink",
+      "template": "WE CAN ACCEPT @1 AT @2",
+      "placeholders": [
+        "Altitude",
+        "Time"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM67c",
+      "direction": "Downlink",
+      "template": "WE CAN ACCEPT @1 AT @2",
+      "placeholders": [
+        "Speed",
+        "Time"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM67d",
+      "direction": "Downlink",
+      "template": "WE CAN ACCEPT @1 @2 AT @3",
+      "placeholders": [
+        "DistanceOffset",
+        "LateralDirection",
+        "Time"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM67e",
+      "direction": "Downlink",
+      "template": "WE CANNOT ACCEPT @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM67f",
+      "direction": "Downlink",
+      "template": "WE CANNOT ACCEPT @1",
+      "placeholders": [
+        "Speed"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM67g",
+      "direction": "Downlink",
+      "template": "WE CANNOT ACCEPT @1 @2",
+      "placeholders": [
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM67h",
+      "direction": "Downlink",
+      "template": "WHEN CAN WE EXPECT CLIMB TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM67i",
+      "direction": "Downlink",
+      "template": "WHEN CAN WE EXPECT DESCENT TO @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM68",
+      "direction": "Downlink",
+      "template": "@1",
+      "placeholders": [
+        "FreeText"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM69",
+      "direction": "Downlink",
+      "template": "REQUEST VMC DESCENT",
+      "placeholders": [],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM70",
+      "direction": "Downlink",
+      "template": "REQUEST HEADING @1",
+      "placeholders": [
+        "Degrees"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM71",
+      "direction": "Downlink",
+      "template": "REQUEST GROUND TRACK @1",
+      "placeholders": [
+        "Degrees"
+      ],
+      "response": "AnyRequired"
+    },
+    {
+      "id": "DM72",
+      "direction": "Downlink",
+      "template": "REACHING @1",
+      "placeholders": [
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM73",
+      "direction": "Downlink",
+      "template": "@1",
+      "placeholders": [
+        "Version"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM74",
+      "direction": "Downlink",
+      "template": "MAINTAIN OWN SEPARATION AND VMC",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM75",
+      "direction": "Downlink",
+      "template": "AT PILOTS DISCRETION",
+      "placeholders": [],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM76",
+      "direction": "Downlink",
+      "template": "REACHING BLOCK @1 TO @2",
+      "placeholders": [
+        "Altitude",
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM77",
+      "direction": "Downlink",
+      "template": "ASSIGNED BLOCK @1 TO @2",
+      "placeholders": [
+        "Altitude",
+        "Altitude"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM78",
+      "direction": "Downlink",
+      "template": "AT @1 @2 @3 @4",
+      "placeholders": [
+        "Time",
+        "Distance",
+        "ToFrom",
+        "Position"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM79",
+      "direction": "Downlink",
+      "template": "ATIS @1",
+      "placeholders": [
+        "AtisCode"
+      ],
+      "response": "NotRequired"
+    },
+    {
+      "id": "DM80",
+      "direction": "Downlink",
+      "template": "DEVIATING @1 @2 OF ROUTE",
+      "placeholders": [
+        "DistanceOffset",
+        "LateralDirection"
+      ],
+      "response": "NotRequired"
+    }
+  ]
+}
