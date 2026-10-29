@@ -128,9 +128,9 @@ fn radpaket_m(spurweite_m: f64) -> f64 {
 }
 
 /// Der Tabelleneintrag zu einem Typcode — eine Suche für beide Masse.
-fn eintrag(icao: Option<&str>) -> Option<(&'static str, f64, f64)> {
+fn eintrag(icao: Option<&str>) -> Option<Zeile> {
     let icao = icao?.trim().to_ascii_uppercase();
-    TABELLE.iter().find(|(code, _, _)| *code == icao).copied()
+    tabelle().iter().find(|(code, _, _)| *code == icao).copied()
 }
 
 /// ICAO-Typcode → (Spurweite Hauptfahrwerk, Spannweite), beide in Metern.
@@ -162,242 +162,124 @@ fn eintrag(icao: Option<&str>) -> Option<(&'static str, f64, f64)> {
 /// driften auseinander, sobald jemand nur eine davon ergänzt — dieselbe
 /// Fehlerklasse, gegen die §8.4 der Spezifikation eine gemeinsame
 /// Projektionsfunktion vorschreibt. Ein Test hält beide Spalten zusammen.
-const TABELLE: &[(&str, f64, f64)] = &[
-    // ── Airbus ────────────────────────────────────────────────────────
-    ("A318", 7.59, 34.10),
-    ("A319", 7.59, 35.80),
-    ("A320", 7.59, 35.80),
-    ("A321", 7.59, 35.80),
-    ("A19N", 7.59, 35.80),
-    ("A20N", 7.59, 35.80),
-    ("A21N", 7.59, 35.80),
-    ("A332", 10.69, 60.30),
-    ("A333", 10.69, 60.30),
-    ("A338", 10.69, 64.00),
-    ("A339", 10.69, 64.00),
-    ("A342", 10.69, 60.30),
-    ("A343", 10.69, 60.30),
-    ("A345", 12.60, 63.45),
-    ("A346", 12.60, 63.45),
-    ("A359", 10.70, 64.75),
-    ("A35K", 10.70, 64.75),
-    ("A388", 14.30, 79.75),
-    ("BCS1", 6.00, 35.10), // A220-100
-    ("BCS3", 6.00, 35.10), // A220-300
-    // ── Boeing ────────────────────────────────────────────────────────
-    ("B712", 5.03, 28.45),
-    ("B733", 5.23, 28.88),
-    ("B734", 5.23, 28.88),
-    ("B735", 5.23, 28.88),
-    ("B736", 5.72, 34.32),
-    ("B737", 5.72, 34.32),
-    ("B738", 5.72, 34.32),
-    ("B739", 5.72, 34.32),
-    ("B37M", 5.72, 35.92),
-    ("B38M", 5.72, 35.92),
-    ("B39M", 5.72, 35.92),
-    ("B741", 11.00, 59.64),
-    ("B742", 11.00, 59.64),
-    ("B743", 11.00, 59.64),
-    ("B744", 11.00, 64.44),
-    ("B748", 12.60, 68.40),
-    ("B752", 7.32, 38.05),
-    ("B753", 7.32, 38.05),
-    ("B762", 9.30, 47.57),
-    ("B763", 9.30, 47.57),
-    ("B764", 9.30, 51.92),
-    ("B772", 10.97, 60.93),
-    ("B773", 10.97, 60.93),
-    ("B77F", 10.97, 64.80),
-    ("B77L", 10.97, 64.80),
-    ("B77W", 10.97, 64.80),
-    // 777X (Nachtrag 30.09.2026): Spannweite ausgefahren 71,76 m (Wikipedia
-    // „Boeing 777X“ nach Boeing-ACAP; FAA EB 94B: 71,7 m / gefaltet 64,8 m).
-    // Bei der Landung sind die Spitzen ausgefahren. Spur: laut FAA EB 94B
-    // gleiche Taxiway Design Group wie die übrige 777-Klasse; eine eigene
-    // Spurangabe lag nicht vor, daher der 777-Wert.
-    ("B778", 10.97, 71.76),
-    ("B779", 10.97, 71.76),
-    ("B788", 9.75, 60.12),
-    ("B789", 9.75, 60.12),
-    ("B78X", 9.75, 60.12),
-    // ── McDonnell Douglas ─────────────────────────────────────────────
-    ("MD11", 10.70, 51.66), // der MPH-9-Fall
-    ("MD1F", 10.70, 51.66),
-    ("MD82", 5.08, 32.85),
-    ("MD83", 5.08, 32.85),
-    ("MD88", 5.08, 32.85),
-    ("MD90", 5.08, 32.87),
-    // ── Embraer / Bombardier / Regional ───────────────────────────────
-    ("E170", 5.30, 26.00),
-    ("E75L", 5.30, 26.00),
-    ("E75S", 5.30, 26.00),
-    ("E190", 5.30, 28.72),
-    ("E195", 5.30, 28.72),
-    ("E290", 5.30, 33.72),
-    ("E295", 5.30, 35.10),
-    ("CRJ2", 3.54, 21.21),
-    ("CRJ7", 4.24, 23.24),
-    ("CRJ9", 4.24, 24.85),
-    ("CRJX", 4.24, 26.18),
-    ("AT43", 4.10, 24.57),
-    ("AT45", 4.10, 24.57),
-    ("AT72", 4.10, 27.05),
-    ("AT76", 4.10, 27.05),
-    ("DH8A", 7.87, 25.91),
-    ("DH8C", 7.87, 27.43),
-    ("DH8D", 7.87, 28.42),
-    ("SF34", 6.71, 21.44),
-    // ── Frachter / Sonstige Grossflugzeuge ────────────────────────────
-    ("A124", 8.00, 73.30),
-    ("A225", 8.00, 88.40),
-    ("IL96", 10.40, 60.11),
-    ("L101", 12.75, 47.35),
-    // ── Geschäftsreise ────────────────────────────────────────────────
-    ("C25A", 3.30, 15.90),
-    ("C25B", 3.30, 16.98),
-    ("C25C", 3.30, 17.20),
-    ("C510", 2.90, 12.37),
-    ("C680", 4.11, 19.24),
-    ("C700", 4.30, 21.00),
-    ("CL30", 3.00, 19.46),
-    ("CL35", 3.00, 21.00),
-    ("CL60", 3.20, 19.61),
-    ("E55P", 3.20, 16.20),
-    ("FA50", 3.60, 18.86),
-    ("FA7X", 4.20, 26.21),
-    ("GLF5", 4.30, 28.50),
-    ("GLF6", 4.30, 30.36),
-    ("P180", 3.30, 14.03),
-    ("SF50", 3.20, 11.76),
-    // ── Nachtrag aus dem Korpus-Lauf 23.08.2026 ───────────────────────
-    // Diese Muster tauchten im Bestand auf und fehlten. Ohne sie entfiel die
-    // seitliche Bewertung — im ersten Lauf waren das 27,8 % aller Landungen.
-    ("A306", 10.69, 44.84), // A300-600
-    ("A310", 10.69, 43.90),
-    ("A30B", 10.69, 44.84),
-    ("A400", 8.50, 42.40), // A400M
-    ("F28", 5.80, 25.07),  // Fokker F28
-    ("F70", 5.04, 28.08),
-    ("F100", 5.04, 28.08),
-    ("C750", 5.61, 19.38), // Citation X
-    ("HA4T", 3.00, 12.12), // HondaJet HA-420
-    ("AC11", 2.90, 9.75),  // Commander 114
-    ("AEST", 3.30, 10.67), // Aerostar
-    ("PA24", 3.10, 10.97), // Comanche
-    ("PA34", 3.60, 11.85), // Seneca
-    ("PA44", 3.20, 11.75), // Seminole
-    ("BE24", 3.00, 10.00), // Sierra
-    ("BE36", 3.10, 10.21), // Bonanza A36
-    ("BE33", 3.00, 10.21),
-    ("BE9L", 4.30, 15.32), // King Air 90
-    ("B350", 5.30, 17.65), // King Air 350
-    ("C25M", 3.30, 15.90),
-    ("C56X", 5.28, 17.17), // Citation Excel
-    ("C525", 3.20, 14.26),
-    ("E50P", 3.20, 12.30), // Phenom 100
-    ("LJ35", 2.50, 12.04),
-    ("LJ45", 2.60, 14.58),
-    ("H25B", 3.10, 15.66), // Hawker 800
-    ("EA50", 2.20, 11.43), // Eclipse
-    ("SR20", 2.70, 11.68),
-    ("C210", 3.10, 11.20),
-    ("C206", 2.80, 10.92),
-    ("C185", 2.50, 10.92),
-    ("PC12", 4.50, 16.28),
-    ("PC24", 4.20, 17.00),
-    ("TBM8", 3.90, 12.68),
-    ("DHC6", 4.30, 19.81), // Twin Otter
-    ("DHC2", 3.30, 14.63), // Beaver
-    ("AN2", 3.36, 18.18),
-    ("RV10", 2.70, 9.63),
-    ("M20P", 2.70, 10.67), // Mooney
-    ("BL8", 1.80, 9.75),   // Bellanca Decathlon
-    // ── Leichtflugzeuge ───────────────────────────────────────────────
-    ("C152", 2.30, 10.00),
-    ("C172", 2.50, 11.00),
-    ("C182", 2.90, 10.97),
-    ("C208", 3.60, 15.88),
-    ("BE20", 5.30, 16.61),
-    ("BE58", 3.20, 11.53),
-    ("DA40", 2.30, 11.94),
-    ("DA42", 2.60, 13.55),
-    ("P28A", 3.00, 10.67),
-    ("SR22", 2.70, 11.68),
-    ("TBM9", 3.90, 12.82),
-    // ── Nachtrag aus der GSG-Flotte (23.08.2026) ──────────────────────
-    //
-    // Abgeglichen gegen alle 656 Subfleets in phpVMS: 93 verschiedene
-    // Muster, davon fehlten 25. Die Liste ist der RUECKFALL — gelesen wird
-    // zuerst aus der Flugzeugdatei (§5.3 B). Sie muss trotzdem vollstaendig
-    // sein: Ohne Eintrag entfaellt die seitliche Bewertung, und der Pilot
-    // sieht „Spurweite nicht hinterlegt" statt einer Note.
-    ("B767", 9.30, 47.57),  // Sammelkennung, Werte der -300
-    ("B757", 7.32, 38.05),  // Sammelkennung
-    ("B777", 10.97, 60.93), // Sammelkennung, Werte der -200
-    ("A20", 7.59, 35.80),   // verkuerzte A320-Kennung aus den Subfleet-Codes
-    ("BE35", 2.90, 10.00),  // Bonanza 35
-    ("B36", 3.10, 10.21),   // Bonanza A36, zweite Schreibweise zu BE36
-    ("B58T", 3.20, 11.53),  // Baron 58TC, zweite Schreibweise zu BE58
-    // GSG1152 (Sven M., 2026-09-11): Duke fehlte, „Spurweite nicht
-    // hinterlegt". Beide Werte aus dem Original — Beechcraft Duke 60
-    // Series Maintenance Manual, Kapitel 6 „Dimensions and Areas",
-    // Figure 1 „Aircraft Dimensions" (Nov 2/73), Frontansicht: Spurweite
-    // 11'2.4" = 3,414 m, Spannweite 39'3.25" = 11,97 m (deckt sich mit
-    // Wikipedia/flugzeuginfo.net). Keine geschaetzte Ableitung von der
-    // Baron (BE58) — der Grundsatz dieser Datei gilt: im Zweifel `None`.
-    ("BE60", 3.41, 11.97), // Duke 60/A60/B60
-    //
-    // Nachtrag beim GSG1152-Fix (2026-09-11): Diff des LIVE-Bestands gegen
-    // den 23.08.-Schnappschuss (`tests/daten/gsg-flotte.txt`, siehe dort
-    // fuer das Neu-Erzeugen-Rezept) fand 13 neue Subfleet-Muster seit
-    // damals. Zehn davon waren Namensschema-Artefakte (z.B. "B739ER" als
-    // Subfleet-Code, aber echtes `Aircraft.icao` = "B739", laengst
-    // hinterlegt) — die eigentliche Landequelle ist NIE der Subfleet-Code,
-    // sondern `Aircraft.icao` (derselbe Fehlschluss wie beim A306-Fall).
-    // Drei echte Luecken blieben:
-    ("GA8", 2.79, 12.41), // GippsAero Airvan — GA8 Owners/Pilots Info
-    // Manual (GA-FM-04), Figure 1-1 "Three View of the GA8": Spurweite
-    // 110,0 in [2794 mm], Spannweite 488,68 in [12412 mm]. Zweite,
-    // unabhaengige Quelle (GA8-TC-320-Datenblatt) bestaetigt 9'2" = 2,8 m.
-    ("YK18", 3.12, 11.16), // Jakowlew Jak-18T (NICHT die alte
-    // Spornrad-Jak-18/18A — andere Bauform, andere Spurweite). GSGs
-    // HA-YAJ ist real als Jak-18T dokumentiert (airhistory.net). Werte
-    // vom Hersteller selbst, Smolensker Flugzeugwerk (smaz.ru): Spurweite
-    // 3,12 m, Spannweite 11,16 m.
-    //
-    // DA50 (Diamond DA50 RG) bewusst NICHT eingetragen: Spannweite
-    // gesichert (13,41 m, EASA-Musterzulassung EASA.A.639), aber die
-    // Spurweite steht in keiner oeffentlich zugaenglichen Quelle — bei
-    // CS-23-Mustern ist sie typischerweise kein Pflichtfeld der
-    // Musterzulassung. Grundsatz dieser Datei: im Zweifel `None`.
-    ("P28R", 3.20, 10.67), // Piper Arrow
-    ("E135", 4.10, 20.04), // ERJ-135
-    ("E145", 4.10, 20.04), // ERJ-145
-    ("E13L", 4.10, 21.17), // Legacy 600 auf ERJ-135-Basis
-    ("E175", 5.30, 26.00), // zweite Schreibweise zu E75L
-    ("RJ85", 4.72, 26.21), // Avro RJ85
-    ("B463", 4.72, 26.21), // BAe 146-300
-    ("748", 5.79, 30.02),  // HS 748
-    ("CJ4", 3.50, 15.08),  // Citation CJ4
-    ("HDJT", 3.00, 12.12), // HondaJet, zweite Schreibweise zu HA4T
-    ("C414", 3.50, 13.45), // Cessna 414
-    ("MU2", 2.44, 11.94),  // Mitsubishi MU-2
-    ("VL3", 1.60, 8.43),   // JMB VL-3, Ultraleicht
-    ("CONC", 7.72, 25.60), // Concorde
-    // Eurofighter: 5,00 m ist die SPURWEITE, 5,80 m waere der Radstand —
-    // die beiden zu verwechseln ist bei Deltafluglern leicht, weil das
-    // Fahrwerk dort im Verhaeltnis zur kurzen Spannweite breit steht. Der
-    // Plausibilitaetstest (Spannweite ueber dem Doppelten der Spurweite)
-    // hat den Fehler gefangen: Mit 5,80 lag das Verhaeltnis bei 1,89.
-    ("EUFI", 5.00, 10.95),
-    ("H145", 2.00, 11.00), // Hubschrauber
-    ("A109", 2.10, 11.00), // Hubschrauber
-    ("A139", 2.78, 13.80), // Hubschrauber
-];
+/// Eine Tabellenzeile.
+pub type Zeile = (&'static str, f64, f64);
+
+/// Eingebauter Stand = Datei im Paketordner (P-3.54, eine Quelle).
+pub const EINGEBAUT: &str = include_str!("../../../../../bundle/tabellen/spurweiten.json");
+
+/// Woher die Tabelle kommt: Der Client meldet beim Start eine Quelle an, die
+/// aus seinem einen Paketstand liest (P-3.02); ohne Anmeldung (Tests, Werkzeuge)
+/// gilt der eingebaute Stand.
+static QUELLE: std::sync::OnceLock<fn() -> &'static [Zeile]> = std::sync::OnceLock::new();
+
+fn tabelle() -> &'static [Zeile] {
+    match QUELLE.get() {
+        Some(quelle) => quelle(),
+        None => {
+            static EIGEN: std::sync::OnceLock<&'static [Zeile]> = std::sync::OnceLock::new();
+            EIGEN.get_or_init(|| lesen(EINGEBAUT).expect("eingebaute Tabelle spurweiten.json"))
+        }
+    }
+}
+
+/// Meldet die Quelle an (einmal je Lauf). `false`, wenn schon eine gilt.
+pub fn quelle_setzen(quelle: fn() -> &'static [Zeile]) -> bool {
+    QUELLE.set(quelle).is_ok()
+}
+
+/// Prueft `tabellen/spurweiten.json` wie [`lesen`], ohne etwas dauerhaft abzulegen.
+pub fn pruefen(json: &str) -> Result<(), String> {
+    datei_lesen(json).map(|_| ())
+}
+
+/// Liest `tabellen/spurweiten.json` (fail-closed). Das Ergebnis lebt bis
+/// Programmende (einmal je Lauf).
+pub fn lesen(json: &str) -> Result<&'static [Zeile], String> {
+    fn s(x: String) -> &'static str {
+        Box::leak(x.into_boxed_str())
+    }
+    let zeilen: Vec<Zeile> =
+        datei_lesen(json)?.muster.into_iter().map(|m| (s(m.icao), m.spur_m, m.spann_m)).collect();
+    Ok(Box::leak(zeilen.into()))
+}
+
+// Dateiform von `tabellen/spurweiten.json`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Datei {
+    format: u32,
+    #[serde(default)]
+    #[allow(dead_code)]
+    notiz: Vec<String>,
+    muster: Vec<MusterDatei>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MusterDatei {
+    icao: String,
+    spur_m: f64,
+    spann_m: f64,
+    #[serde(default)]
+    #[allow(dead_code)]
+    gruppe: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    notiz: Vec<String>,
+}
+
+/// Liest und prueft: ein Eintrag je Muster, Kennung in Grossbuchstaben,
+/// Spurweite > 0 und nie breiter als die Spannweite.
+fn datei_lesen(json: &str) -> Result<Datei, String> {
+    let d: Datei = serde_json::from_str(json).map_err(|e| format!("tabellen/spurweiten.json: {e}"))?;
+    if d.format != 1 {
+        return Err(format!("tabellen/spurweiten.json: Format {} unbekannt", d.format));
+    }
+    let mut gesehen = std::collections::HashSet::new();
+    for m in &d.muster {
+        if m.icao.is_empty() || m.icao != m.icao.trim().to_ascii_uppercase() || !gesehen.insert(m.icao.as_str()) {
+            return Err(format!("tabellen/spurweiten.json: Kennung {:?} ungueltig oder doppelt", m.icao));
+        }
+        if !(m.spur_m.is_finite() && m.spur_m > 0.0 && m.spann_m.is_finite() && m.spann_m >= m.spur_m) {
+            return Err(format!("tabellen/spurweiten.json: {} Masse unplausibel", m.icao));
+        }
+    }
+    Ok(d)
+}
 
 #[cfg(test)]
 mod tests {
+    /// Die Tabelle im Paket ist genau die Konstante `TABELLE` aus 2.1.24
+    /// (Etappe 1b): Abdruck (FNV-1a) der Debug-Ausgabe, vor dem Entfernen
+    /// gegen sie verglichen. Bewusste Aenderung: Abdruck mit Begruendung
+    /// nachziehen.
+    #[test]
+    fn tabelle_wie_2_1_24() {
+        let text = format!("{:?}", super::lesen(super::EINGEBAUT).unwrap());
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in text.bytes() {
+            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+        assert_eq!((h, text.len()), (0xe33981d7e47910af, 3889));
+    }
+
+    #[test]
+    fn regelverstoss_ist_ein_lesefehler() {
+        let gut: serde_json::Value = serde_json::from_str(super::EINGEBAUT).unwrap();
+        assert!(super::pruefen(&gut.to_string()).is_ok());
+        let mut doppelt = gut.clone();
+        let erste = doppelt["muster"][0].clone();
+        doppelt["muster"].as_array_mut().unwrap().push(erste);
+        assert!(super::pruefen(&doppelt.to_string()).is_err());
+        let mut null = gut.clone();
+        null["muster"][0]["spur_m"] = 0.0.into();
+        assert!(super::pruefen(&null.to_string()).is_err());
+        let mut fremd = gut;
+        fremd["muster"][0]["extra"] = 1.into();
+        assert!(super::pruefen(&fremd.to_string()).is_err());
+    }
+
+
     use super::*;
 
     #[test]
@@ -469,7 +351,7 @@ mod tests {
         // deutlich. Faktor 2 ist die konservative Untergrenze: Beim A388
         // (14,30 m Spur, 79,75 m Spannweite) sind es 5,6, beim engsten
         // Muster der Tabelle noch immer ueber 2.
-        for (code, spur, spann) in TABELLE {
+        for (code, spur, spann) in tabelle() {
             assert!(
                 *spann > *spur * 2.0,
                 "{code}: Spannweite {spann} m gegen Spurweite {spur} m -- \
@@ -515,7 +397,7 @@ mod tests {
         let c172 = spurweite_m(Some("C172")).unwrap();
         assert!(a388 > b738 && b738 > c172, "{a388} > {b738} > {c172}");
         // Kein Wert darf ausserhalb des physikalisch Sinnvollen liegen.
-        for (code, m, _) in TABELLE {
+        for (code, m, _) in tabelle() {
             assert!(
                 // Untergrenze 1,5 m: die Bellanca Decathlon hat real 1,80 m.
                 // Die Schranke prueft Tippfehler, nicht die Physik kleiner
@@ -652,7 +534,7 @@ mod tests {
         assert!((a388 - 14.30).abs() < 0.01, "{a388}");
         // Und er muss der breiteste Eintrag der Tabelle sein: Kein Muster
         // im Bestand hat ein breiteres Fahrwerk.
-        let breitester = TABELLE
+        let breitester = tabelle()
             .iter()
             .map(|(_, spur, _)| *spur)
             .fold(f64::MIN, f64::max);
@@ -685,7 +567,7 @@ mod tests {
 
     #[test]
     fn keine_doppelten_eintraege() {
-        let mut codes: Vec<&str> = TABELLE.iter().map(|(c, _, _)| *c).collect();
+        let mut codes: Vec<&str> = tabelle().iter().map(|(c, _, _)| *c).collect();
         let vorher = codes.len();
         codes.sort_unstable();
         codes.dedup();

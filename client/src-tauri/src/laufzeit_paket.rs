@@ -23,13 +23,15 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
 const XPLANE_PROFILE: &str = "profile/xplane.json";
 const CPDLC: &str = "tabellen/cpdlc.json";
 const FLOTTE: &str = "tabellen/flotte.json";
+const SPURWEITEN: &str = "tabellen/spurweiten.json";
+const VREF: &str = "tabellen/vref.json";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
@@ -52,6 +54,10 @@ pub(crate) struct AktiverStand {
     /// Flotten-/Kategorietabelle (Rust-Teil; die Oberflaeche liest dieselbe
     /// Datei ueber `paket_datei`).
     pub flotte: crate::aircraft_category::Flotte,
+    /// Spurweiten/Spannweiten und Vref-Bezugswerte (`landing-scoring`, ueber
+    /// angemeldete Quellen).
+    pub spurweiten: &'static [(&'static str, f64, f64)],
+    pub vref: &'static [(&'static str, f64, f64, landing_scoring::vref::Status)],
     /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
     pub ui: Vec<(&'static str, &'static str)>,
 }
@@ -81,6 +87,8 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         xplane_profile: sim_xplane::profile_lesen(text(XPLANE_PROFILE)?)?,
         cpdlc: hoppie_protocol::elements_data::tabelle_lesen(text(CPDLC)?)?,
         flotte: crate::aircraft_category::flotte_lesen(text(FLOTTE)?)?,
+        spurweiten: landing_scoring::spurweite::lesen(text(SPURWEITEN)?)?,
+        vref: landing_scoring::vref::lesen(text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
     })
 }
@@ -95,6 +103,8 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         xplane_profile: sim_xplane::profile_lesen(eingebauter_text(XPLANE_PROFILE)?)?,
         cpdlc: hoppie_protocol::elements_data::tabelle_lesen(eingebauter_text(CPDLC)?)?,
         flotte: crate::aircraft_category::flotte_lesen(eingebauter_text(FLOTTE)?)?,
+        spurweiten: landing_scoring::spurweite::lesen(eingebauter_text(SPURWEITEN)?)?,
+        vref: landing_scoring::vref::lesen(eingebauter_text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
     })
 }
@@ -213,6 +223,8 @@ fn starten_einmal(app_daten: &Path) {
     // Vor allem anderen: X-Plane-Profile kommen ab jetzt aus DIESEM Stand.
     sim_xplane::profile_quelle_setzen(|| stand().xplane_profile);
     hoppie_protocol::elements_data::tabelle_quelle_setzen(|| stand().cpdlc);
+    landing_scoring::spurweite::quelle_setzen(|| stand().spurweiten);
+    landing_scoring::vref::quelle_setzen(|| stand().vref);
     let pin = pin_des_offenen_flugs(app_daten);
     let eingebaut = eingebaut();
     let ergebnis = Ablage::oeffnen(app_daten.join("laufzeit-paket"))
@@ -416,6 +428,13 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
     sim_xplane::profile_pruefen(std::str::from_utf8(&profile).map_err(|e| e.to_string())?)?;
     let flotte = p.datei(FLOTTE).map_err(|e| e.to_string())?;
     crate::aircraft_category::flotte_lesen(std::str::from_utf8(&flotte).map_err(|e| e.to_string())?)?;
+    for (pfad, pruefen) in [
+        (SPURWEITEN, landing_scoring::spurweite::pruefen as fn(&str) -> Result<(), String>),
+        (VREF, landing_scoring::vref::pruefen),
+    ] {
+        let roh = p.datei(pfad).map_err(|e| e.to_string())?;
+        pruefen(std::str::from_utf8(&roh).map_err(|e| format!("{pfad}: {e}"))?)?;
+    }
     for d in UI_DATEIEN {
         p.datei(d).map_err(|e| e.to_string())?;
     }
@@ -476,6 +495,14 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     fn eingebaute_cpdlc_tabelle_ist_die_des_crates() {
         assert_eq!(eingebaute_datei(CPDLC).unwrap(), hoppie_protocol::elements_data::EINGEBAUT.as_bytes());
         assert_eq!(stand().cpdlc.len(), hoppie_protocol::elements_data::tabelle_lesen(hoppie_protocol::elements_data::EINGEBAUT).unwrap().len());
+    }
+
+    #[test]
+    fn eingebaute_spurweiten_und_vref_sind_die_des_crates() {
+        assert_eq!(eingebaute_datei(SPURWEITEN).unwrap(), landing_scoring::spurweite::EINGEBAUT.as_bytes());
+        assert_eq!(eingebaute_datei(VREF).unwrap(), landing_scoring::vref::EINGEBAUT.as_bytes());
+        assert_eq!(stand().spurweiten.len(), landing_scoring::spurweite::lesen(landing_scoring::spurweite::EINGEBAUT).unwrap().len());
+        assert_eq!(stand().vref.len(), landing_scoring::vref::lesen(landing_scoring::vref::EINGEBAUT).unwrap().len());
     }
 
     #[test]

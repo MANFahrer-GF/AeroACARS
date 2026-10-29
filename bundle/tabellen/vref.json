@@ -1,0 +1,633 @@
+{
+ "format": 1,
+ "notiz": [
+  "ICAO → (Bezugsgeschwindigkeit kt, Bezugsgewicht kg, Status).",
+  "",
+  "FAA Aircraft Characteristics Database, Oktober 2024, für alle Muster der",
+  "GSG-Flotte (`phpvmsaircraft.icao`, 06.10.2026) mit beiden Zahlen und ohne",
+  "Ausschlussgrund. Gewicht = `MALW_lb` × 0,45359237, gerundet.",
+  "Messungen: PMDG-FMC-Vref aus allen Live-Landungen bis 06.10.2026."
+ ],
+ "muster": [
+  {
+   "icao": "A124",
+   "vref_kt": 151.0,
+   "gewicht_kg": 330000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A20N",
+   "vref_kt": 137.0,
+   "gewicht_kg": 67400.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A21N",
+   "vref_kt": 136.0,
+   "gewicht_kg": 79200.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A306",
+   "vref_kt": 137.0,
+   "gewicht_kg": 137996.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A319",
+   "vref_kt": 126.0,
+   "gewicht_kg": 61000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A320",
+   "vref_kt": 136.0,
+   "gewicht_kg": 66000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A321",
+   "vref_kt": 142.0,
+   "gewicht_kg": 77800.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A332",
+   "vref_kt": 136.0,
+   "gewicht_kg": 182000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A333",
+   "vref_kt": 137.0,
+   "gewicht_kg": 187000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A339",
+   "vref_kt": 140.0,
+   "gewicht_kg": 190999.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A343",
+   "vref_kt": 145.0,
+   "gewicht_kg": 192000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A346",
+   "vref_kt": 153.0,
+   "gewicht_kg": 265000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A359",
+   "vref_kt": 140.0,
+   "gewicht_kg": 207000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A35K",
+   "vref_kt": 147.0,
+   "gewicht_kg": 233000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A388",
+   "vref_kt": 138.0,
+   "gewicht_kg": 394000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "A400",
+   "vref_kt": 130.0,
+   "gewicht_kg": 122999.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "AC11",
+   "vref_kt": 70.0,
+   "gewicht_kg": 1424.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "AEST",
+   "vref_kt": 96.0,
+   "gewicht_kg": 2722.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "AT76",
+   "vref_kt": 113.0,
+   "gewicht_kg": 22350.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B350",
+   "vref_kt": 107.0,
+   "gewicht_kg": 6804.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B38M",
+   "vref_kt": 145.0,
+   "gewicht_kg": 69309.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B735",
+   "vref_kt": 128.0,
+   "gewicht_kg": 49895.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B736",
+   "vref_kt": 125.0,
+   "gewicht_kg": 55111.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B742",
+   "vref_kt": 150.0,
+   "gewicht_kg": 285763.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B744",
+   "vref_kt": 157.0,
+   "gewicht_kg": 285763.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B748",
+   "vref_kt": 159.0,
+   "gewicht_kg": 312072.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B753",
+   "vref_kt": 143.0,
+   "gewicht_kg": 101605.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B763",
+   "vref_kt": 140.0,
+   "gewicht_kg": 145150.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B764",
+   "vref_kt": 150.0,
+   "gewicht_kg": 158757.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B772",
+   "vref_kt": 140.0,
+   "gewicht_kg": 213188.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B77W",
+   "vref_kt": 149.0,
+   "gewicht_kg": 251290.0,
+   "status": {
+    "art": "Bestaetigt",
+    "fehler_kt": 2.0
+   },
+   "notiz": [
+    "5 Landungen, 2 Piloten: Mittel 0,9 kt, 90 % ≤ 1,8 kt"
+   ]
+  },
+  {
+   "icao": "B789",
+   "vref_kt": 144.0,
+   "gewicht_kg": 192777.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "B78X",
+   "vref_kt": 149.0,
+   "gewicht_kg": 201849.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "BCS3",
+   "vref_kt": 135.0,
+   "gewicht_kg": 60600.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "BE24",
+   "vref_kt": 78.0,
+   "gewicht_kg": 1247.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "BE35",
+   "vref_kt": 72.0,
+   "gewicht_kg": 1542.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "BE36",
+   "vref_kt": 77.0,
+   "gewicht_kg": 1656.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "BE58",
+   "vref_kt": 95.0,
+   "gewicht_kg": 2449.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "BE60",
+   "vref_kt": 98.0,
+   "gewicht_kg": 3073.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C152",
+   "vref_kt": 56.0,
+   "gewicht_kg": 760.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C172",
+   "vref_kt": 62.0,
+   "gewicht_kg": 1111.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C182",
+   "vref_kt": 65.0,
+   "gewicht_kg": 1338.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C185",
+   "vref_kt": 64.0,
+   "gewicht_kg": 1520.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C208",
+   "vref_kt": 79.0,
+   "gewicht_kg": 3538.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C25A",
+   "vref_kt": 114.0,
+   "gewicht_kg": 5228.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C25C",
+   "vref_kt": 111.0,
+   "gewicht_kg": 7103.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C404",
+   "vref_kt": 96.0,
+   "gewicht_kg": 3674.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C414",
+   "vref_kt": 95.0,
+   "gewicht_kg": 3062.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C525",
+   "vref_kt": 108.0,
+   "gewicht_kg": 4491.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C680",
+   "vref_kt": 108.0,
+   "gewicht_kg": 12292.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "C750",
+   "vref_kt": 131.0,
+   "gewicht_kg": 14424.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "CL30",
+   "vref_kt": 126.0,
+   "gewicht_kg": 15309.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "CL60",
+   "vref_kt": 137.0,
+   "gewicht_kg": 17237.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "DA42",
+   "vref_kt": 88.0,
+   "gewicht_kg": 1700.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "DH8D",
+   "vref_kt": 125.0,
+   "gewicht_kg": 28009.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "E135",
+   "vref_kt": 124.0,
+   "gewicht_kg": 18700.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "E145",
+   "vref_kt": 124.0,
+   "gewicht_kg": 18700.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "E170",
+   "vref_kt": 124.0,
+   "gewicht_kg": 33300.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "E190",
+   "vref_kt": 124.0,
+   "gewicht_kg": 43000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "E195",
+   "vref_kt": 135.0,
+   "gewicht_kg": 45800.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "E55P",
+   "vref_kt": 116.0,
+   "gewicht_kg": 7568.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "E75L",
+   "vref_kt": 126.0,
+   "gewicht_kg": 34000.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "FA50",
+   "vref_kt": 124.0,
+   "gewicht_kg": 16200.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "GLF5",
+   "vref_kt": 136.0,
+   "gewicht_kg": 34156.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "GLF6",
+   "vref_kt": 137.0,
+   "gewicht_kg": 37875.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "H25B",
+   "vref_kt": 137.0,
+   "gewicht_kg": 10591.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "HDJT",
+   "vref_kt": 111.0,
+   "gewicht_kg": 4472.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "LJ35",
+   "vref_kt": 128.0,
+   "gewicht_kg": 6486.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "MD11",
+   "vref_kt": 158.0,
+   "gewicht_kg": 195045.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "MD88",
+   "vref_kt": 130.0,
+   "gewicht_kg": 58967.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "P180",
+   "vref_kt": 121.0,
+   "gewicht_kg": 5216.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "P68",
+   "vref_kt": 73.0,
+   "gewicht_kg": 1890.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "PA24",
+   "vref_kt": 75.0,
+   "gewicht_kg": 1315.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "PA34",
+   "vref_kt": 81.0,
+   "gewicht_kg": 2047.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "PC12",
+   "vref_kt": 85.0,
+   "gewicht_kg": 4500.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "RJ85",
+   "vref_kt": 122.0,
+   "gewicht_kg": 38555.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
+   "icao": "TBM9",
+   "vref_kt": 85.0,
+   "gewicht_kg": 3186.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  }
+ ]
+}

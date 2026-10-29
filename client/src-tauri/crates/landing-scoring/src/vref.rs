@@ -66,8 +66,9 @@
 //! | MU2 | FAA-Landegewicht 5001 kg, Flotte 4240 kg (+18 %) |
 //! | P28R | FAA-Landegewicht 1315 kg, Flotte 1247 kg (+5 %) |
 //!
-//! Die Tabelle wird nur per Release geändert; der monatliche Prüfbericht
-//! auf live schlägt Änderungen vor.
+//! Die Tabelle kommt seit 3.0 aus dem Laufzeit-Paket (`tabellen/vref.json`,
+//! P-3.54) und ändert sich ohne Release; der monatliche Prüfbericht auf live
+//! schlägt Änderungen vor.
 
 /// Wie belastbar der Bezugswert eines Musters ist.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -105,7 +106,7 @@ const MESSWERT_MAX_ABSTAND_KT: f32 = 25.0;
 pub fn vref_aus_gewicht(muster: Option<&str>, gewicht_kg: Option<f64>) -> Option<(f32, Status)> {
     let muster = muster?.trim().to_ascii_uppercase();
     let gewicht = gewicht_kg.filter(|w| *w > 0.0)?;
-    let (_, v, w0, status) = TABELLE.iter().find(|(code, ..)| *code == muster)?;
+    let (_, v, w0, status) = tabelle().iter().find(|(code, ..)| *code == muster)?;
     Some(((*v * (gewicht / *w0).sqrt()) as f32, *status))
 }
 
@@ -174,89 +175,149 @@ pub fn vref_bestimmen(
 /// GSG-Flotte (`phpvmsaircraft.icao`, 06.10.2026) mit beiden Zahlen und ohne
 /// Ausschlussgrund. Gewicht = `MALW_lb` × 0,45359237, gerundet.
 /// Messungen: PMDG-FMC-Vref aus allen Live-Landungen bis 06.10.2026.
-#[rustfmt::skip]
-const TABELLE: &[(&str, f64, f64, Status)] = &[
-    ("A124", 151.0, 330000.0, Status::Ungeprueft),
-    ("A20N", 137.0, 67400.0, Status::Ungeprueft),
-    ("A21N", 136.0, 79200.0, Status::Ungeprueft),
-    ("A306", 137.0, 137996.0, Status::Ungeprueft),
-    ("A319", 126.0, 61000.0, Status::Ungeprueft),
-    ("A320", 136.0, 66000.0, Status::Ungeprueft),
-    ("A321", 142.0, 77800.0, Status::Ungeprueft),
-    ("A332", 136.0, 182000.0, Status::Ungeprueft),
-    ("A333", 137.0, 187000.0, Status::Ungeprueft),
-    ("A339", 140.0, 190999.0, Status::Ungeprueft),
-    ("A343", 145.0, 192000.0, Status::Ungeprueft),
-    ("A346", 153.0, 265000.0, Status::Ungeprueft),
-    ("A359", 140.0, 207000.0, Status::Ungeprueft),
-    ("A35K", 147.0, 233000.0, Status::Ungeprueft),
-    ("A388", 138.0, 394000.0, Status::Ungeprueft),
-    ("A400", 130.0, 122999.0, Status::Ungeprueft),
-    ("AC11", 70.0, 1424.0, Status::Ungeprueft),
-    ("AEST", 96.0, 2722.0, Status::Ungeprueft),
-    ("AT76", 113.0, 22350.0, Status::Ungeprueft),
-    ("B350", 107.0, 6804.0, Status::Ungeprueft),
-    ("B38M", 145.0, 69309.0, Status::Ungeprueft),
-    ("B735", 128.0, 49895.0, Status::Ungeprueft),
-    ("B736", 125.0, 55111.0, Status::Ungeprueft),
-    ("B742", 150.0, 285763.0, Status::Ungeprueft),
-    ("B744", 157.0, 285763.0, Status::Ungeprueft),
-    ("B748", 159.0, 312072.0, Status::Ungeprueft),
-    ("B753", 143.0, 101605.0, Status::Ungeprueft),
-    ("B763", 140.0, 145150.0, Status::Ungeprueft),
-    ("B764", 150.0, 158757.0, Status::Ungeprueft),
-    ("B772", 140.0, 213188.0, Status::Ungeprueft),
-    ("B77W", 149.0, 251290.0, Status::Bestaetigt { fehler_kt: 2.0 }),  // 5 Landungen, 2 Piloten: Mittel 0,9 kt, 90 % ≤ 1,8 kt
-    ("B789", 144.0, 192777.0, Status::Ungeprueft),
-    ("B78X", 149.0, 201849.0, Status::Ungeprueft),
-    ("BCS3", 135.0, 60600.0, Status::Ungeprueft),
-    ("BE24", 78.0, 1247.0, Status::Ungeprueft),
-    ("BE35", 72.0, 1542.0, Status::Ungeprueft),
-    ("BE36", 77.0, 1656.0, Status::Ungeprueft),
-    ("BE58", 95.0, 2449.0, Status::Ungeprueft),
-    ("BE60", 98.0, 3073.0, Status::Ungeprueft),
-    ("C152", 56.0, 760.0, Status::Ungeprueft),
-    ("C172", 62.0, 1111.0, Status::Ungeprueft),
-    ("C182", 65.0, 1338.0, Status::Ungeprueft),
-    ("C185", 64.0, 1520.0, Status::Ungeprueft),
-    ("C208", 79.0, 3538.0, Status::Ungeprueft),
-    ("C25A", 114.0, 5228.0, Status::Ungeprueft),
-    ("C25C", 111.0, 7103.0, Status::Ungeprueft),
-    ("C404", 96.0, 3674.0, Status::Ungeprueft),
-    ("C414", 95.0, 3062.0, Status::Ungeprueft),
-    ("C525", 108.0, 4491.0, Status::Ungeprueft),
-    ("C680", 108.0, 12292.0, Status::Ungeprueft),
-    ("C750", 131.0, 14424.0, Status::Ungeprueft),
-    ("CL30", 126.0, 15309.0, Status::Ungeprueft),
-    ("CL60", 137.0, 17237.0, Status::Ungeprueft),
-    ("DA42", 88.0, 1700.0, Status::Ungeprueft),
-    ("DH8D", 125.0, 28009.0, Status::Ungeprueft),
-    ("E135", 124.0, 18700.0, Status::Ungeprueft),
-    ("E145", 124.0, 18700.0, Status::Ungeprueft),
-    ("E170", 124.0, 33300.0, Status::Ungeprueft),
-    ("E190", 124.0, 43000.0, Status::Ungeprueft),
-    ("E195", 135.0, 45800.0, Status::Ungeprueft),
-    ("E55P", 116.0, 7568.0, Status::Ungeprueft),
-    ("E75L", 126.0, 34000.0, Status::Ungeprueft),
-    ("FA50", 124.0, 16200.0, Status::Ungeprueft),
-    ("GLF5", 136.0, 34156.0, Status::Ungeprueft),
-    ("GLF6", 137.0, 37875.0, Status::Ungeprueft),
-    ("H25B", 137.0, 10591.0, Status::Ungeprueft),
-    ("HDJT", 111.0, 4472.0, Status::Ungeprueft),
-    ("LJ35", 128.0, 6486.0, Status::Ungeprueft),
-    ("MD11", 158.0, 195045.0, Status::Ungeprueft),
-    ("MD88", 130.0, 58967.0, Status::Ungeprueft),
-    ("P180", 121.0, 5216.0, Status::Ungeprueft),
-    ("P68", 73.0, 1890.0, Status::Ungeprueft),
-    ("PA24", 75.0, 1315.0, Status::Ungeprueft),
-    ("PA34", 81.0, 2047.0, Status::Ungeprueft),
-    ("PC12", 85.0, 4500.0, Status::Ungeprueft),
-    ("RJ85", 122.0, 38555.0, Status::Ungeprueft),
-    ("TBM9", 85.0, 3186.0, Status::Ungeprueft),
-];
+/// Eine Tabellenzeile.
+pub type Zeile = (&'static str, f64, f64, Status);
+
+/// Eingebauter Stand = Datei im Paketordner (P-3.54, eine Quelle).
+pub const EINGEBAUT: &str = include_str!("../../../../../bundle/tabellen/vref.json");
+
+/// Woher die Tabelle kommt: Der Client meldet beim Start eine Quelle an, die
+/// aus seinem einen Paketstand liest (P-3.02); ohne Anmeldung (Tests, Werkzeuge)
+/// gilt der eingebaute Stand.
+static QUELLE: std::sync::OnceLock<fn() -> &'static [Zeile]> = std::sync::OnceLock::new();
+
+fn tabelle() -> &'static [Zeile] {
+    match QUELLE.get() {
+        Some(quelle) => quelle(),
+        None => {
+            static EIGEN: std::sync::OnceLock<&'static [Zeile]> = std::sync::OnceLock::new();
+            EIGEN.get_or_init(|| lesen(EINGEBAUT).expect("eingebaute Tabelle vref.json"))
+        }
+    }
+}
+
+/// Meldet die Quelle an (einmal je Lauf). `false`, wenn schon eine gilt.
+pub fn quelle_setzen(quelle: fn() -> &'static [Zeile]) -> bool {
+    QUELLE.set(quelle).is_ok()
+}
+
+/// Prueft `tabellen/vref.json` wie [`lesen`], ohne etwas dauerhaft abzulegen.
+pub fn pruefen(json: &str) -> Result<(), String> {
+    datei_lesen(json).map(|_| ())
+}
+
+/// Liest `tabellen/vref.json` (fail-closed). Das Ergebnis lebt bis
+/// Programmende (einmal je Lauf).
+pub fn lesen(json: &str) -> Result<&'static [Zeile], String> {
+    fn s(x: String) -> &'static str {
+        Box::leak(x.into_boxed_str())
+    }
+    let zeilen: Vec<Zeile> = datei_lesen(json)?
+        .muster
+        .into_iter()
+        .map(|m| {
+            let status = match m.status {
+                StatusDatei::Bestaetigt { fehler_kt } => Status::Bestaetigt { fehler_kt },
+                StatusDatei::Kalibriert { fehler_kt } => Status::Kalibriert { fehler_kt },
+                StatusDatei::Ungeprueft => Status::Ungeprueft,
+            };
+            (s(m.icao), m.vref_kt, m.gewicht_kg, status)
+        })
+        .collect();
+    Ok(Box::leak(zeilen.into()))
+}
+
+// Dateiform von `tabellen/vref.json`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Datei {
+    format: u32,
+    #[serde(default)]
+    #[allow(dead_code)]
+    notiz: Vec<String>,
+    muster: Vec<MusterDatei>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MusterDatei {
+    icao: String,
+    vref_kt: f64,
+    gewicht_kg: f64,
+    status: StatusDatei,
+    #[serde(default)]
+    #[allow(dead_code)]
+    notiz: Vec<String>,
+}
+#[derive(serde::Deserialize)]
+#[serde(tag = "art", deny_unknown_fields)]
+enum StatusDatei {
+    Bestaetigt { fehler_kt: f32 },
+    Kalibriert { fehler_kt: f32 },
+    Ungeprueft,
+}
+
+/// Liest und prueft: ein Eintrag je Muster, Kennung in Grossbuchstaben,
+/// Vref und Bezugsgewicht > 0, Fehlerband >= 0.
+fn datei_lesen(json: &str) -> Result<Datei, String> {
+    let d: Datei = serde_json::from_str(json).map_err(|e| format!("tabellen/vref.json: {e}"))?;
+    if d.format != 1 {
+        return Err(format!("tabellen/vref.json: Format {} unbekannt", d.format));
+    }
+    let mut gesehen = std::collections::HashSet::new();
+    for m in &d.muster {
+        if m.icao.is_empty() || m.icao != m.icao.trim().to_ascii_uppercase() || !gesehen.insert(m.icao.as_str()) {
+            return Err(format!("tabellen/vref.json: Kennung {:?} ungueltig oder doppelt", m.icao));
+        }
+        let fehler = match m.status {
+            StatusDatei::Bestaetigt { fehler_kt } | StatusDatei::Kalibriert { fehler_kt } => fehler_kt,
+            StatusDatei::Ungeprueft => 0.0,
+        };
+        let plausibel = m.vref_kt.is_finite()
+            && m.vref_kt > 0.0
+            && m.gewicht_kg.is_finite()
+            && m.gewicht_kg > 0.0
+            && fehler.is_finite()
+            && fehler >= 0.0;
+        if !plausibel {
+            return Err(format!("tabellen/vref.json: {} Werte unplausibel", m.icao));
+        }
+    }
+    Ok(d)
+}
 
 #[cfg(test)]
 mod tests {
+    /// Die Tabelle im Paket ist genau die Konstante `TABELLE` aus 2.1.24
+    /// (Etappe 1b): Abdruck (FNV-1a) der Debug-Ausgabe, vor dem Entfernen
+    /// gegen sie verglichen. Bewusste Aenderung: Abdruck mit Begruendung
+    /// nachziehen.
+    #[test]
+    fn tabelle_wie_2_1_24() {
+        let text = format!("{:?}", super::lesen(super::EINGEBAUT).unwrap());
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in text.bytes() {
+            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+        assert_eq!((h, text.len()), (0xfa67773c778e3ef6, 2917));
+    }
+
+    #[test]
+    fn regelverstoss_ist_ein_lesefehler() {
+        let gut: serde_json::Value = serde_json::from_str(super::EINGEBAUT).unwrap();
+        assert!(super::pruefen(&gut.to_string()).is_ok());
+        let mut doppelt = gut.clone();
+        let erste = doppelt["muster"][0].clone();
+        doppelt["muster"].as_array_mut().unwrap().push(erste);
+        assert!(super::pruefen(&doppelt.to_string()).is_err());
+        let mut null = gut.clone();
+        null["muster"][0]["vref_kt"] = 0.0.into();
+        assert!(super::pruefen(&null.to_string()).is_err());
+        let mut fremd = gut;
+        fremd["muster"][0]["extra"] = 1.into();
+        assert!(super::pruefen(&fremd.to_string()).is_err());
+    }
+
+
     use super::*;
 
     #[test]
@@ -352,7 +413,7 @@ mod tests {
     #[test]
     fn tabelle_hat_jedes_muster_nur_einmal_und_plausible_werte() {
         let mut gesehen = std::collections::HashSet::new();
-        for (m, v, w, _) in TABELLE {
+        for (m, v, w, _) in tabelle() {
             assert!(gesehen.insert(*m), "doppelt: {m}");
             assert!((50.0..=200.0).contains(v), "{m}: {v}");
             assert!(*w > 500.0, "{m}: {w}");

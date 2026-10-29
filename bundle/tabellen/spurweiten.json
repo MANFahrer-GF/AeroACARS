@@ -1,0 +1,1293 @@
+{
+ "format": 1,
+ "notiz": [
+  "ICAO-Typcode → (Spurweite Hauptfahrwerk, Spannweite), beide in Metern.",
+  "",
+  "# Welche Spurweite, wenn es mehrere Fahrwerke gibt",
+  "",
+  "Die **äusserste**. Mehrere Muster tragen mehr als ein Hauptfahrwerkspaar:",
+  "",
+  "| Muster | Hauptbeine | massgeblich |",
+  "|---|---|---|",
+  "| A380 | zwei am Flügel, zwei am Rumpf | die Flügelbeine, 14,30 m |",
+  "| B777 | zwei, je sechs Räder | 10,97 m |",
+  "| A340-600 | zwei aussen, eines mittig | die äusseren, 12,60 m |",
+  "| B747 | vier, zwei je Seite hintereinander | 11,00 m |",
+  "",
+  "Der Grund ist die Frage, die diese Achse stellt: Lief ein Rad neben der",
+  "befestigten Fläche? Das entscheidet immer das äusserste Rad. Ein",
+  "mittleres oder inneres Bein steht weiter innen und kann die Kante nicht",
+  "zuerst erreichen — es ist für diese Bewertung ohne Belang.",
+  "",
+  "Die Leseroutine für Flugzeugdateien (`fahrwerk::spurweite_aus_beinen`)",
+  "folgt derselben Regel: Sie nimmt den Abstand der äusseren Spuren, nicht",
+  "den der inneren und nicht die Spannweite aller Räder.",
+  "",
+  "Sortiert nach Hersteller und Grösse, damit Lücken beim Lesen auffallen.",
+  "Quelle: Airport Planning Manuals der Hersteller, ICAO Doc 8643.",
+  "",
+  "**Ein Eintrag je Muster, nicht zwei Tabellen.** Zwei getrennte Listen",
+  "driften auseinander, sobald jemand nur eine davon ergänzt — dieselbe",
+  "Fehlerklasse, gegen die §8.4 der Spezifikation eine gemeinsame",
+  "Projektionsfunktion vorschreibt. Ein Test hält beide Spalten zusammen."
+ ],
+ "muster": [
+  {
+   "icao": "A318",
+   "spur_m": 7.59,
+   "spann_m": 34.1,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A319",
+   "spur_m": 7.59,
+   "spann_m": 35.8,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A320",
+   "spur_m": 7.59,
+   "spann_m": 35.8,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A321",
+   "spur_m": 7.59,
+   "spann_m": 35.8,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A19N",
+   "spur_m": 7.59,
+   "spann_m": 35.8,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A20N",
+   "spur_m": 7.59,
+   "spann_m": 35.8,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A21N",
+   "spur_m": 7.59,
+   "spann_m": 35.8,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A332",
+   "spur_m": 10.69,
+   "spann_m": 60.3,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A333",
+   "spur_m": 10.69,
+   "spann_m": 60.3,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A338",
+   "spur_m": 10.69,
+   "spann_m": 64.0,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A339",
+   "spur_m": 10.69,
+   "spann_m": 64.0,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A342",
+   "spur_m": 10.69,
+   "spann_m": 60.3,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A343",
+   "spur_m": 10.69,
+   "spann_m": 60.3,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A345",
+   "spur_m": 12.6,
+   "spann_m": 63.45,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A346",
+   "spur_m": 12.6,
+   "spann_m": 63.45,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A359",
+   "spur_m": 10.7,
+   "spann_m": 64.75,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A35K",
+   "spur_m": 10.7,
+   "spann_m": 64.75,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "A388",
+   "spur_m": 14.3,
+   "spann_m": 79.75,
+   "gruppe": "Airbus"
+  },
+  {
+   "icao": "BCS1",
+   "spur_m": 6.0,
+   "spann_m": 35.1,
+   "gruppe": "Airbus",
+   "notiz": [
+    "A220-100"
+   ]
+  },
+  {
+   "icao": "BCS3",
+   "spur_m": 6.0,
+   "spann_m": 35.1,
+   "gruppe": "Airbus",
+   "notiz": [
+    "A220-300"
+   ]
+  },
+  {
+   "icao": "B712",
+   "spur_m": 5.03,
+   "spann_m": 28.45,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B733",
+   "spur_m": 5.23,
+   "spann_m": 28.88,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B734",
+   "spur_m": 5.23,
+   "spann_m": 28.88,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B735",
+   "spur_m": 5.23,
+   "spann_m": 28.88,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B736",
+   "spur_m": 5.72,
+   "spann_m": 34.32,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B737",
+   "spur_m": 5.72,
+   "spann_m": 34.32,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B738",
+   "spur_m": 5.72,
+   "spann_m": 34.32,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B739",
+   "spur_m": 5.72,
+   "spann_m": 34.32,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B37M",
+   "spur_m": 5.72,
+   "spann_m": 35.92,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B38M",
+   "spur_m": 5.72,
+   "spann_m": 35.92,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B39M",
+   "spur_m": 5.72,
+   "spann_m": 35.92,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B741",
+   "spur_m": 11.0,
+   "spann_m": 59.64,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B742",
+   "spur_m": 11.0,
+   "spann_m": 59.64,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B743",
+   "spur_m": 11.0,
+   "spann_m": 59.64,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B744",
+   "spur_m": 11.0,
+   "spann_m": 64.44,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B748",
+   "spur_m": 12.6,
+   "spann_m": 68.4,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B752",
+   "spur_m": 7.32,
+   "spann_m": 38.05,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B753",
+   "spur_m": 7.32,
+   "spann_m": 38.05,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B762",
+   "spur_m": 9.3,
+   "spann_m": 47.57,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B763",
+   "spur_m": 9.3,
+   "spann_m": 47.57,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B764",
+   "spur_m": 9.3,
+   "spann_m": 51.92,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B772",
+   "spur_m": 10.97,
+   "spann_m": 60.93,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B773",
+   "spur_m": 10.97,
+   "spann_m": 60.93,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B77F",
+   "spur_m": 10.97,
+   "spann_m": 64.8,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B77L",
+   "spur_m": 10.97,
+   "spann_m": 64.8,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B77W",
+   "spur_m": 10.97,
+   "spann_m": 64.8,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B778",
+   "spur_m": 10.97,
+   "spann_m": 71.76,
+   "gruppe": "Boeing",
+   "notiz": [
+    "777X (Nachtrag 30.09.2026): Spannweite ausgefahren 71,76 m (Wikipedia",
+    "„Boeing 777X“ nach Boeing-ACAP; FAA EB 94B: 71,7 m / gefaltet 64,8 m).",
+    "Bei der Landung sind die Spitzen ausgefahren. Spur: laut FAA EB 94B",
+    "gleiche Taxiway Design Group wie die übrige 777-Klasse; eine eigene",
+    "Spurangabe lag nicht vor, daher der 777-Wert."
+   ]
+  },
+  {
+   "icao": "B779",
+   "spur_m": 10.97,
+   "spann_m": 71.76,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B788",
+   "spur_m": 9.75,
+   "spann_m": 60.12,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B789",
+   "spur_m": 9.75,
+   "spann_m": 60.12,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "B78X",
+   "spur_m": 9.75,
+   "spann_m": 60.12,
+   "gruppe": "Boeing"
+  },
+  {
+   "icao": "MD11",
+   "spur_m": 10.7,
+   "spann_m": 51.66,
+   "gruppe": "McDonnell Douglas",
+   "notiz": [
+    "der MPH-9-Fall"
+   ]
+  },
+  {
+   "icao": "MD1F",
+   "spur_m": 10.7,
+   "spann_m": 51.66,
+   "gruppe": "McDonnell Douglas"
+  },
+  {
+   "icao": "MD82",
+   "spur_m": 5.08,
+   "spann_m": 32.85,
+   "gruppe": "McDonnell Douglas"
+  },
+  {
+   "icao": "MD83",
+   "spur_m": 5.08,
+   "spann_m": 32.85,
+   "gruppe": "McDonnell Douglas"
+  },
+  {
+   "icao": "MD88",
+   "spur_m": 5.08,
+   "spann_m": 32.85,
+   "gruppe": "McDonnell Douglas"
+  },
+  {
+   "icao": "MD90",
+   "spur_m": 5.08,
+   "spann_m": 32.87,
+   "gruppe": "McDonnell Douglas"
+  },
+  {
+   "icao": "E170",
+   "spur_m": 5.3,
+   "spann_m": 26.0,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "E75L",
+   "spur_m": 5.3,
+   "spann_m": 26.0,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "E75S",
+   "spur_m": 5.3,
+   "spann_m": 26.0,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "E190",
+   "spur_m": 5.3,
+   "spann_m": 28.72,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "E195",
+   "spur_m": 5.3,
+   "spann_m": 28.72,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "E290",
+   "spur_m": 5.3,
+   "spann_m": 33.72,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "E295",
+   "spur_m": 5.3,
+   "spann_m": 35.1,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "CRJ2",
+   "spur_m": 3.54,
+   "spann_m": 21.21,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "CRJ7",
+   "spur_m": 4.24,
+   "spann_m": 23.24,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "CRJ9",
+   "spur_m": 4.24,
+   "spann_m": 24.85,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "CRJX",
+   "spur_m": 4.24,
+   "spann_m": 26.18,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "AT43",
+   "spur_m": 4.1,
+   "spann_m": 24.57,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "AT45",
+   "spur_m": 4.1,
+   "spann_m": 24.57,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "AT72",
+   "spur_m": 4.1,
+   "spann_m": 27.05,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "AT76",
+   "spur_m": 4.1,
+   "spann_m": 27.05,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "DH8A",
+   "spur_m": 7.87,
+   "spann_m": 25.91,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "DH8C",
+   "spur_m": 7.87,
+   "spann_m": 27.43,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "DH8D",
+   "spur_m": 7.87,
+   "spann_m": 28.42,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "SF34",
+   "spur_m": 6.71,
+   "spann_m": 21.44,
+   "gruppe": "Embraer / Bombardier / Regional"
+  },
+  {
+   "icao": "A124",
+   "spur_m": 8.0,
+   "spann_m": 73.3,
+   "gruppe": "Frachter / Sonstige Grossflugzeuge"
+  },
+  {
+   "icao": "A225",
+   "spur_m": 8.0,
+   "spann_m": 88.4,
+   "gruppe": "Frachter / Sonstige Grossflugzeuge"
+  },
+  {
+   "icao": "IL96",
+   "spur_m": 10.4,
+   "spann_m": 60.11,
+   "gruppe": "Frachter / Sonstige Grossflugzeuge"
+  },
+  {
+   "icao": "L101",
+   "spur_m": 12.75,
+   "spann_m": 47.35,
+   "gruppe": "Frachter / Sonstige Grossflugzeuge"
+  },
+  {
+   "icao": "C25A",
+   "spur_m": 3.3,
+   "spann_m": 15.9,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "C25B",
+   "spur_m": 3.3,
+   "spann_m": 16.98,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "C25C",
+   "spur_m": 3.3,
+   "spann_m": 17.2,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "C510",
+   "spur_m": 2.9,
+   "spann_m": 12.37,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "C680",
+   "spur_m": 4.11,
+   "spann_m": 19.24,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "C700",
+   "spur_m": 4.3,
+   "spann_m": 21.0,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "CL30",
+   "spur_m": 3.0,
+   "spann_m": 19.46,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "CL35",
+   "spur_m": 3.0,
+   "spann_m": 21.0,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "CL60",
+   "spur_m": 3.2,
+   "spann_m": 19.61,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "E55P",
+   "spur_m": 3.2,
+   "spann_m": 16.2,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "FA50",
+   "spur_m": 3.6,
+   "spann_m": 18.86,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "FA7X",
+   "spur_m": 4.2,
+   "spann_m": 26.21,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "GLF5",
+   "spur_m": 4.3,
+   "spann_m": 28.5,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "GLF6",
+   "spur_m": 4.3,
+   "spann_m": 30.36,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "P180",
+   "spur_m": 3.3,
+   "spann_m": 14.03,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "SF50",
+   "spur_m": 3.2,
+   "spann_m": 11.76,
+   "gruppe": "Geschäftsreise"
+  },
+  {
+   "icao": "A306",
+   "spur_m": 10.69,
+   "spann_m": 44.84,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Diese Muster tauchten im Bestand auf und fehlten. Ohne sie entfiel die",
+    "seitliche Bewertung — im ersten Lauf waren das 27,8 % aller Landungen.",
+    "A300-600"
+   ]
+  },
+  {
+   "icao": "A310",
+   "spur_m": 10.69,
+   "spann_m": 43.9,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "A30B",
+   "spur_m": 10.69,
+   "spann_m": 44.84,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "A400",
+   "spur_m": 8.5,
+   "spann_m": 42.4,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "A400M"
+   ]
+  },
+  {
+   "icao": "F28",
+   "spur_m": 5.8,
+   "spann_m": 25.07,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Fokker F28"
+   ]
+  },
+  {
+   "icao": "F70",
+   "spur_m": 5.04,
+   "spann_m": 28.08,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "F100",
+   "spur_m": 5.04,
+   "spann_m": 28.08,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "C750",
+   "spur_m": 5.61,
+   "spann_m": 19.38,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Citation X"
+   ]
+  },
+  {
+   "icao": "HA4T",
+   "spur_m": 3.0,
+   "spann_m": 12.12,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "HondaJet HA-420"
+   ]
+  },
+  {
+   "icao": "AC11",
+   "spur_m": 2.9,
+   "spann_m": 9.75,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Commander 114"
+   ]
+  },
+  {
+   "icao": "AEST",
+   "spur_m": 3.3,
+   "spann_m": 10.67,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Aerostar"
+   ]
+  },
+  {
+   "icao": "PA24",
+   "spur_m": 3.1,
+   "spann_m": 10.97,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Comanche"
+   ]
+  },
+  {
+   "icao": "PA34",
+   "spur_m": 3.6,
+   "spann_m": 11.85,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Seneca"
+   ]
+  },
+  {
+   "icao": "PA44",
+   "spur_m": 3.2,
+   "spann_m": 11.75,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Seminole"
+   ]
+  },
+  {
+   "icao": "BE24",
+   "spur_m": 3.0,
+   "spann_m": 10.0,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Sierra"
+   ]
+  },
+  {
+   "icao": "BE36",
+   "spur_m": 3.1,
+   "spann_m": 10.21,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Bonanza A36"
+   ]
+  },
+  {
+   "icao": "BE33",
+   "spur_m": 3.0,
+   "spann_m": 10.21,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "BE9L",
+   "spur_m": 4.3,
+   "spann_m": 15.32,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "King Air 90"
+   ]
+  },
+  {
+   "icao": "B350",
+   "spur_m": 5.3,
+   "spann_m": 17.65,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "King Air 350"
+   ]
+  },
+  {
+   "icao": "C25M",
+   "spur_m": 3.3,
+   "spann_m": 15.9,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "C56X",
+   "spur_m": 5.28,
+   "spann_m": 17.17,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Citation Excel"
+   ]
+  },
+  {
+   "icao": "C525",
+   "spur_m": 3.2,
+   "spann_m": 14.26,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "E50P",
+   "spur_m": 3.2,
+   "spann_m": 12.3,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Phenom 100"
+   ]
+  },
+  {
+   "icao": "LJ35",
+   "spur_m": 2.5,
+   "spann_m": 12.04,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "LJ45",
+   "spur_m": 2.6,
+   "spann_m": 14.58,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "H25B",
+   "spur_m": 3.1,
+   "spann_m": 15.66,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Hawker 800"
+   ]
+  },
+  {
+   "icao": "EA50",
+   "spur_m": 2.2,
+   "spann_m": 11.43,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Eclipse"
+   ]
+  },
+  {
+   "icao": "SR20",
+   "spur_m": 2.7,
+   "spann_m": 11.68,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "C210",
+   "spur_m": 3.1,
+   "spann_m": 11.2,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "C206",
+   "spur_m": 2.8,
+   "spann_m": 10.92,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "C185",
+   "spur_m": 2.5,
+   "spann_m": 10.92,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "PC12",
+   "spur_m": 4.5,
+   "spann_m": 16.28,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "PC24",
+   "spur_m": 4.2,
+   "spann_m": 17.0,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "TBM8",
+   "spur_m": 3.9,
+   "spann_m": 12.68,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "DHC6",
+   "spur_m": 4.3,
+   "spann_m": 19.81,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Twin Otter"
+   ]
+  },
+  {
+   "icao": "DHC2",
+   "spur_m": 3.3,
+   "spann_m": 14.63,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Beaver"
+   ]
+  },
+  {
+   "icao": "AN2",
+   "spur_m": 3.36,
+   "spann_m": 18.18,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "RV10",
+   "spur_m": 2.7,
+   "spann_m": 9.63,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026"
+  },
+  {
+   "icao": "M20P",
+   "spur_m": 2.7,
+   "spann_m": 10.67,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Mooney"
+   ]
+  },
+  {
+   "icao": "BL8",
+   "spur_m": 1.8,
+   "spann_m": 9.75,
+   "gruppe": "Nachtrag aus dem Korpus-Lauf 23.08.2026",
+   "notiz": [
+    "Bellanca Decathlon"
+   ]
+  },
+  {
+   "icao": "C152",
+   "spur_m": 2.3,
+   "spann_m": 10.0,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "C172",
+   "spur_m": 2.5,
+   "spann_m": 11.0,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "C182",
+   "spur_m": 2.9,
+   "spann_m": 10.97,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "C208",
+   "spur_m": 3.6,
+   "spann_m": 15.88,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "BE20",
+   "spur_m": 5.3,
+   "spann_m": 16.61,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "BE58",
+   "spur_m": 3.2,
+   "spann_m": 11.53,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "DA40",
+   "spur_m": 2.3,
+   "spann_m": 11.94,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "DA42",
+   "spur_m": 2.6,
+   "spann_m": 13.55,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "P28A",
+   "spur_m": 3.0,
+   "spann_m": 10.67,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "SR22",
+   "spur_m": 2.7,
+   "spann_m": 11.68,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "TBM9",
+   "spur_m": 3.9,
+   "spann_m": 12.82,
+   "gruppe": "Leichtflugzeuge"
+  },
+  {
+   "icao": "B767",
+   "spur_m": 9.3,
+   "spann_m": 47.57,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "",
+    "Abgeglichen gegen alle 656 Subfleets in phpVMS: 93 verschiedene",
+    "Muster, davon fehlten 25. Die Liste ist der RUECKFALL — gelesen wird",
+    "zuerst aus der Flugzeugdatei (§5.3 B). Sie muss trotzdem vollstaendig",
+    "sein: Ohne Eintrag entfaellt die seitliche Bewertung, und der Pilot",
+    "sieht „Spurweite nicht hinterlegt\" statt einer Note.",
+    "Sammelkennung, Werte der -300"
+   ]
+  },
+  {
+   "icao": "B757",
+   "spur_m": 7.32,
+   "spann_m": 38.05,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Sammelkennung"
+   ]
+  },
+  {
+   "icao": "B777",
+   "spur_m": 10.97,
+   "spann_m": 60.93,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Sammelkennung, Werte der -200"
+   ]
+  },
+  {
+   "icao": "A20",
+   "spur_m": 7.59,
+   "spann_m": 35.8,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "verkuerzte A320-Kennung aus den Subfleet-Codes"
+   ]
+  },
+  {
+   "icao": "BE35",
+   "spur_m": 2.9,
+   "spann_m": 10.0,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Bonanza 35"
+   ]
+  },
+  {
+   "icao": "B36",
+   "spur_m": 3.1,
+   "spann_m": 10.21,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Bonanza A36, zweite Schreibweise zu BE36"
+   ]
+  },
+  {
+   "icao": "B58T",
+   "spur_m": 3.2,
+   "spann_m": 11.53,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Baron 58TC, zweite Schreibweise zu BE58"
+   ]
+  },
+  {
+   "icao": "BE60",
+   "spur_m": 3.41,
+   "spann_m": 11.97,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "GSG1152 (Sven M., 2026-09-11): Duke fehlte, „Spurweite nicht",
+    "hinterlegt\". Beide Werte aus dem Original — Beechcraft Duke 60",
+    "Series Maintenance Manual, Kapitel 6 „Dimensions and Areas\",",
+    "Figure 1 „Aircraft Dimensions\" (Nov 2/73), Frontansicht: Spurweite",
+    "11'2.4\" = 3,414 m, Spannweite 39'3.25\" = 11,97 m (deckt sich mit",
+    "Wikipedia/flugzeuginfo.net). Keine geschaetzte Ableitung von der",
+    "Baron (BE58) — der Grundsatz dieser Datei gilt: im Zweifel `None`.",
+    "Duke 60/A60/B60"
+   ]
+  },
+  {
+   "icao": "GA8",
+   "spur_m": 2.79,
+   "spann_m": 12.41,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "",
+    "Nachtrag beim GSG1152-Fix (2026-09-11): Diff des LIVE-Bestands gegen",
+    "den 23.08.-Schnappschuss (`tests/daten/gsg-flotte.txt`, siehe dort",
+    "fuer das Neu-Erzeugen-Rezept) fand 13 neue Subfleet-Muster seit",
+    "damals. Zehn davon waren Namensschema-Artefakte (z.B. \"B739ER\" als",
+    "Subfleet-Code, aber echtes `Aircraft.icao` = \"B739\", laengst",
+    "hinterlegt) — die eigentliche Landequelle ist NIE der Subfleet-Code,",
+    "sondern `Aircraft.icao` (derselbe Fehlschluss wie beim A306-Fall).",
+    "Drei echte Luecken blieben:",
+    "GippsAero Airvan — GA8 Owners/Pilots Info"
+   ]
+  },
+  {
+   "icao": "YK18",
+   "spur_m": 3.12,
+   "spann_m": 11.16,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Manual (GA-FM-04), Figure 1-1 \"Three View of the GA8\": Spurweite",
+    "110,0 in [2794 mm], Spannweite 488,68 in [12412 mm]. Zweite,",
+    "unabhaengige Quelle (GA8-TC-320-Datenblatt) bestaetigt 9'2\" = 2,8 m.",
+    "Jakowlew Jak-18T (NICHT die alte"
+   ]
+  },
+  {
+   "icao": "P28R",
+   "spur_m": 3.2,
+   "spann_m": 10.67,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Spornrad-Jak-18/18A — andere Bauform, andere Spurweite). GSGs",
+    "HA-YAJ ist real als Jak-18T dokumentiert (airhistory.net). Werte",
+    "vom Hersteller selbst, Smolensker Flugzeugwerk (smaz.ru): Spurweite",
+    "3,12 m, Spannweite 11,16 m.",
+    "",
+    "DA50 (Diamond DA50 RG) bewusst NICHT eingetragen: Spannweite",
+    "gesichert (13,41 m, EASA-Musterzulassung EASA.A.639), aber die",
+    "Spurweite steht in keiner oeffentlich zugaenglichen Quelle — bei",
+    "CS-23-Mustern ist sie typischerweise kein Pflichtfeld der",
+    "Musterzulassung. Grundsatz dieser Datei: im Zweifel `None`.",
+    "Piper Arrow"
+   ]
+  },
+  {
+   "icao": "E135",
+   "spur_m": 4.1,
+   "spann_m": 20.04,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "ERJ-135"
+   ]
+  },
+  {
+   "icao": "E145",
+   "spur_m": 4.1,
+   "spann_m": 20.04,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "ERJ-145"
+   ]
+  },
+  {
+   "icao": "E13L",
+   "spur_m": 4.1,
+   "spann_m": 21.17,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Legacy 600 auf ERJ-135-Basis"
+   ]
+  },
+  {
+   "icao": "E175",
+   "spur_m": 5.3,
+   "spann_m": 26.0,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "zweite Schreibweise zu E75L"
+   ]
+  },
+  {
+   "icao": "RJ85",
+   "spur_m": 4.72,
+   "spann_m": 26.21,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Avro RJ85"
+   ]
+  },
+  {
+   "icao": "B463",
+   "spur_m": 4.72,
+   "spann_m": 26.21,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "BAe 146-300"
+   ]
+  },
+  {
+   "icao": "748",
+   "spur_m": 5.79,
+   "spann_m": 30.02,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "HS 748"
+   ]
+  },
+  {
+   "icao": "CJ4",
+   "spur_m": 3.5,
+   "spann_m": 15.08,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Citation CJ4"
+   ]
+  },
+  {
+   "icao": "HDJT",
+   "spur_m": 3.0,
+   "spann_m": 12.12,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "HondaJet, zweite Schreibweise zu HA4T"
+   ]
+  },
+  {
+   "icao": "C414",
+   "spur_m": 3.5,
+   "spann_m": 13.45,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Cessna 414"
+   ]
+  },
+  {
+   "icao": "MU2",
+   "spur_m": 2.44,
+   "spann_m": 11.94,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Mitsubishi MU-2"
+   ]
+  },
+  {
+   "icao": "VL3",
+   "spur_m": 1.6,
+   "spann_m": 8.43,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "JMB VL-3, Ultraleicht"
+   ]
+  },
+  {
+   "icao": "CONC",
+   "spur_m": 7.72,
+   "spann_m": 25.6,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Concorde"
+   ]
+  },
+  {
+   "icao": "EUFI",
+   "spur_m": 5.0,
+   "spann_m": 10.95,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Eurofighter: 5,00 m ist die SPURWEITE, 5,80 m waere der Radstand —",
+    "die beiden zu verwechseln ist bei Deltafluglern leicht, weil das",
+    "Fahrwerk dort im Verhaeltnis zur kurzen Spannweite breit steht. Der",
+    "Plausibilitaetstest (Spannweite ueber dem Doppelten der Spurweite)",
+    "hat den Fehler gefangen: Mit 5,80 lag das Verhaeltnis bei 1,89."
+   ]
+  },
+  {
+   "icao": "H145",
+   "spur_m": 2.0,
+   "spann_m": 11.0,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Hubschrauber"
+   ]
+  },
+  {
+   "icao": "A109",
+   "spur_m": 2.1,
+   "spann_m": 11.0,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Hubschrauber"
+   ]
+  },
+  {
+   "icao": "A139",
+   "spur_m": 2.78,
+   "spann_m": 13.8,
+   "gruppe": "Nachtrag aus der GSG-Flotte (23.08.2026)",
+   "notiz": [
+    "Hubschrauber"
+   ]
+  }
+ ]
+}
