@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <title>AeroACARS UI-Selbsttest</title>
+    <!-- aa-selbsttest-seite: Kennung, an der der Test die Testseite vom eingebauten Frontend unterscheidet -->
+  </head>
+  <body>
+    <p id="stand">Selbsttest laeuft …</p>
+    <!-- Inline-Skript: Die CSP (script-src ohne 'unsafe-inline') muss es abweisen. -->
+    <script>window.__inline = 1;</script>
+    <script type="module" src="/selbsttest.js"></script>
+  </body>
+</html>

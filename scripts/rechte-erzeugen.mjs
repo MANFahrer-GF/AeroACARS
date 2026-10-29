@@ -18,9 +18,10 @@ const tauri = join(dirname(fileURLToPath(import.meta.url)), "..", "client", "src
 const { befehle } = JSON.parse(readFileSync(join(tauri, "befehle.json"), "utf8"));
 
 // Welche Fenster welche Rechte-Datei bekommen. Uebergang (Schritt 1): main und
-// telemetrie stehen in beiden, duerfen also wie bisher alles.
+// telemetrie stehen in beiden, duerfen also wie bisher alles. `ui` ist das
+// Fenster des UI-Selbsttests (ui_lader.rs, P-8.03) — nur Rechte aus ui.json.
 const FENSTER = {
-  ui: ["main", "telemetrie"],
+  ui: ["main", "telemetrie", "ui"],
   huelle: ["huelle", "main", "telemetrie"],
 };
 

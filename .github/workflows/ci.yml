@@ -60,6 +60,65 @@ jobs:
         working-directory: client/src-tauri
         run: cargo clippy --workspace --all-targets
 
+  # ─── Etappe 5 (P-8.03, P-13.20): Oberflaeche ueber aeroui:// ──────────
+  # Baut die App (debug, Frontend eingebettet wie im Release) und startet
+  # sie zweimal im Selbsttest-Modus (client/src-tauri/src/ui_lader.rs): nur
+  # das Fenster `ui`, Testseite ueber den Paket-Weg des Laders. Gemessen
+  # werden CSP, fetch an live, Schrift/WASM, Fehlerseite, Rechte (jeder
+  # Systembefehl abgewiesen) und der Ursprung ueber zwei Starts — auf
+  # WebView2 (Windows) und WKWebView (macOS). Messprotokoll in der
+  # Zusammenfassung des Laufs und als Artefakt.
+  ui-selbsttest:
+    name: UI-Selbsttest (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri -> target
+          key: ui-selbsttest
+      - name: Auswerter gegen sich selbst
+        run: node scripts/ui-selbsttest-auswerten.mjs --selbsttest
+      - name: Frontend deps
+        working-directory: client
+        run: npm ci
+      - name: App bauen (debug, eingebettetes Frontend)
+        working-directory: client
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then B="--bundles app"; else B="--no-bundle"; fi
+          npx tauri build --debug $B --config src-tauri/tauri.lokal.conf.json
+      - name: Zwei Selbsttest-Laeufe und Messprotokoll
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            APP=$(ls client/src-tauri/target/debug/bundle/macos/*.app/Contents/MacOS/* | head -1)
+          else
+            APP=client/src-tauri/target/debug/aeroacars-app.exe
+          fi
+          for n in 1 2; do
+            AEROACARS_UI_SELBSTTEST="$RUNNER_TEMP/lauf$n.json" "$APP" || echo "Lauf $n endete mit $?"
+            cat "$RUNNER_TEMP/lauf$n.json" || true
+          done
+          node scripts/ui-selbsttest-auswerten.mjs "$RUNNER_TEMP/lauf1.json" "$RUNNER_TEMP/lauf2.json" "$RUNNER_OS" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-selbsttest-${{ runner.os }}
+          path: ${{ runner.temp }}/lauf*.json
+
   # ─── Ubuntu: schneller Cross-Check (sim-core / sim-xplane) + Frontend ─
   # Spiegelt das release.yml-Preflight (cargo check --all-targets nach
   # apt-Deps). Faengt „lokal gruen, remote rot" durch ungestagete Files.

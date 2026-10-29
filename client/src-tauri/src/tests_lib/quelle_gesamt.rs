@@ -103,6 +103,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// unbrauchbar gewordenen neu auf; in `kabinenansagen` nur der Typ und die
 /// Notiz `planer` (welcher Weg plant). Tests `kabinenplaner::tests`,
 /// `kabinenablauf_aendert_sich_mit_dem_paket`, `kabine-wasm/tests/gleich_nativ.rs`.
+/// — plus Etappe 5 (P-8.02/P-8.03): `mod ui_lader`; am Builder das Protokoll
+/// `aeroui` (`ui_lader::anfrage`); in `.setup` nach dem Laufzeit-Paket der
+/// CI-Selbsttest (`ui_lader::selbsttest_starten`, nur mit
+/// `AEROACARS_UI_SELBSTTEST`). Tests `ui_lader::tests`, CI-Job `ui-selbsttest`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -113,4 +117,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "1df32d622e71f89ad02d765b3ef186c683757f8c6895f6edde613e5f0828b235";
+const HASH_VOR_DER_ZERLEGUNG: &str = "7ac1ceadf4678cef3c6c991d2f1de5060567eeb7009a6c7e07a3536f8bc9fd56";

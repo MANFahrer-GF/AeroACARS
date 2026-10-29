@@ -35,6 +35,8 @@ mod navdata_cache;
 mod replay_erkennung;
 mod grenzwerte;
 mod laufzeit_paket;
+// v3 (Etappe 5): Lader der Oberflaeche ueber aeroui:// (P-8.02, P-8.20).
+mod ui_lader;
 mod datenuebernahme;
 mod bewertung;
 mod landungs_eingabe;
@@ -54958,6 +54960,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         // v1.7.29: Hauptfenster merkt sich Größe/Lage (siehe fenster.rs).
         .plugin(fenster::zustand_plugin())
+        // v3 (Etappe 5): Oberflaeche aus der aktiven Generation (ui_lader.rs).
+        .register_asynchronous_uri_scheme_protocol(ui_lader::SCHEMA, |ctx, req, antwort| ui_lader::anfrage(ctx, req, antwort))
         .manage(app_state)
         .manage(aircraft_scan::AircraftScanState::default())
         // v1.5.6 (#lan-bruecke-1zu1): gespiegelter UI-Zustand (SimBrief-Konto,
@@ -55004,6 +55008,8 @@ pub fn run() {
         .setup(|app| {
             // v3 (Etappe 1a): Laufzeit-Paket zuerst — legt OurAirports fest, bevor jemand Bahnen liest.
             if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten.clone()); tauri::async_runtime::spawn(landungs_eingabe::nachsenden(daten)); }
+            // v3 (Etappe 5, P-8.03): Messlauf der CI — nur das Fenster `ui`, sonst nichts.
+            if ui_lader::selbsttest_starten(app) { return Ok(()); }
             // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
             // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
             // geschrieben werden, an denen ein frueherer Lauf erkannt wird.

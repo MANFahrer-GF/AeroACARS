@@ -90,6 +90,19 @@ pub(crate) struct AktiverStand {
 
 static STAND: OnceLock<AktiverStand> = OnceLock::new();
 
+/// Einstieg der nachgeladenen Oberflaeche im Paket (Etappe 5, P-8.02).
+pub(crate) const UI_EINSTIEG: &str = "ui/index.html";
+
+/// Das Paket des geltenden Stands, wenn es eine Oberflaeche (`ui/`) traegt.
+/// Gesetzt nur zusammen mit dem Stand aus demselben Paket (P-3.02).
+static UI_PAKET: OnceLock<Paket> = OnceLock::new();
+
+/// Die Oberflaeche dieses Laufs: `Some` = `ui/` der aktiven Generation,
+/// `None` = das eingebaute Frontend (`ui_lader`).
+pub(crate) fn ui_paket() -> Option<&'static Paket> {
+    UI_PAKET.get()
+}
+
 /// PIREP und Stand eines offenen Flugs, dessen Stand in diesem Lauf NICHT gilt
 /// (fehlte lokal oder kam zu spaet). Gilt nur fuer genau diesen Flug (P-3.31).
 static PIN: OnceLock<(String, RuntimeBundleId)> = OnceLock::new();
@@ -353,16 +366,20 @@ fn starten_einmal(app_daten: &Path) {
     };
     // Erst den ganzen Stand lesen, dann EINMAL festlegen (P-3.02). Laesst
     // sich ein Teil nicht lesen, gilt der eingebaute Stand.
-    let neu = match stand_aus_paket(&paket) {
-        Ok(neu) => Some(neu),
+    let (neu, aus_paket) = match stand_aus_paket(&paket) {
+        Ok(neu) => (Some(neu), true),
         Err(e) => {
             tracing::warn!(stand = %paket.id, error = %e, "Laufzeit-Paket: Stand nicht anwendbar, eingebauter Stand gilt");
-            eingebauter_stand().ok()
+            (eingebauter_stand().ok(), false)
         }
     };
     if let Some(neu) = neu {
         if !uebernehmen(neu) {
             tracing::warn!("Laufzeit-Paket: ein Stand galt schon (vorher gelesen), er bleibt");
+        } else if aus_paket && paket.manifest.datei(UI_EINSTIEG).is_some() {
+            // Etappe 5 (P-8.20): Die Oberflaeche kommt aus DERSELBEN
+            // Generation wie die Daten — oder ganz aus dem Programm.
+            let _ = UI_PAKET.set(paket);
         }
     }
     let wirksam = stand().id.clone();

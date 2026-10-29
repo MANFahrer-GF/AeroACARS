@@ -4,7 +4,8 @@
   "description": "Nachgeladene Oberflaeche: Stufen lesen und fachlich (P-8.02). ERZEUGT von scripts/rechte-erzeugen.mjs aus befehle.json — nicht von Hand aendern.",
   "windows": [
     "main",
-    "telemetrie"
+    "telemetrie",
+    "ui"
   ],
   "permissions": [
     "allow-activity-log-get",
