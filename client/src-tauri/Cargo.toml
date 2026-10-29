@@ -14,6 +14,9 @@ members = [
     "crates/landing-scoring",
     # v3 (P-3.60): Adressen der Gegenstellen aus dem Laufzeit-Paket
     "crates/paket-endpunkte",
+    # v3 Etappe 3 (P-4.30): landing-scoring als WASM-Modul
+    "crates/bewertung-wasm",
+    "crates/bewertung-host",
     # v0.9.0 (#Discord-RPC) — Pilot-Flugstatus im Discord-Profil
     "crates/discord-presence",
     # v1.3.0 (#Hoppie-PDC-CPDLC) — Hoppie-ACARS-Netzwerk-Protokoll +
@@ -29,7 +32,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "2.1.24"
+version = "3.0.0-beta.1"
 edition = "2021"
 # Proprietaer seit 29.09.2026 — siehe LICENSE im Repo-Wurzelordner.
 license = "LicenseRef-AeroACARS-Proprietary"
@@ -111,6 +114,7 @@ hoppie-protocol = { path = "crates/hoppie-protocol" }
 cabin-announcements = { path = "crates/cabin-announcements" }
 runtime-bundle = { path = "crates/runtime-bundle" }
 paket-endpunkte = { path = "crates/paket-endpunkte" }
+bewertung-host = { path = "crates/bewertung-host" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

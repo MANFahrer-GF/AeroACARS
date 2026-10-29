@@ -35,7 +35,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Die Messwerte des Anflug-Gates. `None` = nicht gemessen.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnflugWerte {
     pub vs_jerk_fpm: Option<f32>,
     pub bank_stddev_deg: Option<f32>,

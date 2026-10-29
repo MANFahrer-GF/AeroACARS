@@ -108,6 +108,13 @@ jobs:
       - name: cargo check (ganzer Workspace)
         working-directory: client/src-tauri
         run: cargo check --all-targets
+      # v3 Etappe 3 (P-4.01): Das eingecheckte Bewertungsmodul
+      # bundle/module/bewertung.wasm muss genau aus diesem Quellstand
+      # entstehen (feste Toolchain, Pfade umgeschrieben).
+      - name: Bewertungsmodul reproduzierbar
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --target wasm32-unknown-unknown
+          sh scripts/bundle/bewertung-bauen.sh --pruefen
       - name: Frontend deps
         working-directory: client
         run: npm ci

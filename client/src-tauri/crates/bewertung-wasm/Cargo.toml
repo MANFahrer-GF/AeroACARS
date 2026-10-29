@@ -1,0 +1,16 @@
+[package]
+name = "bewertung-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "AeroACARS 3.0: landing-scoring als WASM-Modul (P-4.01, P-4.30) — nur die Exporte alloc/bewerte."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+landing-scoring.workspace = true
+
+[lints]
+workspace = true

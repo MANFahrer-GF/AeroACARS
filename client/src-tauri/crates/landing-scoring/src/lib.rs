@@ -38,6 +38,8 @@ pub mod sub_rollout;
 pub mod sub_stability;
 pub mod sub_touchdown_point;
 pub mod vref;
+/// v3 Etappe 3: Modul-Schnittstelle (JSON hinein, JSON heraus).
+pub mod wasm;
 
 /// Score-Band — 1:1 aus TS `Band`. NICHT umbenennen, bestehende UI
 /// erwartet exakt diese Werte (siehe Spec §5.4 K1).
@@ -299,7 +301,7 @@ impl SubScoreEntry {
 /// und produzieren entweder den Default-Pfad (z.B. `bounce_count
 /// .unwrap_or(0)`) oder einen skipped Sub-Score (Phase 2: fuel/
 /// loadsheet).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LandingScoringInput {
     pub vs_fpm: Option<f32>,
     /// Roher 50-Hz-Einzelframe-G-Peak. **Forensik / Backward-Fallback** —
