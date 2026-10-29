@@ -42,10 +42,29 @@ var host = process.env.TAURI_DEV_HOST;
 // v0.9.0 (#GlitchTip): Client-Version fuer Sentry-release-tag
 var pkg = JSON.parse(readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8"));
 // https://vite.dev/config/
+// v3 (Etappe 5, P-8.20): Das HUD (Panel-Server /hud) laedt Skript und Stil
+// des Widgets ueber denselben Lader wie die Oberflaeche — darum liegen sie im
+// Frontend-Bau unter hud/. Quelle bleibt das msfs-panel-Paket (eine Quelle
+// mit Flow-Widget und nativem Panel).
+var HUD_QUELLE = "../msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/";
+var hudDateien = {
+    name: "hud-dateien",
+    apply: "build",
+    generateBundle: function () {
+        for (var _i = 0, _a = ["panel.js", "panel.css"]; _i < _a.length; _i++) {
+            var datei = _a[_i];
+            this.emitFile({
+                type: "asset",
+                fileName: "hud/".concat(datei),
+                source: readFileSync(fileURLToPath(new URL(HUD_QUELLE + datei, import.meta.url)), "utf8"),
+            });
+        }
+    },
+};
 export default defineConfig(function () { return __awaiter(void 0, void 0, void 0, function () {
     return __generator(this, function (_a) {
         return [2 /*return*/, ({
-                plugins: [react()],
+                plugins: [react(), hudDateien],
                 define: {
                     __APP_VERSION__: JSON.stringify(pkg.version),
                 },
@@ -99,6 +118,8 @@ export default defineConfig(function () { return __awaiter(void 0, void 0, void 
                             port: 1421,
                         }
                         : undefined,
+                    // Eingebauter Paketstand liegt ausserhalb von client/ (`../bundle`).
+                    fs: { allow: [".", "../bundle"] },
                     watch: {
                         // 3. tell Vite to ignore watching `src-tauri`
                         ignored: ["**/src-tauri/**"],

@@ -23,7 +23,10 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1"];
+/// `ui-befehle-1` (P-8.11): die Befehlsliste befehle.json dieses Programms —
+/// ein Paket mit Oberflaeche (`ui/`) ruft genau diese Befehle. Neuer Befehl =
+/// Release + `ui-befehle-2` im Paket-Workflow.
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -592,6 +595,19 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// Ein Paket aus dem Paket-Workflow verlangt nur, was dieses Programm
+    /// kann — sonst lehnte der Client sein eigenes Paket ab (P-2.15). Mit
+    /// Oberflaeche (ui/) gehoert ui-befehle-1 dazu (P-8.11).
+    #[test]
+    fn paket_workflow_verlangt_nur_bekannte_faehigkeiten() {
+        let wf = include_str!("../../../.github/workflows/bundle.yml");
+        let liste = wf.split("--requires ").nth(1).expect("--requires").split_whitespace().next().unwrap();
+        for f in liste.split(',') {
+            assert!(FAEHIGKEITEN.contains(&f), "bundle.yml verlangt {f}, das Programm kennt es nicht");
+        }
+        assert!(liste.split(',').any(|f| f == "ui-befehle-1"), "Paket mit ui/ ohne ui-befehle-1");
+    }
+
     use super::*;
 
     /// Beide eingetragenen Schluessel sind echte minisign-Schluessel und

@@ -18,7 +18,19 @@ name: Laufzeit-Paket
 on:
   push:
     branches: [v3, main]
-    paths: ['bundle/**', 'client/src-tauri/crates/runtime-bundle/**', '.github/workflows/bundle.yml']
+    # v3 (Etappe 5): Die Oberflaeche (ui/) ist Paketinhalt — Frontend-Aenderungen
+    # bauen ein neues Paket.
+    paths:
+      - 'bundle/**'
+      - 'client/src-tauri/crates/runtime-bundle/**'
+      - '.github/workflows/bundle.yml'
+      - 'client/src/**'
+      - 'client/index.html'
+      - 'client/package.json'
+      - 'client/package-lock.json'
+      - 'client/vite.config.ts'
+      - 'client/src-tauri/befehle.json'
+      - 'msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/panel.*'
   workflow_dispatch:
     inputs:
       nur_ourairports:
@@ -53,6 +65,20 @@ jobs:
       - name: Selbsttest-Korpus über das Bewertungsmodul (P-13.02)
         working-directory: client/src-tauri
         run: cargo test -p bewertung-host --test selbsttest_korpus
+      # v3 (Etappe 5, P-8.20): Oberflaeche bauen und als ui/ in die Generation
+      # legen — Hauptfenster, Telemetrie, LAN-Webapp und HUD laden daraus.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Oberflaeche bauen (ui/)
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+          rm -rf "$GITHUB_WORKSPACE/bundle/ui"
+          cp -R dist "$GITHUB_WORKSPACE/bundle/ui"
+          test -f "$GITHUB_WORKSPACE/bundle/ui/index.html"
+          test -f "$GITHUB_WORKSPACE/bundle/ui/hud/panel.js"
       - name: Generation festlegen
         id: gen
         # Steigt mit jedem Lauf dieses Workflows; 0 ist der eingebaute Stand.
@@ -71,7 +97,7 @@ jobs:
             --generation "${{ steps.gen.outputs.generation }}" \
             --erstellt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --repo-commit "${{ github.sha }}" ${OA[@]+"${OA[@]}"} \
-            --requires ourairports-1,grenzwerte-1,xplane-profile-1,cpdlc-1,flotte-1,texte-1,spurweiten-1,vref-1,hoehengruppen-1,klappen-1,kabine-1,endpunkte-1,msfs-profile-1,bewertung-1,kabine-modul-1
+            --requires ourairports-1,grenzwerte-1,xplane-profile-1,cpdlc-1,flotte-1,texte-1,spurweiten-1,vref-1,hoehengruppen-1,klappen-1,kabine-1,endpunkte-1,msfs-profile-1,bewertung-1,kabine-modul-1,ui-befehle-1
       - name: Signieren
         id: signieren
         env:

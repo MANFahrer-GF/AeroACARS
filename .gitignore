@@ -169,3 +169,6 @@ client/bericht-dist/
 
 # Python-Zwischenstaende (scripts/)
 __pycache__/
+
+# v3 (Etappe 5): Oberflaeche wird nur im Paket-Workflow nach bundle/ui kopiert
+/bundle/ui/

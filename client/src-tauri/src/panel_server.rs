@@ -131,19 +131,27 @@ struct PanelCtx {
 /// same-origin, also kein CORS-Thema, und weil der Server Loopback-only
 /// ist, bleibt es beim eigenen Rechner.
 ///
-/// Die Dateien kommen per `include_str!` ZUR COMPILE-ZEIT aus dem
-/// msfs-panel-Paket — `panel.js` ist dort byte-identisch mit dem
-/// Flow-Widget (eine Quelle, jetzt drei Ziele). Kein Laufzeit-Dateipfad,
-/// nichts zu installieren, nichts kann fehlen. Der Browser nimmt
+/// v3 (Etappe 5, P-8.20): `panel.js`/`panel.css` kommen ueber den Lader aus
+/// derselben Generation wie Hauptfenster und LAN (`hud/` im Frontend-Bau,
+/// von `vite.config.ts` aus dem msfs-panel-Paket kopiert — weiter eine
+/// Quelle mit Flow-Widget und nativem Panel). Der Browser nimmt
 /// automatisch den "nativen" Einstieg des Skripts (kein Flow-`run()`),
 /// und `aa2-nativ` am Body waehlt die fuellende Positionierung.
-async fn hud_handler() -> axum::response::Html<String> {
-    const JS: &str = include_str!(
-        "../../../msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/panel.js"
-    );
-    const CSS: &str = include_str!(
-        "../../../msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/panel.css"
-    );
+async fn hud_handler(State(ctx): State<PanelCtx>) -> Response {
+    let text = |pfad: &str| {
+        crate::ui_lader::datei(&ctx.app, pfad).and_then(|d| String::from_utf8(d.bytes).map_err(|e| e.to_string()))
+    };
+    match (text("hud/panel.js"), text("hud/panel.css")) {
+        (Ok(js), Ok(css)) => axum::response::Html(hud_seite(&js, &css)).into_response(),
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::warn!(error = %e, "panel_server: HUD nicht in der Oberflaeche");
+            (StatusCode::SERVICE_UNAVAILABLE, "HUD nicht verfuegbar").into_response()
+        }
+    }
+}
+
+/// Die HUD-Seite aus Widget-Skript und -Stil.
+fn hud_seite(js: &str, css: &str) -> String {
     // v1.5.3 (Thomas, 11.08.2026): NUR der Kasten, sonst nichts.
     //
     // Die erste Fassung erbte ueber `aa2-nativ` das Fensterfuell-
@@ -156,7 +164,7 @@ async fn hud_handler() -> axum::response::Html<String> {
     //     OPAKE Flaeche bekommt statt der halbtransparenten aus dem Sim)
     //   - Streifen als inline-flex im Fluss: endet hinter dem Inhalt,
     //     nicht an der Bildschirmkante
-    axum::response::Html(format!(
+    format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
          <title>AeroACARS HUD</title><style>{CSS}\
          html,body{{margin:0;padding:0;background:transparent;}}\
@@ -165,8 +173,9 @@ async fn hud_handler() -> axum::response::Html<String> {
          .aa2-strip.aa2-quiet{{opacity:1;}}\
          .aa2-strip:empty{{display:none;}}</style></head>\
          <body><div class=\"aa2-strip\"></div>\
-         <script>{JS}</script></body></html>"
-    ))
+         <script>{js}</script></body></html>",
+        CSS = css
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -996,7 +1005,10 @@ mod hud_page_tests {
     /// nicht erst beim Piloten im Browser.
     #[tokio::test]
     async fn hud_page_embeds_the_widget() {
-        let html = super::hud_handler().await.0;
+        let html = super::hud_seite(
+            include_str!("../../../msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/panel.js"),
+            include_str!("../../../msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/panel.css"),
+        );
         assert!(html.contains("aa2-strip"), "Streifen-Buehne fehlt");
         assert!(
             html.contains("background:transparent"),

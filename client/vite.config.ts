@@ -11,8 +11,27 @@ const pkg = JSON.parse(
 );
 
 // https://vite.dev/config/
+// v3 (Etappe 5, P-8.20): Das HUD (Panel-Server /hud) laedt Skript und Stil
+// des Widgets ueber denselben Lader wie die Oberflaeche — darum liegen sie im
+// Frontend-Bau unter hud/. Quelle bleibt das msfs-panel-Paket (eine Quelle
+// mit Flow-Widget und nativem Panel).
+const HUD_QUELLE = "../msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel/";
+const hudDateien = {
+  name: "hud-dateien",
+  apply: "build" as const,
+  generateBundle(this: { emitFile: (f: { type: "asset"; fileName: string; source: string }) => void }) {
+    for (const datei of ["panel.js", "panel.css"]) {
+      this.emitFile({
+        type: "asset",
+        fileName: `hud/${datei}`,
+        source: readFileSync(fileURLToPath(new URL(HUD_QUELLE + datei, import.meta.url)), "utf8"),
+      });
+    }
+  },
+};
+
 export default defineConfig(async () => ({
-  plugins: [react()],
+  plugins: [react(), hudDateien],
 
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),

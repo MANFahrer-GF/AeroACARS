@@ -25,6 +25,11 @@
 //!
 //! ## What is covered
 //!
+//! v3 (Etappe 5, P-8.20): Befehle der Stufe „system“ (befehle.json) lehnt
+//! `dispatch` vorab mit `nur_huelle` ab; das Tablet stoesst sie ueber
+//! `shell_request` an, bestaetigt wird am Sim-PC. Ihre Arme unten bleiben
+//! fuer den Guard-Test stehen, werden aber nicht mehr erreicht.
+//!
 //! **Everything.** v1.5.6 (#lan-bruecke-1zu1) — Vorgabe Thomas: "die
 //! LAN-Bruecke soll alles 1 zu 1 machen". Jeder Befehl aus der
 //! `generate_handler!`-Liste (lib.rs) wird hier dispatcht; der Guard-Test
@@ -120,7 +125,20 @@ fn from_uierr<T: serde::Serialize>(r: Result<T, UiError>) -> Result<Value, UiErr
 /// `body` must be a JSON object (the router guarantees this). `app` is a
 /// fresh clone per request; `state` is taken via `app.state::<AppState>()`
 /// inside each arm exactly as Tauri's IPC does.
+/// Systembefehle laufen ueber die Bruecke nie direkt (P-8.20).
+fn nur_huelle(name: &str) -> Option<UiError> {
+    (crate::huelle::stufe(name) == Some("system")).then(|| {
+        UiError::new("nur_huelle", format!("{name} ist ein Systembefehl — bitte ueber die Huelle (shell_request)"))
+    })
+}
+
 pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch {
+    // v3 (Etappe 5, P-8.20): Die LAN-Oberflaeche kommt aus derselben
+    // Generation wie das Hauptfenster und bekommt dieselben Rechte —
+    // Systembefehle nur ueber `shell_request` (Bestaetigung am Sim-PC).
+    if let Some(e) = nur_huelle(name) {
+        return Dispatch::Handled(Err(e));
+    }
     let app: AppHandle = ctx.app.clone();
 
     // --- Macro for the common shapes -------------------------------------
@@ -1353,6 +1371,26 @@ mod tests {
     //! control (`flight_start`-style `{bid_id, acknowledgeAircraftMismatch}`)
     //! arg struct are exercised to prove the named-arg contract + the
     //! camelCase rename survive.
+
+    /// P-8.20: Jeder Systembefehl wird abgewiesen, bevor ein Arm laeuft;
+    /// lesende und fachliche (auch `shell_request`) gehen durch.
+    #[test]
+    fn systembefehle_nur_ueber_die_huelle() {
+        let v: serde_json::Value = serde_json::from_str(include_str!("../../befehle.json")).unwrap();
+        let mut system = 0;
+        for (b, stufe) in v["befehle"].as_object().unwrap() {
+            let gesperrt = super::nur_huelle(b);
+            assert_eq!(gesperrt.is_some(), stufe == "system", "{b}");
+            system += gesperrt.is_some() as usize;
+        }
+        assert!(system > 30);
+        assert_eq!(super::nur_huelle("phpvms_login").unwrap().code, "nur_huelle");
+        // Verdrahtung: die Pruefung ist das Erste in `dispatch`.
+        let quelle = include_str!("bridge.rs");
+        let rumpf = &quelle[quelle.find(&format!("pub async fn {}(", "dispatch")).unwrap()..];
+        let erste = rumpf.lines().skip(1).map(str::trim).find(|z| !z.is_empty() && !z.starts_with("//")).unwrap();
+        assert_eq!(erste, "if let Some(e) = nur_huelle(name) {");
+    }
     use super::*;
     use serde_json::json;
 

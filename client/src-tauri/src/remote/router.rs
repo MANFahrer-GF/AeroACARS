@@ -6,7 +6,7 @@
 //! POST /api/auth          {pin}              → {token} | 401 | 429
 //! POST /api/cmd/{name}     <named args json>  → 200 Ok | 422 UiError | 404
 //! GET  /ws?token=…         (WebSocket)         → push stream
-//! GET  /*path              (SPA via embedded asset_resolver,
+//! GET  /*path              (SPA via ui_lader — aktive Generation oder eingebaut,
 //!                           fallback index.html for deep-links)
 //! ```
 //!
@@ -102,7 +102,8 @@ pub fn resolve_spa_dir(app: &AppHandle) -> PathBuf {
 
 /// Serve the SPA for an unmatched (non-`/api`, non-`/ws`) request.
 ///
-/// PRIMARY path — the EMBEDDED assets via [`AppHandle::asset_resolver`].
+/// PRIMARY path — v3 (Etappe 5): `ui_lader::datei`, also ui/ der aktiven
+/// Generation oder (wie bisher) the EMBEDDED assets via [`AppHandle::asset_resolver`].
 /// In a packaged Tauri app the frontend is compiled into the binary (via
 /// `generate_context!`), NOT shipped as loose files, so a filesystem
 /// `ServeDir` finds nothing and the tablet gets a blank page. The asset
@@ -122,16 +123,18 @@ pub fn resolve_spa_dir(app: &AppHandle) -> PathBuf {
 async fn serve_spa(app: &AppHandle, spa_dir: &std::path::Path, uri: Uri) -> Response {
     let path = uri.path();
 
-    // 1) Embedded assets (production). The resolver strips a leading slash
-    //    and maps "" → index.html, so the raw request path works directly;
-    //    it also falls back to index.html for SPA deep-links itself.
-    if let Some(asset) = app.asset_resolver().get(path.to_string()) {
-        return (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, asset.mime_type)],
-            asset.bytes,
-        )
-            .into_response();
+    // 1) v3 (Etappe 5, P-8.20): derselbe Lader wie Haupt- und
+    //    Telemetriefenster — ui/ der aktiven Generation oder das eingebaute
+    //    Frontend. Ein Pfad ohne Endung (SPA-Deep-Link) bekommt index.html.
+    let datei = crate::ui_lader::datei(app, path).or_else(|e| {
+        if crate::ui_lader::mime(path).is_none() {
+            crate::ui_lader::datei(app, "/index.html")
+        } else {
+            Err(e)
+        }
+    });
+    if let Ok(d) = datei {
+        return (StatusCode::OK, [(header::CONTENT_TYPE, d.mime)], d.bytes).into_response();
     }
 
     // 2) Dev / `cargo run` FS fallback. Resolve the on-disk file; for an
