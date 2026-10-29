@@ -31,6 +31,9 @@ AIRPORTS_SPALTEN = ["ident", "type", "latitude_deg", "longitude_deg"]
 AIRPORTS_KOPF_ROH = ('"id","ident","type","name","latitude_deg","longitude_deg","elevation_ft","continent",'
                      '"iso_country","iso_region","municipality","scheduled_service","icao_code","iata_code",'
                      '"gps_code","local_code","home_link","wikipedia_link","keywords"')
+RUNWAYS_KOPF = ('"id","airport_ref","airport_ident","length_ft","width_ft","surface","lighted","closed","le_ident",'
+                '"le_latitude_deg","le_longitude_deg","le_elevation_ft","le_heading_degT","le_displaced_threshold_ft",'
+                '"he_ident","he_latitude_deg","he_longitude_deg","he_elevation_ft","he_heading_degT","he_displaced_threshold_ft"')
 
 # Geeicht 29.10.2026 (Woche: +0,05 % Plaetze, 28 Verschiebungen > 1 km;
 # Monat: +0,17 %, 31 Verschiebungen).
@@ -88,11 +91,13 @@ def zahl(s):
         return None
 
 
-def pruefen(alt_ap: str, neu_ap: str, alt_rw: str, neu_rw: str, gsg: set, roh_ap_kopf=None) -> list:
+def pruefen(alt_ap: str, neu_ap: str, alt_rw: str, neu_rw: str, gsg: set, roh_ap_kopf=None, rw_kopf=None) -> list:
     """Liste der Haltegruende; leer = Stand darf hinaus."""
     gruende = []
     if roh_ap_kopf is not None and roh_ap_kopf.rstrip("\r") != AIRPORTS_KOPF_ROH:
         gruende.append("airports.csv (roh): Kopfzeile nicht wie erwartet")
+    if rw_kopf is not None and neu_rw.split("\n", 1)[0].rstrip("\r") != rw_kopf:
+        gruende.append("runways.csv: Kopfzeile nicht wie erwartet")
     if neu_rw.split("\n", 1)[0] != alt_rw.split("\n", 1)[0]:
         gruende.append("runways.csv: Kopfzeile geaendert")
     if neu_ap.split("\n", 1)[0] != alt_ap.split("\n", 1)[0]:
@@ -161,7 +166,7 @@ def main(argv=None) -> int:
     if neu_ap == alt_ap and neu_rw == alt_rw:
         print("OurAirports: kein Unterschied")
         return 0
-    gruende = pruefen(alt_ap, neu_ap, alt_rw, neu_rw, gsg, roh_ap.split("\n", 1)[0])
+    gruende = pruefen(alt_ap, neu_ap, alt_rw, neu_rw, gsg, roh_ap.split("\n", 1)[0], RUNWAYS_KOPF)
     bericht = [f"# OurAirports {a.commit}", ""]
     if gruende:
         bericht += ["**Halt** — nichts geschrieben. Gruende:", ""] + [f"- {g}" for g in gruende]

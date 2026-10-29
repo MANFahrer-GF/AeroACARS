@@ -75,6 +75,14 @@ class Pruefen(unittest.TestCase):
         neu = oa.AIRPORTS_KOPF_ROH + ',"neue_spalte"'
         self.assertTrue(any("roh" in g for g in oa.pruefen(*basis, neu)))
 
+    def test_feste_kopfzeile_runways(self):
+        # Auch wenn alter und neuer Stand dieselbe falsche Kopfzeile haben.
+        basis = (ap(BASIS_AP), ap(BASIS_AP), rw(BASIS_RW), rw(BASIS_RW), GSG, None)
+        self.assertTrue(any("runways.csv: Kopfzeile nicht" in g for g in oa.pruefen(*basis, oa.RUNWAYS_KOPF)))
+        self.assertEqual(oa.pruefen(*basis, RW_KOPF.strip()), [])
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../bundle/ourairports/runways.csv"), encoding="utf-8") as f:
+            self.assertEqual(f.readline().rstrip("\n"), oa.RUNWAYS_KOPF)
+
     def test_jede_anzahl_schwelle(self):
         # Flughaefen: +2 % haelt nicht, darueber Halt (1001 Plaetze).
         plus = [(f"N{n:03d}", "small_airport", 1, 1) for n in range(21)]
@@ -96,6 +104,9 @@ class Pruefen(unittest.TestCase):
 class Lauf(unittest.TestCase):
     def test_stand_wird_nur_bei_neuem_stand_geschrieben(self):
         import tempfile
+        from unittest import mock
+        mock.patch.object(oa, "RUNWAYS_KOPF", RW_KOPF.strip()).start()
+        self.addCleanup(mock.patch.stopall)
         with tempfile.TemporaryDirectory() as d:
             ziel, roh = os.path.join(d, "ziel"), os.path.join(d, "roh")
             os.mkdir(ziel)

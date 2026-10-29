@@ -414,22 +414,27 @@ fn sha256_hex(b: &[u8]) -> String {
     Sha256::digest(b).iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Umschlag fuer den Server. Prueft, dass das Paket die Dateien traegt, mit
-/// denen gerechnet wurde (`bundle(pfad)` liefert sie aus dem Repo), und dass
-/// seine `score_version` die Fassung des Moduls ist.
+/// Umschlag fuer den Server. Prueft, dass das Paket genau die Dateien traegt,
+/// mit denen gerechnet wurde (`GENUTZT`; `bundle(pfad)` liefert sie aus dem
+/// Repo), und dass seine `score_version` die Fassung des Moduls ist.
+/// Dateien, mit denen dieses Werkzeug rechnet: muessen im Paket stehen.
+const GENUTZT: [&str; 5] = [
+    "module/bewertung.wasm",
+    "grenzwerte/anflug_kern.json",
+    "grenzwerte/aufsetzen.json",
+    "grenzwerte/landung.json",
+    "tabellen/flotte.json",
+];
+
 fn umschlag(manifest: &[u8], bundle: impl Fn(&str) -> Option<Vec<u8>>, fassung: u64, gelaufen_at: String, zeilen: Vec<Value>) -> Value {
     let m: Value = serde_json::from_slice(manifest).unwrap();
-    let mut modul_da = false;
-    for d in m["files"].as_array().unwrap() {
-        let pfad = d["path"].as_str().unwrap();
-        modul_da |= pfad == "module/bewertung.wasm";
-        if let Some(b) = bundle(pfad) {
-            assert_eq!(sha256_hex(&b), d["sha256"].as_str().unwrap(), "Paket passt nicht: {pfad}");
-        } else {
-            assert_ne!(pfad, "module/bewertung.wasm", "Modul fehlt im Repo");
-        }
+    let dateien = m["files"].as_array().unwrap();
+    // Nur die genutzten Dateien: Texte u. a. aendern die Bewertung nicht.
+    for g in GENUTZT {
+        let d = dateien.iter().find(|d| d["path"] == g).unwrap_or_else(|| panic!("{g} fehlt im Paket"));
+        let b = bundle(g).unwrap_or_else(|| panic!("{g} fehlt im Repo"));
+        assert_eq!(sha256_hex(&b), d["sha256"].as_str().unwrap(), "Paket passt nicht: {g}");
     }
-    assert!(modul_da, "Modul fehlt im Paket");
     assert_eq!(m["score_version"].as_u64(), Some(fassung), "score_version des Pakets != Fassung des Moduls");
     json!({
         "paket": { "generation": m["generation"].as_u64().unwrap(), "manifest_sha256": sha256_hex(manifest) },
@@ -551,10 +556,10 @@ fn gleichheitslauf() {
             Some("kein_pirep")
         } else if pirep.is_none() {
             Some("keine_pirep_id")
-        } else if !pireps.insert((pirep.clone(), seq(f))) {
-            Some("doppelt")
         } else if ref_teile.is_none() {
             Some("keine_2x_teilnoten")
+        } else if !pireps.insert((pirep.clone(), seq(f))) {
+            Some("doppelt")
         } else {
             None
         };
@@ -653,18 +658,23 @@ fn seq_ist_der_letzte_aufsetzer() {
 }
 
 fn probe_manifest(modul: &[u8], fassung: u64) -> Vec<u8> {
-    serde_json::to_vec(&json!({"generation": 27, "score_version": fassung, "files": [
-        {"path": "module/bewertung.wasm", "sha256": sha256_hex(modul)},
-        {"path": "texte/de.json", "sha256": sha256_hex(b"nicht im repo")}
-    ]}))
-    .unwrap()
+    let mut files: Vec<Value> = GENUTZT.iter().map(|g| json!({"path": g, "sha256": sha256_hex(&probe_datei(g, modul))})).collect();
+    files.push(json!({"path": "texte/de.json", "sha256": sha256_hex(b"nicht im repo")}));
+    serde_json::to_vec(&json!({"generation": 27, "score_version": fassung, "files": files})).unwrap()
+}
+
+fn probe_datei(pfad: &str, modul: &[u8]) -> Vec<u8> {
+    if pfad == "module/bewertung.wasm" { modul.to_vec() } else { pfad.as_bytes().to_vec() }
+}
+
+fn probe_bundle(pfad: &str) -> Option<Vec<u8>> {
+    GENUTZT.contains(&pfad).then(|| probe_datei(pfad, b"modul"))
 }
 
 #[test]
 fn umschlag_im_format_des_servers() {
     let m = probe_manifest(b"modul", 27);
-    let bundle = |p: &str| (p == "module/bewertung.wasm").then(|| b"modul".to_vec());
-    let u = umschlag(&m, bundle, 27, "2026-10-29T22:00:00Z".into(), vec![json!({"datei": "a"})]);
+    let u = umschlag(&m, probe_bundle, 27, "2026-10-29T22:00:00Z".into(), vec![json!({"datei": "a"})]);
     assert_eq!(u["paket"]["generation"], 27);
     // Server (`bundleIdText`): 12 bis 64 Hex-Zeichen.
     let sha = u["paket"]["manifest_sha256"].as_str().unwrap();
@@ -678,12 +688,20 @@ fn umschlag_im_format_des_servers() {
 #[should_panic(expected = "Paket passt nicht: module/bewertung.wasm")]
 fn umschlag_verweigert_fremdes_modul() {
     let m = probe_manifest(b"modul", 27);
-    umschlag(&m, |_| Some(b"anderes modul".to_vec()), 27, String::new(), vec![]);
+    umschlag(&m, |p| probe_bundle(p).map(|b| if p == "module/bewertung.wasm" { b"anderes modul".to_vec() } else { b }), 27, String::new(), vec![]);
+}
+
+#[test]
+#[should_panic(expected = "tabellen/flotte.json fehlt im Paket")]
+fn umschlag_verweigert_paket_ohne_genutzte_tabelle() {
+    let mut m: Value = serde_json::from_slice(&probe_manifest(b"modul", 27)).unwrap();
+    m["files"].as_array_mut().unwrap().retain(|d| d["path"] != "tabellen/flotte.json");
+    umschlag(&serde_json::to_vec(&m).unwrap(), probe_bundle, 27, String::new(), vec![]);
 }
 
 #[test]
 #[should_panic(expected = "score_version des Pakets")]
 fn umschlag_verweigert_andere_fassung() {
     let m = probe_manifest(b"modul", 26);
-    umschlag(&m, |p| (p == "module/bewertung.wasm").then(|| b"modul".to_vec()), 27, String::new(), vec![]);
+    umschlag(&m, probe_bundle, 27, String::new(), vec![]);
 }
