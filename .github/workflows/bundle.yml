@@ -87,21 +87,8 @@ jobs:
         # ourairports/ unterscheidet. Sonst immer Freigabe durch Thomas.
         run: |
           UMGEBUNG=bundle-produktion
-          if [ "$NUR_OA" = "true" ]; then
-            if python3 -I - <<'PY'
-          import json, sys, urllib.request
-          neu = {d["path"]: d["sha256"] for d in json.load(open("paket/manifest.json"))["files"]}
-          try:
-              basis = "https://live.kant.ovh"
-              a = json.load(urllib.request.urlopen(basis + "/api/bundle/current", timeout=30))
-              alt = {d["path"]: d["sha256"] for d in json.load(urllib.request.urlopen(basis + a["manifest"], timeout=30))["files"]}
-          except Exception as e:
-              print("kein veroeffentlichter Stand lesbar:", e); sys.exit(1)
-          andere = sorted(p for p in set(neu) | set(alt) if not p.startswith("ourairports/") and neu.get(p) != alt.get(p))
-          print("ausserhalb ourairports/ geaendert:", andere or "nichts")
-          sys.exit(1 if andere else 0)
-          PY
-            then UMGEBUNG=bundle-ourairports; fi
+          if [ "$NUR_OA" = "true" ] && python3 -I scripts/bundle/freigabeweg.py paket/manifest.json https://live.kant.ovh; then
+            UMGEBUNG=bundle-ourairports
           fi
           echo "umgebung=$UMGEBUNG" >> "$GITHUB_OUTPUT"
           echo "Freigabeweg: $UMGEBUNG"

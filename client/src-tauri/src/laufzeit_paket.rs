@@ -149,7 +149,11 @@ fn starten_einmal(app_daten: &Path) {
         (Some(rw), Some(ap)) => crate::runway::ourairports_setzen(rw, ap),
         _ => false,
     };
-    let (id, herkunft) = if gesetzt {
+    // Ist der geladene Stand selbst der eingebaute, gelten seine Tabellen auch
+    // dann, wenn sie schon gelesen waren — der Pin des Flugs bleibt erhalten
+    // (Windows-CI 29.10.: paralleler Test hatte die Tabellen schon gelesen).
+    let ist_eingebaut = eingebaut.paket().map(|p| p.id == paket.id).unwrap_or(false);
+    let (id, herkunft) = if gesetzt || ist_eingebaut {
         (paket.id, herkunft)
     } else {
         tracing::warn!(stand = %paket.id, "Laufzeit-Paket: OurAirports nicht anwendbar, eingebauter Stand gilt");
@@ -348,6 +352,12 @@ mod tests {
             serde_json::json!({ "pirep_id": "x", "runtime_bundle_id": pin }).to_string(),
         )
         .unwrap();
+        // Wie auf Windows beobachtet: Ein anderer Teil hat die Bahntabellen
+        // schon gelesen, bevor `starten` laeuft. Der Pin darf trotzdem bleiben.
+        let _ = crate::runway::ourairports_setzen(
+            crate::runway::EINGEBAUT_RUNWAYS_CSV,
+            crate::runway::EINGEBAUT_AIRPORTS_CSV,
+        );
         starten(&dir);
         assert_eq!(flug_pin("x"), Some(pin.clone()));
         // Ein spaeterer Flug im selben Lauf flog mit dem eingebauten Stand.
