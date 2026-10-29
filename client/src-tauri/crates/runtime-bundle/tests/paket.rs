@@ -588,3 +588,30 @@ fn fehlende_nennt_nur_was_lokal_fehlt_oder_kaputt_ist() {
     std::fs::write(dir.path().join("blobs").join(hex(&Sha256::digest(b"bleibt"))), b"kaputt").unwrap();
     assert_eq!(a.fehlende(&Manifest::lesen(&m6).unwrap()).len(), 3);
 }
+
+#[test]
+fn fehlender_stand_eines_offenen_flugs_wird_genau_nachgeholt() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let mut k = kontext(&[&s]);
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let (m5, i5) = paket(5, &[("a", b"fuenf")]);
+    let pin = installieren(&a, &s, &k, &m5, &i5).unwrap();
+    let (m6, i6) = paket(6, &[("a", b"sechs")]);
+    installieren(&a, &s, &k, &m6, &i6).unwrap();
+    std::fs::remove_dir_all(dir.path().join("gen/5")).unwrap();
+    assert_eq!(a.laden(Some(&pin), &k, &eingebaut()).unwrap().herkunft, Herkunft::EingebautStattPin);
+    // Ein Jahr spaeter, Stand 5 laengst abgelaufen: Nachholen geht trotzdem.
+    k.jetzt = t0() + Duration::days(365);
+    let sig = s.signieren(&m5);
+    // Falsches Manifest (anderer Stand) wird abgelehnt.
+    let sig6 = s.signieren(&m6);
+    assert!(a.nachinstallieren(Eingang { manifest: &m6, signatur: &sig6 }, &pin, &k, &mut holer(&i6)).is_err());
+    let id = a.nachinstallieren(Eingang { manifest: &m5, signatur: &sig }, &pin, &k, &mut holer(&i5)).unwrap();
+    assert_eq!(id, pin);
+    let l = a.laden(Some(&pin), &k, &eingebaut()).unwrap();
+    assert_eq!(l.herkunft, Herkunft::Pin);
+    assert_eq!(l.paket.datei("a").unwrap(), b"fuenf");
+    // Zeiger unberuehrt.
+    assert_eq!((a.aktuell(), a.vorher()), (Some(6), Some(5)));
+}

@@ -271,6 +271,47 @@ impl Ablage {
         Ok(paket.id)
     }
 
+    /// Legt GENAU den Stand `pin` ab, auf den ein offener Flug verweist und der
+    /// lokal fehlt (P-3.31). Kein Zeiger wird umgestellt, die Regel „neuer als
+    /// der aktive“ und der Ablauf gelten hier nicht (ein alter Stand darf
+    /// abgelaufen sein); Signatur, Manifest-Hash = Pin und alle Dateien werden
+    /// geprueft. Danach findet `laden(Some(pin))` ihn.
+    pub fn nachinstallieren(
+        &self,
+        eingang: Eingang<'_>,
+        pin: &RuntimeBundleId,
+        kontext: &Kontext,
+        hole: &mut dyn FnMut(&Datei) -> Result<Vec<u8>, String>,
+    ) -> Result<RuntimeBundleId, Fehler> {
+        let _sperre = self.sperre(true)?;
+        if hex(&Sha256::digest(eingang.manifest)) != pin.manifest_sha256 {
+            return Err(Fehler::Manifest(format!("Manifest passt nicht zum Pin {pin}")));
+        }
+        signatur_pruefen(eingang.manifest, eingang.signatur, &kontext.schluessel)?;
+        let m = Manifest::lesen(eingang.manifest)?;
+        if m.generation != pin.generation {
+            return Err(Fehler::Manifest(format!("Generation {} statt {}", m.generation, pin.generation)));
+        }
+        passt(&m, kontext)?;
+        for d in self.fehlende(&m) {
+            let bytes = hole(&d).map_err(|grund| Fehler::Datei { pfad: d.path.clone(), grund })?;
+            datei_pruefen(&d, &bytes)?;
+            self.atomar_schreiben(&self.wurzel.join("blobs").join(&d.sha256), &bytes)?;
+        }
+        let gen_ordner = self.gen_ordner(m.generation);
+        if !gen_ordner.exists() {
+            let tmp = self.tmp_pfad(&format!("gen-{}", m.generation));
+            fs::create_dir_all(&tmp)?;
+            dauerhaft_schreiben(&tmp.join("manifest.json"), eingang.manifest)?;
+            dauerhaft_schreiben(&tmp.join("manifest.json.minisig"), eingang.signatur.as_bytes())?;
+            dauerhaft_schreiben(&tmp.join("installiert"), kontext.jetzt.to_rfc3339().as_bytes())?;
+            ordner_sichern(&tmp)?;
+            fs::rename(&tmp, &gen_ordner)?;
+            ordner_sichern(&self.wurzel.join("gen"))?;
+        }
+        Ok(self.paket_aus_ablage(m.generation, kontext)?.id)
+    }
+
     /// Laedt den Stand fuer diesen Programmstart (P-3.20, P-3.31).
     ///
     /// Mit `pin` (offener Flug) gilt nur genau dieser Stand (Generation UND

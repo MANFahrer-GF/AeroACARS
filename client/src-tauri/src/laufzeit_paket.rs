@@ -167,7 +167,20 @@ fn starten_einmal(app_daten: &Path) {
 /// beim naechsten Programmstart (P-3.20). Nicht bei offenem Flug, nicht ohne
 /// Pruefschluessel (dann bestuende ohnehin kein Stand die Pruefung).
 pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf) {
-    if PRUEFSCHLUESSEL.is_empty() || flug_offen(&app_daten) {
+    if PRUEFSCHLUESSEL.is_empty() {
+        return;
+    }
+    if flug_offen(&app_daten) {
+        // Kein Update im Flug — aber fehlte beim Start der Stand des offenen
+        // Flugs, genau diesen nachholen (P-3.31).
+        if let Some((_, pin)) = GELADEN.get().and_then(|g| g.pin.clone()) {
+            tauri::async_runtime::spawn(async move {
+                match pin_nachholen(&app_daten, &pin).await {
+                    Ok(()) => tracing::info!(stand = %pin, "Laufzeit-Paket: Stand des offenen Flugs nachgeholt"),
+                    Err(e) => tracing::warn!(stand = %pin, error = %e, "Laufzeit-Paket: Stand des Flugs nicht nachholbar"),
+                }
+            });
+        }
         return;
     }
     tauri::async_runtime::spawn(async move {
@@ -239,6 +252,45 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
             tracing::warn!(error = %e, "Laufzeit-Paket: Aufraeumen ausgelassen");
         }
         Ok(Some(id))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+async fn pin_nachholen(app_daten: &Path, pin: &RuntimeBundleId) -> Result<(), String> {
+    let basis = crate::live_zugang::LIVE_BASIS;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let holen = |pfad: String| {
+        let client = client.clone();
+        async move {
+            let r = client.get(format!("{basis}{pfad}")).send().await.map_err(|e| e.to_string())?;
+            r.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())
+        }
+    };
+    let g = pin.generation;
+    let manifest = holen(format!("/api/bundle/gen/{g}/manifest.json")).await?.to_vec();
+    let signatur = String::from_utf8(holen(format!("/api/bundle/gen/{g}/manifest.json.minisig")).await?.to_vec())
+        .map_err(|e| e.to_string())?;
+    let ablage = Ablage::oeffnen(app_daten.join("laufzeit-paket")).map_err(|e| e.to_string())?;
+    let m = Manifest::lesen(&manifest).map_err(|e| e.to_string())?;
+    let mut geholt = HashMap::new();
+    for d in ablage.fehlende(&m) {
+        geholt.insert(d.sha256.clone(), holen(format!("/api/bundle/blobs/{}", d.sha256)).await?.to_vec());
+    }
+    let pin = pin.clone();
+    tokio::task::spawn_blocking(move || {
+        ablage
+            .nachinstallieren(
+                Eingang { manifest: &manifest, signatur: &signatur },
+                &pin,
+                &kontext(),
+                &mut |d| geholt.get(&d.sha256).cloned().ok_or_else(|| "nicht geholt".to_string()),
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
