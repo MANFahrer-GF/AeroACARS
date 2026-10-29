@@ -6481,6 +6481,31 @@ mod tests {
         assert!(st.kabinen_lauf.angefragt.contains("ankunft"), "schon fürs neue Ziel bestellt");
     }
 
+    /// Hamdoun NOZ390 29.10.2026 (ENGM→ENSB, Durchstarten, Umleitung nach
+    /// ENTC): Die Sinkflug-Ansagen waren schon gespielt, „nach der Landung“
+    /// nannte danach noch Svalbard. Gespieltes bleibt, die offenen
+    /// Ankunftsansagen fallen weg und werden fürs neue Ziel bestellt.
+    #[test]
+    fn umleitung_nach_durchstart_bestellt_offene_ankunft_neu() {
+        let mut st = FlightStats::new();
+        let l = &mut st.kabinen_lauf;
+        l.angefragt.insert("ankunft".into());
+        for (s, t) in [(Slot::KapitaenSinkflug, "Landing in Svalbard."), (Slot::NachDerLandung, "Welcome to Svalbard."), (Slot::Aussteigen, "Goodbye from Svalbard.")] {
+            l.texte.insert((s, "en-GB".into()), t.into());
+            l.ton.insert((s, "en-GB".into()), ton());
+        }
+        l.verlauf.push(Gespielt { id: 1, slot: Slot::KapitaenSinkflug, rolle: Rolle::Kapitaen, zeit: 0, teile: vec![], vorschau: false, ergebnis: Some("gespielt".into()), gestartet: true, grund: None });
+        st.umleitung_ziel = Some("ENTC".into());
+        ankunft_nach_umleitung(&mut st);
+        let l = &st.kabinen_lauf;
+        assert!(!l.angefragt.contains("ankunft"), "neu bestellen");
+        for s in [Slot::NachDerLandung, Slot::Aussteigen] {
+            assert!(!l.texte.contains_key(&(s, "en-GB".into())), "{s:?} fürs alte Ziel verworfen");
+            assert!(!l.ton.contains_key(&(s, "en-GB".into())));
+        }
+        assert!(l.texte.contains_key(&(Slot::KapitaenSinkflug, "en-GB".into())), "Gespieltes bleibt");
+    }
+
     /// Michael BER181: dreimal „sechzehn Uhr“ = Planankunft 14:00 UTC, gelandet
     /// 13:24. In der Luft zählt jetzt Abheben + Flugzeit, früher Abflug auch.
     #[test]
@@ -8063,7 +8088,7 @@ mod reaktion_tests {
         assert!(st.kabinen_lauf.reaktion.einsatz.is_some());
         st.kabinen_lauf.beta = Beta::FlugAus;
         assert_eq!(schritt(&mut st, eingang(t0 + 2_500, "CFG", [0.9; 3]), &mut z), ReaktionTun::Nichts);
-        let spaet = AUFSETZEN_MS + (cabin_announcements::reaktion::SPAETESTENS_NACH_AUFSETZEN_S + 1) * 1000;
+        let spaet = AUFSETZEN_MS + (cabin_announcements::tabelle().werte.spaetestens_nach_aufsetzen_s.wert + 1) * 1000;
         assert_eq!(schritt(&mut st, eingang(spaet, "CFG", [0.9; 3]), &mut z), ReaktionTun::Nichts);
         assert!(!notizen(&st).iter().any(|(a, _)| *a == "reaktion_start"), "nie gestartet");
         assert_eq!(notizen(&st).last().unwrap().1["grund"], "zu_spaet");
