@@ -62,6 +62,16 @@ impl Host {
 
     /// Wie [`Host::bewerten`], dazu der Verbrauch an Fuel (Messung P-4.32).
     pub fn bewerten_mit_verbrauch(&self, eingabe: &str, fuel: u64) -> Result<(String, u64), Fehler> {
+        self.aufrufen("bewerte", eingabe, fuel)
+    }
+
+    /// Soll-Band des Anflugs (Export `sollband`, P-4.21).
+    pub fn sollband(&self, eingabe: &str, fuel: u64) -> Result<String, Fehler> {
+        self.aufrufen("sollband", eingabe, fuel).map(|(t, _)| t)
+    }
+
+    /// Einen Export mit JSON-Ein-/Ausgabe aufrufen (frische Instanz).
+    fn aufrufen(&self, export: &str, eingabe: &str, fuel: u64) -> Result<(String, u64), Fehler> {
         let grenzen = StoreLimitsBuilder::new().memory_size(SPEICHER_MAX).build();
         let mut store: Store<StoreLimits> = Store::new(&self.engine, grenzen);
         store.limiter(|g| g);
@@ -77,7 +87,7 @@ impl Host {
             .get_typed_func::<u32, u32>(&store, "alloc")
             .map_err(|e| Fehler::Modul(e.to_string()))?;
         let bewerte = instanz
-            .get_typed_func::<(u32, u32), u64>(&store, "bewerte")
+            .get_typed_func::<(u32, u32), u64>(&store, export)
             .map_err(|e| Fehler::Modul(e.to_string()))?;
         let bytes = eingabe.as_bytes();
         let n = u32::try_from(bytes.len()).map_err(|_| Fehler::Abbruch("Eingabe zu gross".into()))?;
@@ -215,6 +225,24 @@ mod tests {
             (func (export "bewerte") (param i32 i32) (result i64) i64.const 0x00000010FFFFFFF0))"#;
         let host = Host::neu(&wat::parse_str(wat).unwrap()).unwrap();
         assert_eq!(host.bewerten("{}", VIEL), Err(Fehler::Ausgabe));
+    }
+
+    /// Export `sollband` rechnet wie das Crate — bis auf die letzte
+    /// Binaerstelle: `tan` im Modul (Rust-libm in WASM) und nativ (macOS-libm)
+    /// unterscheiden sich dort (29.10.: …546 gegen …547). Genau deshalb
+    /// laufen Regeln nur im Modul (P-4.31); Mac, Windows und live rechnen mit
+    /// derselben Modulfassung bitgleich.
+    #[test]
+    fn sollband_wie_nativ() {
+        let host = Host::neu(MODUL).unwrap();
+        let ein = r#"{"proben":[{"gs_kt":140},{"gs_kt":20},{"gs_kt":138,"is_flare":true},{"gs_kt":136,"t_ms":-300}],"winkel_grad":3.5}"#;
+        let wasm: Vec<landing_scoring::sollband::Punkt> = serde_json::from_str(&host.sollband(ein, VIEL).unwrap()).unwrap();
+        let nativ: Vec<landing_scoring::sollband::Punkt> = serde_json::from_str(&landing_scoring::sollband::sollband_json(ein)).unwrap();
+        assert_eq!(wasm.iter().map(|p| p.index).collect::<Vec<_>>(), [0, 3]);
+        for (w, n) in wasm.iter().zip(&nativ) {
+            assert_eq!(w.index, n.index);
+            assert!((w.soll - n.soll).abs() < 1e-9 && (w.oben - n.oben).abs() < 1e-9 && (w.unten - n.unten).abs() < 1e-9);
+        }
     }
 
     #[test]

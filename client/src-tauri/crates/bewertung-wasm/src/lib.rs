@@ -12,6 +12,25 @@ pub extern "C" fn alloc(len: u32) -> *mut u8 {
     p
 }
 
+fn antworten(aus: String) -> u64 {
+    let mut bytes = aus.into_bytes().into_boxed_slice();
+    let (p, n) = (bytes.as_mut_ptr() as usize as u64, bytes.len() as u64);
+    std::mem::forget(bytes);
+    (p << 32) | n
+}
+
+/// Soll-Band des Anflugs (Anzeige, P-4.21): `{proben, winkel_grad}` →
+/// Punkte. Gleiche Aufrufkonvention wie [`bewerte`].
+///
+/// # Safety
+/// Wie [`bewerte`].
+#[no_mangle]
+pub unsafe extern "C" fn sollband(ptr: *mut u8, len: u32) -> u64 {
+    // SAFETY: Zeiger und Laenge stammen aus `alloc`.
+    let eingabe = unsafe { Vec::from_raw_parts(ptr, len as usize, len as usize) };
+    antworten(landing_scoring::sollband::sollband_json(std::str::from_utf8(&eingabe).unwrap_or("")))
+}
+
 /// Bewerten.
 ///
 /// # Safety
@@ -21,9 +40,5 @@ pub extern "C" fn alloc(len: u32) -> *mut u8 {
 pub unsafe extern "C" fn bewerte(ptr: *mut u8, len: u32) -> u64 {
     // SAFETY: siehe oben — Zeiger und Laenge stammen aus `alloc`.
     let eingabe = unsafe { Vec::from_raw_parts(ptr, len as usize, len as usize) };
-    let aus = landing_scoring::wasm::bewerten_json(std::str::from_utf8(&eingabe).unwrap_or(""));
-    let mut bytes = aus.into_bytes().into_boxed_slice();
-    let (p, n) = (bytes.as_mut_ptr() as usize as u64, bytes.len() as u64);
-    std::mem::forget(bytes);
-    (p << 32) | n
+    antworten(landing_scoring::wasm::bewerten_json(std::str::from_utf8(&eingabe).unwrap_or("")))
 }
