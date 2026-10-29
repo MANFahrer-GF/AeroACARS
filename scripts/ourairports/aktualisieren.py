@@ -12,7 +12,8 @@ geschrieben, Bericht nennt die Gruende); 1 = Fehler.
 
 Aufruf: python3 -I aktualisieren.py --ziel bundle/ourairports
           [--commit SHA] [--gsg scripts/ourairports/gsg-flughaefen.txt]
-          [--bericht bericht.md] [--roh-ordner DIR]
+          [--bericht bericht.md] [--stand scripts/ourairports/stand.txt]
+          [--roh-ordner DIR]
 """
 import argparse
 import csv
@@ -24,6 +25,12 @@ import urllib.request
 
 QUELLE = "https://raw.githubusercontent.com/davidmegginson/ourairports-data/{commit}/{datei}"
 AIRPORTS_SPALTEN = ["ident", "type", "latitude_deg", "longitude_deg"]
+# Kopfzeile des rohen airports.csv (Staende 27.10. und 29.10.2026); die
+# umgesetzte Fassung hat immer dieselbe Kopfzeile, deshalb wird hier das
+# Original geprueft (P-9.42 „Kopfzeilen nicht exakt wie erwartet“).
+AIRPORTS_KOPF_ROH = ('"id","ident","type","name","latitude_deg","longitude_deg","elevation_ft","continent",'
+                     '"iso_country","iso_region","municipality","scheduled_service","icao_code","iata_code",'
+                     '"gps_code","local_code","home_link","wikipedia_link","keywords"')
 
 # Geeicht 29.10.2026 (Woche: +0,05 % Plaetze, 28 Verschiebungen > 1 km;
 # Monat: +0,17 %, 31 Verschiebungen).
@@ -81,9 +88,11 @@ def zahl(s):
         return None
 
 
-def pruefen(alt_ap: str, neu_ap: str, alt_rw: str, neu_rw: str, gsg: set) -> list:
+def pruefen(alt_ap: str, neu_ap: str, alt_rw: str, neu_rw: str, gsg: set, roh_ap_kopf=None) -> list:
     """Liste der Haltegruende; leer = Stand darf hinaus."""
     gruende = []
+    if roh_ap_kopf is not None and roh_ap_kopf.rstrip("\r") != AIRPORTS_KOPF_ROH:
+        gruende.append("airports.csv (roh): Kopfzeile nicht wie erwartet")
     if neu_rw.split("\n", 1)[0] != alt_rw.split("\n", 1)[0]:
         gruende.append("runways.csv: Kopfzeile geaendert")
     if neu_ap.split("\n", 1)[0] != alt_ap.split("\n", 1)[0]:
@@ -134,6 +143,7 @@ def main(argv=None) -> int:
     p.add_argument("--commit", default="main")
     p.add_argument("--gsg", default=None)
     p.add_argument("--bericht", default=None)
+    p.add_argument("--stand", default=None, help="Datei fuer den OurAirports-Commit des geschriebenen Stands (P-9.44)")
     p.add_argument("--roh-ordner", default=None, help="Rohdateien lokal statt von GitHub (Tests)")
     a = p.parse_args(argv)
     gsg = set()
@@ -145,12 +155,13 @@ def main(argv=None) -> int:
         alt_ap = f.read()
     with open(pfad_rw, encoding="utf-8") as f:
         alt_rw = f.read()
-    neu_ap = airports_umsetzen(holen(a.commit, "airports.csv", a.roh_ordner))
+    roh_ap = holen(a.commit, "airports.csv", a.roh_ordner)
+    neu_ap = airports_umsetzen(roh_ap)
     neu_rw = holen(a.commit, "runways.csv", a.roh_ordner)
     if neu_ap == alt_ap and neu_rw == alt_rw:
         print("OurAirports: kein Unterschied")
         return 0
-    gruende = pruefen(alt_ap, neu_ap, alt_rw, neu_rw, gsg)
+    gruende = pruefen(alt_ap, neu_ap, alt_rw, neu_rw, gsg, roh_ap.split("\n", 1)[0])
     bericht = [f"# OurAirports {a.commit}", ""]
     if gruende:
         bericht += ["**Halt** — nichts geschrieben. Gruende:", ""] + [f"- {g}" for g in gruende]
@@ -167,6 +178,9 @@ def main(argv=None) -> int:
         f.write(neu_ap)
     with open(pfad_rw, "w", encoding="utf-8", newline="") as f:
         f.write(neu_rw)
+    if a.stand:
+        with open(a.stand, "w", encoding="utf-8") as f:
+            f.write(a.commit + "\n")
     return 0
 
 

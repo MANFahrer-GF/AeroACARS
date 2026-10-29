@@ -59,12 +59,18 @@ jobs:
         run: echo "generation=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
       - name: Paket bauen
         working-directory: client/src-tauri
+        # P-9.44: OurAirports-Commit des Stands (schreibt der Wochenlauf) als
+        # Herkunft ins Manifest; unbekannt (vor dem ersten Wochenlauf) -> leer.
         run: |
+          OA=()
+          if [ -s "$GITHUB_WORKSPACE/scripts/ourairports/stand.txt" ]; then
+            OA=(--ourairports-commit "$(head -1 "$GITHUB_WORKSPACE/scripts/ourairports/stand.txt")")
+          fi
           cargo run -q -p runtime-bundle --bin paket-bauen -- \
             "$GITHUB_WORKSPACE/bundle" "$GITHUB_WORKSPACE/paket" \
             --generation "${{ steps.gen.outputs.generation }}" \
             --erstellt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --repo-commit "${{ github.sha }}" \
+            --repo-commit "${{ github.sha }}" ${OA[@]+"${OA[@]}"} \
             --requires ourairports-1,grenzwerte-1,xplane-profile-1,cpdlc-1,flotte-1,texte-1,spurweiten-1,vref-1,hoehengruppen-1,klappen-1,kabine-1,endpunkte-1,msfs-profile-1,bewertung-1,kabine-modul-1
       - name: Signieren
         id: signieren

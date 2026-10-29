@@ -37,7 +37,8 @@ jobs:
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           set +e
           python3 -I scripts/ourairports/aktualisieren.py --ziel bundle/ourairports --commit "$COMMIT" \
-            --gsg scripts/ourairports/gsg-flughaefen.txt --bericht "$RUNNER_TEMP/bericht.md"
+            --gsg scripts/ourairports/gsg-flughaefen.txt --bericht "$RUNNER_TEMP/bericht.md" \
+            --stand scripts/ourairports/stand.txt
           RC=$?
           set -e
           if [ -f "$RUNNER_TEMP/bericht.md" ]; then cat "$RUNNER_TEMP/bericht.md" >> "$GITHUB_STEP_SUMMARY"; fi
@@ -49,7 +50,7 @@ jobs:
           if git diff --quiet -- bundle/ourairports; then echo "kein Unterschied"; exit 0; fi
           git config user.name "aeroacars-ci"
           git config user.email "ci@aeroacars.invalid"
-          git add bundle/ourairports
+          git add bundle/ourairports scripts/ourairports/stand.txt
           git commit -m "chore(ourairports): Stand ${{ steps.lauf.outputs.commit }}"
           git push
           gh workflow run bundle.yml --ref "${GITHUB_REF_NAME}" -f nur_ourairports=true

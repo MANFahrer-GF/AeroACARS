@@ -69,6 +69,56 @@ class Pruefen(unittest.TestCase):
     def test_kopfzeile_geaendert(self):
         self.assertTrue(any("Kopfzeile" in g for g in oa.pruefen(ap(BASIS_AP), "x\n", rw(BASIS_RW), rw(BASIS_RW), GSG)))
 
+    def test_rohe_kopfzeile_airports(self):
+        basis = (ap(BASIS_AP), ap(BASIS_AP), rw(BASIS_RW), rw(BASIS_RW), GSG)
+        self.assertEqual(oa.pruefen(*basis, oa.AIRPORTS_KOPF_ROH + "\r"), [])
+        neu = oa.AIRPORTS_KOPF_ROH + ',"neue_spalte"'
+        self.assertTrue(any("roh" in g for g in oa.pruefen(*basis, neu)))
+
+    def test_jede_anzahl_schwelle(self):
+        # Flughaefen: +2 % haelt nicht, darueber Halt (1001 Plaetze).
+        plus = [(f"N{n:03d}", "small_airport", 1, 1) for n in range(21)]
+        self.assertFalse(any("Flughaefen:" in g for g in self.gruende(neu_ap=BASIS_AP + plus[:20])))
+        self.assertTrue(any("Flughaefen:" in g for g in self.gruende(neu_ap=BASIS_AP + plus)))
+        # Bahnen: -0,5 % haelt nicht, darueber Halt; +2 % ebenso.
+        self.assertFalse(any("Bahnen:" in g for g in self.gruende(neu_rw=BASIS_RW[5:])))
+        self.assertTrue(any("Bahnen:" in g for g in self.gruende(neu_rw=BASIS_RW[6:])))
+        mehr = [(f"N{n:03d}", 3000, "09", 90, "27") for n in range(21)]
+        self.assertFalse(any("Bahnen:" in g for g in self.gruende(neu_rw=BASIS_RW + mehr[:20])))
+        self.assertTrue(any("Bahnen:" in g for g in self.gruende(neu_rw=BASIS_RW + mehr)))
+        # Verschiebungen: 100 haelt nicht, 101 Halt.
+        def schiebe(n):
+            return [(i, t, la + 0.05, lo) if k < n else (i, t, la, lo) for k, (i, t, la, lo) in enumerate(BASIS_AP)]
+        self.assertFalse(any("verschoben (hoechstens" in g for g in self.gruende(neu_ap=schiebe(100))))
+        self.assertTrue(any("verschoben (hoechstens" in g for g in self.gruende(neu_ap=schiebe(101))))
+
+
+class Lauf(unittest.TestCase):
+    def test_stand_wird_nur_bei_neuem_stand_geschrieben(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            ziel, roh = os.path.join(d, "ziel"), os.path.join(d, "roh")
+            os.mkdir(ziel)
+            os.mkdir(roh)
+            zeile = '"1","EDDF","large_airport","Frankfurt","50.0333","8.5706"' + ",x" * 13 + "\n"
+            with open(os.path.join(roh, "airports.csv"), "w") as f:
+                f.write(oa.AIRPORTS_KOPF_ROH + "\n" + zeile)
+            with open(os.path.join(roh, "runways.csv"), "w") as f:
+                f.write(rw([("EDDF", 13123, "07C", 69.9, "25C")]))
+            with open(os.path.join(ziel, "airports.csv"), "w") as f:
+                f.write(oa.airports_umsetzen(oa.AIRPORTS_KOPF_ROH + "\n" + zeile))
+            with open(os.path.join(ziel, "runways.csv"), "w") as f:
+                f.write(rw([("EDDF", 13123, "07C", 69.9, "25C")]))
+            stand = os.path.join(d, "stand.txt")
+            args = ["--ziel", ziel, "--roh-ordner", roh, "--commit", "abc123", "--stand", stand]
+            self.assertEqual(oa.main(args), 0)
+            self.assertFalse(os.path.exists(stand))  # kein Unterschied: nichts geschrieben
+            with open(os.path.join(roh, "runways.csv"), "w") as f:
+                f.write(rw([("EDDF", 13200, "07C", 69.9, "25C")]))
+            self.assertEqual(oa.main(args), 0)
+            with open(stand) as f:
+                self.assertEqual(f.read(), "abc123\n")
+
 
 class Umsetzen(unittest.TestCase):
     def test_vier_spalten_werte_unveraendert(self):
