@@ -23,7 +23,7 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -37,6 +37,7 @@ const KLAPPEN: &str = "tabellen/klappen.json";
 const KABINE: &str = "tabellen/kabine.json";
 const ENDPUNKTE: &str = "endpunkte.json";
 const MSFS_PROFILE: &str = "profile/msfs.json";
+const BEWERTUNG: &str = "module/bewertung.wasm";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
@@ -75,6 +76,8 @@ pub(crate) struct AktiverStand {
     pub endpunkte: paket_endpunkte::Endpunkte,
     /// MSFS-Paketprofile fuer neue Add-ons (Etappe 2, P-3.52).
     pub msfs_profile: sim_core::msfs_paketprofil::Datei,
+    /// Bewertungsmodul (WASM, P-4.31) dieses Stands.
+    pub bewertung: &'static [u8],
     /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
     pub ui: Vec<(&'static str, &'static str)>,
 }
@@ -110,6 +113,7 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         kabine: cabin_announcements::lesen(text(KABINE)?)?,
         endpunkte: paket_endpunkte::lesen(text(ENDPUNKTE)?)?,
         msfs_profile: sim_core::msfs_paketprofil::lesen(text(MSFS_PROFILE)?)?,
+        bewertung: Box::leak(p.datei(BEWERTUNG).map_err(|e| e.to_string())?.into_boxed_slice()),
         vref: landing_scoring::vref::lesen(text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -131,6 +135,7 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         kabine: cabin_announcements::lesen(eingebauter_text(KABINE)?)?,
         endpunkte: paket_endpunkte::lesen(eingebauter_text(ENDPUNKTE)?)?,
         msfs_profile: sim_core::msfs_paketprofil::lesen(eingebauter_text(MSFS_PROFILE)?)?,
+        bewertung: eingebaute_datei(BEWERTUNG).ok_or(BEWERTUNG)?,
         vref: landing_scoring::vref::lesen(eingebauter_text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -179,6 +184,11 @@ pub(crate) fn klappen_lesen(json: &str) -> Result<Vec<KlappenRaster>, String> {
         }
     }
     Ok(d.raster)
+}
+
+/// Das Bewertungsmodul des eingebauten Stands (Rueckfall, P-4.33).
+pub(crate) fn eingebautes_bewertungsmodul() -> Option<&'static [u8]> {
+    eingebaute_datei(BEWERTUNG)
 }
 
 /// Eine Datei des geltenden Stands fuer die Oberflaeche (nur [`UI_DATEIEN`]).
@@ -510,6 +520,9 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
         let roh = p.datei(pfad).map_err(|e| e.to_string())?;
         pruefen(std::str::from_utf8(&roh).map_err(|e| format!("{pfad}: {e}"))?)?;
     }
+    // Bewertungsmodul: muss laden und die Exporte haben (P-3.21).
+    let modul = p.datei(BEWERTUNG).map_err(|e| e.to_string())?;
+    bewertung_host::Host::neu(&modul).map_err(|e| format!("{BEWERTUNG}: {e}"))?;
     for d in UI_DATEIEN {
         p.datei(d).map_err(|e| e.to_string())?;
     }

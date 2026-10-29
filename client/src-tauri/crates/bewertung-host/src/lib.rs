@@ -57,6 +57,11 @@ impl Host {
 
     /// Ein Eingabe-Dokument (JSON) bewerten, hoechstens `fuel` Rechenschritte.
     pub fn bewerten(&self, eingabe: &str, fuel: u64) -> Result<String, Fehler> {
+        self.bewerten_mit_verbrauch(eingabe, fuel).map(|(t, _)| t)
+    }
+
+    /// Wie [`Host::bewerten`], dazu der Verbrauch an Fuel (Messung P-4.32).
+    pub fn bewerten_mit_verbrauch(&self, eingabe: &str, fuel: u64) -> Result<(String, u64), Fehler> {
         let grenzen = StoreLimitsBuilder::new().memory_size(SPEICHER_MAX).build();
         let mut store: Store<StoreLimits> = Store::new(&self.engine, grenzen);
         store.limiter(|g| g);
@@ -86,7 +91,8 @@ impl Host {
         speicher
             .read(&store, aus_ptr, &mut aus)
             .map_err(|e| Fehler::Abbruch(e.to_string()))?;
-        String::from_utf8(aus).map_err(|_| Fehler::Ausgabe)
+        let verbraucht = fuel - store.get_fuel().unwrap_or(0);
+        String::from_utf8(aus).map(|t| (t, verbraucht)).map_err(|_| Fehler::Ausgabe)
     }
 }
 
@@ -136,6 +142,18 @@ mod tests {
             let json = serde_json::to_string(&e).unwrap();
             assert_eq!(host.bewerten(&json, VIEL).unwrap(), bewerten_json(&json), "{json}");
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn verbrauch_messen() {
+        let host = Host::neu(MODUL).unwrap();
+        let mut v: Vec<u64> = faelle()
+            .iter()
+            .map(|e| host.bewerten_mit_verbrauch(&serde_json::to_string(e).unwrap(), VIEL).unwrap().1)
+            .collect();
+        v.sort_unstable();
+        println!("FUEL min {} median {} max {}", v[0], v[v.len() / 2], v[v.len() - 1]);
     }
 
     #[test]

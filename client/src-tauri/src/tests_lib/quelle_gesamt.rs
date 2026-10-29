@@ -49,6 +49,13 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `log_dir_identifier_matches_tauri_conf`), Webview-Diagnose ueber die
 /// Konstante, und in `run` die einmalige Kopie der 2.x-Daten (Tests
 /// `datenuebernahme::tests`).
+/// — plus Etappe 3 (P-4.31): `mod bewertung`; die vier Rechenstellen
+/// (Touchdown-Payload, `compute_aggregate_master_score`, Landungsdatensatz,
+/// Schattenvergleich) nehmen Teilnoten, Gesamtnote und Deckel aus
+/// `bewertung::bewerten` (WASM-Modul) statt `landing_scoring` nativ; Test
+/// `bewertung::tests::modul_rechnet_wie_das_crate`, `bewertung-host`
+/// (60 Faelle Byte fuer Byte). Nativ bleibt nur `normalize_derived_scores`
+/// fuer 2.x-Datensaetze der Fassung 18–20.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -59,4 +66,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "62510c6e4d62d1d3dcbc091f003bab5de12209d833f00e6d4bfb2ac20eef1ad4";
+const HASH_VOR_DER_ZERLEGUNG: &str = "1add7b6a09af243bbb97b2590d5bf3c94a76ad711b22616bb99fbf1bc8387b84";

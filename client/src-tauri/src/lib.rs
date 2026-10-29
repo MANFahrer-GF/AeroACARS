@@ -36,6 +36,7 @@ mod replay_erkennung;
 mod grenzwerte;
 mod laufzeit_paket;
 mod datenuebernahme;
+mod bewertung;
 mod runway;
 mod runway_assessment;
 mod stands;
@@ -21794,8 +21795,10 @@ fn build_pirep_payload(
     //  30/50/70/90 → 40/60/80/95; Sinkraten-Score von monotoner
     //  "weicher=besser"-Kurve auf Ziel-Korridor 90-250 fpm umgestellt).
     fill_v2_rollout_fields(&mut scoring_input, &stats, effective_arr_icao);
-    let payload_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
-    let aggregate_master = landing_scoring::aggregate_master_score(&payload_sub_scores);
+    // v3 (P-4.31): Bewertung nur im WASM-Modul.
+    let bewertet = crate::bewertung::bewerten(&scoring_input);
+    let payload_sub_scores = bewertet.as_ref().map(|(a, _)| a.teilnoten.clone()).unwrap_or_default();
+    let aggregate_master = bewertet.as_ref().and_then(|(a, _)| a.gesamt);
     // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse — sie kennt
     // keinen Deckel. Ohne Gesamtnote (keine Sinkrate) gibt es keine Note.
     let payload_landing_score = aggregate_master.map(|m| m as i32);
@@ -21862,7 +21865,7 @@ fn build_pirep_payload(
         // Nur wenn es eine Gesamtnote gibt (seit Score-Version 19 ohne
         // Touchdown-Rückfall) und der Deckel sie wirklich gesenkt hat.
         landing_score_deckel: aggregate_master
-            .and_then(|_| landing_scoring::master_deckel_wirksam(&payload_sub_scores)),
+            .and_then(|_| bewertet.as_ref().and_then(|(a, _)| a.deckel.clone())),
         go_around_count: Some(stats.go_around_count),
         touchdown_count: Some(touchdown_count),
         aufsetzer,
@@ -24030,8 +24033,8 @@ fn compute_aggregate_master_score(
     // Sub-Score gerechnet wird (siehe spec docs/spec/v0.10.0-runway-
     // utilization-score.md).
     fill_v2_rollout_fields(&mut scoring_input, stats, arr_airport);
-    let subs = landing_scoring::compute_sub_scores(&scoring_input);
-    landing_scoring::aggregate_master_score(&subs)
+    // v3 (P-4.31): Bewertung nur im WASM-Modul.
+    crate::bewertung::bewerten(&scoring_input).and_then(|(a, _)| a.gesamt)
 }
 
 /// v0.7.1 Round-2: Aggregate-Score → Label-Mapping. Damit
@@ -25892,12 +25895,14 @@ where
     // meter-only).
     // v0.15.x: effektiven Landeflughafen (Divert-aware) statt geplantes Ziel.
     fill_v2_rollout_fields(&mut scoring_input, stats, effective_arr_icao);
-    let computed_sub_scores = landing_scoring::compute_sub_scores(&scoring_input);
-    let aggregate_master = landing_scoring::aggregate_master_score(&computed_sub_scores);
+    // v3 (P-4.31): Bewertung nur im WASM-Modul.
+    let bewertet = crate::bewertung::bewerten(&scoring_input);
+    let computed_sub_scores = bewertet.as_ref().map(|(a, _)| a.teilnoten.clone()).unwrap_or_default();
+    let aggregate_master = bewertet.as_ref().and_then(|(a, _)| a.gesamt);
     // Lernpaket AP2: nur wenn die Gesamtnote tatsaechlich gedeckelt ist,
     // traegt der Datensatz den Grund — die Anzeige erklaert damit die Note.
     let score_deckel =
-        aggregate_master.and(landing_scoring::master_deckel_wirksam(&computed_sub_scores));
+        aggregate_master.and(bewertet.as_ref().and_then(|(a, _)| a.deckel.clone()));
     // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse — sie kennt
     // keinen Deckel (Vorlage Punktesystem, Punkt 7). Ohne Rate liefert
     // `aggregate_master_score` `None` ("lieber gar keine Note als eine
@@ -48404,8 +48409,10 @@ fn build_pirep_notes(
     // uebergaben schon immer das effektive Ziel; dieser eine ist beim
     // Herausloesen der Funktion (24.08.2026) uebersehen worden.
     fill_v2_rollout_fields(&mut crate_input, stats, effective_arr_icao);
-    let crate_subs = landing_scoring::compute_sub_scores(&crate_input);
-    if let Some(crate_master) = landing_scoring::aggregate_master_score(&crate_subs) {
+    // v3 (P-4.31): Bewertung nur im WASM-Modul.
+    let bewertet = crate::bewertung::bewerten(&crate_input);
+    let crate_subs = bewertet.as_ref().map(|(a, _)| a.teilnoten.clone()).unwrap_or_default();
+    if let Some(crate_master) = bewertet.as_ref().and_then(|(a, _)| a.gesamt) {
         // v0.7.1 P2.6-Fix: Drift-Vergleich gegen den ECHTEN
         // Touchdown-Klassifikator-Score (LandingScore::numeric) ist
         // unsinnig — das ist eine andere Score-Definition (vs/g/bounce-
