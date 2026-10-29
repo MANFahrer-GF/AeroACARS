@@ -1,0 +1,25 @@
+[package]
+name = "kabine-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "AeroACARS 3.0: Kabinenplaner (cabin-announcements) als WASM-Modul (P-3.58) — nur die Exporte alloc/kabine."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cabin-announcements.workspace = true
+# Ohne `float_roundtrip` liest serde_json Gleitkommazahlen nur bis auf
+# eine Binaerstelle genau — das Modul muss dieselben Werte sehen wie der
+# Client (Test modul_plant_wie_nativ, 29.10.: 26.18…334 kam als …337 an).
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+
+[dev-dependencies]
+bewertung-host.workspace = true
+serde.workspace = true
+sim-core.workspace = true
+
+[lints]
+workspace = true

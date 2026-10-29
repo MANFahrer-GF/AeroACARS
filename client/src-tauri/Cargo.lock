@@ -76,6 +76,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid 1.23.1",
+ "wat",
  "windows-sys 0.59.0",
  "zip 2.4.2",
 ]
@@ -817,10 +818,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-traits",
  "serde",
- "wasm-bindgen",
  "windows-link 0.2.1",
 ]
 
@@ -2710,6 +2709,17 @@ checksum = "5dea2b27dd239b2556ed7a25ba842fe47fd602e7fc7433c2a8d6106d4d9edd70"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "kabine-wasm"
+version = "3.0.0-beta.1"
+dependencies = [
+ "bewertung-host",
+ "cabin-announcements",
+ "serde",
+ "serde_json",
+ "sim-core",
 ]
 
 [[package]]

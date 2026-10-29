@@ -97,6 +97,12 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `build_landing_record` (neuer Parameter `rechnung`) und die
 /// Eingabe-Dokumente (`eingabe_teile`) lesen sie ueber
 /// `einreichungs_rechnung`; `landungs_bewertung_aus` leitet das Urteil ab.
+/// — plus Etappe 4 (P-3.58): `mod kabinenplaner`; `kabinen_planer` hat den
+/// Typ `kabinenplaner::Planer` (Fassade ueber `module/kabine.wasm`, gleiche
+/// Methoden), `kabinen_schritt` legt ihn damit an und baut einen
+/// unbrauchbar gewordenen neu auf; in `kabinenansagen` nur der Typ und die
+/// Notiz `planer` (welcher Weg plant). Tests `kabinenplaner::tests`,
+/// `kabinenablauf_aendert_sich_mit_dem_paket`, `kabine-wasm/tests/gleich_nativ.rs`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -107,4 +113,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "781a8b58eeb8abce370aedcfa8c59f182a5d7d2b366c5aaba089469831585225";
+const HASH_VOR_DER_ZERLEGUNG: &str = "1df32d622e71f89ad02d765b3ef186c683757f8c6895f6edde613e5f0828b235";

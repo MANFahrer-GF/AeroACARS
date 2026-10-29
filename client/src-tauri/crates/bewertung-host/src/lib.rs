@@ -1,11 +1,14 @@
-//! WASM-Host fuer das Bewertungsmodul (Pflichtenheft P-4.30, P-4.31, P-4.33).
+//! WASM-Host fuer die Paketmodule: Bewertung (Pflichtenheft P-4.30, P-4.31,
+//! P-4.33) und Kabinenplaner (P-3.58).
 //!
 //! wasmi: reines Rust, kein JIT, gleich auf Mac und Windows. Jede Bewertung
 //! laeuft in einer frischen Instanz mit Rechenzeitgrenze („Fuel") und
 //! Speichergrenze (64 MB); ein Fehler im Modul kann den Client so weder
-//! aufhaengen noch seinen Speicher fuellen.
+//! aufhaengen noch seinen Speicher fuellen. Der Kabinenplaner behaelt eine
+//! [`Instanz`] den ganzen Flug (Zustand im Modulspeicher), mit denselben
+//! Grenzen je Aufruf.
 
-use wasmi::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmi::{Config, Engine, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
 
 /// Speichergrenze des Moduls (P-4.30).
 pub const SPEICHER_MAX: usize = 64 * 1024 * 1024;
@@ -43,11 +46,16 @@ pub struct Host {
 impl Host {
     /// Modul laden und pruefen (Exporte `memory`, `alloc`, `bewerte`).
     pub fn neu(wasm: &[u8]) -> Result<Self, Fehler> {
+        Self::neu_mit(wasm, &["memory", "alloc", "bewerte"])
+    }
+
+    /// Modul laden und pruefen, ob es diese Exporte hat.
+    pub fn neu_mit(wasm: &[u8], exporte: &[&str]) -> Result<Self, Fehler> {
         let mut config = Config::default();
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         let modul = Module::new(&engine, wasm).map_err(|e| Fehler::Modul(e.to_string()))?;
-        for name in ["memory", "alloc", "bewerte"] {
+        for &name in exporte {
             if modul.get_export(name).is_none() {
                 return Err(Fehler::Modul(format!("Export {name} fehlt")));
             }
@@ -72,6 +80,14 @@ impl Host {
 
     /// Einen Export mit JSON-Ein-/Ausgabe aufrufen (frische Instanz).
     fn aufrufen(&self, export: &str, eingabe: &str, fuel: u64) -> Result<(String, u64), Fehler> {
+        // Der Vorrat gilt fuer Start UND Aufruf zusammen.
+        let mut instanz = self.instanz(export, fuel)?;
+        instanz.rufen(eingabe, fuel)
+    }
+
+    /// Eine Instanz, die ueber viele Aufrufe von `export` bestehen bleibt
+    /// (Kabinenplaner: eine je Flug). `fuel` gilt fuer den Start.
+    pub fn instanz(&self, export: &str, fuel: u64) -> Result<Instanz, Fehler> {
         let grenzen = StoreLimitsBuilder::new().memory_size(SPEICHER_MAX).build();
         let mut store: Store<StoreLimits> = Store::new(&self.engine, grenzen);
         store.limiter(|g| g);
@@ -86,26 +102,55 @@ impl Host {
         let alloc = instanz
             .get_typed_func::<u32, u32>(&store, "alloc")
             .map_err(|e| Fehler::Modul(e.to_string()))?;
-        let bewerte = instanz
+        let funktion = instanz
             .get_typed_func::<(u32, u32), u64>(&store, export)
             .map_err(|e| Fehler::Modul(e.to_string()))?;
+        Ok(Instanz { store, speicher, alloc, funktion })
+    }
+}
+
+/// Eine laufende Modulinstanz: Ihr Speicher (und damit der Zustand des
+/// Moduls) bleibt zwischen den Aufrufen erhalten.
+pub struct Instanz {
+    store: Store<StoreLimits>,
+    speicher: Memory,
+    alloc: TypedFunc<u32, u32>,
+    funktion: TypedFunc<(u32, u32), u64>,
+}
+
+impl Instanz {
+    /// Den Export mit `eingabe` aufrufen, hoechstens `fuel` Rechenschritte;
+    /// dazu der Verbrauch.
+    pub fn aufrufen(&mut self, eingabe: &str, fuel: u64) -> Result<(String, u64), Fehler> {
+        self.store.set_fuel(fuel).map_err(|e| Fehler::Modul(e.to_string()))?;
+        self.rufen(eingabe, fuel)
+    }
+
+    /// Belegter Modulspeicher in Bytes (Messung: waechst er im Flug?).
+    pub fn speicher_bytes(&self) -> usize {
+        self.speicher.data_size(&self.store)
+    }
+
+    /// Aufruf mit dem gesetzten Vorrat; `fuel` ist der Vorrat vor dem Start.
+    fn rufen(&mut self, eingabe: &str, fuel: u64) -> Result<(String, u64), Fehler> {
+        let store = &mut self.store;
         let bytes = eingabe.as_bytes();
         let n = u32::try_from(bytes.len()).map_err(|_| Fehler::Abbruch("Eingabe zu gross".into()))?;
-        let ptr = alloc.call(&mut store, n).map_err(|e| abbruch(&mut store, e))?;
-        speicher
-            .write(&mut store, ptr as usize, bytes)
+        let ptr = self.alloc.call(&mut *store, n).map_err(|e| abbruch(store, e))?;
+        self.speicher
+            .write(&mut *store, ptr as usize, bytes)
             .map_err(|e| Fehler::Abbruch(e.to_string()))?;
-        let r = bewerte.call(&mut store, (ptr, n)).map_err(|e| abbruch(&mut store, e))?;
+        let r = self.funktion.call(&mut *store, (ptr, n)).map_err(|e| abbruch(store, e))?;
         let (aus_ptr, aus_len) = ((r >> 32) as usize, (r & 0xffff_ffff) as usize);
         // Erst pruefen, dann anlegen: Die Laenge kommt vom Modul, ein
         // fehlerhaftes Modul koennte sonst Gigabytes im Client anfordern
         // (Codex 29.10.).
-        if aus_ptr.checked_add(aus_len).is_none_or(|ende| ende > speicher.data_size(&store)) {
+        if aus_ptr.checked_add(aus_len).is_none_or(|ende| ende > self.speicher.data_size(&*store)) {
             return Err(Fehler::Ausgabe);
         }
         let mut aus = vec![0u8; aus_len];
-        speicher
-            .read(&store, aus_ptr, &mut aus)
+        self.speicher
+            .read(&*store, aus_ptr, &mut aus)
             .map_err(|e| Fehler::Abbruch(e.to_string()))?;
         let verbraucht = fuel - store.get_fuel().unwrap_or(0);
         String::from_utf8(aus).map(|t| (t, verbraucht)).map_err(|_| Fehler::Ausgabe)

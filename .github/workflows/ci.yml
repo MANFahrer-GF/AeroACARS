@@ -114,7 +114,11 @@ jobs:
       - name: Bewertungsmodul gleich dem Quellstand
         run: |
           rustup toolchain install 1.96.0 --profile minimal --target wasm32-unknown-unknown
-          sh scripts/bundle/bewertung-bauen.sh --pruefen
+          sh scripts/bundle/modul-bauen.sh bewertung --pruefen
+      # v3 Etappe 4 (P-3.58): ebenso das Kabinenmodul bundle/module/kabine.wasm
+      # (sechs echte Fluege, Takt fuer Takt gegen Ablage und Planer nativ).
+      - name: Kabinenmodul gleich dem Quellstand
+        run: sh scripts/bundle/modul-bauen.sh kabine --pruefen
       - name: Frontend deps
         working-directory: client
         run: npm ci

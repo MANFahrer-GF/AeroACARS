@@ -46,6 +46,7 @@ mod ui_state;
 mod xplane_band;
 mod xplane_plugin_install;
 mod kabinenansagen;
+mod kabinenplaner;
 mod kabinen_musik;
 mod kabinen_reaktion;
 mod flug_aktivitaet;
@@ -6482,8 +6483,9 @@ struct FlightStats {
     /// Die Kennung steht schon in `ActiveFlight::airline_icao`.
     airline_name: Option<String>,
     /// Kabinenansagen (Beta): der Planer dieses Fluges. Nicht gespeichert —
-    /// nach einem Neustart entsteht er mit `Planer::fortsetzen` neu.
-    kabinen_planer: Option<cabin_announcements::Planer>,
+    /// nach einem Neustart entsteht er mit `Planer::fortsetzen` neu. Seit
+    /// v3 (Etappe 4) als Modul aus dem Laufzeit-Paket.
+    kabinen_planer: Option<kabinenplaner::Planer>,
     /// Zuletzt gesehener `go_around_count`: Der Planer will eine Flanke,
     /// keinen Zaehler.
     kabinen_durchstarts: u32,
@@ -43667,6 +43669,11 @@ fn kabinen_schritt(
     abgewaehlt: &[cabin_announcements::Slot],
 ) -> KabinenSchritt {
     let jetzt = now.timestamp();
+    // Kein Weg konnte den Stand uebernehmen (Etappe 4): neu aufbauen wie
+    // nach einem Neustart.
+    if stats.kabinen_planer.as_ref().is_some_and(kabinenplaner::Planer::unbrauchbar) {
+        stats.kabinen_planer = None;
+    }
     if stats.kabinen_planer.is_none() {
         // `fortsetzen` gilt auch fuer den normalen Start: Vor dem Boarding
         // loest kein Slot aus, also wird dort nichts uebersprungen.
@@ -43683,7 +43690,7 @@ fn kabinen_schritt(
         } else {
             stats.phase
         };
-        let mut planer = cabin_announcements::Planer::fortsetzen(flug, phase);
+        let mut planer = kabinenplaner::Planer::fortsetzen(flug, phase);
         planer.schon_gespielt(kabinenansagen::erledigte_slots(&stats.kabinen_lauf));
         if kabinenansagen::service_gespielt(&stats.kabinen_lauf) {
             planer.service_ende(true);

@@ -17,6 +17,8 @@ members = [
     # v3 Etappe 3 (P-4.30): landing-scoring als WASM-Modul
     "crates/bewertung-wasm",
     "crates/bewertung-host",
+    # v3 Etappe 4 (P-3.58): Kabinenplaner als WASM-Modul
+    "crates/kabine-wasm",
     # v0.9.0 (#Discord-RPC) — Pilot-Flugstatus im Discord-Profil
     "crates/discord-presence",
     # v1.3.0 (#Hoppie-PDC-CPDLC) — Hoppie-ACARS-Netzwerk-Protokoll +
@@ -88,7 +90,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # Audit Q4-2026-05 (CC1) + Security-Audit M5.
 
 # Time
-chrono = { version = "0.4", features = ["serde"] }
+# Ohne `wasmbind` (wirkt nur auf wasm32): Das Kabinenmodul (sim-core ->
+# chrono) darf keine wasm-bindgen-Importe tragen, der Host bietet keine an.
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock", "std", "oldtime"] }
 
 # v0.20 (Process-Integrity): cross-platform OS-process-table lookup, used
 # by sim-core::process_probe to check whether the sim's own process is
@@ -174,7 +178,8 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 
 serde.workspace = true
-serde_json.workspace = true
+# Kabinenmodul (P-3.58): Zahlen kommen bitgleich aus dem Modul zurueck.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -302,6 +307,8 @@ workspace = true
 # v0.7.0 — Replay-Acceptance-Tests gegen historische JSONL-Fixtures
 # (Touchdown-Forensik v2). Fixtures sind .jsonl.gz, brauchen flate2.
 flate2 = "1"
+# v3 Etappe 4: Ersatzmodul im Test „Kabinenablauf ohne Release geaendert“.
+wat = "1"
 
 [lints]
 workspace = true

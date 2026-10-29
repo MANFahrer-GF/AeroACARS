@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "AeroACARS 3.0: WASM-Host fuer das Bewertungsmodul (wasmi, Rechenzeit- und Speichergrenze, P-4.30)."
+description = "AeroACARS 3.0: WASM-Host fuer die Paketmodule Bewertung und Kabinenplaner (wasmi, Rechenzeit- und Speichergrenze, P-4.30, P-3.58)."
 
 [dependencies]
 wasmi = "2.0.0"

@@ -875,7 +875,7 @@ const ANKUNFT_TEXT_VOR_LANDUNG_MIN: i64 = 45;
 /// Ankunftsteil ~45 min vor der Landung bestellt und am TOD gespielt wird).
 /// Halbzeit: ihr Zeitpunkt; Ankunft: die Prognose der Kapitänsansage; sonst
 /// und ohne Quelle: jetzt. Nie vor jetzt.
-fn rest_bezug(teil: &str, planer: Option<&cabin_announcements::Planer>, landung: Option<i64>, jetzt: i64) -> i64 {
+fn rest_bezug(teil: &str, planer: Option<&crate::kabinenplaner::Planer>, landung: Option<i64>, jetzt: i64) -> i64 {
     let um = planer.and_then(|p| match teil {
         "halbzeit" => p.zeitpunkt(Slot::Reiseflug50, landung),
         "ankunft" => p.kapitaen_sinkflug_prognose(landung),
@@ -946,7 +946,7 @@ fn kapitaen_sprachen(lauf: &Lauf) -> Option<Vec<String>> {
 /// und gibt nach ihrem Ablauf auf (dann spielt der alte Ton).
 fn auffrischen_schritt(
     lauf: &mut Lauf,
-    planer: Option<&cabin_announcements::Planer>,
+    planer: Option<&crate::kabinenplaner::Planer>,
     landung: Option<i64>,
     ankunft_min: Option<i64>,
     jetzt: i64,
@@ -2329,6 +2329,10 @@ fn takt_kern(
     }
     let mut verlauf_neu_vorab = false;
     let schritt = crate::kabinen_schritt(stats, snap, now, &flight.arr_airport, flight.planned_flight_time_min, &flight.aircraft_icao, &abgewaehlt);
+    // Welcher Weg plant (Paketmodul, eingebautes Modul, nativ), Etappe 4.
+    for (weg, grund) in stats.kabinen_planer.as_ref().map(crate::kabinenplaner::Planer::wechsel_abholen).unwrap_or_default() {
+        notiz(&mut stats.kabinen_lauf, "planer", None, None, serde_json::json!({ "weg": weg, "grund": grund }));
+    }
     stats.kabinen_lauf.ruhephase = schritt.ruhephase;
     // Kam die Art „zweiter Service“ erst, als Reiseflug 80 schon nach der
     // 12-min-Regel wartete, und reicht die Zeit nicht mehr (unter 60 min
@@ -5339,8 +5343,8 @@ mod tests {
         assert!(ausgabe::huellkurve(rate, &vec![0.0; 2205]).iter().all(|w| *w == 0.0));
     }
 
-    fn planer_mit(flugart: Flugart, phase: crate::FlightPhase) -> cabin_announcements::Planer {
-        cabin_announcements::Planer::fortsetzen(
+    fn planer_mit(flugart: Flugart, phase: crate::FlightPhase) -> crate::kabinenplaner::Planer {
+        crate::kabinenplaner::Planer::fortsetzen(
             cabin_announcements::Flugdaten {
                 flugart: Some(flugart),
                 geplante_flugzeit_min: Some(120),
@@ -5371,7 +5375,7 @@ mod tests {
     fn jede_ansage_sagt_ehrlich_wo_sie_steht() {
         let mut st = FlightStats::new();
         assert!(geplant(&st, &einst(), 0).is_empty(), "vor dem ersten Takt nichts");
-        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::fortsetzen(
             cabin_announcements::Flugdaten {
                 flugart: Some(Flugart::Linie),
                 geplante_flugzeit_min: Some(120),
@@ -5697,7 +5701,7 @@ mod tests {
             reiseflughoehe_ft: Some(reise_ft as u32),
             abheben_epoch: ab,
         };
-        st.kabinen_planer = Some(cabin_announcements::Planer::neu(flug(None)));
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::neu(flug(None)));
         // Profil: Boden 18 min, Steigflug 2.000 ft/min, Sinkflug 1.800 ft/min,
         // Anflug 8 min; Reiseflug füllt die Planzeit auf.
         let steig = (reise_ft / 2_000.0 * 60.0) as i64;
@@ -5746,7 +5750,7 @@ mod tests {
                 // Planer wie in `lib.rs` (EWG 221: nur ein gespielter Service
                 // gibt „Ende des Service“ frei).
                 st.kabinen_lauf.verlauf.push(Gespielt { id: 0, slot: Slot::Reiseflug25, rolle: Rolle::Kabine, zeit: jetzt, teile: vec![], vorschau: false, ergebnis: Some("gespielt".into()), gestartet: true, grund: None });
-                let mut p = cabin_announcements::Planer::fortsetzen(flug(Some(abheben)), phase);
+                let mut p = crate::kabinenplaner::Planer::fortsetzen(flug(Some(abheben)), phase);
                 p.schon_gespielt(erledigte_slots(&st.kabinen_lauf));
                 if service_gespielt(&st.kabinen_lauf) {
                     p.service_ende(true);
@@ -5913,7 +5917,7 @@ mod tests {
         st.flight_type = Some(flight_type.into());
         st.pax_count = pax;
         st.kabinen_lauf.beta = Beta::Ja;
-        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::fortsetzen(
             cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(45), ..Default::default() },
             crate::FlightPhase::Boarding,
         ));
@@ -5969,7 +5973,7 @@ mod tests {
         let eigene = Some(("DLH".to_string(), vec![PathBuf::from("/m/DLH/a.mp3")]));
         st.phase = crate::FlightPhase::TaxiOut;
         musik_schritt(&mut st, &gate_snap(true), "A320", eigene, 0);
-        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::fortsetzen(
             cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(45), ..Default::default() },
             crate::FlightPhase::TaxiIn,
         ));
@@ -6137,7 +6141,7 @@ mod tests {
         assert!(halbzeit_anfragen(true, Climb, Some(10_000), 9_999));
         assert!(!halbzeit_anfragen(true, Climb, Some(10_000), 10_000 - 16 * 60));
         assert!(!halbzeit_anfragen(false, Cruise, Some(10_000), 9_999), "kommt nicht (Kurzstrecke)");
-        let kurz = cabin_announcements::Planer::neu(cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(50), ..Default::default() });
+        let kurz = crate::kabinenplaner::Planer::neu(cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(50), ..Default::default() });
         assert!(!kurz.kommt_noch(Slot::Reiseflug50, Cruise), "Kurzstrecke hat keine Halbzeit");
     }
 
@@ -6152,7 +6156,7 @@ mod tests {
         }
         let d: Daten = serde_json::from_str(include_str!("../crates/cabin-announcements/tests/daten/afr218.json")).unwrap();
         let erste = d.ticks[0].1;
-        let mut p = cabin_announcements::Planer::fortsetzen(
+        let mut p = crate::kabinenplaner::Planer::fortsetzen(
             cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(510), reiseflughoehe_ft: Some(38_000), ..Default::default() },
             erste,
         );
@@ -6616,7 +6620,7 @@ mod tests {
     #[test]
     fn hinweis_anschnallzeichen_im_reiseflug() {
         let mut st = FlightStats::new();
-        st.kabinen_planer = Some(cabin_announcements::Planer::neu(cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(120), ..Default::default() }));
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::neu(cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(120), ..Default::default() }));
         st.phase = crate::FlightPhase::Cruise;
         let mut snap = SimSnapshot { seatbelts_sign: Some(2), ..SimSnapshot::default() };
         hinweis_pruefen(&mut st, &snap, crate::FlightPhase::Cruise, 0);
@@ -7263,7 +7267,7 @@ mod rundumschlag_p1_tests {
         let mut st = FlightStats::new();
         st.pax_count = Some(150);
         st.phase = phase;
-        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::fortsetzen(
             cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(120), reiseflughoehe_ft: Some(36_000), ..Default::default() },
             phase,
         ));
@@ -7601,7 +7605,7 @@ mod rundumschlag_p1_tests {
     #[test]
     fn halbzeit_text_schon_im_steigflug() {
         let f = cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(70), reiseflughoehe_ft: Some(38_000), abheben_epoch: Some(1_000), ..Default::default() };
-        let p = cabin_announcements::Planer::fortsetzen(f, Climb);
+        let p = crate::kabinenplaner::Planer::fortsetzen(f, Climb);
         let um = p.zeitpunkt(Slot::Reiseflug50, None).expect("Halbzeit hat einen Zeitpunkt");
         let toc = um + 300; // Reiseflug beginnt erst 5 min nach der Halbzeit
         let erste = (1_000..toc).step_by(10).find(|&t| halbzeit_anfragen(p.kommt_noch(Slot::Reiseflug50, Climb), Climb, Some(um), t));
@@ -7732,7 +7736,7 @@ mod rundumschlag_p1_tests {
     fn tha638_abflug() -> FlightStats {
         use crate::FlightPhase::*;
         let mut st = FlightStats::new();
-        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(Default::default(), Cruise));
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::fortsetzen(Default::default(), Cruise));
         let l = &mut st.kabinen_lauf;
         drehbuch_uebernehmen(l, antwort(&["th-TH", "de-DE"], &je_sprache(&ABFLUG, &["th-TH", "de-DE"])), &ABFLUG, false, false);
         // Erstes „keine Stimme“ des Ton-Servers (wie `ton_auftrag`).
@@ -7815,7 +7819,7 @@ mod rundumschlag_p1_tests {
     fn umstellung_mitten_im_flug_alte_ansagen_in_ihren_sprachen() {
         use crate::FlightPhase::*;
         let mut st = FlightStats::new();
-        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(Default::default(), Cruise));
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::fortsetzen(Default::default(), Cruise));
         let l = &mut st.kabinen_lauf;
         drehbuch_uebernehmen(l, antwort(&["de-DE", "en-GB"], &je_sprache(&ABFLUG, &["de-DE", "en-GB"])), &ABFLUG, false, false);
         let halbzeit = drehbuch_uebernehmen(l, antwort(&["de-DE", "fr-FR"], &je_sprache(&HALBZEIT, &["de-DE", "fr-FR"])), &HALBZEIT, false, false);
@@ -7839,7 +7843,7 @@ mod rundumschlag_p1_tests {
     fn mit_gemeldetem_service(ton: bool) -> FlightStats {
         use crate::FlightPhase::*;
         let mut st = flug(Cruise, if ton { &[Slot::Reiseflug25] } else { &[] });
-        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::fortsetzen(
             cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(120), reiseflughoehe_ft: Some(36_000), abheben_epoch: Some(0), ..Default::default() },
             Cruise,
         ));
@@ -8193,7 +8197,7 @@ mod auffrischung_tests {
     }
 
     /// Gesendete Restzeit des Teils `ankunft`, gerundet wie vom Server.
-    fn gesendet(teil: &str, p: &cabin_announcements::Planer, landung: Option<i64>, jetzt: i64) -> Option<i64> {
+    fn gesendet(teil: &str, p: &crate::kabinenplaner::Planer, landung: Option<i64>, jetzt: i64) -> Option<i64> {
         restzeit_gerundet(rest_min_ab(landung, rest_bezug(teil, Some(p), landung, jetzt)))
     }
 
@@ -8204,7 +8208,7 @@ mod auffrischung_tests {
         let landung = 100_000;
         let jetzt = landung - 44 * 60;
         let tod = landung - 20 * 60 + cabin_announcements::tabelle().werte.kapitaen_vor_tod_s.wert;
-        let mut p = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        let mut p = crate::kabinenplaner::Planer::fortsetzen(flugdaten(180), Cruise);
         p.tick(&reise(jetzt, landung, Some(tod)));
         assert_eq!(p.kapitaen_sinkflug_prognose(Some(landung)), Some(landung - 20 * 60));
         assert_eq!(rest_min_ab(Some(landung), rest_bezug("ankunft", Some(&p), Some(landung), jetzt)), Some(20));
@@ -8212,11 +8216,11 @@ mod auffrischung_tests {
         // Heute (Bezug = Bestellung) wären es 44 → 45 gewesen.
         assert_eq!(restzeit_gerundet(rest_min_ab(Some(landung), jetzt)), Some(45));
         // Der TOD liegt später als „Landung − 20“: Die ETA-Regel gewinnt.
-        let mut q = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        let mut q = crate::kabinenplaner::Planer::fortsetzen(flugdaten(180), Cruise);
         q.tick(&reise(jetzt, landung, Some(landung - 5 * 60)));
         assert_eq!(rest_min_ab(Some(landung), rest_bezug("ankunft", Some(&q), Some(landung), jetzt)), Some(cabin_announcements::tabelle().werte.kapitaen_vor_landung_min.wert as i64));
         // TOD früher (30 min vor der Landung): 30 min + 90 s → 31 → 30.
-        let mut r = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        let mut r = crate::kabinenplaner::Planer::fortsetzen(flugdaten(180), Cruise);
         r.tick(&reise(jetzt, landung, Some(landung - 30 * 60)));
         assert_eq!(rest_min_ab(Some(landung), rest_bezug("ankunft", Some(&r), Some(landung), jetzt)), Some(31));
         assert_eq!(gesendet("ankunft", &r, Some(landung), jetzt), Some(30));
@@ -8228,7 +8232,7 @@ mod auffrischung_tests {
     fn kurzstrecke_nach_dem_abheben() {
         let landung = 50_000;
         let jetzt = landung - 40 * 60;
-        let mut p = cabin_announcements::Planer::neu(flugdaten(45));
+        let mut p = crate::kabinenplaner::Planer::neu(flugdaten(45));
         let mut tk = reise(jetzt, landung, Some(landung - 18 * 60));
         tk.phase = Climb;
         tk.hoehe_ft = 3_000.0;
@@ -8244,7 +8248,7 @@ mod auffrischung_tests {
     fn umleitung_ohne_alte_route() {
         let landung = 100_000;
         let jetzt = landung - 40 * 60;
-        let mut p = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        let mut p = crate::kabinenplaner::Planer::fortsetzen(flugdaten(180), Cruise);
         let mut tk = reise(jetzt, landung, Some(landung - 25 * 60));
         tk.ziel_icao = Some("EDDK".into());
         p.tick(&tk);
@@ -8256,13 +8260,13 @@ mod auffrischung_tests {
     #[test]
     fn ohne_quelle_wie_heute() {
         let jetzt = 10_000;
-        let p = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        let p = crate::kabinenplaner::Planer::fortsetzen(flugdaten(180), Cruise);
         assert_eq!(rest_bezug("ankunft", Some(&p), None, jetzt), jetzt);
         assert_eq!(rest_min_ab(None, rest_bezug("ankunft", Some(&p), None, jetzt)), None);
         assert_eq!(rest_bezug("ankunft", None, Some(20_000), jetzt), jetzt, "ohne Planer: jetzt");
         assert_eq!(rest_bezug("abflug", Some(&p), Some(20_000), jetzt), jetzt, "andere Teile: jetzt");
         // Prognose in der Vergangenheit: nie vor jetzt.
-        let mut q = cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise);
+        let mut q = crate::kabinenplaner::Planer::fortsetzen(flugdaten(180), Cruise);
         q.tick(&reise(jetzt, jetzt + 10 * 60, None));
         assert_eq!(rest_bezug("ankunft", Some(&q), Some(jetzt + 10 * 60), jetzt), jetzt);
     }
@@ -8272,7 +8276,7 @@ mod auffrischung_tests {
     fn halbzeit_unveraendert() {
         let mut f = flugdaten(240);
         f.abheben_epoch = Some(0);
-        let p = cabin_announcements::Planer::fortsetzen(f, Cruise);
+        let p = crate::kabinenplaner::Planer::fortsetzen(f, Cruise);
         let landung = 240 * 60;
         let um = p.zeitpunkt(Slot::Reiseflug50, Some(landung)).expect("Halbzeit hat eine Uhrzeit");
         let jetzt = um - HALBZEIT_VORLAUF_MIN * 60;
@@ -8319,7 +8323,7 @@ mod auffrischung_tests {
                 st.kabinen_lauf.ton.insert((slot, sp.into()), ton(&format!("alt-{sp}")));
             }
         }
-        st.kabinen_planer = Some(cabin_announcements::Planer::fortsetzen(flugdaten(180), Cruise));
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::fortsetzen(flugdaten(180), Cruise));
         st.landung_erwartet = Some(LANDUNG);
         st.kabinen_lauf.auffrischung.gesendet = Some(KapitaenWerte { rest_min: Some(rest_gesendet), ankunft_min: Some(ANKUNFT_MIN) });
         st

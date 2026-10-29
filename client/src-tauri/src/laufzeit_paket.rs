@@ -23,7 +23,7 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 ];
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -38,6 +38,7 @@ const KABINE: &str = "tabellen/kabine.json";
 const ENDPUNKTE: &str = "endpunkte.json";
 const MSFS_PROFILE: &str = "profile/msfs.json";
 const BEWERTUNG: &str = "module/bewertung.wasm";
+const KABINE_MODUL: &str = "module/kabine.wasm";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
@@ -71,6 +72,9 @@ pub(crate) struct AktiverStand {
     /// Kabinenansagen: Listen und Zeiten (`cabin-announcements`, ueber eine
     /// angemeldete Quelle).
     pub kabine: cabin_announcements::Tabelle,
+    /// Dieselbe Tabelle als Text: Das Kabinenmodul bekommt sie mit dem
+    /// ersten Befehl (Etappe 4, P-3.59).
+    pub kabine_json: &'static str,
     /// Adressen der Gegenstellen, nur innerhalb der festen Hostliste von
     /// `paket-endpunkte` (P-3.60).
     pub endpunkte: paket_endpunkte::Endpunkte,
@@ -78,6 +82,8 @@ pub(crate) struct AktiverStand {
     pub msfs_profile: sim_core::msfs_paketprofil::Datei,
     /// Bewertungsmodul (WASM, P-4.31) dieses Stands.
     pub bewertung: &'static [u8],
+    /// Kabinenplaner (WASM, P-3.58) dieses Stands.
+    pub kabine_modul: &'static [u8],
     /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
     pub ui: Vec<(&'static str, &'static str)>,
 }
@@ -111,9 +117,11 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         hoehengruppen: crate::runway_assessment::hoehengruppen_lesen(text(HOEHENGRUPPEN)?)?,
         klappen: klappen_lesen(text(KLAPPEN)?)?,
         kabine: cabin_announcements::lesen(text(KABINE)?)?,
+        kabine_json: text(KABINE)?,
         endpunkte: paket_endpunkte::lesen(text(ENDPUNKTE)?)?,
         msfs_profile: sim_core::msfs_paketprofil::lesen(text(MSFS_PROFILE)?)?,
         bewertung: Box::leak(p.datei(BEWERTUNG).map_err(|e| e.to_string())?.into_boxed_slice()),
+        kabine_modul: Box::leak(p.datei(KABINE_MODUL).map_err(|e| e.to_string())?.into_boxed_slice()),
         vref: landing_scoring::vref::lesen(text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -133,9 +141,11 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         hoehengruppen: crate::runway_assessment::hoehengruppen_lesen(eingebauter_text(HOEHENGRUPPEN)?)?,
         klappen: klappen_lesen(eingebauter_text(KLAPPEN)?)?,
         kabine: cabin_announcements::lesen(eingebauter_text(KABINE)?)?,
+        kabine_json: eingebauter_text(KABINE)?,
         endpunkte: paket_endpunkte::lesen(eingebauter_text(ENDPUNKTE)?)?,
         msfs_profile: sim_core::msfs_paketprofil::lesen(eingebauter_text(MSFS_PROFILE)?)?,
         bewertung: eingebaute_datei(BEWERTUNG).ok_or(BEWERTUNG)?,
+        kabine_modul: eingebaute_datei(KABINE_MODUL).ok_or(KABINE_MODUL)?,
         vref: landing_scoring::vref::lesen(eingebauter_text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
     })
@@ -191,6 +201,11 @@ pub(crate) fn eingebautes_bewertungsmodul() -> Option<&'static [u8]> {
     eingebaute_datei(BEWERTUNG)
 }
 
+/// Der Kabinenplaner des eingebauten Stands (Rueckfall, Etappe 4).
+pub(crate) fn eingebautes_kabinenmodul() -> Option<&'static [u8]> {
+    eingebaute_datei(KABINE_MODUL)
+}
+
 /// Eine Datei des geltenden Stands fuer die Oberflaeche (nur [`UI_DATEIEN`]).
 #[tauri::command]
 pub(crate) fn paket_datei(pfad: String) -> Result<&'static str, String> {
@@ -244,9 +259,18 @@ pub(crate) fn eingebaute_datei(pfad: &str) -> Option<&'static [u8]> {
 
 /// Der eingebaute Stand: Generation 0 aus den Dateien im Programm (P-3.22).
 fn eingebaut() -> Eingebaut {
-    let dateien: HashMap<String, Vec<u8>> =
-        eingebettet::DATEIEN.iter().map(|(p, b)| (p.to_string(), b.to_vec())).collect();
-    let files: Vec<_> = eingebettet::DATEIEN
+    eingebaut_mit(&[])
+}
+
+/// Wie [`eingebaut`], einzelne Dateien ersetzt (Tests: ein Paket, das sich
+/// nur in diesen Dateien unterscheidet).
+fn eingebaut_mit(ersetzt: &[(&str, &[u8])]) -> Eingebaut {
+    let inhalt: Vec<(&str, &[u8])> = eingebettet::DATEIEN
+        .iter()
+        .map(|&(p, b)| (p, ersetzt.iter().find(|(e, _)| *e == p).map_or(b, |(_, n)| *n)))
+        .collect();
+    let dateien: HashMap<String, Vec<u8>> = inhalt.iter().map(|(p, b)| (p.to_string(), b.to_vec())).collect();
+    let files: Vec<_> = inhalt
         .iter()
         .map(|(p, b)| {
             serde_json::json!({
@@ -523,6 +547,12 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
     // Bewertungsmodul: muss laden und die Exporte haben (P-3.21).
     let modul = p.datei(BEWERTUNG).map_err(|e| e.to_string())?;
     bewertung_host::Host::neu(&modul).map_err(|e| format!("{BEWERTUNG}: {e}"))?;
+    // Kabinenplaner: muss laden und mit der Tabelle DIESES Stands einen
+    // Planer anlegen (Etappe 4).
+    let modul = p.datei(KABINE_MODUL).map_err(|e| e.to_string())?;
+    let tabelle = p.datei(KABINE).map_err(|e| e.to_string())?;
+    crate::kabinenplaner::pruefen(&modul, std::str::from_utf8(&tabelle).map_err(|e| format!("{KABINE}: {e}"))?)
+        .map_err(|e| format!("{KABINE_MODUL}: {e}"))?;
     for d in UI_DATEIEN {
         p.datei(d).map_err(|e| e.to_string())?;
     }
@@ -638,6 +668,44 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         // 29.10. nachgezogen: nur `quelle` korrigiert (Zeilen gegen v2.1.24,
         // phase_sinkflug_hoechstens_rest_min stammt aus e073b562), Werte gleich.
         assert_eq!(abdruck(&t), (13780505455500687198, 8453));
+    }
+
+    /// Etappe 4, Abnahme „Kabinenablauf ohne Release geaendert“: Ein Paket,
+    /// das sich nur in `tabellen/kabine.json` bzw. `module/kabine.wasm`
+    /// unterscheidet, plant anders — gelesen ueber `stand_aus_paket` wie
+    /// beim Programmstart, ohne Aenderung am Client.
+    #[test]
+    fn kabinenablauf_aendert_sich_mit_dem_paket() {
+        use cabin_announcements::{modul::Befehl, Flugart, Flugdaten, Slot};
+        let aus = |ersetzt: &[(&str, &[u8])]| stand_aus_paket(&eingebaut_mit(ersetzt).paket().unwrap()).unwrap();
+        // 165-min-Flug im Reiseflug: Halbzeit-Ansage und Weg.
+        let plane = |s: &AktiverStand| {
+            let flug = Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(165), abheben_epoch: Some(1_000), ..Default::default() };
+            let anlegen = Befehl::Fortsetzen { tabelle: s.kabine_json.into(), flug, phase: crate::FlightPhase::Cruise };
+            let p = crate::kabinenplaner::Planer::starten(s.kabine_modul, eingebautes_kabinenmodul(), s.kabine_json, anlegen);
+            (p.zeitpunkt(Slot::Reiseflug50, Some(1_000 + 165 * 60)), p.wechsel_abholen())
+        };
+        let (halbzeit, weg) = plane(&aus(&[]));
+        assert!(halbzeit.is_some(), "Bezug: Halbzeit geplant");
+        assert_eq!(weg, vec![("paket", None)]);
+        // Tabelle: Kurzstrecke bis 200 min — der Flug hat keine Halbzeit mehr.
+        let mut t: serde_json::Value = serde_json::from_str(eingebauter_text(KABINE).unwrap()).unwrap();
+        t["werte"]["kurzstrecke_min"]["wert"] = 200.into();
+        let t = t.to_string();
+        let (halbzeit, weg) = plane(&aus(&[(KABINE, t.as_bytes())]));
+        assert_eq!(halbzeit, None, "Tabelle aus dem Paket");
+        assert_eq!(weg, vec![("paket", None)]);
+        // Modul: ein Paketmodul, das nichts plant (antwortet immer `null`).
+        let stumm = wat::parse_str(
+            r#"(module (memory (export "memory") 1)
+            (data (i32.const 16) "{\"Ok\":null}")
+            (func (export "alloc") (param i32) (result i32) i32.const 1024)
+            (func (export "kabine") (param i32 i32) (result i64) i64.const 0x000000100000000B))"#,
+        )
+        .unwrap();
+        let (halbzeit, weg) = plane(&aus(&[(KABINE_MODUL, &stumm)]));
+        assert_eq!(halbzeit, None, "Modul aus dem Paket");
+        assert_eq!(weg, vec![("paket", None)]);
     }
 
     #[test]
