@@ -1,0 +1,246 @@
+{
+  "ausgabe": {
+    "anflug_abzug": [
+      "anflug_partial",
+      5
+    ],
+    "anflug_urteil": "partial",
+    "deckel": "anflug_partial_abzug",
+    "fassung": 27,
+    "gesamt": 87,
+    "gesamt_buchstabe": "B+",
+    "gesamt_wort": "acceptable",
+    "grenzen": {
+      "g": [
+        1.2,
+        1.4,
+        1.7,
+        2.1
+      ],
+      "vs_fpm": [
+        200.0,
+        400.0,
+        600.0,
+        1000.0
+      ]
+    },
+    "landungs_abzug": null,
+    "teilnoten": [
+      {
+        "band": "good",
+        "key": "landing_rate",
+        "label_key": "landing.sub.landing_rate",
+        "points": 100,
+        "rationale_key": "landing.rat.firm_positive_touchdown",
+        "score": 100,
+        "skipped": false,
+        "tip_key": "landing.tip.firm_positive_touchdown",
+        "value": "-238 fpm"
+      },
+      {
+        "band": "good",
+        "key": "g_force",
+        "label_key": "landing.sub.g_force",
+        "messwert": 1.2167557,
+        "points": 80,
+        "rationale_key": "landing.rat.comfortable_g",
+        "score": 80,
+        "skipped": false,
+        "tip_key": "landing.tip.comfortable_g",
+        "value": "1.22 G"
+      },
+      {
+        "band": "good",
+        "key": "bounces",
+        "label_key": "landing.sub.bounces",
+        "points": 100,
+        "rationale_key": "landing.rat.clean_set",
+        "score": 100,
+        "skipped": false,
+        "tip_key": "landing.tip.clean_set",
+        "value": "0"
+      },
+      {
+        "band": "good",
+        "gate": [
+          {
+            "gut_unter": 1.0,
+            "key": "gleitpfad",
+            "stufe": "gut",
+            "wert": 0.49
+          },
+          {
+            "gut_unter": 5.0,
+            "key": "fahrt",
+            "stufe": "mittel",
+            "wert": 6.8685865
+          },
+          {
+            "gut_unter": 3.0,
+            "key": "querneigung",
+            "stufe": "gut",
+            "wert": 1.4129082
+          },
+          {
+            "gut_unter": 100.0,
+            "key": "ruck",
+            "stufe": "gut",
+            "wert": 75.37281
+          },
+          {
+            "key": "sinken",
+            "stufe": "gut"
+          },
+          {
+            "key": "konfiguration",
+            "stufe": "gut"
+          }
+        ],
+        "key": "stability",
+        "label_key": "landing.sub.stability",
+        "points": 80,
+        "rationale_key": "landing.rat.partly_stable",
+        "score": 80,
+        "skipped": false,
+        "tip_key": "landing.tip.partly_stable",
+        "value": "σ 254 fpm / 1.4°",
+        "warning": "anflug_partial"
+      },
+      {
+        "band": "good",
+        "key": "rollout",
+        "label_key": "landing.sub.runway_discipline",
+        "points": 100,
+        "rationale_key": "landing.rat.centered",
+        "score": 100,
+        "skipped": false,
+        "tip_key": "landing.tip.centered",
+        "value": "4.1 m Versatz · äußeres Rad 6.6 m von der Mitte · Rand +17.3 m",
+        "value_key": "landing.wert.bahn_versatz",
+        "value_params": {
+          "aussen": "6.6",
+          "rand": "+17.3",
+          "versatz": "4.1"
+        }
+      },
+      {
+        "band": "good",
+        "key": "alignment",
+        "label_key": "landing.sub.alignment",
+        "messwert": 0.07799711,
+        "points": 100,
+        "rationale_key": "landing.rat.aligned_on_centerline",
+        "score": 100,
+        "skipped": false,
+        "tip_key": "landing.tip.aligned_on_centerline",
+        "value": "2 m · 1°"
+      },
+      {
+        "band": "good",
+        "key": "touchdown_point",
+        "label_key": "landing.sub.touchdown_point",
+        "points": 85,
+        "rationale_key": "landing.rat.in_tdz",
+        "score": 85,
+        "skipped": false,
+        "tip_key": "landing.tip.in_tdz",
+        "value": "652 m · Ziel 400 m · Δ +252 m",
+        "value_key": "landing.wert.td_ziel",
+        "value_params": {
+          "delta": "+252",
+          "td": "652",
+          "ziel": "400"
+        }
+      },
+      {
+        "band": "good",
+        "key": "abfangen",
+        "label_key": "landing.sub.abfangen",
+        "messwert": 9.4,
+        "points": 100,
+        "rationale_key": "landing.rat.flare_normal",
+        "score": 100,
+        "skipped": false,
+        "tip_key": "landing.tip.flare_normal",
+        "value": "9.4 s ab 50 ft",
+        "value_key": "landing.abfangen.teil_wert",
+        "value_params": {
+          "s": "9.4"
+        }
+      }
+    ]
+  },
+  "eingabe": {
+    "landung": {
+      "abfangen": {
+        "beginn_hoehe_ft": 39.0,
+        "dauer_ab_50ft_s": 9.399999618530273,
+        "grund_ohne_werte": null,
+        "max_vs_fpm": -135.0,
+        "reduktion_fpm": 539.0,
+        "schweben_m": 0.0,
+        "schweben_s": 0.0,
+        "vs_50ft_fpm": -777.0,
+        "vs_aufsetzen_fpm": -238.47312927246094
+      },
+      "actual_trip_burn_kg": 974.81689453125,
+      "aim_point_m": 400.0,
+      "aircraft_icao": "AT76",
+      "airport_source": "runway_match",
+      "anflug": {
+        "bank_stddev_deg": 1.4129081964492798,
+        "excessive_sink": false,
+        "gleitpfad_dots": 0.49000000953674316,
+        "ias_stddev_kt": 6.868586540222168,
+        "ias_stddev_unter_500_kt": null,
+        "spaetes_final_rechtzeitig": null,
+        "stable_config": true,
+        "stable_config_500": null,
+        "vs_jerk_fpm": 75.37281036376953
+      },
+      "approach_bank_stddev_deg": 1.4129081964492798,
+      "approach_vs_stddev_fpm": 254.20404052734375,
+      "bahn_achsen_abweichung_grad": -0.20722708018638297,
+      "bahn_achsen_groesster_betrag_m": 4.1,
+      "bahn_achsen_kreuzt_mitte": true,
+      "bahn_geometrie_aus_szenerie": true,
+      "bahn_max_querversatz_m": 4.126162289586857,
+      "bahn_overrun_m": null,
+      "bahn_proben": 68,
+      "bounce_count": 0,
+      "diverted": false,
+      "durchstarts": 0,
+      "fahrwerk_spurweite_m": 4.1,
+      "flare_quality_score": null,
+      "fuel_efficiency_pct": null,
+      "geflogene_strecke_nm": 351.95709228515625,
+      "landing_float_distance_m": 652.4894409179688,
+      "landing_groundspeed_kt": 104.65753936767578,
+      "landing_heading_true_deg": 202.51084899902344,
+      "landing_wind_direction_deg": 92.59860229492188,
+      "landing_wind_speed_kt": 3.4668359756469727,
+      "light_bounce_count": 0,
+      "nicht_konventionell": false,
+      "peak_g_load": 1.9505486488342285,
+      "plan_strecke_nm": null,
+      "planned_burn_kg": 1169.0,
+      "planned_tow_kg": 20394.0,
+      "planned_zfw_kg": 18367.0,
+      "pre_displaced_threshold": false,
+      "rollout_distance_m": 884.3021850585938,
+      "runway_displaced_threshold_ft": 0,
+      "runway_geometry_trusted": true,
+      "runway_length_m": 2510.332763671875,
+      "runway_match_centerline_offset_m": 1.866221308708191,
+      "runway_match_icao": "EYVI",
+      "runway_match_ident": "19",
+      "runway_surface": "ASP",
+      "runway_true_course_deg": 201.82351684570312,
+      "runway_width_m": 47.853599548339844,
+      "scored_g_load": 1.216755747795105,
+      "td_distance_from_threshold_m": 652.489474437646,
+      "tdz_end_m": 836.7776000033472,
+      "vs_fpm": -238.47312927246094
+    }
+  }
+}

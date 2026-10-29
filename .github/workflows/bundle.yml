@@ -50,6 +50,9 @@ jobs:
       - name: runtime-bundle testen
         working-directory: client/src-tauri
         run: cargo test -p runtime-bundle
+      - name: Selbsttest-Korpus über das Bewertungsmodul (P-13.02)
+        working-directory: client/src-tauri
+        run: cargo test -p bewertung-host --test selbsttest_korpus
       - name: Generation festlegen
         id: gen
         # Steigt mit jedem Lauf dieses Workflows; 0 ist der eingebaute Stand.

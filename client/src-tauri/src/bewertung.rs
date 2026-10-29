@@ -11,10 +11,11 @@ use bewertung_host::Host;
 use landing_scoring::wasm::{Ausgabe, Eingabe};
 use landing_scoring::LandingScoringInput;
 
-/// Rechenzeitgrenze je Bewertung. VORLAEUFIG: P-4.32 verlangt 10 x Median
-/// der echten Protokolle (Messung mit dem Gleichheitslauf, Etappe 3). Gemessen
-/// 29.10. an synthetischen Eingaben: Median 0,42 Mio., Maximum 0,86 Mio.
-pub(crate) const FUEL_GRENZE: u64 = 50_000_000;
+/// Rechenzeitgrenze je Bewertung: 10 x Median der echten Protokolle (P-4.32).
+/// Gemessen 29.10. im Gleichheitslauf (`bewertung-host/tests/
+/// gleichheitslauf.rs`) ueber 1 860 Landungen: Median 974 274, Maximum
+/// 5 044 000.
+pub(crate) const FUEL_GRENZE: u64 = 9_742_740;
 
 /// Woher die Note kam (Vermerk im PIREP, P-4.33).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
