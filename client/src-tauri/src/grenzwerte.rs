@@ -35,13 +35,48 @@ pub(crate) struct Staende {
     pub rollweg_mittellinie_m: Grenzwert<f64>,
 }
 
+/// `phase_v2.rs`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Phasen {
+    pub window_secs: Grenzwert<f64>,
+    pub min_span_secs: Grenzwert<f64>,
+    pub max_samples: Grenzwert<usize>,
+    pub min_sample_spacing_secs: Grenzwert<f64>,
+    pub reset_gap_secs: Grenzwert<f64>,
+    pub rate_climb_fpm: Grenzwert<f64>,
+    pub median_vs_climb_fpm: Grenzwert<f64>,
+    pub rate_level_fpm: Grenzwert<f64>,
+    pub median_vs_level_fpm: Grenzwert<f64>,
+    pub cruise_ref_band_ft: Grenzwert<f64>,
+    pub level_to_cruise_fallback_secs: Grenzwert<i64>,
+    pub level_below_ref_to_cruise_fallback_secs: Grenzwert<i64>,
+    pub obsref_band_ft: Grenzwert<f64>,
+    pub ga_confirm_ft: Grenzwert<f64>,
+    pub climbing_to_climb_fallback_secs: Grenzwert<i64>,
+    pub cruise_min_agl_ft: Grenzwert<f64>,
+    pub approach_agl_ft: Grenzwert<f64>,
+    pub final_agl_ft: Grenzwert<f64>,
+    pub cruise_fastpath_agl_ft: Grenzwert<f64>,
+    pub cruise_fastpath_vs_fpm: Grenzwert<f32>,
+    pub umkehr_min_agl_ft: Grenzwert<f64>,
+    pub umkehr_halte_secs: Grenzwert<i64>,
+    pub reiseflug_stufe_ft: Grenzwert<f64>,
+    pub sinkflug_level_zu_cruise_secs: Grenzwert<i64>,
+    pub climb_schnellsink_agl_ft: Grenzwert<f64>,
+    pub climb_schnellsink_vs_fpm: Grenzwert<f32>,
+    pub climb_schnellsink_secs: Grenzwert<i64>,
+    pub climb_schnellsink_fruehestens_secs: Grenzwert<i64>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Grenzwerte {
     pub staende: Staende,
+    pub phasen: Phasen,
 }
 
 /// Bereich -> Datei im Paket.
-pub(crate) const DATEIEN: &[&str] = &["grenzwerte/staende.json"];
+pub(crate) const DATEIEN: &[&str] = &["grenzwerte/staende.json", "grenzwerte/phasen.json"];
 
 static GRENZWERTE: OnceLock<Grenzwerte> = OnceLock::new();
 
@@ -69,7 +104,10 @@ pub(crate) fn lesen(datei: impl Fn(&str) -> Option<Vec<u8>>) -> Result<Grenzwert
         let bytes = datei(pfad).ok_or_else(|| format!("{pfad} fehlt"))?;
         serde_json::from_slice(&bytes).map_err(|e| format!("{pfad}: {e}"))
     }
-    Ok(Grenzwerte { staende: bereich(&datei, "grenzwerte/staende.json")? })
+    Ok(Grenzwerte {
+        staende: bereich(&datei, "grenzwerte/staende.json")?,
+        phasen: bereich(&datei, "grenzwerte/phasen.json")?,
+    })
 }
 
 #[cfg(test)]
@@ -91,6 +129,39 @@ mod tests {
         assert_eq!(s.stand_name_radius_m.wert, 60.0); // stands.rs:64
         assert_eq!(s.stand_name_vorsprung_m.wert, 10.0); // stands.rs:69
         assert_eq!(s.rollweg_mittellinie_m.wert, 3.0); // stands.rs:326
+    }
+
+    #[test]
+    fn grenzwerte_phasen_wie_2_1_24() {
+        let g = &grenzwerte().phasen;
+        assert_eq!(g.window_secs.wert, 60.0); // phase_v2.rs:66
+        assert_eq!(g.min_span_secs.wert, 45.0); // phase_v2.rs:70
+        assert_eq!(g.max_samples.wert, 64); // phase_v2.rs:76
+        assert_eq!(g.min_sample_spacing_secs.wert, 1.5); // phase_v2.rs:81
+        assert_eq!(g.reset_gap_secs.wert, 300.0); // phase_v2.rs:86
+        assert_eq!(g.rate_climb_fpm.wert, 300.0); // phase_v2.rs:90
+        assert_eq!(g.median_vs_climb_fpm.wert, 200.0); // phase_v2.rs:92
+        assert_eq!(g.rate_level_fpm.wert, 150.0); // phase_v2.rs:94
+        assert_eq!(g.median_vs_level_fpm.wert, 200.0); // phase_v2.rs:96
+        assert_eq!(g.cruise_ref_band_ft.wert, 1000.0); // phase_v2.rs:102
+        assert_eq!(g.level_to_cruise_fallback_secs.wert, 240); // phase_v2.rs:108
+        assert_eq!(g.level_below_ref_to_cruise_fallback_secs.wert, 600); // phase_v2.rs:121
+        assert_eq!(g.obsref_band_ft.wert, 1000.0); // phase_v2.rs:137
+        assert_eq!(g.ga_confirm_ft.wert, 700.0); // phase_v2.rs:150
+        assert_eq!(g.climbing_to_climb_fallback_secs.wert, 60); // phase_v2.rs:155
+        assert_eq!(g.cruise_min_agl_ft.wert, 5000.0); // phase_v2.rs:158
+        assert_eq!(g.approach_agl_ft.wert, 5000.0); // phase_v2.rs:161
+        assert_eq!(g.final_agl_ft.wert, 700.0); // phase_v2.rs:163
+        assert_eq!(g.cruise_fastpath_agl_ft.wert, 3000.0); // phase_v2.rs:166
+        assert_eq!(g.cruise_fastpath_vs_fpm.wert, -500.0); // phase_v2.rs:168
+        assert_eq!(g.umkehr_min_agl_ft.wert, 3000.0); // phase_v2.rs:175
+        assert_eq!(g.umkehr_halte_secs.wert, 120); // phase_v2.rs:179
+        assert_eq!(g.reiseflug_stufe_ft.wert, 2000.0); // phase_v2.rs:183
+        assert_eq!(g.sinkflug_level_zu_cruise_secs.wert, 600); // phase_v2.rs:186
+        assert_eq!(g.climb_schnellsink_agl_ft.wert, 3000.0); // phase_v2.rs:190
+        assert_eq!(g.climb_schnellsink_vs_fpm.wert, -500.0); // phase_v2.rs:191
+        assert_eq!(g.climb_schnellsink_secs.wert, 10); // phase_v2.rs:192
+        assert_eq!(g.climb_schnellsink_fruehestens_secs.wert, 120); // phase_v2.rs:197
     }
 
     #[test]
