@@ -293,6 +293,7 @@
       "zu_wenig_zeit": "zu wenig Zeit bis zum Sinkflug",
       "uebersprungen": "Reiseflug zu spät erkannt, spätere Ansage kam zuerst",
       "ton_nicht_fertig": "Ton nicht rechtzeitig fertig",
+      "text_fehlt": "Text fehlte (Server lieferte keinen)",
       "zu_spaet": "zu spät dran (Ruhephase oder andere Ansage)",
       "keine_stimme": "keine Stimme für diese Sprachen",
       "kein_kurztext": "GSG-Server liefert noch keine Kurzfassung des Kapitäns",
