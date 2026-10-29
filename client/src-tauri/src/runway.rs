@@ -26,7 +26,7 @@ use std::sync::OnceLock;
 /// unverändertes Spalten-Schema — 1:1 Drop-in). Update-Rezept: Datei neu
 /// laden, hier ersetzen, `cargo test --lib runway::` laufen lassen (einige
 /// Tests hängen an echten Koordinaten für konkrete Flughäfen).
-pub(crate) const EINGEBAUT_RUNWAYS_CSV: &str = include_str!("../data/ourairports-runways.csv");
+pub(crate) const EINGEBAUT_RUNWAYS_CSV: &str = include_str!("../../../bundle/ourairports/runways.csv");
 
 /// Embedded snapshot of the ourairports **airports** table (ident, type,
 /// reference point). Same source, same public domain, same refresh cadence.
@@ -54,7 +54,7 @@ pub(crate) const EINGEBAUT_RUNWAYS_CSV: &str = include_str!("../data/ourairports
 /// 2026 bereits einmal geändert, `icao_code` kam neu dazu), Header
 /// `ident,type,latitude_deg,longitude_deg` beibehalten, dann hier ersetzen
 /// und `cargo test --lib runway::` laufen lassen.
-pub(crate) const EINGEBAUT_AIRPORTS_CSV: &str = include_str!("../data/ourairports-airports.csv");
+pub(crate) const EINGEBAUT_AIRPORTS_CSV: &str = include_str!("../../../bundle/ourairports/airports.csv");
 
 /// v3 (Etappe 1a): Welche OurAirports-Fassung gilt — die aus dem
 /// Laufzeit-Paket oder die eingebaute. Entschieden wird beim ersten Zugriff
@@ -500,7 +500,7 @@ fn rows_for_airport(icao: &str) -> impl Iterator<Item = &'static RunwayRow> {
 /// jedem echten Flug. Gemeldet am ersten Live-Tag von v1.7.0, EDDL.
 ///
 /// Die richtige Angabe lag die ganze Zeit daneben: `EDDL` steht in
-/// `data/ourairports-runways.csv` mit `CON`, und 47.658 der 48.162
+/// `bundle/ourairports/runways.csv` mit `CON`, und 47.658 der 48.162
 /// Bahnen dort haben einen Belag. Der CSV-Pfad las sie immer; der
 /// Navigraph-Pfad nie.
 ///
@@ -2547,7 +2547,7 @@ mod tests {
     // strip. OurAirports has never heard of "06C"/"24C" for EFTP.
     /// EDDL, so wie die Navdaten es wirklich liefern: **ohne Belag**.
     ///
-    /// Die Geometrie stammt aus `data/ourairports-runways.csv`, damit der
+    /// Die Geometrie stammt aus `bundle/ourairports/runways.csv`, damit der
     /// Treffer sitzt; `surface: None` ist der Punkt. Genau so kommt jede
     /// Bahn aus dem Navdaten-Endpunkt — `nav_runways.surface_code` ist in
     /// allen 85.058 Zeilen leer.

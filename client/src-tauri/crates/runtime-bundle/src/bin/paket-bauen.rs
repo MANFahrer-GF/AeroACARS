@@ -25,7 +25,7 @@ fn lauf() -> Result<(), String> {
         generation: 0,
         erstellt: Utc::now(),
         gueltig_tage: 180,
-        client_min: "3.0.0".into(),
+        client_min: "3.0.0-0".into(),
         client_max: "3.99.99".into(),
         requires: Vec::new(),
         score_version: 27,

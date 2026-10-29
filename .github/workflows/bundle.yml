@@ -1,0 +1,102 @@
+# AeroACARS 3.0 — Laufzeit-Paket bauen, signieren, veröffentlichen
+# (Pflichtenheft P-3.10 bis P-3.14, P-9.41 bis P-9.43).
+#
+# Ablauf: Änderung unter bundle/ -> bauen + testen -> signieren (nur mit
+# Secret BUNDLE_MINISIGN_KEY) -> Freigabe durch Thomas im Environment
+# bundle-produktion -> auf live hochladen (nur mit Secret LIVE_BUNDLE_SSH_KEY).
+# Fehlen die Secrets, endet der Lauf nach Bauen und Testen; nichts wird
+# veröffentlicht. Der private Paketschlüssel existiert nur als Secret.
+
+name: Laufzeit-Paket
+
+on:
+  push:
+    branches: [v3, main]
+    paths: ['bundle/**', 'client/src-tauri/crates/runtime-bundle/**', '.github/workflows/bundle.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: laufzeit-paket
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bauen:
+    name: Bauen, testen, signieren
+    runs-on: ubuntu-latest
+    outputs:
+      generation: ${{ steps.gen.outputs.generation }}
+      signiert: ${{ steps.signieren.outputs.signiert }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+      - name: runtime-bundle testen
+        working-directory: client/src-tauri
+        run: cargo test -p runtime-bundle
+      - name: Generation festlegen
+        id: gen
+        # Steigt mit jedem Lauf dieses Workflows; 0 ist der eingebaute Stand.
+        run: echo "generation=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+      - name: Paket bauen
+        working-directory: client/src-tauri
+        run: |
+          cargo run -q -p runtime-bundle --bin paket-bauen -- \
+            "$GITHUB_WORKSPACE/bundle" "$GITHUB_WORKSPACE/paket" \
+            --generation "${{ steps.gen.outputs.generation }}" \
+            --erstellt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --repo-commit "${{ github.sha }}" \
+            --requires ourairports-1
+      - name: Signieren
+        id: signieren
+        env:
+          SCHLUESSEL: ${{ secrets.BUNDLE_MINISIGN_KEY }}
+        run: |
+          if [ -z "$SCHLUESSEL" ]; then
+            echo "Kein BUNDLE_MINISIGN_KEY — Paket bleibt unsigniert, wird nicht veröffentlicht."
+            echo "signiert=nein" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sudo apt-get install -y -qq minisign
+          umask 077
+          printf '%s\n' "$SCHLUESSEL" > "$RUNNER_TEMP/paket.key"
+          minisign -S -s "$RUNNER_TEMP/paket.key" -m paket/manifest.json -t "AeroACARS Laufzeit-Paket g${{ steps.gen.outputs.generation }}" < /dev/null
+          rm -f "$RUNNER_TEMP/paket.key"
+          echo "signiert=ja" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laufzeit-paket-g${{ steps.gen.outputs.generation }}
+          path: paket/
+          retention-days: 30
+
+  veroeffentlichen:
+    name: Auf live veröffentlichen (Freigabe Thomas)
+    needs: bauen
+    if: needs.bauen.outputs.signiert == 'ja' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: bundle-produktion
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: laufzeit-paket-g${{ needs.bauen.outputs.generation }}
+          path: paket
+      - name: Hochladen
+        env:
+          SSH_KEY: ${{ secrets.LIVE_BUNDLE_SSH_KEY }}
+          G: ${{ needs.bauen.outputs.generation }}
+        run: |
+          if [ -z "$SSH_KEY" ]; then echo "Kein LIVE_BUNDLE_SSH_KEY"; exit 1; fi
+          umask 077
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/id"
+          SSH="ssh -i $RUNNER_TEMP/id -p 2222 -o StrictHostKeyChecking=accept-new"
+          ZIEL=bundle@live.kant.ovh
+          # Erst Dateien und Stand, ganz zuletzt der Zeiger: Ein Abbruch
+          # dazwischen laesst den alten Stand aktiv.
+          rsync -a --ignore-existing -e "$SSH" paket/blobs/ "$ZIEL:blobs/"
+          rsync -a -e "$SSH" paket/manifest.json paket/manifest.json.minisig "$ZIEL:tmp-gen-$G/"
+          $SSH "$ZIEL" "mv tmp-gen-$G gen/$G && printf '{\"generation\":%s}' $G > aktuell.json.neu && mv aktuell.json.neu aktuell.json"
+          rm -f "$RUNNER_TEMP/id"
