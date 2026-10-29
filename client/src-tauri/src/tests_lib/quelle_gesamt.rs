@@ -73,6 +73,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// beiden Aufrufen von `landung_beim_wegsteigen_abschliessen`; beim Abgeben
 /// je Aufsetzer ein Dokument (seq 1 …, Touch-and-Go vor der Landung); Tests
 /// `aufsetzer_einfrieren_tests`.
+/// — plus P-4.21: `letter_grade`/`aggregate_score_label` rufen
+/// `landing_scoring::wasm::gesamt_buchstabe`/`gesamt_wort` (eine Quelle,
+/// Test `wort_und_buchstabe_an_den_grenzen`); die PIREP-Nutzlast nimmt Wort
+/// und Buchstabe aus der Modul-Ausgabe.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -83,4 +87,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "09a75628621167b262485a2efec5f1ccecb0341fdc30e84ec28eb143d65bac9d";
+const HASH_VOR_DER_ZERLEGUNG: &str = "36876ee7a8ec7e0a1b6084af55c58ab396d5b5e7f5e7fd712b4fd6cc671481c9";

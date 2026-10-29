@@ -11291,15 +11291,8 @@ fn compute_approach_stability_v2_mit_final(
 /// so a clean butter touchdown (LandingScore::Smooth = 100) earns
 /// A+, an Acceptable (80) earns B, Firm (60) earns C, etc.
 fn letter_grade(numeric: i32) -> &'static str {
-    match numeric {
-        95..=100 => "A+",
-        88..=94 => "A",
-        82..=87 => "B+",
-        75..=81 => "B",
-        65..=74 => "C",
-        50..=64 => "D",
-        _ => "F",
-    }
+    // v3 (P-4.21): eine Quelle — die Leiter steht im Bewertungsmodul.
+    landing_scoring::wasm::gesamt_buchstabe(numeric)
 }
 
 /// Render the full callsign as "DLH 155" (airline + space + number) when
@@ -21870,8 +21863,9 @@ fn build_pirep_payload(
         // mit einer eigenen Leiter. Zwei Kopien einer Regel driften; hier
         // gibt es nur noch eine.
         landing_score_label: payload_landing_score
-            .map(|s| aggregate_score_label(s.clamp(0, 100) as u8).to_string()),
-        landing_score_grade: payload_landing_score.map(|s| letter_grade(s).to_string()),
+            .and(bewertet.as_ref().and_then(|(a, _)| a.gesamt_wort.clone())),
+        // v3 (P-4.21): Wort und Buchstabe aus der Modul-Ausgabe.
+        landing_score_grade: bewertet.as_ref().and_then(|(a, _)| a.gesamt_buchstabe.clone()),
         // Nur wenn es eine Gesamtnote gibt (seit Score-Version 19 ohne
         // Touchdown-Rückfall) und der Deckel sie wirklich gesenkt hat.
         landing_score_deckel: aggregate_master
@@ -24079,17 +24073,8 @@ fn gesamtnote_wort(numeric: i32) -> &'static str {
 }
 
 fn aggregate_score_label(aggregate: u8) -> &'static str {
-    if aggregate >= 88 {
-        "smooth"
-    } else if aggregate >= 75 {
-        "acceptable"
-    } else if aggregate >= 50 {
-        "firm"
-    } else if aggregate >= 15 {
-        "hard"
-    } else {
-        "severe"
-    }
+    // v3 (P-4.21): eine Quelle — die Leiter steht im Bewertungsmodul.
+    landing_scoring::wasm::gesamt_wort(aggregate)
 }
 
 /// Die EINE Landungsbewertung.
