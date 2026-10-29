@@ -20,6 +20,9 @@ members = [
     # v2.0.26 (Beta) — Kabinenansagen: Planer, Warteschlange, Drehbuch,
     # SSML. Pure Logik, kein tauri/reqwest.
     "crates/cabin-announcements",
+    # v3 (Etappe 1a) — Laufzeit-Paket: Manifest, Signatur, Ablage, Rueckfall,
+    # Flug-Pin. Pure Logik, kein tauri/reqwest.
+    "crates/runtime-bundle",
 ]
 resolver = "2"
 

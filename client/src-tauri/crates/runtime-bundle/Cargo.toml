@@ -1,0 +1,25 @@
+[package]
+name = "runtime-bundle"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Laufzeit-Paket (AeroACARS 3.0): signierter, nach Inhalt adressierter Stand mit Rueckfall und Flug-Pin"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+sha2 = "0.10"
+# Dieselbe Pruefbibliothek, die der Tauri-Updater schon mitbringt.
+minisign-verify = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+# Nur in Tests: Schluessel erzeugen und Pakete signieren. Das Programm
+# selbst kann nie signieren (Pflichtenheft P-3.11).
+minisign = "0.7"
+
+[lints]
+workspace = true
