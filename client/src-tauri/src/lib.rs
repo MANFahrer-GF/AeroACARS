@@ -14322,7 +14322,7 @@ fn divert_nearest_airports(
     Ok(runway::find_nearest_icao_airports(
         lat,
         lon,
-        arrival::NEAREST_SEARCH_RADIUS_NM * 1852.0,
+        crate::grenzwerte::grenzwerte().ankunft.nearest_search_radius_nm.wert * 1852.0,
         limit,
     ))
 }
@@ -23430,7 +23430,7 @@ fn sprit_ist_ausweichflug(stats: &FlightStats) -> bool {
     // Derselbe Radius, mit dem `arrival::locate` ueber die Referenzposition
     // entscheidet — eine Quelle fuer die Frage „ist das noch der geplante
     // Platz?", nicht zwei.
-    runway::distance_m(la, lo, rlat, rlon) / 1852.0 > arrival::ON_FIELD_FALLBACK_RADIUS_NM
+    runway::distance_m(la, lo, rlat, rlon) / 1852.0 > crate::grenzwerte::grenzwerte().ankunft.on_field_fallback_radius_nm.wert
 }
 
 /// Die Auswertung holen — **einmal rechnen, dann einfrieren**.

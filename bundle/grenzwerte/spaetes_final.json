@@ -1,0 +1,14 @@
+{
+  "spur_toleranz_deg": {"wert": 20.0, "einheit": "deg", "quelle": "client/src-tauri/src/spaetes_final.rs:39 (v2.1.24)"},
+  "quer_grund_m": {"wert": 300.0, "einheit": "m", "quelle": "client/src-tauri/src/spaetes_final.rs:41 (v2.1.24)"},
+  "quer_anteil": {"wert": 0.05, "einheit": "", "quelle": "client/src-tauri/src/spaetes_final.rs:43 (v2.1.24)"},
+  "luecke_s": {"wert": 3.0, "einheit": "", "quelle": "client/src-tauri/src/spaetes_final.rs:45 (v2.1.24)"},
+  "max_probenabstand_s": {"wert": 5.0, "einheit": "", "quelle": "client/src-tauri/src/spaetes_final.rs:49 (v2.1.24)"},
+  "spur_zeitraum_s": {"wert": 4.0, "einheit": "", "quelle": "client/src-tauri/src/spaetes_final.rs:51 (v2.1.24)"},
+  "spur_min_weg_m": {"wert": 30.0, "einheit": "m", "quelle": "client/src-tauri/src/spaetes_final.rs:53 (v2.1.24)"},
+  "spaet_unter_ft": {"wert": 1000.0, "einheit": "ft", "quelle": "client/src-tauri/src/spaetes_final.rs:55 (v2.1.24)"},
+  "fehl_min_s": {"wert": 20.0, "einheit": "", "quelle": "client/src-tauri/src/spaetes_final.rs:61 (v2.1.24)"},
+  "kurve_unter_ft": {"wert": 2000.0, "einheit": "ft", "quelle": "client/src-tauri/src/spaetes_final.rs:63 (v2.1.24)"},
+  "final_spaetestens_ft": {"wert": 300.0, "einheit": "ft", "quelle": "client/src-tauri/src/spaetes_final.rs:65 (v2.1.24)"},
+  "fluegel_waagerecht_deg": {"wert": 10.0, "einheit": "deg", "quelle": "client/src-tauri/src/spaetes_final.rs:67 (v2.1.24)"}
+}

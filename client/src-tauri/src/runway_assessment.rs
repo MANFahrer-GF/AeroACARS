@@ -40,17 +40,17 @@
 /// aim-point shifts from 300 m to 400 m past the threshold.
 const LONG_RUNWAY_FT: f64 = 7874.0; // = 2400 m
 
-/// ICAO Annex 14: TDZ markings are only painted on runways ≥ 1200 m.
-/// Below that there's no defined "touchdown zone" and we surface "n/a"
-/// in the UI instead of inventing a number.
-const TDZ_MIN_RUNWAY_M: f64 = 1200.0;
+// ICAO Annex 14: TDZ markings are only painted on runways ≥ 1200 m.
+// Below that there's no defined "touchdown zone" and we surface "n/a"
+// in the UI instead of inventing a number.
+// Wert seit v3: bundle/grenzwerte/bahnbewertung.json -> tdz_min_runway_m (v2.1.24: 1200.0)
 
-/// ICAO Annex 14: TDZ ends at min(900 m, length/3).
-const TDZ_MAX_LENGTH_M: f64 = 900.0;
+// ICAO Annex 14: TDZ ends at min(900 m, length/3).
+// Wert seit v3: bundle/grenzwerte/bahnbewertung.json -> tdz_max_length_m (v2.1.24: 900.0)
 
-/// Aim-Point distances (FAA AIM 8-9-1).
-const AIM_SHORT_M: f64 = 300.0;
-const AIM_LONG_M: f64 = 400.0;
+// Aim-Point distances (FAA AIM 8-9-1).
+// Wert seit v3: bundle/grenzwerte/bahnbewertung.json -> aim_short_m (v2.1.24: 300.0)
+// Wert seit v3: bundle/grenzwerte/bahnbewertung.json -> aim_long_m (v2.1.24: 400.0)
 
 const FT_PER_M: f64 = 3.280_839_895;
 
@@ -108,10 +108,10 @@ pub fn drittel(td_distance_m: f64, runway_length_m: f64) -> u8 {
 /// same convention as `runway::lookup_runway`. Returns `None` when the
 /// runway is too short for ICAO TDZ markings to apply.
 pub fn classify_tdz(td_distance_m: f64, runway_length_m: f64) -> Option<TdzResult> {
-    if runway_length_m < TDZ_MIN_RUNWAY_M {
+    if runway_length_m < crate::grenzwerte::grenzwerte().bahnbewertung.tdz_min_runway_m.wert {
         return None;
     }
-    let tdz_length_m = (runway_length_m / 3.0).min(TDZ_MAX_LENGTH_M);
+    let tdz_length_m = (runway_length_m / 3.0).min(crate::grenzwerte::grenzwerte().bahnbewertung.tdz_max_length_m.wert);
     let in_tdz = td_distance_m > 0.0 && td_distance_m <= tdz_length_m;
     let third = drittel(td_distance_m, runway_length_m);
     Some(TdzResult {
@@ -154,9 +154,9 @@ pub struct AimResult {
 /// Classify the touchdown distance against the standard aim point.
 pub fn classify_aim(td_distance_m: f64, runway_length_m: f64) -> AimResult {
     let aim_point_m = if runway_length_m * FT_PER_M >= LONG_RUNWAY_FT {
-        AIM_LONG_M
+        crate::grenzwerte::grenzwerte().bahnbewertung.aim_long_m.wert
     } else {
-        AIM_SHORT_M
+        crate::grenzwerte::grenzwerte().bahnbewertung.aim_short_m.wert
     };
     let delta_m = td_distance_m - aim_point_m;
     let class = if delta_m.abs() < 60.0 {
@@ -290,12 +290,12 @@ pub fn hoehengruppe(icao: Option<&str>) -> Hoehengruppe {
     }
 }
 
-/// FAA: Raeder mindestens 20 ft ueber der Schwelle.
-pub const WCH_MIN_FT: f64 = 20.0;
-/// FAA: Raeder hoechstens 50 ft ueber der Schwelle.
-pub const WCH_MAX_FT: f64 = 50.0;
-/// Unser Toleranzstreifen (gelb) jenseits des FAA-Bands.
-pub const WCH_TOLERANZ_FT: f64 = 10.0;
+// FAA: Raeder mindestens 20 ft ueber der Schwelle.
+// Wert seit v3: bundle/grenzwerte/bahnbewertung.json -> wch_min_ft (v2.1.24: 20.0)
+// FAA: Raeder hoechstens 50 ft ueber der Schwelle.
+// Wert seit v3: bundle/grenzwerte/bahnbewertung.json -> wch_max_ft (v2.1.24: 50.0)
+// Unser Toleranzstreifen (gelb) jenseits des FAA-Bands.
+// Wert seit v3: bundle/grenzwerte/bahnbewertung.json -> wch_toleranz_ft (v2.1.24: 10.0)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -329,13 +329,13 @@ pub struct TchResult {
 pub fn classify_tch(actual_ft: f64, expected_ft: f64, gruppe: Hoehengruppe) -> TchResult {
     let delta_ft = actual_ft - expected_ft;
     let rad_ft = actual_ft - gruppe.gleitpfad_zu_rad_ft();
-    let class = if rad_ft < WCH_MIN_FT - WCH_TOLERANZ_FT {
+    let class = if rad_ft < crate::grenzwerte::grenzwerte().bahnbewertung.wch_min_ft.wert - crate::grenzwerte::grenzwerte().bahnbewertung.wch_toleranz_ft.wert {
         TchClass::BelowProfile
-    } else if rad_ft < WCH_MIN_FT {
+    } else if rad_ft < crate::grenzwerte::grenzwerte().bahnbewertung.wch_min_ft.wert {
         TchClass::SlightlyLow
-    } else if rad_ft <= WCH_MAX_FT {
+    } else if rad_ft <= crate::grenzwerte::grenzwerte().bahnbewertung.wch_max_ft.wert {
         TchClass::OnProfile
-    } else if rad_ft <= WCH_MAX_FT + WCH_TOLERANZ_FT {
+    } else if rad_ft <= crate::grenzwerte::grenzwerte().bahnbewertung.wch_max_ft.wert + crate::grenzwerte::grenzwerte().bahnbewertung.wch_toleranz_ft.wert {
         TchClass::SlightlyHigh
     } else {
         TchClass::High

@@ -56,48 +56,48 @@ pub struct ReplayProbe {
     pub on_ground: bool,
 }
 
-/// Kuerzester Abstand zweier Proben, aus denen ein Beleg gebildet wird.
-///
-/// Kuerzer waere anfaellig fuer Rundung in Position und Zeitstempel: bei 50 Hz
-/// und 140 kt liegen zwei Proben 1,2 m auseinander, da schlaegt jede
-/// Nachkommastelle durch.
-const MIN_PAARDAUER_S: f64 = 0.5;
-/// Laengster Abstand zweier Proben, aus denen ein Beleg gebildet wird.
-///
-/// ⚠️ QS-Befund 21.08.2026: hier standen 1,5 s — der Wert aus der Vorlage, die
-/// mit einer viel hoeheren Abtastrate arbeitet. Unser Streamer tickt aber
-/// adaptiv nach Hoehe und im Reiseflug nur alle
-/// [`crate::MQTT_PUBLISH_INTERVAL_SECS`] Sekunden. Damit lag JEDES Paar
-/// oberhalb von rund 2000 ft ueber der Grenze und wurde verworfen: die
-/// Erkennung sammelte dort **nie einen einzigen Beleg** und konnte gar nicht
-/// anschlagen. Ein Verfahren, das nur in einem Hoehenband wirkt, ohne dass das
-/// irgendwo steht.
-///
-/// Der Wert muss also ueber der langsamsten Kadenz liegen. Vier Sekunden geben
-/// Luft nach oben und kosten nichts an Genauigkeit: die Sehne zwischen zwei
-/// Punkten unterschaetzt eine gefloge Kurve, macht die errechnete
-/// Geschwindigkeit also KLEINER — das kann nur Fehlalarme verhindern, nie
-/// welche erzeugen.
-///
-/// `replay_erkennung::tests::fenster_passt_zur_langsamsten_kadenz` haelt den
-/// Zusammenhang fest, damit eine Aenderung der Taktrate hier laut auffaellt.
-const MAX_PAARDAUER_S: f64 = 4.0;
-/// So viele Belege muessen zusammenkommen, sonst wird nicht geurteilt.
-pub const MIN_PAARE: usize = 8;
+// Kuerzester Abstand zweier Proben, aus denen ein Beleg gebildet wird.
+//
+// Kuerzer waere anfaellig fuer Rundung in Position und Zeitstempel: bei 50 Hz
+// und 140 kt liegen zwei Proben 1,2 m auseinander, da schlaegt jede
+// Nachkommastelle durch.
+// Wert seit v3: bundle/grenzwerte/replay.json -> min_paardauer_s (v2.1.24: 0.5)
+// Laengster Abstand zweier Proben, aus denen ein Beleg gebildet wird.
+//
+// ⚠️ QS-Befund 21.08.2026: hier standen 1,5 s — der Wert aus der Vorlage, die
+// mit einer viel hoeheren Abtastrate arbeitet. Unser Streamer tickt aber
+// adaptiv nach Hoehe und im Reiseflug nur alle
+// [`crate::MQTT_PUBLISH_INTERVAL_SECS`] Sekunden. Damit lag JEDES Paar
+// oberhalb von rund 2000 ft ueber der Grenze und wurde verworfen: die
+// Erkennung sammelte dort **nie einen einzigen Beleg** und konnte gar nicht
+// anschlagen. Ein Verfahren, das nur in einem Hoehenband wirkt, ohne dass das
+// irgendwo steht.
+//
+// Der Wert muss also ueber der langsamsten Kadenz liegen. Vier Sekunden geben
+// Luft nach oben und kosten nichts an Genauigkeit: die Sehne zwischen zwei
+// Punkten unterschaetzt eine gefloge Kurve, macht die errechnete
+// Geschwindigkeit also KLEINER — das kann nur Fehlalarme verhindern, nie
+// welche erzeugen.
+//
+// `replay_erkennung::tests::fenster_passt_zur_langsamsten_kadenz` haelt den
+// Zusammenhang fest, damit eine Aenderung der Taktrate hier laut auffaellt.
+// Wert seit v3: bundle/grenzwerte/replay.json -> max_paardauer_s (v2.1.24: 4.0)
+// So viele Belege muessen zusammenkommen, sonst wird nicht geurteilt.
+// Wert seit v3: bundle/grenzwerte/replay.json -> min_paare (v2.1.24: 8)
 
-/// Ab hier bewegt sich das Flugzeug mit Flugtempo durch die Landschaft.
-const MIN_ERRECHNETE_GS_KT: f64 = 30.0;
-/// Bis hierher meldet der Sim „steht praktisch".
-const MAX_GEMELDETE_GS_KT: f64 = 5.0;
-/// Bis hierher meldet der Sim „keine nennenswerte Fahrt".
-const MAX_GEMELDETE_IAS_KT: f64 = 30.0;
-/// Der errechnete Wert muss den gemeldeten um diesen Faktor uebertreffen.
-/// Faengt den Fall ab, dass beide klein sind und das Verhaeltnis zufaellig passt.
-const MIN_VERHAELTNIS: f64 = 4.0;
-/// Die Hoehe muss sich spuerbar aendern — sonst ist es ein Standbild.
-const MIN_HOEHENRATE_FPS: f64 = 3.0;
-/// Und die gemeldete Sinkrate muss dieser Aenderung deutlich widersprechen.
-const MIN_VS_FEHLER_FPS: f64 = 5.0;
+// Ab hier bewegt sich das Flugzeug mit Flugtempo durch die Landschaft.
+// Wert seit v3: bundle/grenzwerte/replay.json -> min_errechnete_gs_kt (v2.1.24: 30.0)
+// Bis hierher meldet der Sim „steht praktisch".
+// Wert seit v3: bundle/grenzwerte/replay.json -> max_gemeldete_gs_kt (v2.1.24: 5.0)
+// Bis hierher meldet der Sim „keine nennenswerte Fahrt".
+// Wert seit v3: bundle/grenzwerte/replay.json -> max_gemeldete_ias_kt (v2.1.24: 30.0)
+// Der errechnete Wert muss den gemeldeten um diesen Faktor uebertreffen.
+// Faengt den Fall ab, dass beide klein sind und das Verhaeltnis zufaellig passt.
+// Wert seit v3: bundle/grenzwerte/replay.json -> min_verhaeltnis (v2.1.24: 4.0)
+// Die Hoehe muss sich spuerbar aendern — sonst ist es ein Standbild.
+// Wert seit v3: bundle/grenzwerte/replay.json -> min_hoehenrate_fps (v2.1.24: 3.0)
+// Und die gemeldete Sinkrate muss dieser Aenderung deutlich widersprechen.
+// Wert seit v3: bundle/grenzwerte/replay.json -> min_vs_fehler_fps (v2.1.24: 5.0)
 
 /// Grosskreisentfernung in nautischen Meilen.
 fn distanz_nm(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
@@ -162,7 +162,7 @@ pub fn pruefe_replay(proben: &[ReplayProbe]) -> ReplayBefund {
         median_errechnete_gs_kt: None,
         median_gemeldete_gs_kt: None,
     };
-    if proben.len() < MIN_PAARE + 1 {
+    if proben.len() < crate::grenzwerte::grenzwerte().replay.min_paare.wert + 1 {
         return leer;
     }
 
@@ -179,7 +179,7 @@ pub fn pruefe_replay(proben: &[ReplayProbe]) -> ReplayBefund {
             continue;
         }
         j = j.max(i + 1);
-        while j < proben.len() && proben[j].t_s - a.t_s < MIN_PAARDAUER_S {
+        while j < proben.len() && proben[j].t_s - a.t_s < crate::grenzwerte::grenzwerte().replay.min_paardauer_s.wert {
             j += 1;
         }
         if j >= proben.len() {
@@ -187,7 +187,7 @@ pub fn pruefe_replay(proben: &[ReplayProbe]) -> ReplayBefund {
         }
         let b = &proben[j];
         let dauer = b.t_s - a.t_s;
-        if b.on_ground || !brauchbar(b) || dauer <= 0.0 || dauer > MAX_PAARDAUER_S {
+        if b.on_ground || !brauchbar(b) || dauer <= 0.0 || dauer > crate::grenzwerte::grenzwerte().replay.max_paardauer_s.wert {
             continue;
         }
 
@@ -200,7 +200,7 @@ pub fn pruefe_replay(proben: &[ReplayProbe]) -> ReplayBefund {
     }
 
     let belege = errechnet_gs.len();
-    if belege < MIN_PAARE {
+    if belege < crate::grenzwerte::grenzwerte().replay.min_paare.wert {
         return ReplayBefund { belege, ..leer };
     }
 
@@ -214,12 +214,12 @@ pub fn pruefe_replay(proben: &[ReplayProbe]) -> ReplayBefund {
         return ReplayBefund { belege, ..leer };
     };
 
-    let ist_replay = m_err >= MIN_ERRECHNETE_GS_KT
-        && m_gem <= MAX_GEMELDETE_GS_KT
-        && m_ias <= MAX_GEMELDETE_IAS_KT
-        && m_err >= m_gem * MIN_VERHAELTNIS
-        && m_hoehe >= MIN_HOEHENRATE_FPS
-        && m_vs >= MIN_VS_FEHLER_FPS;
+    let ist_replay = m_err >= crate::grenzwerte::grenzwerte().replay.min_errechnete_gs_kt.wert
+        && m_gem <= crate::grenzwerte::grenzwerte().replay.max_gemeldete_gs_kt.wert
+        && m_ias <= crate::grenzwerte::grenzwerte().replay.max_gemeldete_ias_kt.wert
+        && m_err >= m_gem * crate::grenzwerte::grenzwerte().replay.min_verhaeltnis.wert
+        && m_hoehe >= crate::grenzwerte::grenzwerte().replay.min_hoehenrate_fps.wert
+        && m_vs >= crate::grenzwerte::grenzwerte().replay.min_vs_fehler_fps.wert;
 
     ReplayBefund {
         ist_replay,
@@ -265,9 +265,10 @@ mod tests {
         // betroffenen Hoehenbands nie ein Beleg und die Erkennung ist dort
         // blind — ohne dass irgendetwas rot wird.
         let langsamster_takt = crate::MQTT_PUBLISH_INTERVAL_SECS as f64;
+        let max_paardauer_s = crate::grenzwerte::grenzwerte().replay.max_paardauer_s.wert;
         assert!(
-            MAX_PAARDAUER_S > langsamster_takt,
-            "Paarfenster {MAX_PAARDAUER_S} s liegt nicht ueber der langsamsten \
+            crate::grenzwerte::grenzwerte().replay.max_paardauer_s.wert > langsamster_takt,
+            "Paarfenster {max_paardauer_s} s liegt nicht ueber der langsamsten \
              Kadenz {langsamster_takt} s — die Erkennung waere im Reiseflug blind"
         );
         // Und der schnellste Takt (500 ms im Flare) muss ebenfalls noch Paare
@@ -290,7 +291,7 @@ mod tests {
             });
         }
         assert!(
-            pruefe_replay(&v).belege >= MIN_PAARE,
+            pruefe_replay(&v).belege >= crate::grenzwerte::grenzwerte().replay.min_paare.wert,
             "beim 500-ms-Takt im Flare entstehen keine Belege"
         );
     }
@@ -319,7 +320,7 @@ mod tests {
         }
         let b = pruefe_replay(&v);
         assert!(
-            b.belege >= MIN_PAARE,
+            b.belege >= crate::grenzwerte::grenzwerte().replay.min_paare.wert,
             "bei {takt}-s-Takt kamen nur {} Belege zusammen — die Erkennung ist dort blind",
             b.belege
         );
@@ -333,7 +334,7 @@ mod tests {
     fn echter_anflug_ist_kein_replay() {
         let b = pruefe_replay(&anflug(200, 140.0, -12.0, true));
         assert!(!b.ist_replay, "echter Anflug faelschlich als Replay: {b:?}");
-        assert!(b.belege >= MIN_PAARE, "zu wenige Belege gesammelt: {b:?}");
+        assert!(b.belege >= crate::grenzwerte::grenzwerte().replay.min_paare.wert, "zu wenige Belege gesammelt: {b:?}");
     }
 
     #[test]
@@ -359,7 +360,7 @@ mod tests {
     fn zu_wenige_proben_urteilen_nicht() {
         let b = pruefe_replay(&anflug(5, 140.0, -12.0, false));
         assert!(!b.ist_replay);
-        assert!(b.belege < MIN_PAARE);
+        assert!(b.belege < crate::grenzwerte::grenzwerte().replay.min_paare.wert);
         assert!(b.median_errechnete_gs_kt.is_none());
     }
 

@@ -49,32 +49,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::runway;
 
-/// How close to an airport's nearest runway threshold an aircraft has to be
-/// for us to say it is *on that field*. One radius, used by every consumer —
-/// previously this was duplicated as `ARRIVED_FALLBACK_RADIUS_NM` and
-/// `DIVERT_DETECT_RADIUS_NM` (both 2.0, with a doc comment on the latter
-/// promising they'd stay in sync — nothing enforced it).
-///
-/// 2 nm covers the stand areas of the biggest fields (EDDF's most remote
-/// apron is ~1.1 nm from the nearest threshold, KJFK's ~1.3 nm) with room to
-/// spare, while staying far below the distance to any *neighbouring* field.
-pub const ON_FIELD_RADIUS_NM: f64 = 2.0;
+// How close to an airport's nearest runway threshold an aircraft has to be
+// for us to say it is *on that field*. One radius, used by every consumer —
+// previously this was duplicated as `ARRIVED_FALLBACK_RADIUS_NM` and
+// `DIVERT_DETECT_RADIUS_NM` (both 2.0, with a doc comment on the latter
+// promising they'd stay in sync — nothing enforced it).
+//
+// 2 nm covers the stand areas of the biggest fields (EDDF's most remote
+// apron is ~1.1 nm from the nearest threshold, KJFK's ~1.3 nm) with room to
+// spare, while staying far below the distance to any *neighbouring* field.
+// Wert seit v3: bundle/grenzwerte/ankunft.json -> on_field_radius_nm (v2.1.24: 2.0)
 
-/// The on-field radius when we are measuring against an airport's *reference
-/// point* (phpVMS) instead of its runway thresholds — the fallback for fields
-/// the runway table has no geometry for.
-///
-/// A reference point sits somewhere in the middle of the field, so the same
-/// stand measures farther from it than from the nearest threshold; 3 nm keeps
-/// the biggest aprons inside. Verified against the live flight corpus: of 617
-/// real arrivals, 613 parked within 3 nm of their destination's reference
-/// point, and the four beyond it were genuine diverts.
-pub const ON_FIELD_FALLBACK_RADIUS_NM: f64 = 3.0;
+// The on-field radius when we are measuring against an airport's *reference
+// point* (phpVMS) instead of its runway thresholds — the fallback for fields
+// the runway table has no geometry for.
+//
+// A reference point sits somewhere in the middle of the field, so the same
+// stand measures farther from it than from the nearest threshold; 3 nm keeps
+// the biggest aprons inside. Verified against the live flight corpus: of 617
+// real arrivals, 613 parked within 3 nm of their destination's reference
+// point, and the four beyond it were genuine diverts.
+// Wert seit v3: bundle/grenzwerte/ankunft.json -> on_field_fallback_radius_nm (v2.1.24: 3.0)
 
-/// How far out we look for the field an aircraft actually ended up on, when
-/// it is demonstrably not on the planned one. Real-world diverts land 20-100
-/// nm out; 50 nm covers the sane cases without dragging in half a continent.
-pub const NEAREST_SEARCH_RADIUS_NM: f64 = 50.0;
+// How far out we look for the field an aircraft actually ended up on, when
+// it is demonstrably not on the planned one. Real-world diverts land 20-100
+// nm out; 50 nm covers the sane cases without dragging in half a continent.
+// Wert seit v3: bundle/grenzwerte/ankunft.json -> nearest_search_radius_nm (v2.1.24: 50.0)
 
 /// Where an aircraft is, relative to the airport it was supposed to fly to.
 ///
@@ -198,8 +198,8 @@ pub fn locate(
         return ArrivalSite::AtPlanned { distance_nm: None };
     }
 
-    let at_planned = by_runway_nm.is_some_and(|d| d <= ON_FIELD_RADIUS_NM)
-        || by_ref_nm.is_some_and(|d| d <= ON_FIELD_FALLBACK_RADIUS_NM);
+    let at_planned = by_runway_nm.is_some_and(|d| d <= crate::grenzwerte::grenzwerte().ankunft.on_field_radius_nm.wert)
+        || by_ref_nm.is_some_and(|d| d <= crate::grenzwerte::grenzwerte().ankunft.on_field_fallback_radius_nm.wert);
 
     // Report the smaller of the two — the honest "how far from the destination
     // am I", not whichever source happened to be consulted first.
@@ -218,10 +218,10 @@ pub fn locate(
 
     // Off the planned field. Which field, if any, are we on instead?
     let nearest =
-        runway::find_nearest_icao_airports(lat, lon, NEAREST_SEARCH_RADIUS_NM * 1852.0, 1)
+        runway::find_nearest_icao_airports(lat, lon, crate::grenzwerte::grenzwerte().ankunft.nearest_search_radius_nm.wert * 1852.0, 1)
             .into_iter()
             .next()
-            .filter(|na| na.distance_m / 1852.0 <= ON_FIELD_RADIUS_NM);
+            .filter(|na| na.distance_m / 1852.0 <= crate::grenzwerte::grenzwerte().ankunft.on_field_radius_nm.wert);
 
     match nearest {
         // Same metric as the planned probe above, so this branch is
@@ -373,13 +373,14 @@ mod tests {
         let centroid_nm = runway::distance_m(lat, lon, c_lat, c_lon) / 1852.0;
 
         assert!(
-            threshold_nm <= ON_FIELD_RADIUS_NM,
+            threshold_nm <= crate::grenzwerte::grenzwerte().ankunft.on_field_radius_nm.wert,
             "a T2 stand is on the field: {threshold_nm:.2} nm from the nearest threshold"
         );
+        let on_field_radius_nm = crate::grenzwerte::grenzwerte().ankunft.on_field_radius_nm.wert;
         assert!(
-            centroid_nm > ON_FIELD_RADIUS_NM,
+            centroid_nm > crate::grenzwerte::grenzwerte().ankunft.on_field_radius_nm.wert,
             "the centroid metric, which we must NOT use, puts that same stand \
-             {centroid_nm:.2} nm away — outside the {ON_FIELD_RADIUS_NM} nm radius. \
+             {centroid_nm:.2} nm away — outside the {on_field_radius_nm} nm radius. \
              That contradiction is the whole bug."
         );
 
@@ -387,7 +388,7 @@ mod tests {
         let site = locate("EDDF", lat, lon, None);
         assert_eq!(
             site.distance_from_planned_nm()
-                .map(|d| d <= ON_FIELD_RADIUS_NM),
+                .map(|d| d <= crate::grenzwerte::grenzwerte().ankunft.on_field_radius_nm.wert),
             Some(true),
             "the reported distance must be the on-field one, not the centroid's"
         );
@@ -747,7 +748,7 @@ mod tests {
                 .expect("EDDF has geometry")
                 / 1852.0;
         assert!(
-            by_runway_nm > ON_FIELD_RADIUS_NM,
+            by_runway_nm > crate::grenzwerte::grenzwerte().ankunft.on_field_radius_nm.wert,
             "test precondition: the runway probe must disagree ({by_runway_nm:.2} nm)"
         );
 

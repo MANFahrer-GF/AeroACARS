@@ -1,0 +1,11 @@
+{
+  "min_paardauer_s": {"wert": 0.5, "einheit": "", "quelle": "client/src-tauri/src/replay_erkennung.rs:64 (v2.1.24)"},
+  "max_paardauer_s": {"wert": 4.0, "einheit": "", "quelle": "client/src-tauri/src/replay_erkennung.rs:84 (v2.1.24)"},
+  "min_paare": {"wert": 8, "einheit": "", "quelle": "client/src-tauri/src/replay_erkennung.rs:86 (v2.1.24)"},
+  "min_errechnete_gs_kt": {"wert": 30.0, "einheit": "kt", "quelle": "client/src-tauri/src/replay_erkennung.rs:89 (v2.1.24)"},
+  "max_gemeldete_gs_kt": {"wert": 5.0, "einheit": "kt", "quelle": "client/src-tauri/src/replay_erkennung.rs:91 (v2.1.24)"},
+  "max_gemeldete_ias_kt": {"wert": 30.0, "einheit": "kt", "quelle": "client/src-tauri/src/replay_erkennung.rs:93 (v2.1.24)"},
+  "min_verhaeltnis": {"wert": 4.0, "einheit": "", "quelle": "client/src-tauri/src/replay_erkennung.rs:96 (v2.1.24)"},
+  "min_hoehenrate_fps": {"wert": 3.0, "einheit": "", "quelle": "client/src-tauri/src/replay_erkennung.rs:98 (v2.1.24)"},
+  "min_vs_fehler_fps": {"wert": 5.0, "einheit": "", "quelle": "client/src-tauri/src/replay_erkennung.rs:100 (v2.1.24)"}
+}

@@ -35,36 +35,36 @@ use serde::{Deserialize, Serialize};
 
 use crate::ApproachBufferSample;
 
-/// Spur hoechstens so weit neben der Bahnrichtung.
-const SPUR_TOLERANZ_DEG: f64 = 20.0;
-/// Querablage zur verlaengerten Achse: fester Teil …
-const QUER_GRUND_M: f64 = 300.0;
-/// … plus dieser Anteil der Entfernung zur Schwelle (Trichter).
-const QUER_ANTEIL: f64 = 0.05;
-/// Kuerzere Unterbrechungen zaehlen nicht (Boe, eine verrauschte Probe).
-const LUECKE_S: f64 = 3.0;
-/// Laengere Luecke zwischen zwei Proben: Fuer die Zeit dazwischen gibt es
-/// keine Beobachtung — sie darf nicht als „am Stueck daneben" zaehlen
-/// (Codex-QS 13.10.2026). Unter 1500 ft tastet der Puffer etwa sekuendlich ab.
-const MAX_PROBENABSTAND_S: f64 = 5.0;
-/// Die Spur ergibt sich aus der Strecke der letzten Sekunden …
-const SPUR_ZEITRAUM_S: f64 = 4.0;
-/// … aber erst ab dieser Strecke (sonst ist sie Rauschen).
-const SPUR_MIN_WEG_M: f64 = 30.0;
-/// Erst wer UNTER dieser Hoehe ausgerichtet ist, hat ein spaetes Final.
-pub const SPAET_UNTER_FT: f32 = 1000.0;
-/// Fehlausrichtung am Stueck direkt vor dem Final, damit es zaehlt. Ein
-/// kurzer Schlenker auf geradem Final bleibt darunter. Die Kurve davor ist
-/// bewusst KEIN zweites Kriterium: ein Schlenker hin und zurueck summiert
-/// sich schnell auf 90° (QS 13.10.2026) — sie steht nur als Angabe im
-/// Ergebnis. Im Bestand fielen dadurch 3 von 80 Anfluegen heraus.
-const FEHL_MIN_S: f64 = 20.0;
-/// Die Kurve vor dem Final wird unter dieser Hoehe aufsummiert.
-const KURVE_UNTER_FT: f32 = 2000.0;
-/// Spaetestens hier auf dem Final (FSF ALAR 7.1, Circling).
-pub const FINAL_SPAETESTENS_FT: f32 = 300.0;
-/// Fluegel waagerecht = hoechstens so viel Querneigung unter 300 ft.
-pub const FLUEGEL_WAAGERECHT_DEG: f32 = 10.0;
+// Spur hoechstens so weit neben der Bahnrichtung.
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> spur_toleranz_deg (v2.1.24: 20.0)
+// Querablage zur verlaengerten Achse: fester Teil …
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> quer_grund_m (v2.1.24: 300.0)
+// … plus dieser Anteil der Entfernung zur Schwelle (Trichter).
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> quer_anteil (v2.1.24: 0.05)
+// Kuerzere Unterbrechungen zaehlen nicht (Boe, eine verrauschte Probe).
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> luecke_s (v2.1.24: 3.0)
+// Laengere Luecke zwischen zwei Proben: Fuer die Zeit dazwischen gibt es
+// keine Beobachtung — sie darf nicht als „am Stueck daneben" zaehlen
+// (Codex-QS 13.10.2026). Unter 1500 ft tastet der Puffer etwa sekuendlich ab.
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> max_probenabstand_s (v2.1.24: 5.0)
+// Die Spur ergibt sich aus der Strecke der letzten Sekunden …
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> spur_zeitraum_s (v2.1.24: 4.0)
+// … aber erst ab dieser Strecke (sonst ist sie Rauschen).
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> spur_min_weg_m (v2.1.24: 30.0)
+// Erst wer UNTER dieser Hoehe ausgerichtet ist, hat ein spaetes Final.
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> spaet_unter_ft (v2.1.24: 1000.0)
+// Fehlausrichtung am Stueck direkt vor dem Final, damit es zaehlt. Ein
+// kurzer Schlenker auf geradem Final bleibt darunter. Die Kurve davor ist
+// bewusst KEIN zweites Kriterium: ein Schlenker hin und zurueck summiert
+// sich schnell auf 90° (QS 13.10.2026) — sie steht nur als Angabe im
+// Ergebnis. Im Bestand fielen dadurch 3 von 80 Anfluegen heraus.
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> fehl_min_s (v2.1.24: 20.0)
+// Die Kurve vor dem Final wird unter dieser Hoehe aufsummiert.
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> kurve_unter_ft (v2.1.24: 2000.0)
+// Spaetestens hier auf dem Final (FSF ALAR 7.1, Circling).
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> final_spaetestens_ft (v2.1.24: 300.0)
+// Fluegel waagerecht = hoechstens so viel Querneigung unter 300 ft.
+// Wert seit v3: bundle/grenzwerte/spaetes_final.json -> fluegel_waagerecht_deg (v2.1.24: 10.0)
 
 const ERDRADIUS_M: f64 = 6_371_000.0;
 
@@ -151,22 +151,22 @@ pub fn erkennen(
     for i in 0..mit_pos.len() {
         let (s, _, _) = mit_pos[i];
         let mut j = i;
-        while j > 0 && sekunden(mit_pos[j].0.at, s.at) < SPUR_ZEITRAUM_S {
+        while j > 0 && sekunden(mit_pos[j].0.at, s.at) < crate::grenzwerte::grenzwerte().spaetes_final.spur_zeitraum_s.wert {
             j -= 1;
         }
         let (x, y) = ebene[i];
         let (xa, ya) = ebene[j];
         let weg = (x - xa).hypot(y - ya);
         let spur_deg =
-            (weg > SPUR_MIN_WEG_M).then(|| (x - xa).atan2(y - ya).to_degrees().rem_euclid(360.0));
+            (weg > crate::grenzwerte::grenzwerte().spaetes_final.spur_min_weg_m.wert).then(|| (x - xa).atan2(y - ya).to_degrees().rem_euclid(360.0));
         let laengs = x * ux + y * uy;
         let quer = x * uy - y * ux;
         let ausgerichtet = match spur_deg {
             // Ohne Spur (Stillstand, Luecke) zaehlt die Probe nicht dagegen.
             None => true,
             Some(sp) => {
-                winkel_diff(sp, kurs).abs() <= SPUR_TOLERANZ_DEG
-                    && quer.abs() <= QUER_GRUND_M + QUER_ANTEIL * laengs.abs()
+                winkel_diff(sp, kurs).abs() <= crate::grenzwerte::grenzwerte().spaetes_final.spur_toleranz_deg.wert
+                    && quer.abs() <= crate::grenzwerte::grenzwerte().spaetes_final.quer_grund_m.wert + crate::grenzwerte::grenzwerte().spaetes_final.quer_anteil.wert * laengs.abs()
             }
         };
         reihe.push(Probe {
@@ -189,7 +189,7 @@ pub fn erkennen(
             idx = Some(k);
         } else {
             let seit = *fehl_seit.get_or_insert(reihe[k].at);
-            if sekunden(reihe[k].at, seit) > LUECKE_S {
+            if sekunden(reihe[k].at, seit) > crate::grenzwerte::grenzwerte().spaetes_final.luecke_s.wert {
                 abgebrochen = true;
                 break;
             }
@@ -201,7 +201,7 @@ pub fn erkennen(
         return None;
     }
     let ab = &reihe[idx];
-    if !(ab.hoehe_ft > 0.0 && ab.hoehe_ft < SPAET_UNTER_FT) {
+    if !(ab.hoehe_ft > 0.0 && ab.hoehe_ft < crate::grenzwerte::grenzwerte().spaetes_final.spaet_unter_ft.wert) {
         return None;
     }
 
@@ -210,12 +210,12 @@ pub fn erkennen(
     let mut fehl_s = 0.0;
     let mut ok_seit: Option<DateTime<Utc>> = None;
     for k in (0..idx).rev() {
-        if sekunden(reihe[k].at, reihe[k + 1].at) > MAX_PROBENABSTAND_S {
+        if sekunden(reihe[k].at, reihe[k + 1].at) > crate::grenzwerte::grenzwerte().spaetes_final.max_probenabstand_s.wert {
             break;
         }
         if reihe[k].ausgerichtet {
             let seit = *ok_seit.get_or_insert(reihe[k].at);
-            if sekunden(reihe[k].at, seit) > LUECKE_S {
+            if sekunden(reihe[k].at, seit) > crate::grenzwerte::grenzwerte().spaetes_final.luecke_s.wert {
                 break;
             }
         } else {
@@ -228,7 +228,7 @@ pub fn erkennen(
     let mut kurve = 0.0;
     let mut vorige: Option<f64> = None;
     for p in &reihe[..idx] {
-        if p.hoehe_ft > KURVE_UNTER_FT {
+        if p.hoehe_ft > crate::grenzwerte::grenzwerte().spaetes_final.kurve_unter_ft.wert {
             vorige = None;
             continue;
         }
@@ -240,13 +240,13 @@ pub fn erkennen(
         }
     }
 
-    if fehl_s < FEHL_MIN_S {
+    if fehl_s < crate::grenzwerte::grenzwerte().spaetes_final.fehl_min_s.wert {
         return None;
     }
 
     let querneigung_max = reihe
         .iter()
-        .filter(|p| p.hoehe_ft > 0.0 && p.hoehe_ft <= FINAL_SPAETESTENS_FT)
+        .filter(|p| p.hoehe_ft > 0.0 && p.hoehe_ft <= crate::grenzwerte::grenzwerte().spaetes_final.final_spaetestens_ft.wert)
         .filter(|p| (td - p.at).num_milliseconds() >= flare_cutoff_ms)
         .map(|p| p.bank_deg.abs())
         .fold(0.0_f32, f32::max);
@@ -256,8 +256,8 @@ pub fn erkennen(
         ab_hoehe_ft: ab.hoehe_ft,
         kurve_deg: kurve as f32,
         querneigung_max_unter_300_deg: querneigung_max,
-        rechtzeitig: ab.hoehe_ft >= FINAL_SPAETESTENS_FT
-            && querneigung_max <= FLUEGEL_WAAGERECHT_DEG,
+        rechtzeitig: ab.hoehe_ft >= crate::grenzwerte::grenzwerte().spaetes_final.final_spaetestens_ft.wert
+            && querneigung_max <= crate::grenzwerte::grenzwerte().spaetes_final.fluegel_waagerecht_deg.wert,
     })
 }
 
@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn haengende_fluegel_unter_300_ft_sind_nicht_rechtzeitig() {
         let sf = lauf(&platzrunde(&bahn(), 600.0, 12.0)).expect("erkannt");
-        assert!(sf.querneigung_max_unter_300_deg > FLUEGEL_WAAGERECHT_DEG);
+        assert!(sf.querneigung_max_unter_300_deg > crate::grenzwerte::grenzwerte().spaetes_final.fluegel_waagerecht_deg.wert);
         assert!(!sf.rechtzeitig);
     }
 

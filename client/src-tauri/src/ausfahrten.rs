@@ -77,62 +77,62 @@ pub struct Ausfahrt {
     pub abzweig: Option<(f64, f64)>,
 }
 
-/// Mindestabstand zweier Verlaufspunkte, in Metern.
-///
-/// Rollwege in OpenStreetMap haben teils Stützpunkte im Meterabstand. Für
-/// eine Zeichnung reicht deutlich weniger, und jede Landung traegt diese
-/// Punkte durch die Leitung — bei vierzehn Ausfahrten summiert sich das.
-const VERLAUF_MIN_ABSTAND_M: f64 = 8.0;
+// Mindestabstand zweier Verlaufspunkte, in Metern.
+//
+// Rollwege in OpenStreetMap haben teils Stützpunkte im Meterabstand. Für
+// eine Zeichnung reicht deutlich weniger, und jede Landung traegt diese
+// Punkte durch die Leitung — bei vierzehn Ausfahrten summiert sich das.
+// Wert seit v3: bundle/grenzwerte/ausfahrten.json -> verlauf_min_abstand_m (v2.1.24: 8.0)
 
-/// Wie weit der Verlauf vor und hinter der Kante mitgenommen wird.
-///
-/// Vierhundert Meter hinter der Kante: So weit reicht ein
-/// Schnellabrollweg, bis er in den parallelen Rollweg einmündet — bei
-/// EDDM B6 sind es rund dreihundert. Davor genügen fünfzig; weiter
-/// vorn liegt der Rollweg auf der Bahn und ist dort nicht zu zeichnen.
-const VERLAUF_VOR_M: f64 = 50.0;
-const VERLAUF_NACH_M: f64 = 400.0;
+// Wie weit der Verlauf vor und hinter der Kante mitgenommen wird.
+//
+// Vierhundert Meter hinter der Kante: So weit reicht ein
+// Schnellabrollweg, bis er in den parallelen Rollweg einmündet — bei
+// EDDM B6 sind es rund dreihundert. Davor genügen fünfzig; weiter
+// vorn liegt der Rollweg auf der Bahn und ist dort nicht zu zeichnen.
+// Wert seit v3: bundle/grenzwerte/ausfahrten.json -> verlauf_vor_m (v2.1.24: 50.0)
+// Wert seit v3: bundle/grenzwerte/ausfahrten.json -> verlauf_nach_m (v2.1.24: 400.0)
 
-/// Wie weit der Verlauf ueber die Bahnkante hinaus mitgenommen wird.
-///
-/// Bis v1.7.39 waren es sechs Meter — passend fuer die ueberhoehte
-/// Queransicht, die neben der Kante nur einen schmalen Gruenstreifen zeigt.
-/// Seit es die Lupe „Abrollen im echten Massstab" gibt, wird der Rollweg
-/// dort gezeichnet, wo das Flugzeug hinrollt: Die Spur laeuft bis achtzig
-/// Meter neben die Kante (`BAHN_SPUR_RAND_M`), der Rollweg muss darueber
-/// hinausreichen, sonst endet er mitten in der Kurve.
-///
-/// Die Queransicht beschneidet selbst (`Math.abs(v.quer_m) <= sichtbarM`)
-/// und bekommt deshalb nichts Zusaetzliches ins Bild.
-const VERLAUF_QUER_UEBER_KANTE_M: f64 = 150.0;
+// Wie weit der Verlauf ueber die Bahnkante hinaus mitgenommen wird.
+//
+// Bis v1.7.39 waren es sechs Meter — passend fuer die ueberhoehte
+// Queransicht, die neben der Kante nur einen schmalen Gruenstreifen zeigt.
+// Seit es die Lupe „Abrollen im echten Massstab" gibt, wird der Rollweg
+// dort gezeichnet, wo das Flugzeug hinrollt: Die Spur laeuft bis achtzig
+// Meter neben die Kante (`BAHN_SPUR_RAND_M`), der Rollweg muss darueber
+// hinausreichen, sonst endet er mitten in der Kurve.
+//
+// Die Queransicht beschneidet selbst (`Math.abs(v.quer_m) <= sichtbarM`)
+// und bekommt deshalb nichts Zusaetzliches ins Bild.
+// Wert seit v3: bundle/grenzwerte/ausfahrten.json -> verlauf_quer_ueber_kante_m (v2.1.24: 150.0)
 
-/// Wie nah ein Stützpunkt an der Bahnkante liegen muss, um als Ausfahrt zu
-/// zählen, in Metern.
-///
-/// Fünfundzwanzig Meter: Rollwege sind in OpenStreetMap als Mittellinie
-/// erfasst, und ihr erster Stützpunkt liegt selten exakt auf der Kante —
-/// mal ein Stück davor, mal schon auf der Bahn. Enger gefasst fallen echte
-/// Ausfahrten heraus; weiter gefasst zählen parallel verlaufende Rollwege
-/// mit, die die Bahn nie berühren.
-const KANTEN_TOLERANZ_M: f64 = 25.0;
+// Wie nah ein Stützpunkt an der Bahnkante liegen muss, um als Ausfahrt zu
+// zählen, in Metern.
+//
+// Fünfundzwanzig Meter: Rollwege sind in OpenStreetMap als Mittellinie
+// erfasst, und ihr erster Stützpunkt liegt selten exakt auf der Kante —
+// mal ein Stück davor, mal schon auf der Bahn. Enger gefasst fallen echte
+// Ausfahrten heraus; weiter gefasst zählen parallel verlaufende Rollwege
+// mit, die die Bahn nie berühren.
+// Wert seit v3: bundle/grenzwerte/ausfahrten.json -> kanten_toleranz_m (v2.1.24: 25.0)
 
 
 
-/// Wie weit ein Rollweg über die Kante hinausreichen muss, damit er die
-/// Bahn auf dieser Seite wirklich verlässt, in Metern.
-const DRAUSSEN_MIN_M: f64 = 2.0;
+// Wie weit ein Rollweg über die Kante hinausreichen muss, damit er die
+// Bahn auf dieser Seite wirklich verlässt, in Metern.
+// Wert seit v3: bundle/grenzwerte/ausfahrten.json -> draussen_min_m (v2.1.24: 2.0)
 
-/// Wie weit zwei Übergänge desselben Namens auf derselben Seite höchstens
-/// auseinander liegen, um EINE Ausfahrt zu sein, in Metern.
-///
-/// Ein Name kann an einer Bahn zweimal vorkommen: In den OSM-Bodenkarten
-/// berühren an 30 Bahnseiten zwei getrennte Rollwegstücke gleichen Namens
-/// dieselbe Seite, über 300 m auseinander (LFPG Z2/Z3, KMIA K2, VABB S1;
-/// gemessen 28.10.2026 über 473 Karten). Bis hier galt „ein Stummel je Name
-/// und Seite“, und die zweite Ausfahrt fiel weg. Mehrere Stützpunkte DESSELBEN
-/// Übergangs liegen dagegen wenige Meter auseinander
-/// (`ein_rollweg_gibt_einen_stummel_je_seite`).
-const DIESELBE_STELLE_M: f64 = 150.0;
+// Wie weit zwei Übergänge desselben Namens auf derselben Seite höchstens
+// auseinander liegen, um EINE Ausfahrt zu sein, in Metern.
+//
+// Ein Name kann an einer Bahn zweimal vorkommen: In den OSM-Bodenkarten
+// berühren an 30 Bahnseiten zwei getrennte Rollwegstücke gleichen Namens
+// dieselbe Seite, über 300 m auseinander (LFPG Z2/Z3, KMIA K2, VABB S1;
+// gemessen 28.10.2026 über 473 Karten). Bis hier galt „ein Stummel je Name
+// und Seite“, und die zweite Ausfahrt fiel weg. Mehrere Stützpunkte DESSELBEN
+// Übergangs liegen dagegen wenige Meter auseinander
+// (`ein_rollweg_gibt_einen_stummel_je_seite`).
+// Wert seit v3: bundle/grenzwerte/ausfahrten.json -> dieselbe_stelle_m (v2.1.24: 150.0)
 
 /// Wo ein Rollwegzug die Bahn verlässt: (laengs, Kantenabstand, Seite).
 ///
@@ -172,7 +172,7 @@ fn kantenpunkte(
         let reicht_hinaus = |i: usize, schritt: isize| {
             let mut j = i as isize;
             while j >= 0 && (j as usize) < n && d(j as usize) >= 0.0 {
-                if d(j as usize) >= DRAUSSEN_MIN_M {
+                if d(j as usize) >= crate::grenzwerte::grenzwerte().ausfahrten.draussen_min_m.wert {
                     return true;
                 }
                 j += schritt;
@@ -201,7 +201,7 @@ fn kantenpunkte(
         if n >= 2 {
             for (ende, nachbar, schritt) in [(0usize, 1usize, 1isize), (n - 1, n - 2, -1isize)] {
                 let de = d(ende);
-                if (0.0..=KANTEN_TOLERANZ_M).contains(&de) && de <= d(nachbar) && reicht_hinaus(ende, schritt) {
+                if (0.0..=crate::grenzwerte::grenzwerte().ausfahrten.kanten_toleranz_m.wert).contains(&de) && de <= d(nachbar) && reicht_hinaus(ende, schritt) {
                     aus.push((zug[ende].0, de, seite, Some(zug[ende])));
                 }
             }
@@ -210,12 +210,12 @@ fn kantenpunkte(
     aus
 }
 
-/// Wie weit zwei Ausfahrten derselben Seite auseinander liegen dürfen und
-/// noch dieselbe Abzweigung sind, in Metern: derselbe Stützpunkt (B und S1
-/// in EDDG liegen beide bei 1947,0 m). Getrennte Rollwege wenige Meter
-/// auseinander (Frankfurt R11/M19/R13) bleiben getrennt und werden in der
-/// Anzeige gezählt.
-const DIESELBE_ABZWEIGUNG_M: f64 = 0.5;
+// Wie weit zwei Ausfahrten derselben Seite auseinander liegen dürfen und
+// noch dieselbe Abzweigung sind, in Metern: derselbe Stützpunkt (B und S1
+// in EDDG liegen beide bei 1947,0 m). Getrennte Rollwege wenige Meter
+// auseinander (Frankfurt R11/M19/R13) bleiben getrennt und werden in der
+// Anzeige gezählt.
+// Wert seit v3: bundle/grenzwerte/ausfahrten.json -> dieselbe_abzweigung_m (v2.1.24: 0.5)
 
 /// Doppelnamen an derselben Abzweigung → EIN Name (Thomas, 22.10.2026).
 ///
@@ -236,11 +236,11 @@ pub fn doppelnamen_zusammenfassen(
             .iter_mut()
             .find(|b| {
                 let gleicher_abzweig = match (a.abzweig, b.abzweig) {
-                    (Some(p), Some(q)) => (p.0 - q.0).hypot(p.1 - q.1) <= DIESELBE_ABZWEIGUNG_M,
+                    (Some(p), Some(q)) => (p.0 - q.0).hypot(p.1 - q.1) <= crate::grenzwerte::grenzwerte().ausfahrten.dieselbe_abzweigung_m.wert,
                     _ => false,
                 };
                 b.seite == a.seite
-                    && (gleicher_abzweig || (b.laengs_m - a.laengs_m).abs() <= DIESELBE_ABZWEIGUNG_M)
+                    && (gleicher_abzweig || (b.laengs_m - a.laengs_m).abs() <= crate::grenzwerte::grenzwerte().ausfahrten.dieselbe_abzweigung_m.wert)
             })
         {
             Some(b) => {
@@ -353,7 +353,7 @@ pub fn ausfahrten_fuer_bahn(
             match beste
                 .iter_mut()
                 .find(|(n, s, l, _, _, _)| {
-                    n == name && s == seite && (l - laengs).abs() <= DIESELBE_STELLE_M
+                    n == name && s == seite && (l - laengs).abs() <= crate::grenzwerte::grenzwerte().ausfahrten.dieselbe_stelle_m.wert
                 })
             {
                 Some(eintrag) if kantenabstand < eintrag.3 => {
@@ -399,10 +399,10 @@ fn verlauf_ausduennen(
     kante_laengs: f64,
     halbe_breite_m: f64,
 ) -> Vec<Verlaufspunkt> {
-    let quer_max = halbe_breite_m + VERLAUF_QUER_UEBER_KANTE_M;
+    let quer_max = halbe_breite_m + crate::grenzwerte::grenzwerte().ausfahrten.verlauf_quer_ueber_kante_m.wert;
     let fenster = (
-        kante_laengs - VERLAUF_VOR_M,
-        kante_laengs + VERLAUF_NACH_M,
+        kante_laengs - crate::grenzwerte::grenzwerte().ausfahrten.verlauf_vor_m.wert,
+        kante_laengs + crate::grenzwerte::grenzwerte().ausfahrten.verlauf_nach_m.wert,
         -quer_max,
         quer_max,
     );
@@ -460,12 +460,12 @@ fn verlauf_ausduennen(
         // gezeichnet, als er ist.
         if let Some(letzter) = aus.last() {
             let d = (laengs - letzter.laengs_m).hypot(quer - letzter.quer_m);
-            if d < VERLAUF_MIN_ABSTAND_M && i + 1 < n {
+            if d < crate::grenzwerte::grenzwerte().ausfahrten.verlauf_min_abstand_m.wert && i + 1 < n {
                 continue;
             }
             // Der letzte Punkt ersetzt einen zu nahen Vorgänger (ausser dem
             // ersten), statt zwei Punkte dicht nebeneinander zu lassen.
-            if d < VERLAUF_MIN_ABSTAND_M && aus.len() > 1 {
+            if d < crate::grenzwerte::grenzwerte().ausfahrten.verlauf_min_abstand_m.wert && aus.len() > 1 {
                 aus.pop();
             }
         }
@@ -676,7 +676,7 @@ mod tests {
         assert!(v.len() > 5, "{} Punkte — zu duenn", v.len());
         for w in v.windows(2) {
             let d = (w[1].laengs_m - w[0].laengs_m).hypot(w[1].quer_m - w[0].quer_m);
-            assert!(d >= VERLAUF_MIN_ABSTAND_M - 0.5, "{d:.1} m Abstand");
+            assert!(d >= crate::grenzwerte::grenzwerte().ausfahrten.verlauf_min_abstand_m.wert - 0.5, "{d:.1} m Abstand");
         }
     }
 

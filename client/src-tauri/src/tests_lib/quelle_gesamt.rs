@@ -25,7 +25,9 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// (Wert gleich, Test `grenzwerte_staende_wie_2_1_24`) — plus Bereich
 /// Aufsetzen: vier Stellen `touchdown_v2::<KONST>` -> `grenzwerte().aufsetzen.*`
 /// (VS_FLOOR_FPM, BOUNCE_FORENSIC/SCORED_MIN_AGL_FT, BEWERTUNGS_FENSTER_VOR/NACH_MS;
-/// Werte gleich, Test `grenzwerte_aufsetzen_wie_2_1_24`).
+/// Werte gleich, Test `grenzwerte_aufsetzen_wie_2_1_24`) — plus Bereich
+/// Ankunft: `arrival::ON_FIELD_*`/`NEAREST_SEARCH_RADIUS_NM` -> `grenzwerte().ankunft.*`
+/// (Werte gleich, Test `grenzwerte_ankunft_wie_2_1_24`).
 #[test]
 fn zerlegung_ist_nur_verschoben() {
     use sha2::{Digest, Sha256};
@@ -36,4 +38,4 @@ fn zerlegung_ist_nur_verschoben() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs-Zerlegung hat Programmtext veraendert");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "f46bee92e41f3ccbea726c3fbbf9440a2dba422b69777ad8d896f23e38346b05";
+const HASH_VOR_DER_ZERLEGUNG: &str = "845067f8a435794ee058a65a212d0d4844cfea6d7a2cea4cde2b5b5c840c0b96";

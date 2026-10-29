@@ -39,126 +39,126 @@ use storage::{AnflugGleitpfad, AnflugRuhe, GleitpfadTor, RuheTor, Scherung};
 
 use crate::ApproachBufferSample;
 
-/// Ein Dot bei 3° Gleitwinkel: 0,35° — so rechnet vmsACARS (Vollausschlag
-/// 0,7° = 2 Dots). Die Anzeige eines echten Gleitwegs skaliert mit dem
-/// Winkel (ICAO Annex 10: Vollausschlag bei rund 0,12 × θ), deshalb gilt
-/// allgemein 0,35° × θ/3: bei 3° unveraendert, beim 5,5°-Anflug in London
-/// City rund 0,64°. Wir BENOTEN das nicht — die Dots sind nur die gewohnte
-/// Einheit.
-const GRAD_JE_DOT_BEI_3_GRAD: f64 = 0.35;
+// Ein Dot bei 3° Gleitwinkel: 0,35° — so rechnet vmsACARS (Vollausschlag
+// 0,7° = 2 Dots). Die Anzeige eines echten Gleitwegs skaliert mit dem
+// Winkel (ICAO Annex 10: Vollausschlag bei rund 0,12 × θ), deshalb gilt
+// allgemein 0,35° × θ/3: bei 3° unveraendert, beim 5,5°-Anflug in London
+// City rund 0,64°. Wir BENOTEN das nicht — die Dots sind nur die gewohnte
+// Einheit.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> grad_je_dot_bei_3_grad (v2.1.24: 0.35)
 
 pub(crate) fn grad_je_dot(winkel_deg: f64) -> f64 {
-    GRAD_JE_DOT_BEI_3_GRAD * winkel_deg / 3.0
+    crate::grenzwerte::grenzwerte().anflug.grad_je_dot_bei_3_grad.wert * winkel_deg / 3.0
 }
 
-/// Obere Grenze des ausgewerteten Anflugs, ft ueber der Schwelle.
-const HOEHE_OBEN_FT: f64 = 1000.0;
-/// Grenze zwischen den Toren 1000–500 und 500–200.
-const HOEHE_MITTE_FT: f64 = 500.0;
-/// Untere Grenze: 200 ft ist die Entscheidungshoehe eines CAT-I-Anflugs.
-/// Darunter beginnt der Uebergang in den Sichtflug und das Ausschweben —
-/// dort ist eine Pfadabweichung kein Anflugfehler mehr.
-const HOEHE_UNTEN_FT: f64 = 200.0;
+// Obere Grenze des ausgewerteten Anflugs, ft ueber der Schwelle.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> hoehe_oben_ft (v2.1.24: 1000.0)
+// Grenze zwischen den Toren 1000–500 und 500–200.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> hoehe_mitte_ft (v2.1.24: 500.0)
+// Untere Grenze: 200 ft ist die Entscheidungshoehe eines CAT-I-Anflugs.
+// Darunter beginnt der Uebergang in den Sichtflug und das Ausschweben —
+// dort ist eine Pfadabweichung kein Anflugfehler mehr.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> hoehe_unten_ft (v2.1.24: 200.0)
 
-/// Nur Proben aus den letzten fuenf Minuten vor dem Aufsetzen. Von 1000 ft
-/// sinkt selbst ein langsamer GA-Anflug (300 fpm) in gut drei Minuten; ein
-/// VORHERIGER Anflug mit Durchstarten liegt dagegen fast immer weiter
-/// zurueck (Platzrunde) und darf nicht mitgerechnet werden.
-const ANFLUG_FENSTER_S: i64 = 300;
+// Nur Proben aus den letzten fuenf Minuten vor dem Aufsetzen. Von 1000 ft
+// sinkt selbst ein langsamer GA-Anflug (300 fpm) in gut drei Minuten; ein
+// VORHERIGER Anflug mit Durchstarten liegt dagegen fast immer weiter
+// zurueck (Platzrunde) und darf nicht mitgerechnet werden.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> anflug_fenster_s (v2.1.24: 300)
 
-/// Halber Oeffnungswinkel des Gleitwegsektors, vom Gleitweg-Bezugspunkt
-/// aus gemessen. Ein echter Gleitwegsender deckt seitlich nur rund ±8° ab
-/// (ICAO Annex 10) — ausserhalb gibt es keine Gleitweganzeige, also auch
-/// keine Abweichung. ±10° laesst etwas Luft fuer die Lage des Senders.
-/// Die ANFLUGRUHE ist an keinen Sektor gebunden (sie braucht keine Bahn).
-const GLEITWEG_SEKTOR_HALBWINKEL_DEG: f64 = 10.0;
+// Halber Oeffnungswinkel des Gleitwegsektors, vom Gleitweg-Bezugspunkt
+// aus gemessen. Ein echter Gleitwegsender deckt seitlich nur rund ±8° ab
+// (ICAO Annex 10) — ausserhalb gibt es keine Gleitweganzeige, also auch
+// keine Abweichung. ±10° laesst etwas Luft fuer die Lage des Senders.
+// Die ANFLUGRUHE ist an keinen Sektor gebunden (sie braucht keine Bahn).
+// Wert seit v3: bundle/grenzwerte/anflug.json -> gleitweg_sektor_halbwinkel_deg (v2.1.24: 10.0)
 
-/// „Grob in Anflugrichtung": mehr als 90° zwischen Steuerkurs und
-/// Bahnrichtung ist Gegen- oder Queranflug, keine Endanflugprobe.
-const KURS_TOLERANZ_DEG: f64 = 90.0;
+// „Grob in Anflugrichtung": mehr als 90° zwischen Steuerkurs und
+// Bahnrichtung ist Gegen- oder Queranflug, keine Endanflugprobe.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> kurs_toleranz_deg (v2.1.24: 90.0)
 
-/// Mindestens so viele Proben je Band, sonst keine Kennwerte. Unter 1500 ft
-/// tastet der Puffer etwa sekuendlich ab; fuenf Proben sind fuenf Sekunden.
-const MIN_PROBEN_JE_TOR: usize = 5;
+// Mindestens so viele Proben je Band, sonst keine Kennwerte. Unter 1500 ft
+// tastet der Puffer etwa sekuendlich ab; fuenf Proben sind fuenf Sekunden.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> min_proben_je_tor (v2.1.24: 5)
 
-/// Fehlt die TCH in den Navdaten (der Server schreibt dann 0), gilt 50 ft
-/// — der ICAO-Richtwert fuer Verkehrsflugzeuge. Die Unsicherheit ist
-/// klein: 10 ft TCH verschieben den Bezugspunkt um rund 190 ft entlang der
-/// Bahn, das ist bei 1 NM Entfernung weniger als 0,03°.
-const TCH_ANNAHME_FT: f64 = 50.0;
+// Fehlt die TCH in den Navdaten (der Server schreibt dann 0), gilt 50 ft
+// — der ICAO-Richtwert fuer Verkehrsflugzeuge. Die Unsicherheit ist
+// klein: 10 ft TCH verschieben den Bezugspunkt um rund 190 ft entlang der
+// Bahn, das ist bei 1 NM Entfernung weniger als 0,03°.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> tch_annahme_ft (v2.1.24: 50.0)
 
-/// Ab dieser Abweichung zwischen Sim-Boden und Navigraph-Schwellenhoehe
-/// gilt der Sim-Boden. 20 ft sind bei 1 NM rund 0,2° — fast ein Dot. Kleinere
-/// Unterschiede (Bahnneigung, Rundung der Navdaten auf ganze Fuss) sollen
-/// den Bezug nicht umschalten.
-const SIM_BODEN_TOLERANZ_FT: f64 = 20.0;
-/// Nur Proben UEBER DER BAHN verraten die Bodenhoehe der Sim-Bahn: hoechstens
-/// so weit HINTER der Landeschwelle …
-///
-/// ⚠ Nicht davor (Nachpruefung 29.09.2026, Befund A): Vor der Schwelle
-/// liegt Gelaende, Wasser oder eine Klippe — KLGA rund 20 ft ueber dem
-/// Wasser, LPMA/TNCM/LXGB mit Meer vor der Bahn, dazu jede Senke im Mesh.
-/// Dort gemessen, schaltete der Bezug grundlos auf „Sim-Boden" und
-/// verschob den Pfad um fast einen Dot je 20 ft.
-const SIM_BODEN_LAENGS_M: f64 = 600.0;
-/// … und hoechstens so weit neben der Achse (halbe Bahnbreite, mindestens
-/// 30 m, wenn die Breite unbekannt oder schmaler ist).
-const SIM_BODEN_QUER_MIN_M: f64 = 30.0;
-/// Median ueber die schwellennaechsten Proben — eine einzelne Probe ueber
-/// einem Gebaeude oder einer Bodenwelle soll den Bezug nicht bestimmen.
-const SIM_BODEN_PROBEN: usize = 3;
-/// So viele Proben ueber dem ersten Bahnstueck braucht der Median.
-const SIM_BODEN_MIN_PROBEN: usize = 2;
+// Ab dieser Abweichung zwischen Sim-Boden und Navigraph-Schwellenhoehe
+// gilt der Sim-Boden. 20 ft sind bei 1 NM rund 0,2° — fast ein Dot. Kleinere
+// Unterschiede (Bahnneigung, Rundung der Navdaten auf ganze Fuss) sollen
+// den Bezug nicht umschalten.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> sim_boden_toleranz_ft (v2.1.24: 20.0)
+// Nur Proben UEBER DER BAHN verraten die Bodenhoehe der Sim-Bahn: hoechstens
+// so weit HINTER der Landeschwelle …
+//
+// ⚠ Nicht davor (Nachpruefung 29.09.2026, Befund A): Vor der Schwelle
+// liegt Gelaende, Wasser oder eine Klippe — KLGA rund 20 ft ueber dem
+// Wasser, LPMA/TNCM/LXGB mit Meer vor der Bahn, dazu jede Senke im Mesh.
+// Dort gemessen, schaltete der Bezug grundlos auf „Sim-Boden" und
+// verschob den Pfad um fast einen Dot je 20 ft.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> sim_boden_laengs_m (v2.1.24: 600.0)
+// … und hoechstens so weit neben der Achse (halbe Bahnbreite, mindestens
+// 30 m, wenn die Breite unbekannt oder schmaler ist).
+// Wert seit v3: bundle/grenzwerte/anflug.json -> sim_boden_quer_min_m (v2.1.24: 30.0)
+// Median ueber die schwellennaechsten Proben — eine einzelne Probe ueber
+// einem Gebaeude oder einer Bodenwelle soll den Bezug nicht bestimmen.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> sim_boden_proben (v2.1.24: 3)
+// So viele Proben ueber dem ersten Bahnstueck braucht der Median.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> sim_boden_min_proben (v2.1.24: 2)
 
-/// Totband fuer den Seitenwechsel: erst ab ±0,1 Dot (bei 3° 0,035°) gilt
-/// eine Probe als „ueber" oder „unter" dem Pfad. Bei 2 NM sind das rund
-/// 7 ft — weniger als die Hoehe, um die ein Flugzeug zwischen zwei Proben
-/// schon durch normale Luftbewegung schwankt. Ohne Totband zaehlte jede
-/// Probe, die den Pfad nur streift, als Korrektur.
-const PFAD_TOTBAND_DOTS: f64 = 0.1;
+// Totband fuer den Seitenwechsel: erst ab ±0,1 Dot (bei 3° 0,035°) gilt
+// eine Probe als „ueber" oder „unter" dem Pfad. Bei 2 NM sind das rund
+// 7 ft — weniger als die Hoehe, um die ein Flugzeug zwischen zwei Proben
+// schon durch normale Luftbewegung schwankt. Ohne Totband zaehlte jede
+// Probe, die den Pfad nur streift, als Korrektur.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> pfad_totband_dots (v2.1.24: 0.1)
 
-/// Totband fuer Schub-Umkehrungen: 2 % N1. Eine Autothrottle- oder
-/// Hebelkorrektur im Endanflug bewegt N1 um 3–10 %; darunter liegen das
-/// Nachregeln der Triebwerksregelung und die Anzeigeaufloesung. Gezaehlt
-/// wird erst, wenn N1 sich vom letzten Extremwert um mehr als das Totband
-/// in die GEGENRICHTUNG bewegt hat (Hysterese).
-const SCHUB_TOTBAND_PCT: f64 = 2.0;
+// Totband fuer Schub-Umkehrungen: 2 % N1. Eine Autothrottle- oder
+// Hebelkorrektur im Endanflug bewegt N1 um 3–10 %; darunter liegen das
+// Nachregeln der Triebwerksregelung und die Anzeigeaufloesung. Gezaehlt
+// wird erst, wenn N1 sich vom letzten Extremwert um mehr als das Totband
+// in die GEGENRICHTUNG bewegt hat (Hysterese).
+// Wert seit v3: bundle/grenzwerte/anflug.json -> schub_totband_pct (v2.1.24: 2.0)
 
-/// Zeitabstand, in dem zwei Proben eine Nick-/Rollrate bilden duerfen.
-/// Unter 0,2 s dominiert das Zeitstempel-Rauschen, ueber 5 s ist es keine
-/// Rate mehr, sondern eine Luecke im Puffer.
-const RATE_DT_MIN_S: f64 = 0.2;
-const RATE_DT_MAX_S: f64 = 5.0;
+// Zeitabstand, in dem zwei Proben eine Nick-/Rollrate bilden duerfen.
+// Unter 0,2 s dominiert das Zeitstempel-Rauschen, ueber 5 s ist es keine
+// Rate mehr, sondern eine Luecke im Puffer.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> rate_dt_min_s (v2.1.24: 0.2)
+// Wert seit v3: bundle/grenzwerte/anflug.json -> rate_dt_max_s (v2.1.24: 5.0)
 
-/// Eine Rate braucht so viele Paare fuer eine Streuung.
-const MIN_RATEN: usize = 4;
+// Eine Rate braucht so viele Paare fuer eine Streuung.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> min_raten (v2.1.24: 4)
 
-/// Unter dieser Dauer ist „Umkehrungen je Minute" keine Rate.
-const MIN_DAUER_SCHUB_S: f64 = 10.0;
+// Unter dieser Dauer ist „Umkehrungen je Minute" keine Rate.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> min_dauer_schub_s (v2.1.24: 10.0)
 
-/// Windscherung (28.10.2026, Idee aus LocalTC, Schwellen nachgemessen):
-/// Gegenwind UND angezeigte Fahrt aendern sich in 4–5,5 s gleichsinnig um je
-/// mindestens 15 kt, zwischen 30 und 1500 ft ueber dem Bezug.
-///
-/// Gemessen ueber 1857 Client-Flugprotokolle: 3 Treffer, alle Airliner
-/// (XRNDLE A321 in 1480 ft: Gegenwind −31 kt, Fahrt −29 kt). Der Gegenwind
-/// kommt aus dem Simulator (`aircraft_wind_z_kt`), nicht aus TAS − GS —
-/// letzteres meldete auch einen Kampfjet im Sturzflug und eine C172 mit
-/// −10 000 fpm. Dass sich die Fahrt MIT dem Wind aendert, trennt die
-/// Scherung vom Piloten, der Schub gibt oder wegnimmt. Boeen, die schneller
-/// hin- und herspringen (q3B30), erfasst die Regel bewusst nicht.
-const SCHERUNG_MIN_KT: f64 = 15.0;
-const SCHERUNG_DT_MIN_S: f64 = 4.0;
-const SCHERUNG_DT_MAX_S: f64 = 5.5;
-const SCHERUNG_HOEHE_UNTEN_FT: f64 = 30.0;
-const SCHERUNG_HOEHE_OBEN_FT: f64 = 1500.0;
-/// Treffer innerhalb dieser Zeit gehoeren zu EINER Scherung; gemeldet wird
-/// die staerkste.
-const SCHERUNG_ENTPRELLEN_S: f64 = 60.0;
-/// Hoechstens so viele, die staerksten: Budget unter 256 Bytes
-/// (`zwei_scherungen_bleiben_unter_256_bytes` in landing-scoring). Gemessen
-/// kam nie mehr als eine je Flug vor.
-const SCHERUNGEN_MAX: usize = 2;
+// Windscherung (28.10.2026, Idee aus LocalTC, Schwellen nachgemessen):
+// Gegenwind UND angezeigte Fahrt aendern sich in 4–5,5 s gleichsinnig um je
+// mindestens 15 kt, zwischen 30 und 1500 ft ueber dem Bezug.
+//
+// Gemessen ueber 1857 Client-Flugprotokolle: 3 Treffer, alle Airliner
+// (XRNDLE A321 in 1480 ft: Gegenwind −31 kt, Fahrt −29 kt). Der Gegenwind
+// kommt aus dem Simulator (`aircraft_wind_z_kt`), nicht aus TAS − GS —
+// letzteres meldete auch einen Kampfjet im Sturzflug und eine C172 mit
+// −10 000 fpm. Dass sich die Fahrt MIT dem Wind aendert, trennt die
+// Scherung vom Piloten, der Schub gibt oder wegnimmt. Boeen, die schneller
+// hin- und herspringen (q3B30), erfasst die Regel bewusst nicht.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> scherung_min_kt (v2.1.24: 15.0)
+// Wert seit v3: bundle/grenzwerte/anflug.json -> scherung_dt_min_s (v2.1.24: 4.0)
+// Wert seit v3: bundle/grenzwerte/anflug.json -> scherung_dt_max_s (v2.1.24: 5.5)
+// Wert seit v3: bundle/grenzwerte/anflug.json -> scherung_hoehe_unten_ft (v2.1.24: 30.0)
+// Wert seit v3: bundle/grenzwerte/anflug.json -> scherung_hoehe_oben_ft (v2.1.24: 1500.0)
+// Treffer innerhalb dieser Zeit gehoeren zu EINER Scherung; gemeldet wird
+// die staerkste.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> scherung_entprellen_s (v2.1.24: 60.0)
+// Hoechstens so viele, die staerksten: Budget unter 256 Bytes
+// (`zwei_scherungen_bleiben_unter_256_bytes` in landing-scoring). Gemessen
+// kam nie mehr als eine je Flug vor.
+// Wert seit v3: bundle/grenzwerte/anflug.json -> scherungen_max (v2.1.24: 2)
 
 pub(crate) const QUELLE_NAVIGRAPH_ILS: &str = "navigraph_ils";
 pub(crate) const QUELLE_NAVIGRAPH_BAHN: &str = "navigraph_bahn";
@@ -222,7 +222,7 @@ impl Bahnbezug {
                 .width_ft
                 .map(|w| w as f64 / FT_JE_M / 2.0)
                 .unwrap_or(0.0)
-                .max(SIM_BODEN_QUER_MIN_M),
+                .max(crate::grenzwerte::grenzwerte().anflug.sim_boden_quer_min_m.wert),
         }
     }
 
@@ -348,7 +348,7 @@ pub(crate) fn auswerten_ab_final(
                 .unwrap_or(3.0);
             let (tch_ft, tch_angenommen) = match b.tch_ft {
                 Some(t) => (t, false),
-                None => (TCH_ANNAHME_FT, true),
+                None => (crate::grenzwerte::grenzwerte().anflug.tch_annahme_ft.wert, true),
             };
             gleitpfad.winkel_deg = Some(winkel_deg as f32);
             gleitpfad.tch_ft = Some(tch_ft as f32);
@@ -359,7 +359,7 @@ pub(crate) fn auswerten_ab_final(
             let sim_boden = sim_boden_an_schwelle(&proben, b);
             gleitpfad.sim_boden_ft = sim_boden.map(|h| runden(h, 1));
             let bezug = match (b.schwellenhoehe_ft, sim_boden) {
-                (Some(n), Some(s)) if (s - n).abs() > SIM_BODEN_TOLERANZ_FT => {
+                (Some(n), Some(s)) if (s - n).abs() > crate::grenzwerte::grenzwerte().anflug.sim_boden_toleranz_ft.wert => {
                     Some((s, HOEHENBEZUG_SIM_BODEN))
                 }
                 (Some(n), _) => Some((n, HOEHENBEZUG_NAVIGRAPH)),
@@ -402,9 +402,9 @@ pub(crate) fn auswerten_ab_final(
             Some(ab) => punkte.iter().filter(|p| p.at >= ab).cloned().collect(),
             None => punkte.clone(),
         };
-        gleitpfad.gesamt = gleitpfad_tor(&tor_punkte, HOEHE_UNTEN_FT, HOEHE_OBEN_FT);
-        gleitpfad.tor_1000_500 = gleitpfad_tor(&tor_punkte, HOEHE_MITTE_FT, HOEHE_OBEN_FT);
-        gleitpfad.tor_500_200 = gleitpfad_tor(&tor_punkte, HOEHE_UNTEN_FT, HOEHE_MITTE_FT);
+        gleitpfad.gesamt = gleitpfad_tor(&tor_punkte, crate::grenzwerte::grenzwerte().anflug.hoehe_unten_ft.wert, crate::grenzwerte::grenzwerte().anflug.hoehe_oben_ft.wert);
+        gleitpfad.tor_1000_500 = gleitpfad_tor(&tor_punkte, crate::grenzwerte::grenzwerte().anflug.hoehe_mitte_ft.wert, crate::grenzwerte::grenzwerte().anflug.hoehe_oben_ft.wert);
+        gleitpfad.tor_500_200 = gleitpfad_tor(&tor_punkte, crate::grenzwerte::grenzwerte().anflug.hoehe_unten_ft.wert, crate::grenzwerte::grenzwerte().anflug.hoehe_mitte_ft.wert);
         if gleitpfad.gesamt.is_none() {
             gleitpfad.grund_ohne_werte = Some(GRUND_KEINE_PROBEN.to_string());
         }
@@ -413,8 +413,8 @@ pub(crate) fn auswerten_ab_final(
         gleitpfad.verlauf = gleitpfad_verlauf(&proben, bezug_ft, p, t);
     }
 
-    let ruhe_1000_500 = ruhe_tor(&punkte, HOEHE_MITTE_FT, HOEHE_OBEN_FT);
-    let ruhe_500_200 = ruhe_tor(&punkte, HOEHE_UNTEN_FT, HOEHE_MITTE_FT);
+    let ruhe_1000_500 = ruhe_tor(&punkte, crate::grenzwerte::grenzwerte().anflug.hoehe_mitte_ft.wert, crate::grenzwerte::grenzwerte().anflug.hoehe_oben_ft.wert);
+    let ruhe_500_200 = ruhe_tor(&punkte, crate::grenzwerte::grenzwerte().anflug.hoehe_unten_ft.wert, crate::grenzwerte::grenzwerte().anflug.hoehe_mitte_ft.wert);
     let scherungen = scherungen(&proben, bezug_ft, td);
     let ruhe = (ruhe_1000_500.is_some() || ruhe_500_200.is_some() || !scherungen.is_empty())
         .then(|| AnflugRuhe {
@@ -438,7 +438,7 @@ fn im_fenster(
     let Some(anker) = td.or_else(|| buf.back().map(|s| s.at)) else {
         return Vec::new();
     };
-    let fruehestens = anker - chrono::Duration::seconds(ANFLUG_FENSTER_S);
+    let fruehestens = anker - chrono::Duration::seconds(crate::grenzwerte::grenzwerte().anflug.anflug_fenster_s.wert);
     buf.iter()
         .filter(|s| {
             s.at >= fruehestens
@@ -477,14 +477,14 @@ fn sim_boden_an_schwelle(proben: &[&ApproachBufferSample], bahn: &Bahnbezug) -> 
         .collect();
     let nah_mit_zeit: Vec<(f64, f64, DateTime<Utc>)> = ueber_bahn
         .into_iter()
-        .filter(|p| p.0 <= SIM_BODEN_LAENGS_M)
+        .filter(|p| p.0 <= crate::grenzwerte::grenzwerte().anflug.sim_boden_laengs_m.wert)
         .collect();
     // Ersatz bei weniger als zwei Proben: die juengste im selben Stueck.
     let ersatz = nah_mit_zeit.iter().max_by_key(|p| p.2).map(|p| p.1);
     let mut nah: Vec<(f64, f64)> = nah_mit_zeit.iter().map(|p| (p.0, p.1)).collect();
-    if nah.len() >= SIM_BODEN_MIN_PROBEN {
+    if nah.len() >= crate::grenzwerte::grenzwerte().anflug.sim_boden_min_proben.wert {
         nah.sort_by(|a, b| a.0.total_cmp(&b.0));
-        nah.truncate(SIM_BODEN_PROBEN);
+        nah.truncate(crate::grenzwerte::grenzwerte().anflug.sim_boden_proben.wert);
         let mut boeden: Vec<f64> = nah.into_iter().map(|n| n.1).collect();
         boeden.sort_by(|a, b| a.total_cmp(b));
         let n = boeden.len();
@@ -549,14 +549,14 @@ impl Pfad {
         if d_ft <= 0.0 {
             return None; // ueber oder hinter der Schwelle
         }
-        if winkel_diff_deg(s.heading_true_deg as f64, self.achse_deg) > KURS_TOLERANZ_DEG {
+        if winkel_diff_deg(s.heading_true_deg as f64, self.achse_deg) > crate::grenzwerte::grenzwerte().anflug.kurs_toleranz_deg.wert {
             return None; // nicht in Anflugrichtung
         }
         let tan_w = self.winkel_rad.tan();
         let gpi_ft = self.tch_ft / tan_w;
         let laengs_ab_gpi_ft = d_ft + gpi_ft;
         let quer_ft = quer_m * FT_JE_M;
-        if quer_ft.abs().atan2(laengs_ab_gpi_ft).to_degrees() > GLEITWEG_SEKTOR_HALBWINKEL_DEG {
+        if quer_ft.abs().atan2(laengs_ab_gpi_ft).to_degrees() > crate::grenzwerte::grenzwerte().anflug.gleitweg_sektor_halbwinkel_deg.wert {
             return None; // ausserhalb des Gleitwegsektors
         }
         let r_ft = laengs_ab_gpi_ft.hypot(quer_ft);
@@ -576,7 +576,7 @@ fn punkte_im_anflug(
         .iter()
         .filter_map(|s| {
             let hoehe_ft = s.msl_ft as f64 - bezug_ft;
-            if !hoehe_ft.is_finite() || !(HOEHE_UNTEN_FT..=HOEHE_OBEN_FT).contains(&hoehe_ft) {
+            if !hoehe_ft.is_finite() || !(crate::grenzwerte::grenzwerte().anflug.hoehe_unten_ft.wert..=crate::grenzwerte::grenzwerte().anflug.hoehe_oben_ft.wert).contains(&hoehe_ft) {
                 return None;
             }
             let abw = pfad.and_then(|p| p.abweichung(s));
@@ -609,7 +609,7 @@ fn gleitpfad_verlauf(
     let mut letzte: Option<DateTime<Utc>> = None;
     for s in proben {
         let hoehe_ft = s.msl_ft as f64 - bezug_ft;
-        if !hoehe_ft.is_finite() || !(0.0..=HOEHE_OBEN_FT).contains(&hoehe_ft) {
+        if !hoehe_ft.is_finite() || !(0.0..=crate::grenzwerte::grenzwerte().anflug.hoehe_oben_ft.wert).contains(&hoehe_ft) {
             continue;
         }
         if letzte.is_some_and(|l| sekunden(l, s.at) < VERLAUF_TAKT_S) {
@@ -631,7 +631,7 @@ fn gleitpfad_verlauf(
 /// Band `[unten, oben]`; das obere Tor schliesst die Mitte aus, damit
 /// keine Probe in beiden Toren zaehlt.
 fn im_band(p: &Punkt, unten: f64, oben: f64) -> bool {
-    if unten >= HOEHE_MITTE_FT {
+    if unten >= crate::grenzwerte::grenzwerte().anflug.hoehe_mitte_ft.wert {
         p.hoehe_ft > unten && p.hoehe_ft <= oben
     } else {
         p.hoehe_ft >= unten && p.hoehe_ft <= oben
@@ -647,7 +647,7 @@ fn gleitpfad_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<GleitpfadTor
         .filter(|p| im_band(p, unten, oben))
         .filter_map(|p| Some((p.abw_dots?, p.abw_ft?, p.hoehe_ft)))
         .collect();
-    if werte.len() < MIN_PROBEN_JE_TOR {
+    if werte.len() < crate::grenzwerte::grenzwerte().anflug.min_proben_je_tor.wert {
         return None;
     }
     let mittel = werte.iter().map(|w| w.0.abs()).sum::<f64>() / werte.len() as f64;
@@ -670,7 +670,7 @@ fn gleitpfad_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<GleitpfadTor
 
 fn ruhe_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<RuheTor> {
     let band: Vec<&Punkt> = punkte.iter().filter(|p| im_band(p, unten, oben)).collect();
-    if band.len() < MIN_PROBEN_JE_TOR {
+    if band.len() < crate::grenzwerte::grenzwerte().anflug.min_proben_je_tor.wert {
         return None;
     }
     let dauer_s = sekunden(band[0].at, band[band.len() - 1].at);
@@ -678,7 +678,7 @@ fn ruhe_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<RuheTor> {
 
     let abw: Vec<f64> = band.iter().filter_map(|p| p.abw_dots).collect();
     let pfad_vorzeichenwechsel =
-        (abw.len() >= MIN_PROBEN_JE_TOR).then(|| seitenwechsel(&abw, PFAD_TOTBAND_DOTS));
+        (abw.len() >= crate::grenzwerte::grenzwerte().anflug.min_proben_je_tor.wert).then(|| seitenwechsel(&abw, crate::grenzwerte::grenzwerte().anflug.pfad_totband_dots.wert));
 
     let nick: Vec<(DateTime<Utc>, f64)> = band
         .iter()
@@ -694,11 +694,11 @@ fn ruhe_tor(punkte: &[Punkt], unten: f64, oben: f64) -> Option<RuheTor> {
         (None, Some(SCHUB_GRUND_KEIN_N1))
     } else {
         let dauer = sekunden(n1[0].0, n1[n1.len() - 1].0);
-        if n1.len() < MIN_PROBEN_JE_TOR || dauer < MIN_DAUER_SCHUB_S {
+        if n1.len() < crate::grenzwerte::grenzwerte().anflug.min_proben_je_tor.wert || dauer < crate::grenzwerte::grenzwerte().anflug.min_dauer_schub_s.wert {
             (None, Some(SCHUB_GRUND_ZU_KURZ))
         } else {
             let werte: Vec<f64> = n1.iter().map(|w| w.1).collect();
-            let rate = umkehrungen(&werte, SCHUB_TOTBAND_PCT) as f64 / (dauer / 60.0);
+            let rate = umkehrungen(&werte, crate::grenzwerte::grenzwerte().anflug.schub_totband_pct.wert) as f64 / (dauer / 60.0);
             (Some(runden(rate, 2)), None)
         }
     };
@@ -727,18 +727,18 @@ fn scherungen(
     for (i, b) in proben.iter().enumerate() {
         let hoehe_ft = b.msl_ft as f64 - bezug_ft;
         let Some(wind_b) = b.headwind_kt.map(f64::from) else { continue };
-        if !(SCHERUNG_HOEHE_UNTEN_FT..=SCHERUNG_HOEHE_OBEN_FT).contains(&hoehe_ft) {
+        if !(crate::grenzwerte::grenzwerte().anflug.scherung_hoehe_unten_ft.wert..=crate::grenzwerte::grenzwerte().anflug.scherung_hoehe_oben_ft.wert).contains(&hoehe_ft) {
             continue;
         }
         let vorher = proben[..i].iter().rev().find(|a| {
             let dt = sekunden(a.at, b.at);
-            (SCHERUNG_DT_MIN_S..=SCHERUNG_DT_MAX_S).contains(&dt) && a.headwind_kt.is_some()
+            (crate::grenzwerte::grenzwerte().anflug.scherung_dt_min_s.wert..=crate::grenzwerte::grenzwerte().anflug.scherung_dt_max_s.wert).contains(&dt) && a.headwind_kt.is_some()
         });
         let Some(a) = vorher else { continue };
         let wind = wind_b - a.headwind_kt.map(f64::from).unwrap_or(wind_b);
         let fahrt = b.ias_kt as f64 - a.ias_kt as f64;
         // `!(… >= …)` statt `< …`: ein NaN faellt so heraus, statt zu zaehlen.
-        if !(wind.abs() >= SCHERUNG_MIN_KT && fahrt.abs() >= SCHERUNG_MIN_KT && wind * fahrt > 0.0) {
+        if !(wind.abs() >= crate::grenzwerte::grenzwerte().anflug.scherung_min_kt.wert && fahrt.abs() >= crate::grenzwerte::grenzwerte().anflug.scherung_min_kt.wert && wind * fahrt > 0.0) {
             continue;
         }
         let s = Scherung {
@@ -749,7 +749,7 @@ fn scherungen(
             dauer_s: runden(sekunden(a.at, b.at), 1),
         };
         match treffer.last_mut() {
-            Some((zuletzt, alt)) if sekunden(*zuletzt, b.at) <= SCHERUNG_ENTPRELLEN_S => {
+            Some((zuletzt, alt)) if sekunden(*zuletzt, b.at) <= crate::grenzwerte::grenzwerte().anflug.scherung_entprellen_s.wert => {
                 if s.gegenwind_kt.abs() > alt.gegenwind_kt.abs() {
                     *alt = s;
                 }
@@ -769,7 +769,7 @@ fn scherungen(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(i.cmp(j))
     });
-    nach_staerke.truncate(SCHERUNGEN_MAX);
+    nach_staerke.truncate(crate::grenzwerte::grenzwerte().anflug.scherungen_max.wert);
     nach_staerke.sort_by_key(|(i, _)| *i);
     nach_staerke.into_iter().map(|(_, s)| s).collect()
 }
@@ -859,12 +859,12 @@ fn raten_streuung(folge: &[(DateTime<Utc>, f64)]) -> Option<f64> {
         .windows(2)
         .filter_map(|w| {
             let dt = sekunden(w[0].0, w[1].0);
-            (RATE_DT_MIN_S..=RATE_DT_MAX_S)
+            (crate::grenzwerte::grenzwerte().anflug.rate_dt_min_s.wert..=crate::grenzwerte::grenzwerte().anflug.rate_dt_max_s.wert)
                 .contains(&dt)
                 .then(|| (w[1].1 - w[0].1) / dt)
         })
         .collect();
-    if raten.len() < MIN_RATEN {
+    if raten.len() < crate::grenzwerte::grenzwerte().anflug.min_raten.wert {
         return None;
     }
     let n = raten.len() as f64;

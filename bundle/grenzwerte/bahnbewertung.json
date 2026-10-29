@@ -1,0 +1,9 @@
+{
+  "tdz_min_runway_m": {"wert": 1200.0, "einheit": "m", "quelle": "client/src-tauri/src/runway_assessment.rs:46 (v2.1.24)"},
+  "tdz_max_length_m": {"wert": 900.0, "einheit": "m", "quelle": "client/src-tauri/src/runway_assessment.rs:49 (v2.1.24)"},
+  "aim_short_m": {"wert": 300.0, "einheit": "m", "quelle": "client/src-tauri/src/runway_assessment.rs:52 (v2.1.24)"},
+  "aim_long_m": {"wert": 400.0, "einheit": "m", "quelle": "client/src-tauri/src/runway_assessment.rs:53 (v2.1.24)"},
+  "wch_min_ft": {"wert": 20.0, "einheit": "ft", "quelle": "client/src-tauri/src/runway_assessment.rs:294 (v2.1.24)"},
+  "wch_max_ft": {"wert": 50.0, "einheit": "ft", "quelle": "client/src-tauri/src/runway_assessment.rs:296 (v2.1.24)"},
+  "wch_toleranz_ft": {"wert": 10.0, "einheit": "ft", "quelle": "client/src-tauri/src/runway_assessment.rs:298 (v2.1.24)"}
+}

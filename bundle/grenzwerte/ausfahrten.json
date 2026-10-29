@@ -1,0 +1,10 @@
+{
+  "verlauf_min_abstand_m": {"wert": 8.0, "einheit": "m", "quelle": "client/src-tauri/src/ausfahrten.rs:85 (v2.1.24)"},
+  "verlauf_vor_m": {"wert": 50.0, "einheit": "m", "quelle": "client/src-tauri/src/ausfahrten.rs:93 (v2.1.24)"},
+  "verlauf_nach_m": {"wert": 400.0, "einheit": "m", "quelle": "client/src-tauri/src/ausfahrten.rs:94 (v2.1.24)"},
+  "verlauf_quer_ueber_kante_m": {"wert": 150.0, "einheit": "m", "quelle": "client/src-tauri/src/ausfahrten.rs:107 (v2.1.24)"},
+  "kanten_toleranz_m": {"wert": 25.0, "einheit": "m", "quelle": "client/src-tauri/src/ausfahrten.rs:117 (v2.1.24)"},
+  "draussen_min_m": {"wert": 2.0, "einheit": "m", "quelle": "client/src-tauri/src/ausfahrten.rs:123 (v2.1.24)"},
+  "dieselbe_stelle_m": {"wert": 150.0, "einheit": "m", "quelle": "client/src-tauri/src/ausfahrten.rs:135 (v2.1.24)"},
+  "dieselbe_abzweigung_m": {"wert": 0.5, "einheit": "m", "quelle": "client/src-tauri/src/ausfahrten.rs:218 (v2.1.24)"}
+}
