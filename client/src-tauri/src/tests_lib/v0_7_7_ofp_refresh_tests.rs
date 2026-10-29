@@ -108,6 +108,7 @@
             flight_id: "1234567".to_string(),
             bid_callsign: None,
             pilot_callsign: None,
+            runtime_bundle_id: None,
             started_at: Utc::now(),
             zuletzt_geschrieben: None,
             airline_icao: "DLH".to_string(),

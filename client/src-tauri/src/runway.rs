@@ -26,7 +26,7 @@ use std::sync::OnceLock;
 /// unverändertes Spalten-Schema — 1:1 Drop-in). Update-Rezept: Datei neu
 /// laden, hier ersetzen, `cargo test --lib runway::` laufen lassen (einige
 /// Tests hängen an echten Koordinaten für konkrete Flughäfen).
-const RUNWAYS_CSV: &str = include_str!("../data/ourairports-runways.csv");
+pub(crate) const EINGEBAUT_RUNWAYS_CSV: &str = include_str!("../data/ourairports-runways.csv");
 
 /// Embedded snapshot of the ourairports **airports** table (ident, type,
 /// reference point). Same source, same public domain, same refresh cadence.
@@ -44,7 +44,7 @@ const RUNWAYS_CSV: &str = include_str!("../data/ourairports-runways.csv");
 /// thresholds can be *identified* rather than guessed at, and every airport has
 /// a position even when its runways don't.
 ///
-/// Zuletzt aktualisiert: 2026-08-06. **Anders als `RUNWAYS_CSV` KEIN
+/// Zuletzt aktualisiert: 2026-08-06. **Anders als `EINGEBAUT_RUNWAYS_CSV` KEIN
 /// Rohformat** — `airports_by_ident()` liest positionell nur die ersten 4
 /// Spalten (`ident,type,latitude_deg,longitude_deg`), das rohe
 /// `https://ourairports.com/data/airports.csv` hat aber ~19 Spalten in
@@ -54,7 +54,30 @@ const RUNWAYS_CSV: &str = include_str!("../data/ourairports-runways.csv");
 /// 2026 bereits einmal geändert, `icao_code` kam neu dazu), Header
 /// `ident,type,latitude_deg,longitude_deg` beibehalten, dann hier ersetzen
 /// und `cargo test --lib runway::` laufen lassen.
-const AIRPORTS_CSV: &str = include_str!("../data/ourairports-airports.csv");
+pub(crate) const EINGEBAUT_AIRPORTS_CSV: &str = include_str!("../data/ourairports-airports.csv");
+
+/// v3 (Etappe 1a): Welche OurAirports-Fassung gilt — die aus dem
+/// Laufzeit-Paket oder die eingebaute. Entschieden wird beim ersten Zugriff
+/// auf eine Bahntabelle; danach ist sie fest fuer den ganzen Programmlauf.
+static OURAIRPORTS: std::sync::OnceLock<(&'static str, &'static str)> = std::sync::OnceLock::new();
+
+fn ourairports() -> &'static (&'static str, &'static str) {
+    OURAIRPORTS.get_or_init(|| (EINGEBAUT_RUNWAYS_CSV, EINGEBAUT_AIRPORTS_CSV))
+}
+
+fn runways_csv() -> &'static str {
+    ourairports().0
+}
+
+fn airports_csv() -> &'static str {
+    ourairports().1
+}
+
+/// Setzt OurAirports aus dem Laufzeit-Paket. `false`, wenn schon eine
+/// Bahntabelle gelesen wurde — dann gilt fuer diesen Lauf die eingebaute.
+pub(crate) fn ourairports_setzen(runways: &'static str, airports: &'static str) -> bool {
+    OURAIRPORTS.set((runways, airports)).is_ok()
+}
 
 /// Mean Earth radius (meters) — same value used by the haversine formula
 /// throughout aviation tooling.
@@ -400,7 +423,7 @@ fn airports_by_ident() -> &'static std::collections::HashMap<String, AirportRef>
     AIRPORTS_BY_IDENT.get_or_init(|| {
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
-            .from_reader(AIRPORTS_CSV.as_bytes());
+            .from_reader(airports_csv().as_bytes());
         let mut map = std::collections::HashMap::with_capacity(90_000);
         for rec in rdr.records().flatten() {
             let (Some(ident), Some(kind), Some(lat), Some(lon)) =
@@ -521,7 +544,7 @@ fn belaege() -> &'static std::collections::HashMap<(String, String), String> {
         let mut map = std::collections::HashMap::with_capacity(64_000);
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
-            .from_reader(RUNWAYS_CSV.as_bytes());
+            .from_reader(runways_csv().as_bytes());
         for record in rdr.records().flatten() {
             // Geschlossene Bahnen bleiben draussen — auf ihnen landet
             // niemand, und ihr Belag wuerde eine offene Bahn gleichen
@@ -628,7 +651,7 @@ fn runways() -> &'static Vec<RunwayRow> {
     RUNWAYS.get_or_init(|| {
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
-            .from_reader(RUNWAYS_CSV.as_bytes());
+            .from_reader(runways_csv().as_bytes());
         let mut out = Vec::with_capacity(48_000);
         for record in rdr.records().flatten() {
             // Skip closed runways — pilots can't land on them and matching
@@ -3464,7 +3487,7 @@ mod belag_ohne_koordinaten {
         let mut nur_geschlossen: HashMap<(String, String), String> = HashMap::new();
         let mut rdr = csv::ReaderBuilder::new()
             .has_headers(true)
-            .from_reader(RUNWAYS_CSV.as_bytes());
+            .from_reader(runways_csv().as_bytes());
         for record in rdr.records().flatten() {
             let icao = record.get(2).unwrap_or("").trim().to_uppercase();
             if icao.is_empty() {

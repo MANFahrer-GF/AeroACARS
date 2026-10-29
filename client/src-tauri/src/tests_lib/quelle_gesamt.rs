@@ -14,7 +14,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// begruendet es in der Commit-Nachricht.
 ///
 /// Stand: `lib.rs` bei `cdd6028c` (nach dem Auslagern der Testmodule) plus
-/// die vier Zeilen der Erklaerung `mod quelle_gesamt` (`341303c6`).
+/// die vier Zeilen der Erklaerung `mod quelle_gesamt` (`341303c6`) plus die
+/// Anbindung des Laufzeit-Pakets (Etappe 1a: `mod laufzeit_paket`, Feld
+/// `runtime_bundle_id` in `PersistedFlight`, Eintrag in `save_active_flight`,
+/// Aufruf am Anfang von `.setup`) — nur Zusaetze, keine Zeile entfernt.
 #[test]
 fn zerlegung_ist_nur_verschoben() {
     use sha2::{Digest, Sha256};
@@ -25,4 +28,4 @@ fn zerlegung_ist_nur_verschoben() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs-Zerlegung hat Programmtext veraendert");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "b016bd046c0bc7399d72be9ec3d6526029e654d007ce9a769e679a0fb26f8e11";
+const HASH_VOR_DER_ZERLEGUNG: &str = "f0c5870dd569dc67f887d9a33b5cd796e5fc2ff823e2abf44d22d385c47b3244";

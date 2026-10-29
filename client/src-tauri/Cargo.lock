@@ -45,6 +45,7 @@ dependencies = [
  "recorder",
  "regex",
  "reqwest 0.12.28",
+ "runtime-bundle",
  "rustls",
  "secrets",
  "sentry",

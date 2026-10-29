@@ -12,6 +12,7 @@
             flight_id: String::new(),
             bid_callsign: None,
             pilot_callsign: None,
+            runtime_bundle_id: None,
             started_at: Utc::now(),
             zuletzt_geschrieben: None,
             airline_icao: "THY".to_string(),

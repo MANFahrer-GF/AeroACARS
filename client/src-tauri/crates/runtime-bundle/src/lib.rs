@@ -279,7 +279,7 @@ impl Ablage {
                 Ok(p) => hinweise.push(format!("Pin {pin}: lokal liegt {}", p.id)),
                 Err(e) => hinweise.push(format!("Pin {pin}: {e}")),
             }
-            let paket = eingebautes_paket(eingebaut, kontext)?;
+            let paket = eingebautes_paket(eingebaut)?;
             return Ok(Ladeergebnis { paket, herkunft: Herkunft::EingebautStattPin, hinweise });
         }
         let zeiger = match self.zeiger() {
@@ -299,7 +299,7 @@ impl Ablage {
                 Err(e) => hinweise.push(format!("{name} ({g}): {e}")),
             }
         }
-        let paket = eingebautes_paket(eingebaut, kontext)?;
+        let paket = eingebautes_paket(eingebaut)?;
         Ok(Ladeergebnis { paket, herkunft: Herkunft::Eingebaut, hinweise })
     }
 
@@ -458,7 +458,14 @@ fn ordner_sichern(ordner: &Path) -> Result<(), Fehler> {
     Ok(())
 }
 
-fn eingebautes_paket(e: &Eingebaut, _kontext: &Kontext) -> Result<Paket, Fehler> {
+impl Eingebaut {
+    /// Der eingebaute Stand als Paket, Hashes geprueft.
+    pub fn paket(&self) -> Result<Paket, Fehler> {
+        eingebautes_paket(self)
+    }
+}
+
+fn eingebautes_paket(e: &Eingebaut) -> Result<Paket, Fehler> {
     let manifest = Manifest::lesen(&e.manifest)?;
     let paket = Paket {
         id: RuntimeBundleId {

@@ -107,6 +107,7 @@ aeroacars-mqtt = { path = "crates/aeroacars-mqtt" }
 landing-scoring = { path = "crates/landing-scoring" }
 hoppie-protocol = { path = "crates/hoppie-protocol" }
 cabin-announcements = { path = "crates/cabin-announcements" }
+runtime-bundle = { path = "crates/runtime-bundle" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
@@ -257,6 +258,7 @@ metar.workspace = true
 aeroacars-mqtt.workspace = true
 landing-scoring.workspace = true
 cabin-announcements.workspace = true
+runtime-bundle.workspace = true
 # v1.3.0 (#Hoppie-PDC-CPDLC): Hoppie-ACARS-Netzwerk-Protokoll + GOLD-
 # Elementtabelle. Wiring lebt in src/hoppie/.
 hoppie-protocol.workspace = true

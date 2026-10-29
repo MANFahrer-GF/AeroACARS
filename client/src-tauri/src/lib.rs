@@ -33,6 +33,7 @@ mod fenster;
 mod hauptfaden_waechter;
 mod navdata_cache;
 mod replay_erkennung;
+mod laufzeit_paket;
 mod runway;
 mod runway_assessment;
 mod stands;
@@ -4123,6 +4124,11 @@ struct PersistedFlight {
     /// serde(default) → None bei pre-v0.7.8-Resume-Files.
     #[serde(default)]
     pilot_callsign: Option<String>,
+    /// v3 (Etappe 1a): Stand des Laufzeit-Pakets, mit dem dieser Flug lief
+    /// (P-3.30). Der Lader liest das Feld beim Start roh aus der Datei
+    /// (`laufzeit_paket::starten`). `serde(default)` → None bei 2.x-Dateien.
+    #[serde(default)]
+    runtime_bundle_id: Option<runtime_bundle::RuntimeBundleId>,
     started_at: DateTime<Utc>,
     /// Wann die Datei zuletzt geschrieben wurde — der einzige belastbare
     /// Hinweis darauf, ob der Flug noch lebt. `started_at` sagt darüber
@@ -16376,6 +16382,7 @@ fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) -> bool {
             plan_strecke_nm: flight.plan_strecke_nm,
             bid_callsign: flight.bid_callsign.clone(),
             pilot_callsign: flight.pilot_callsign.clone(),
+            runtime_bundle_id: laufzeit_paket::flug_pin(),
             started_at: flight.started_at,
             // Wird von `write_persisted_flight` gesetzt — hier bewusst None.
             zuletzt_geschrieben: None,
@@ -54673,6 +54680,8 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // v3 (Etappe 1a): Laufzeit-Paket zuerst — legt OurAirports fest, bevor jemand Bahnen liest.
+            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); }
             // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
             // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
             // geschrieben werden, an denen ein frueherer Lauf erkannt wird.
