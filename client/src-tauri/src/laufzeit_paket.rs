@@ -8,10 +8,10 @@
 //! Inhalt bis Etappe 1b: nur OurAirports (`runway.rs`).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use runtime_bundle::{Ablage, Eingebaut, Herkunft, Kontext, RuntimeBundleId};
+use runtime_bundle::{Ablage, Eingang, Eingebaut, Herkunft, Kontext, Manifest, Paket, RuntimeBundleId};
 use sha2::{Digest, Sha256};
 
 /// Pruefschluessel der Laufzeit-Pakete (minisign, Base64), aktiv + Reserve
@@ -137,9 +137,108 @@ pub(crate) fn starten(app_daten: &Path) {
     let _ = GELADEN.set(Geladen { id: paket.id, pin });
 }
 
+/// Holt einen neueren Stand von live und installiert ihn; aktiv wird er erst
+/// beim naechsten Programmstart (P-3.20). Nicht bei offenem Flug, nicht ohne
+/// Pruefschluessel (dann bestuende ohnehin kein Stand die Pruefung).
+pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf) {
+    if PRUEFSCHLUESSEL.is_empty() || pin_des_offenen_flugs(&app_daten).is_some() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        match aktualisieren(&app_daten).await {
+            Ok(Some(id)) => tracing::info!(stand = %id, "Laufzeit-Paket: neuer Stand, aktiv ab naechstem Start"),
+            Ok(None) => {}
+            Err(e) => tracing::warn!(error = %e, "Laufzeit-Paket: Aktualisierung nicht moeglich"),
+        }
+    });
+}
+
+#[derive(serde::Deserialize)]
+struct AktuellAntwort {
+    generation: u64,
+    manifest: String,
+    signatur: String,
+    blobs: String,
+}
+
+async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, String> {
+    let basis = crate::live_zugang::LIVE_BASIS;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let antwort = client.get(format!("{basis}/api/bundle/current")).send().await.map_err(|e| e.to_string())?;
+    if antwort.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let a: AktuellAntwort =
+        antwort.error_for_status().map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    let ablage = Ablage::oeffnen(app_daten.join("laufzeit-paket")).map_err(|e| e.to_string())?;
+    if ablage.aktuell().is_some_and(|g| g >= a.generation) {
+        return Ok(None);
+    }
+    let holen = |pfad: String| {
+        let client = client.clone();
+        async move {
+            let r = client.get(format!("{basis}{pfad}")).send().await.map_err(|e| e.to_string())?;
+            r.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())
+        }
+    };
+    let manifest = holen(a.manifest).await?.to_vec();
+    let signatur = String::from_utf8(holen(a.signatur).await?.to_vec()).map_err(|e| e.to_string())?;
+    let m = Manifest::lesen(&manifest).map_err(|e| e.to_string())?;
+    let mut geholt = HashMap::new();
+    for d in ablage.fehlende(&m) {
+        geholt.insert(d.sha256.clone(), holen(format!("{}{}", a.blobs, d.sha256)).await?.to_vec());
+    }
+    let pins: Vec<u64> = [GELADEN.get().map(|g| g.id.generation), GELADEN.get().and_then(|g| g.pin.as_ref()).map(|p| p.generation)]
+        .into_iter()
+        .flatten()
+        .collect();
+    tokio::task::spawn_blocking(move || {
+        let id = ablage
+            .installieren(
+                Eingang { manifest: &manifest, signatur: &signatur },
+                &kontext(),
+                &mut |d| geholt.get(&d.sha256).cloned().ok_or_else(|| "nicht geholt".to_string()),
+                &selbsttest,
+            )
+            .map_err(|e| e.to_string())?;
+        if let Err(e) = ablage.aufraeumen(&pins, chrono::Utc::now()) {
+            tracing::warn!(error = %e, "Laufzeit-Paket: Aufraeumen ausgelassen");
+        }
+        Ok(Some(id))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Ein Stand, dessen OurAirports-Dateien nicht das erwartete Format haben,
+/// wird nicht aktiviert (P-3.21).
+fn selbsttest(p: &Paket) -> Result<(), String> {
+    for (pfad, kopf) in [
+        (RUNWAYS, "\"id\",\"airport_ref\",\"airport_ident\""),
+        (AIRPORTS, "ident,type,latitude_deg,longitude_deg"),
+    ] {
+        let text = p.datei(pfad).map_err(|e| e.to_string())?;
+        if !text.starts_with(kopf.as_bytes()) {
+            return Err(format!("{pfad}: Kopfzeile unerwartet"));
+        }
+        if text.iter().filter(|&&b| b == b'\n').count() < 10_000 {
+            return Err(format!("{pfad}: zu wenige Zeilen"));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eingebauter_stand_besteht_den_selbsttest() {
+        assert_eq!(selbsttest(&eingebaut().paket().unwrap()), Ok(()));
+    }
 
     #[test]
     fn eingebauter_stand_ist_ein_gueltiges_paket_mit_ourairports() {

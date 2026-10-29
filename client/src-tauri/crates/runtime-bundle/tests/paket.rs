@@ -573,3 +573,18 @@ fn gleichzeitige_installationen_enden_nie_auf_einer_kleineren_generation() {
     // alten Zeiger vor der 8 gelesen hatte, die 8 ueberschreiben.
     assert_eq!(aktuell, 8);
 }
+
+#[test]
+fn fehlende_nennt_nur_was_lokal_fehlt_oder_kaputt_ist() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let k = kontext(&[&s]);
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let (m5, i5) = paket(5, &[("a", b"bleibt"), ("b", b"alt")]);
+    installieren(&a, &s, &k, &m5, &i5).unwrap();
+    let (m6, _) = paket(6, &[("a", b"bleibt"), ("b", b"neu"), ("c", b"dazu")]);
+    let fehlt: Vec<_> = a.fehlende(&Manifest::lesen(&m6).unwrap()).into_iter().map(|d| d.path).collect();
+    assert_eq!(fehlt, ["b", "c"]);
+    std::fs::write(dir.path().join("blobs").join(hex(&Sha256::digest(b"bleibt"))), b"kaputt").unwrap();
+    assert_eq!(a.fehlende(&Manifest::lesen(&m6).unwrap()).len(), 3);
+}

@@ -28,4 +28,4 @@ fn zerlegung_ist_nur_verschoben() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs-Zerlegung hat Programmtext veraendert");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "f0c5870dd569dc67f887d9a33b5cd796e5fc2ff823e2abf44d22d385c47b3244";
+const HASH_VOR_DER_ZERLEGUNG: &str = "0061b670a5f1e59c56ad9ca220343a80fcf8e9b52a36f50280c8df71c2480e8b";

@@ -54681,7 +54681,7 @@ pub fn run() {
         })
         .setup(|app| {
             // v3 (Etappe 1a): Laufzeit-Paket zuerst — legt OurAirports fest, bevor jemand Bahnen liest.
-            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); }
+            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten); }
             // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
             // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
             // geschrieben werden, an denen ein frueherer Lauf erkannt wird.

@@ -185,6 +185,20 @@ impl Ablage {
         self.zeiger().ok().and_then(|z| z.vorher)
     }
 
+    /// Dateien eines Manifests, die lokal fehlen oder kaputt sind — nur die
+    /// muessen geholt werden (nach Inhalt adressiert, P-3.01).
+    pub fn fehlende(&self, m: &Manifest) -> Vec<Datei> {
+        m.files
+            .iter()
+            .filter(|d| {
+                !fs::read(self.wurzel.join("blobs").join(&d.sha256))
+                    .map(|b| datei_pruefen(d, &b).is_ok())
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Prueft und installiert einen neuen Stand und macht ihn zum aktuellen.
     ///
     /// Reihenfolge nach P-3.20: Signatur → Manifest → passt zum Programm →
