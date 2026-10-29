@@ -468,7 +468,8 @@ pub(crate) struct Grenzwerte {
     pub abgabe: Abgabe,
 }
 
-/// Bereich -> Datei im Paket.
+/// Bereich -> Datei im Paket (Pruefliste fuer Tests).
+#[cfg(test)]
 pub(crate) const DATEIEN: &[&str] = &["grenzwerte/staende.json", "grenzwerte/phasen.json", "grenzwerte/aufsetzen.json", "grenzwerte/ankunft.json", "grenzwerte/spaetes_final.json", "grenzwerte/ausfahrten.json", "grenzwerte/replay.json", "grenzwerte/bahnbewertung.json", "grenzwerte/anflug.json", "grenzwerte/cockpit.json", "grenzwerte/phasen_kern.json", "grenzwerte/landung.json", "grenzwerte/anflug_kern.json", "grenzwerte/ausrollen.json", "grenzwerte/sprit.json", "grenzwerte/abgabe.json"];
 
 static GRENZWERTE: OnceLock<Grenzwerte> = OnceLock::new();
