@@ -150,6 +150,22 @@ mod tests {
         }
     }
 
+    /// Referenz fuer andere Hosts (Server, Node): je Zeile Eingabe und die
+    /// Ausgabe des Crates nativ. `REFERENZ_JSONL=<datei> cargo test -p
+    /// bewertung-host referenz_schreiben -- --ignored`.
+    #[test]
+    #[ignore]
+    fn referenz_schreiben() {
+        let zeilen: Vec<String> = faelle()
+            .iter()
+            .map(|e| {
+                let ein = serde_json::to_string(e).unwrap();
+                serde_json::json!({ "eingabe": ein, "ausgabe": bewerten_json(&ein) }).to_string()
+            })
+            .collect();
+        std::fs::write(std::env::var("REFERENZ_JSONL").unwrap(), zeilen.join("\n") + "\n").unwrap();
+    }
+
     #[test]
     #[ignore]
     fn verbrauch_messen() {
@@ -160,6 +176,27 @@ mod tests {
             .collect();
         v.sort_unstable();
         println!("FUEL min {} median {} max {}", v[0], v[v.len() / 2], v[v.len() - 1]);
+    }
+
+    /// CI (Schritt „Bewertungsmodul gleich dem Quellstand“): Ein frisch aus
+    /// dem Quellstand gebautes Modul (`BEWERTUNG_WASM_FRISCH`) rechnet alle
+    /// Faelle genau wie das eingecheckte und wie das Crate nativ. Bytegleich
+    /// sind Mac- und Linux-Build nicht (29.10.: Funktionsabschnitt weicht ab,
+    /// auch mit fester Toolchain und einer Codegen-Einheit) — verglichen
+    /// wird deshalb, was das Modul rechnet.
+    #[test]
+    fn frisch_gebautes_modul_rechnet_wie_das_eingecheckte() {
+        let Ok(pfad) = std::env::var("BEWERTUNG_WASM_FRISCH") else {
+            return;
+        };
+        let frisch = Host::neu(&std::fs::read(pfad).unwrap()).unwrap();
+        let eingecheckt = Host::neu(MODUL).unwrap();
+        for e in faelle() {
+            let json = serde_json::to_string(&e).unwrap();
+            let a = frisch.bewerten(&json, VIEL).unwrap();
+            assert_eq!(a, eingecheckt.bewerten(&json, VIEL).unwrap(), "{json}");
+            assert_eq!(a, bewerten_json(&json), "{json}");
+        }
     }
 
     #[test]
