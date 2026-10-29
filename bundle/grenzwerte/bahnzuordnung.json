@@ -1,8 +1,8 @@
 {
-  "centerline_tolerance_m": {"wert": 2.0, "einheit": "m", "quelle": "client/src-tauri/src/runway.rs:165 (v2.1.24)"},
-  "min_plausibel_m": {"wert": 20.0, "einheit": "m", "quelle": "client/src-tauri/src/runway.rs:635 (v2.1.24)"},
-  "runway_misplaced_nm": {"wert": 10.0, "einheit": "nm", "quelle": "client/src-tauri/src/runway.rs:799 (v2.1.24)"},
-  "predict_max_heading_diff_deg": {"wert": 30.0, "einheit": "deg", "quelle": "client/src-tauri/src/runway.rs:1825 (v2.1.24)"},
-  "predict_max_threshold_distance_m": {"wert": 27780.0, "einheit": "m", "quelle": "client/src-tauri/src/runway.rs:1829 (v2.1.24)"},
-  "predict_max_centerline_offset_m": {"wert": 3704.0, "einheit": "m", "quelle": "client/src-tauri/src/runway.rs:1831 (v2.1.24)"}
+  "centerline_tolerance_m": {"wert": 2.0, "einheit": "m", "quelle": "client/src-tauri/src/runway.rs:144 (v2.1.24)"},
+  "min_plausibel_m": {"wert": 20.0, "einheit": "m", "quelle": "client/src-tauri/src/runway.rs:614 (v2.1.24)"},
+  "runway_misplaced_nm": {"wert": 10.0, "einheit": "nm", "quelle": "client/src-tauri/src/runway.rs:778 (v2.1.24)"},
+  "predict_max_heading_diff_deg": {"wert": 30.0, "einheit": "deg", "quelle": "client/src-tauri/src/runway.rs:1804 (v2.1.24)"},
+  "predict_max_threshold_distance_m": {"wert": 27780.0, "einheit": "m", "quelle": "client/src-tauri/src/runway.rs:1808 (v2.1.24)"},
+  "predict_max_centerline_offset_m": {"wert": 3704.0, "einheit": "m", "quelle": "client/src-tauri/src/runway.rs:1810 (v2.1.24)"}
 }

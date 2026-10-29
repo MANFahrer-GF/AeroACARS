@@ -615,7 +615,9 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     fn kabine_wie_2_1_24() {
         assert_eq!(eingebaute_datei(KABINE).unwrap(), cabin_announcements::EINGEBAUT.as_bytes());
         let t = format!("{:?}", cabin_announcements::lesen(eingebauter_text(KABINE).unwrap()).unwrap());
-        assert_eq!(abdruck(&t), (12188610868671356069, 8442));
+        // 29.10. nachgezogen: nur `quelle` korrigiert (Zeilen gegen v2.1.24,
+        // phase_sinkflug_hoechstens_rest_min stammt aus e073b562), Werte gleich.
+        assert_eq!(abdruck(&t), (13780505455500687198, 8453));
     }
 
     #[test]

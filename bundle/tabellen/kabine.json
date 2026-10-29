@@ -366,77 +366,77 @@
   "phase_sinkflug_hoechstens_rest_min": {
    "wert": 75.0,
    "einheit": "min",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:265 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs (e073b562, nach v2.1.24)"
   },
   "reiseflug80_vor_tod_s": {
    "wert": 720,
    "einheit": "s",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:268 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:261 (v2.1.24)"
   },
   "zweiter_service_vor_tod_s": {
    "wert": 5400,
    "einheit": "s",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:273 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:266 (v2.1.24)"
   },
   "zweiter_service_rest_min": {
    "wert": 60.0,
    "einheit": "min",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:276 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:269 (v2.1.24)"
   },
   "plaetze_landung_agl_ft": {
    "wert": 2000.0,
    "einheit": "ft",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:279 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:272 (v2.1.24)"
   },
   "boarding_zuladung_kg": {
    "wert": 200.0,
    "einheit": "kg",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:283 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:276 (v2.1.24)"
   },
   "boarding_zuladung_s": {
    "wert": 30,
    "einheit": "s",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:285 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:278 (v2.1.24)"
   },
   "boarding_ofp_kg": {
    "wert": 300.0,
    "einheit": "kg",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:291 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:284 (v2.1.24)"
   },
   "boarding_ofp_anteil": {
    "wert": 0.01,
    "einheit": "",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:292 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:285 (v2.1.24)"
   },
   "boarding_ofp_s": {
    "wert": 60,
    "einheit": "s",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:294 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:287 (v2.1.24)"
   },
   "rollt_ab_kt": {
    "wert": 3.0,
    "einheit": "kt",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:297 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:290 (v2.1.24)"
   },
   "service_nach_reiseflug_s": {
    "wert": 600,
    "einheit": "s",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:300 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:293 (v2.1.24)"
   },
   "tod_frisch_s": {
    "wert": 600,
    "einheit": "s",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:302 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:295 (v2.1.24)"
   },
   "anschnall_aus_stabil_s": {
    "wert": 10,
    "einheit": "s",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:307 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:300 (v2.1.24)"
   },
   "anschnall_aus_sinken_fpm": {
    "wert": -1000.0,
    "einheit": "",
-   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:311 (v2.1.24)"
+   "quelle": "client/src-tauri/crates/cabin-announcements/src/planer.rs:304 (v2.1.24)"
   },
   "applaus_ferien": {
    "wert": 0.85,
