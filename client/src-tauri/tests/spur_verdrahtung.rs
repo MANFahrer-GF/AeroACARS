@@ -155,6 +155,14 @@ fn produktionsteil(quelle: &str) -> String {
         let Some(auf) = nach.find('{') else {
             break;
         };
+        // v3 (Etappe 0): Die Testmodule liegen jetzt in `src/tests_lib/`;
+        // in `lib.rs` steht nur `#[cfg(test)] #[path = …] mod x;` ohne
+        // Block. Endet das Element vor der naechsten Klammer, nur bis zum
+        // `;` abschneiden — sonst verschwaende der naechste Produktionsblock.
+        if let Some(semi) = nach.find(';').filter(|&s| s < auf) {
+            rest = &nach[semi + 1..];
+            continue;
+        }
         let mut tiefe = 0i32;
         let mut ende = None;
         for (k, c) in nach[auf..].char_indices() {
