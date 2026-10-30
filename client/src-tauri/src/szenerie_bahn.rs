@@ -121,6 +121,25 @@ pub struct UebernahmeBericht {
     /// gilt deshalb als „Achse Navigraph".
     #[serde(default)]
     pub achsen: Vec<AchsenUebernahme>,
+    /// P-4.15 (d): Je Navdaten-Bahn OHNE Übernahme die drei nächsten
+    /// Szenerie-Bahnen mit Lage ihrer Mitte — damit sich ein Rückfall auf
+    /// Navigraph aus dem Bericht erklären lässt (Fall UUDD: Szenerie-Bahnen
+    /// unter 1 m entfernt, nur anders benannt).
+    #[serde(default)]
+    pub verworfene_kandidaten: Vec<VerworfeneSzenerieBahn>,
+}
+
+/// P-4.15 (d): Eine nicht genommene Szenerie-Bahn und ihre Lage.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct VerworfeneSzenerieBahn {
+    /// Navdaten-Bahn, für die gesucht wurde.
+    pub bahn: String,
+    /// Bezeichner der Szenerie-Bahn.
+    pub szenerie_bahn: String,
+    /// Mitte der Szenerie-Bahn quer zur Navdaten-Achse (m, + = rechts).
+    pub quer_m: f64,
+    /// Mitte der Szenerie-Bahn längs zur Navdaten-Mitte (m).
+    pub laengs_m: f64,
 }
 
 impl UebernahmeBericht {
@@ -168,9 +187,15 @@ pub enum KursHerkunft {
 
 /// P-4.14 (c): Achse einer Bahn — Herkunft, Facility-Mitte, Verschiebung.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AchsenUebernahme {
     /// Bezeichner der Bahn (Navdaten).
     pub bahn: String,
+    /// P-4.15 (a): Bezeichner der Szenerie-Bahn, wenn er anders lautet
+    /// (Zuordnung über die Lage, etwa UUDD 32L = Navigraph 31L). Die
+    /// Navdaten-Bezeichnung bleibt die Identität der Bahn: ILS,
+    /// `runway_nav_geometry` und die Leitung suchen über sie.
+    pub szenerie_bezeichner: Option<String>,
     pub herkunft: AchsenHerkunft,
     pub kurs_quelle: KursHerkunft,
     /// Mitte der Szenerie-Bahn (Breite, Länge). Bei MSFS die gemeldete
@@ -311,6 +336,78 @@ fn passende_szenerie_bahn<'a>(
         return (Some(b), true);
     }
     (None, bezeichner_passte)
+}
+
+/// P-4.15 (a): Zuordnung über die LAGE, wenn der Bezeichner bei keiner
+/// Szenerie-Bahn passte (`ohne_treffer`).
+///
+/// # Warum
+///
+/// UUDD (td 1647, X-Plane, Client 1.9.22): `kein_treffer(bahnen=6,
+/// ohne_treffer=6)`. Die Szenerie (Gateway 90987, 2022) führt 14/32,
+/// 14L/32R, 14R/32L, Navigraph seit der Missweisungs-Umbenennung 13L/31R,
+/// 13C/31C, 13R/31L — auf unter einem Meter dieselben Schwellen. Allein der
+/// Bezeichner verhinderte die Übernahme; gerechnet wurde still gegen
+/// Navigraph.
+///
+/// Dieselben Lagegrenzen wie über den Bezeichner (Mitte quer/längs). Welches
+/// ENDE es ist, entscheidet die Nähe der Szenerie-Schwelle zur
+/// Navdaten-Schwelle (die Mitte ist für beide Enden dieselbe). Szenerie-
+/// Bahnen, deren Bezeichner zu einer Navdaten-Bahn passt, gehören dieser
+/// und sind hier ausgeschlossen. Nur für `ohne_treffer`, nie für
+/// `verworfen` — passte der Bezeichner und die Lage nicht, ist es eine
+/// andere Bahn (FACT 19, EDHE).
+fn szenerie_bahn_ueber_lage<'a>(
+    nav: &NavAirport,
+    bahn: &NavRunway,
+    sz: &'a SzenerieFlughafen,
+) -> Option<&'a SzenerieBahn> {
+    let g = &crate::grenzwerte::grenzwerte().szenerie;
+    let schwelle = (bahn.threshold.lat, bahn.threshold.lon);
+    sz.bahnen
+        .iter()
+        .filter(|s| {
+            let n = normiert(&s.bezeichner);
+            !nav.runways.iter().any(|r| normiert(&r.designator) == n)
+        })
+        .filter(|s| abstand_m(s.schwelle, schwelle) < abstand_m(s.gegenende, schwelle))
+        .filter_map(|s| {
+            let mitte = ((s.schwelle.0 + s.gegenende.0) / 2.0, (s.schwelle.1 + s.gegenende.1) / 2.0);
+            let (laengs, quer) = achsenversatz_m(
+                (bahn.threshold.lat, bahn.threshold.lon),
+                (bahn.far_end.lat, bahn.far_end.lon),
+                mitte,
+            );
+            (quer <= g.querabstand_hoechst_m.wert && laengs <= g.laengsversatz_hoechst_m.wert).then_some((s, quer))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(s, _)| s)
+}
+
+/// P-4.15 (d): Die nächsten Szenerie-Bahnen einer nicht übernommenen
+/// Navdaten-Bahn, mit Lage ihrer Mitte zur Navdaten-Mitte.
+fn naechste_kandidaten(bahn: &NavRunway, sz: &SzenerieFlughafen) -> Vec<VerworfeneSzenerieBahn> {
+    let Some(r) = Rahmen::aus(bahn) else {
+        return Vec::new();
+    };
+    let mut k: Vec<VerworfeneSzenerieBahn> = sz
+        .bahnen
+        .iter()
+        .map(|s| {
+            let mitte = ((s.schwelle.0 + s.gegenende.0) / 2.0, (s.schwelle.1 + s.gegenende.1) / 2.0);
+            let (laengs_m, quer_m) = r.lage(mitte);
+            VerworfeneSzenerieBahn {
+                bahn: bahn.designator.clone(),
+                szenerie_bahn: s.bezeichner.clone(),
+                quer_m,
+                laengs_m,
+            }
+        })
+        .filter(|v| v.quer_m.is_finite() && v.laengs_m.is_finite())
+        .collect();
+    k.sort_by(|a, b| a.quer_m.hypot(a.laengs_m).total_cmp(&b.quer_m.hypot(b.laengs_m)));
+    k.truncate(3);
+    k
 }
 
 /// Belagsschlüssel der `apt.dat` in die Schreibweise der Navdaten.
@@ -649,13 +746,19 @@ pub fn uebernimm_szenerie(
     for (i, bahn) in aus.runways.iter_mut().enumerate() {
         // Die UNVERAENDERTE Navdaten-Bahn — Bezug fuer Mitte und Versatz.
         let orig = &nav.runways[i];
-        let (treffer, bezeichner_passte) = passende_szenerie_bahn(bahn, sz);
+        let (mut treffer, bezeichner_passte) = passende_szenerie_bahn(bahn, sz);
+        // P-4.15 (a): Passte der Bezeichner nirgends, über die Lage.
+        let ueber_lage = treffer.is_none() && !bezeichner_passte;
+        if ueber_lage {
+            treffer = szenerie_bahn_ueber_lage(nav, orig, sz);
+        }
         let Some(s) = treffer else {
             if bezeichner_passte {
                 b.verworfen.push(bahn.designator.clone());
             } else {
                 b.ohne_treffer.push(bahn.designator.clone());
             }
+            b.verworfene_kandidaten.extend(naechste_kandidaten(orig, sz));
             continue;
         };
 
@@ -772,6 +875,15 @@ pub fn uebernimm_szenerie(
         if !navdaten_kennen_belag {
             if let Some(text) = belag_text(s.belag_code) {
                 bahn.surface = Some(text.to_string());
+            }
+        }
+        if ueber_lage {
+            if let Some(a) = b.achsen.last_mut() {
+                a.szenerie_bezeichner = Some(s.bezeichner.clone());
+                a.grund = Some(match a.grund.take() {
+                    Some(g) => format!("zuordnung_ueber_lage, {g}"),
+                    None => "zuordnung_ueber_lage".to_string(),
+                });
             }
         }
         b.uebernommen.push(bahn.designator.clone());
@@ -1284,6 +1396,130 @@ pub(crate) mod tests {
         let mitte = (53.6459, 9.7042 + 250.0 / (111_320.0 * cos_b));
         let (_, b) = uebernimm_szenerie(&nav, &szenerie_aus_mitte("09", mitte, 90.0, 600.0), Quelle::MsfsFacility);
         assert!(b.achse_aus_szenerie("09"));
+    }
+
+    /// UUDD, Navigraph 2610 (`nav_runways` auf live, lesend; 2611 gleich).
+    fn uudd_navigraph() -> NavAirport {
+        let z = |d: &str, k: f64, l: i32, w: i32, t: (f64, f64), e: (f64, f64)| NavRunway {
+            designator: d.into(),
+            magnetic_course: k - 11.7,
+            true_course: k,
+            length_ft: l,
+            width_ft: Some(w),
+            surface: Some("CON".into()),
+            threshold: punkt(t.0, t.1),
+            far_end: punkt(e.0, e.1),
+            displaced_threshold_ft: 0,
+            ils: None,
+            glideslope_angle: 3.0,
+            tch_ft: 50,
+        };
+        let (a, b) = ((55.41694444, 37.91536111), (55.39936944, 37.936475));
+        let (c, d) = ((55.42451667, 37.91176667), (55.39633611, 37.94561667));
+        let (e, f) = ((55.42106111, 37.87214444), (55.39511944, 37.90335));
+        NavAirport {
+            cycle: "2610".into(),
+            valid_to: String::new(),
+            icao: "UUDD".into(),
+            name: "DOMODEDOVO".into(),
+            latitude: 55.4086,
+            longitude: 37.9061,
+            elevation_ft: Some(588),
+            runways: vec![
+                z("13C", 145.696, 7776, 174, a, b),
+                z("13L", 145.696, 12467, 197, c, d),
+                z("13R", 145.657, 11483, 197, e, f),
+                z("31C", 325.713, 7776, 174, b, a),
+                z("31L", 325.683, 11483, 197, f, e),
+                z("31R", 325.724, 12467, 197, d, c),
+            ],
+        }
+    }
+
+    /// UUDD in der X-Plane-Szenerie: Gateway 90987 (2022), Zeilen 100 der
+    /// `apt.dat` — Ersatz für die installierte Szenerie des Piloten, die im
+    /// Protokoll nicht steht. Die Bezeichner sind die vor der Umbenennung.
+    fn uudd_szenerie(namen: [(&str, &str); 3]) -> SzenerieFlughafen {
+        let zeilen = [
+            (60.0, (55.424633, 37.911833), (55.396436, 37.945803)),
+            (53.0, (55.41695, 37.915344), (55.399375, 37.936464)),
+            (60.0, (55.421061, 37.872139), (55.395117, 37.903344)),
+        ];
+        let mut bahnen = Vec::new();
+        for ((breite, p, q), (n1, n2)) in zeilen.into_iter().zip(namen) {
+            for (name, s, g) in [(n1, p, q), (n2, q, p)] {
+                bahnen.push(SzenerieBahn {
+                    bezeichner: name.into(),
+                    kurs_grad: Rahmen::aus(&NavRunway { threshold: punkt(s.0, s.1), far_end: punkt(g.0, g.1), ..edhe_nav().runways[0].clone() })
+                        .unwrap()
+                        .kurs_grad(),
+                    breite_m: breite,
+                    laenge_m: abstand_m(s, g),
+                    versetzte_schwelle_m: 0.0,
+                    schwelle: s,
+                    gegenende: g,
+                    belag_code: 2,
+                    kurs_bestaetigt_grad: None,
+                    kurs_quelle: sim_core::szenerie::KursQuelle::Unbestaetigt,
+                });
+            }
+        }
+        SzenerieFlughafen {
+            icao: "UUDD".into(),
+            quelle: "Gateway 90987 (Test)".into(),
+            bahnen,
+            ..Default::default()
+        }
+    }
+
+    /// P-4.15 (a)/(c): UUDD (td 1647, X-Plane) bekam `kein_treffer(bahnen=6,
+    /// ohne_treffer=6)` — nur weil die Szenerie die Bahnen vor der
+    /// Umbenennung führt. Über die Lage wird jede Bahn ihrem Szenerie-Ende
+    /// zugeordnet; die Navdaten-Bezeichnung bleibt.
+    #[test]
+    fn uudd_umbenannte_bahnen_werden_ueber_die_lage_zugeordnet() {
+        let nav = uudd_navigraph();
+        let sz = uudd_szenerie([("14", "32"), ("14L", "32R"), ("14R", "32L")]);
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
+        assert_eq!(b.uebernommen.len(), 6, "{b:?}");
+        assert!(b.ohne_treffer.is_empty() && b.verworfen.is_empty());
+        for (navi, szen) in [("31L", "32L"), ("13R", "14R"), ("31R", "32"), ("13C", "14L")] {
+            let a = b.achsen.iter().find(|a| a.bahn == navi).unwrap();
+            assert_eq!(a.szenerie_bezeichner.as_deref(), Some(szen), "{navi}");
+            assert_eq!(a.grund.as_deref(), Some("zuordnung_ueber_lage"));
+            assert!(b.achse_aus_szenerie(navi));
+        }
+        // Die gelandete 31L liegt jetzt auf der Szenerie-Schwelle 32L.
+        let l = aus.runways.iter().find(|r| r.designator == "31L").unwrap();
+        assert_eq!((l.threshold.lat, l.threshold.lon), (55.395117, 37.903344));
+        assert_eq!(l.designator, "31L", "Identitaet bleibt Navigraph (ILS, Leitung)");
+
+        // Gegenprobe: Traegt die Szenerie die Navigraph-Namen, laeuft die
+        // Zuordnung wie bisher ueber den Bezeichner — ohne Lage-Vermerk.
+        let gleich = uudd_szenerie([("13L", "31R"), ("13C", "31C"), ("13R", "31L")]);
+        let (_, b) = uebernimm_szenerie(&nav, &gleich, Quelle::XPlaneDatei);
+        assert_eq!(b.uebernommen.len(), 6);
+        assert!(b.achsen.iter().all(|a| a.grund.is_none() && a.szenerie_bezeichner.is_none()), "{b:?}");
+    }
+
+    /// P-4.15 (d): Findet sich nichts, stehen die naechsten Szenerie-Bahnen
+    /// mit ihrer Lage im Bericht. Und eine gleichnamige Bahn an anderer
+    /// Stelle (verworfen) wird nicht ueber die Lage „gerettet".
+    #[test]
+    fn ohne_uebernahme_stehen_die_naechsten_kandidaten_im_bericht() {
+        let nav = edhe_nav();
+        // Szenerie-Bahn „27" 3 km entfernt: kein Treffer, aber ein Kandidat.
+        let sz = szenerie_aus_mitte("27", (53.6459, 9.7042 + 0.045), 270.0, 1100.0);
+        let (_, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
+        assert_eq!(b.ohne_treffer, vec!["09"]);
+        let k = &b.verworfene_kandidaten[0];
+        assert_eq!((k.bahn.as_str(), k.szenerie_bahn.as_str()), ("09", "27"));
+        assert!((k.laengs_m - 0.045 * 111_320.0 * 53.6459_f64.to_radians().cos()).abs() < 1.0, "{k:?}");
+        // Verworfen (Bezeichner passt, Lage nicht) bleibt verworfen.
+        let sz = szenerie("09", 269.99, 55.0, (53.6459, 9.7033));
+        let (_, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
+        assert_eq!(b.verworfen, vec!["09"]);
+        assert!(b.achsen.is_empty());
     }
 
     /// X-Plane: die Achse kommt aus der Datei und wird so mitgeschrieben.

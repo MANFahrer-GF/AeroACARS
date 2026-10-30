@@ -70,6 +70,7 @@ fn s6_038_uebernahmebericht_ueberlebt_den_neustart_verworfen_getrennt() {
         // P-4.14 (c): Herkunft der Achse samt Facility-Mitte und Verschiebung.
         achsen: vec![AchsenUebernahme {
             bahn: "09".into(),
+            szenerie_bezeichner: None,
             herkunft: AchsenHerkunft::SzenerieMitte,
             kurs_quelle: KursHerkunft::Heading,
             szenerie_mitte: Some((-15.105524, 39.2817712)),
@@ -77,6 +78,12 @@ fn s6_038_uebernahmebericht_ueberlebt_den_neustart_verworfen_getrennt() {
             verschiebung_laengs_m: Some(0.3),
             laengs_gemessen_m: Some(0.3),
             grund: Some("laengs_nicht_angewandt(versetzte_schwelle)".into()),
+        }],
+        verworfene_kandidaten: vec![aeroacars_app_lib::szenerie_bahn::VerworfeneSzenerieBahn {
+            bahn: "27".into(),
+            szenerie_bahn: "28".into(),
+            quer_m: 0.4,
+            laengs_m: -2.0,
         }],
     };
     let json = serde_json::to_string(&voll).unwrap();
