@@ -132,7 +132,10 @@ pub(crate) fn paket_bauen(dateien: &[PathBuf], max: usize) -> Result<Vec<u8>, St
     let mut roh: Vec<u8> = Vec::new();
     for pfad in dateien {
         let Ok(teil) = std::fs::read(pfad) else { continue };
-        roh.extend_from_slice(format!("\n===== {} =====\n", pfad.display()).as_bytes());
+        // Nur der Dateiname: der volle Pfad naennte Benutzername und Ordner,
+        // die die Vorschau nicht zeigt (Codex 30.10.).
+        let name = pfad.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        roh.extend_from_slice(format!("\n===== {name} =====\n").as_bytes());
         roh.extend_from_slice(&teil);
     }
     if roh.is_empty() {
@@ -405,6 +408,15 @@ mod tests {
         std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&gz[..]), &mut text).unwrap();
         assert_eq!(text.len(), 64);
         assert!(text.ends_with("mitte ENDE"));
+        // Kopfzeilen nennen nur den Dateinamen, nie den Ordner (Benutzername).
+        let voll = String::from_utf8_lossy(&{
+            let mut t = Vec::new();
+            std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&paket_bauen(&[b.clone()], 1 << 20).unwrap()[..]), &mut t).unwrap();
+            t
+        })
+        .into_owned();
+        assert!(voll.contains("===== b.log ====="), "{voll}");
+        assert!(!voll.contains(&*ordner.to_string_lossy()), "{voll}");
         assert_eq!(paket_bauen(&[ordner.join("fehlt.log")], 64), Err("keine_datei".to_string()));
         std::fs::remove_dir_all(&ordner).unwrap();
     }

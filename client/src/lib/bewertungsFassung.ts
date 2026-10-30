@@ -36,9 +36,10 @@ export interface Nachbewertung {
   gesamt_wort: string;
 }
 
-/** Nur 3.0-Landungen ohne eigene Note fragen bei live nach. */
+/** Nur Landungen, deren Bewertung im Client gescheitert ist (`modulfehler`),
+ *  fragen bei live nach — eine regulär nicht bewertbare Landung bleibt, wie sie ist. */
 export function nachbewertungNoetig(r: Datensatz): boolean {
-  return istDreiNull(r) && r.score_numeric == null;
+  return r.bewertung_status === "modulfehler" && r.score_numeric == null;
 }
 
 /** Anzeige-Kopie mit der nachbewerteten Note und dem Vermerk — nie gespeichert,

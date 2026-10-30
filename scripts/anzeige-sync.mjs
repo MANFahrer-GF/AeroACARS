@@ -557,6 +557,12 @@ export function vergleiche() {
       });
     }
   }
+  // Getrennte Dateien vergleicht niemand Byte fuer Byte — aber eine, die es
+  // beidseitig geben soll und in der Webapp fehlt, ist trotzdem Drift.
+  for (const [rel, e] of Object.entries(GETRENNT_3_0)) {
+    if (!existsSync(resolve(CLIENT, rel))) drift.push({ rel, grund: "fehlt im Client (GETRENNT_3_0)" });
+    else if (e.beidseitig && !existsSync(resolve(WEBAPP, rel))) drift.push({ rel, grund: "fehlt in der Webapp (GETRENNT_3_0)" });
+  }
   return { erreichbar: true, drift };
 }
 

@@ -91,6 +91,10 @@ describe("Nachbewertung über den Pilot-Zugang (Client)", () => {
     expect(nachbewertungNoetig(FEHLER)).toBe(true);
     expect(nachbewertungNoetig(DREI)).toBe(false);
     expect(nachbewertungNoetig({ ...ZWEI, score_numeric: null })).toBe(false);
+    // 3.0, regulär nicht bewertbar (kein Modulfehler): nicht nachfragen, nicht überlagern
+    const nichtBewertbar = { ...FEHLER, bewertung_status: "endgueltig" };
+    expect(nachbewertungNoetig(nichtBewertbar)).toBe(false);
+    expect(mitNachbewertung(nichtBewertbar, NB)).toBe(nichtBewertbar);
     const r = mitNachbewertung(FEHLER, NB);
     expect([r.score_numeric, r.grade_letter, r.score_label, r.nachbewertet, r.bewertung_status]).toEqual([72, "C", "firm", true, "nachbewertet"]);
     expect(FEHLER.score_numeric).toBeNull(); // Original unverändert
