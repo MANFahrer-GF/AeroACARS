@@ -12,7 +12,9 @@ wasmi = "2.0.0"
 [dev-dependencies]
 wat = "1"
 landing-scoring.workspace = true
-serde_json.workspace = true
+# float_roundtrip wie im Client-Crate: Ohne waere selftest.json je nach
+# Bau (`-p bewertung-host` allein oder `--workspace`) anders erzeugt.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 # Gleichheitslauf: Paket-Kennung (sha256 des Manifests) und Laufzeit.
 sha2 = "0.10"
 chrono.workspace = true

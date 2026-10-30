@@ -44,6 +44,41 @@ fn modul_trifft_jede_erwartete_ausgabe() {
     }
 }
 
+/// Das Paket traegt den Korpus als `selftest.json` (P-3.21): je Fall die
+/// Eingabe und die erwartete Ausgabe als genau die Zeichenkette, die das
+/// Modul bekommt bzw. schreibt. Der Client vergleicht roh (Zeichen fuer
+/// Zeichen), ohne eigene Struktur — ein neueres Modul mit einem Feld mehr
+/// waere sonst falsch abgelehnt. Neu schreiben:
+/// `SELBSTTEST_SCHREIBEN=1 cargo test -p bewertung-host --test selbsttest_korpus`.
+#[test]
+fn selftest_json_im_paket_ist_der_korpus() {
+    let faelle: Vec<Value> = faelle()
+        .into_iter()
+        .map(|(name, fall)| {
+            let eingabe: Eingabe = serde_json::from_value(fall["eingabe"].clone()).unwrap();
+            let ausgabe: Ausgabe = serde_json::from_value(fall["ausgabe"].clone()).unwrap();
+            serde_json::json!({
+                "name": name,
+                "eingabe": serde_json::to_string(&eingabe).unwrap(),
+                "ausgabe": serde_json::to_string(&ausgabe).unwrap(),
+            })
+        })
+        .collect();
+    let soll = serde_json::to_string_pretty(&serde_json::json!({
+        "format": 1,
+        "notiz": "Selbsttest des Bewertungsmoduls (P-3.21, P-13.02): erzeugt aus client/src-tauri/crates/bewertung-host/tests/korpus — nicht von Hand aendern.",
+        "faelle": faelle,
+    }))
+    .unwrap()
+        + "\n";
+    let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../bundle/selftest.json");
+    if std::env::var_os("SELBSTTEST_SCHREIBEN").is_some() {
+        std::fs::write(pfad, &soll).unwrap();
+    }
+    let ist = std::fs::read_to_string(pfad).unwrap_or_default();
+    assert!(ist == soll, "bundle/selftest.json weicht vom Korpus ab — neu schreiben (SELBSTTEST_SCHREIBEN=1)");
+}
+
 /// Gegenprobe: Der Korpus traegt — eine andere Sinkrate aendert die Ausgabe.
 #[test]
 fn andere_eingabe_trifft_die_erwartung_nicht() {

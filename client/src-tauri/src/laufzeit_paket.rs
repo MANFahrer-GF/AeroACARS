@@ -42,6 +42,8 @@ const ENDPUNKTE: &str = "endpunkte.json";
 const MSFS_PROFILE: &str = "profile/msfs.json";
 const BEWERTUNG: &str = "module/bewertung.wasm";
 const KABINE_MODUL: &str = "module/kabine.wasm";
+/// Referenzfaelle des Bewertungsmoduls (P-3.21, P-13.02).
+const SELBSTTEST: &str = "selftest.json";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
@@ -574,7 +576,18 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
                 &mut |d| geholt.get(&d.sha256).cloned().ok_or_else(|| "nicht geholt".to_string()),
                 &selbsttest,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                // P-3.21: Ein Stand, der seinen Selbsttest nicht besteht, wird
+                // nicht aktiviert — und live (GlitchTip) erfaehrt es.
+                if let runtime_bundle::Fehler::Selbsttest(grund) = &e {
+                    crate::sentry_init::capture_activity(
+                        "Laufzeit-Paket: Selbsttest gescheitert",
+                        Some(&format!("Generation {}: {grund}", a.generation)),
+                        sentry::Level::Error,
+                    );
+                }
+                e.to_string()
+            })?;
         if let Err(e) = ablage.aufraeumen(&pins, chrono::Utc::now()) {
             tracing::warn!(error = %e, "Laufzeit-Paket: Aufraeumen ausgelassen");
         }
@@ -657,9 +670,11 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
         let roh = p.datei(pfad).map_err(|e| e.to_string())?;
         pruefen(std::str::from_utf8(&roh).map_err(|e| format!("{pfad}: {e}"))?)?;
     }
-    // Bewertungsmodul: muss laden und die Exporte haben (P-3.21).
+    // Bewertungsmodul: muss laden, die Exporte haben und jeden Fall aus
+    // selftest.json exakt treffen (P-3.21, P-13.02).
     let modul = p.datei(BEWERTUNG).map_err(|e| e.to_string())?;
-    bewertung_host::Host::neu(&modul).map_err(|e| format!("{BEWERTUNG}: {e}"))?;
+    let faelle = p.datei(SELBSTTEST).map_err(|e| e.to_string())?;
+    bewertung_selbsttest(&modul, &faelle)?;
     // Kabinenplaner: muss laden und mit der Tabelle DIESES Stands einen
     // Planer anlegen (Etappe 4).
     let modul = p.datei(KABINE_MODUL).map_err(|e| e.to_string())?;
@@ -681,6 +696,40 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
         }
         if text.iter().filter(|&&b| b == b'\n').count() < 10_000 {
             return Err(format!("{pfad}: zu wenige Zeilen"));
+        }
+    }
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct Selbsttest {
+    faelle: Vec<SelbsttestFall>,
+}
+
+#[derive(serde::Deserialize)]
+struct SelbsttestFall {
+    name: String,
+    eingabe: String,
+    ausgabe: String,
+}
+
+/// P-3.21: Das Modul des Pakets rechnet jeden Referenzfall mit der Grenze
+/// des Betriebs (`FUEL_GRENZE`) und muss die erwartete Ausgabe Zeichen fuer
+/// Zeichen treffen (P-12.03: byte-gleich). Verglichen wird roh, nicht ueber
+/// die Ausgabe-Struktur dieses Programms — ein neueres Modul darf Felder
+/// haben, die dieses Programm nicht kennt.
+fn bewertung_selbsttest(modul: &[u8], selftest: &[u8]) -> Result<(), String> {
+    let s: Selbsttest = serde_json::from_slice(selftest).map_err(|e| format!("{SELBSTTEST}: {e}"))?;
+    if s.faelle.is_empty() {
+        return Err(format!("{SELBSTTEST}: keine Faelle"));
+    }
+    let host = bewertung_host::Host::neu(modul).map_err(|e| format!("{BEWERTUNG}: {e}"))?;
+    for f in &s.faelle {
+        let aus = host
+            .bewerten(&f.eingabe, crate::bewertung::FUEL_GRENZE)
+            .map_err(|e| format!("{SELBSTTEST}: {}: {e}", f.name))?;
+        if aus != f.ausgabe {
+            return Err(format!("{SELBSTTEST}: {} weicht ab", f.name));
         }
     }
     Ok(())
@@ -860,6 +909,28 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     #[test]
     fn eingebauter_stand_besteht_den_selbsttest() {
         assert_eq!(selbsttest(&eingebaut().paket().unwrap()), Ok(()));
+    }
+
+    /// P-3.21/P-13.02: Das Paket traegt den ganzen Korpus (je Simulator
+    /// mindestens 20 Faelle), und eine einzige abweichende Erwartung
+    /// verwirft das Paket — dann bleibt der bisherige Stand (P-3.20).
+    #[test]
+    fn selbsttest_verwirft_ein_paket_mit_abweichender_erwartung() {
+        let roh = eingebaute_datei(SELBSTTEST).expect("selftest.json im Paket");
+        let mut v: serde_json::Value = serde_json::from_slice(roh).unwrap();
+        let namen: Vec<&str> = v["faelle"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+        for sim in ["msfs_", "xplane_"] {
+            assert!(namen.iter().filter(|n| n.starts_with(sim)).count() >= 20, "{sim}");
+        }
+        let letzter = v["faelle"].as_array().unwrap().len() - 1;
+        let aus = v["faelle"][letzter]["ausgabe"].as_str().unwrap().replacen("\"gesamt\":", "\"gesamt\":1", 1);
+        v["faelle"][letzter]["ausgabe"] = aus.into();
+        let falsch = serde_json::to_vec(&v).unwrap();
+        let fehler = selbsttest(&eingebaut_mit(&[(SELBSTTEST, &falsch)]).paket().unwrap()).unwrap_err();
+        assert!(fehler.contains("weicht ab"), "{fehler}");
+        // Ein Paket ohne einen einzigen Fall prueft nichts — abgelehnt.
+        let leer = br#"{"format":1,"faelle":[]}"#;
+        assert!(selbsttest(&eingebaut_mit(&[(SELBSTTEST, leer)]).paket().unwrap()).is_err());
     }
 
     /// Nie gemischt (P-3.02): Gilt schon ein Stand, wird ein zweiter
