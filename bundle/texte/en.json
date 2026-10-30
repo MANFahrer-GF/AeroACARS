@@ -5081,7 +5081,9 @@
       "hilfe_bild_gross": "An image is too large (at most 5 MB).",
       "hilfe_bild_typ": "An image is not a PNG, JPEG or WebP.",
       "ticket_bild_ungueltig": "The HelpDesk rejected an image; the ticket was not created. Send again without the image.",
-      "ticket_zu_gross": "The request is too large for german-sky-group.eu. Attach fewer or smaller images."
+      "ticket_zu_gross": "The request is too large for german-sky-group.eu. Attach fewer or smaller images.",
+      "hilfe_zusatz": "An additional field is invalid (too long or not allowed characters).",
+      "ticket_zusatz_ungueltig": "The HelpDesk rejected an additional field. Please check your entry."
     },
     "kuerzel": "Request help (F1)",
     "zurueck": "Back to the request",
@@ -5110,6 +5112,8 @@
         "gross": "The image is too large (at most 25 MB, at most 5 MB after scaling).",
         "lesen": "The image could not be read."
       }
-    }
+    },
+    "pflicht": "Required",
+    "zusatz_waehlen": "Please choose"
   }
 }

@@ -39,7 +39,14 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 /// `grenzwerte-2` (P-3.55 Nachtrag): zwoelf neue Felder in fuenf Bereichen;
 /// ersetzt `grenzwerte-1`, denn ein Paket ohne sie liest dieses Programm
 /// nicht (`deny_unknown_fields`, fehlende Felder -> eingebauter Stand).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-2", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-3"];
+/// `hilfe-formular-1` (30.10.2026): `tabellen/hilfe-formular.json`
+/// (Zusatzfelder der Hilfe-Seite, Namen prueft der Kern beim Senden),
+/// `endpunkte.json` mit `helpdesk_pfad` und das optionale Argument `zusatz`
+/// von `hilfe_anfordern`. Ein aelteres Programm laese ein solches Paket
+/// nicht (`deny_unknown_fields` in `paket-endpunkte`, Datei unbekannt) — mit
+/// der Faehigkeit uebergeht es das Paket sauber (P-2.30) statt am Lesen zu
+/// scheitern. Kein neuer Befehl: `befehle.json` bleibt.
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-2", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-3", "hilfe-formular-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -52,6 +59,8 @@ const HOEHENGRUPPEN: &str = "tabellen/hoehengruppen.json";
 const KLAPPEN: &str = "tabellen/klappen.json";
 const KABINE: &str = "tabellen/kabine.json";
 const ENDPUNKTE: &str = "endpunkte.json";
+/// Zusatzfelder der Hilfe-Seite (P-9.22, `hilfe-formular-1`).
+const HILFE_FORMULAR: &str = "tabellen/hilfe-formular.json";
 const MSFS_PROFILE: &str = "profile/msfs.json";
 const BEWERTUNG: &str = "module/bewertung.wasm";
 const KABINE_MODUL: &str = "module/kabine.wasm";
@@ -60,7 +69,7 @@ const SELBSTTEST: &str = "selftest.json";
 
 /// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
 /// Liste, nur lesen, nur aus dem geltenden Stand.
-const UI_DATEIEN: &[&str] = &[FLOTTE, "texte/de.json", "texte/en.json", "texte/it.json"];
+const UI_DATEIEN: &[&str] = &[FLOTTE, "texte/de.json", "texte/en.json", "texte/it.json", HILFE_FORMULAR];
 
 /// Alles, was aus dem Laufzeit-Paket kommt, als EIN Stand (P-3.02): Er wird
 /// genau einmal je Programmlauf festgelegt — vollstaendig aus dem Paket oder
@@ -96,6 +105,9 @@ pub(crate) struct AktiverStand {
     /// Adressen der Gegenstellen, nur innerhalb der festen Hostliste von
     /// `paket-endpunkte` (P-3.60).
     pub endpunkte: paket_endpunkte::Endpunkte,
+    /// Zusatzfelder der Hilfe-Seite: die Namen, die `hilfe_anfordern`
+    /// annimmt (die Oberflaeche liest dieselbe Datei ueber `paket_datei`).
+    pub hilfe_formular: crate::hilfe::HilfeFormular,
     /// MSFS-Paketprofile fuer neue Add-ons (Etappe 2, P-3.52).
     pub msfs_profile: sim_core::msfs_paketprofil::Datei,
     /// Bewertungsmodul (WASM, P-4.31) dieses Stands.
@@ -181,6 +193,7 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         kabine: cabin_announcements::lesen(text(KABINE)?)?,
         kabine_json: text(KABINE)?,
         endpunkte: paket_endpunkte::lesen(text(ENDPUNKTE)?)?,
+        hilfe_formular: crate::hilfe::hilfe_formular_lesen(text(HILFE_FORMULAR)?)?,
         msfs_profile: sim_core::msfs_paketprofil::lesen(text(MSFS_PROFILE)?)?,
         bewertung: Box::leak(p.datei(BEWERTUNG).map_err(|e| e.to_string())?.into_boxed_slice()),
         kabine_modul: Box::leak(p.datei(KABINE_MODUL).map_err(|e| e.to_string())?.into_boxed_slice()),
@@ -206,6 +219,7 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         kabine: cabin_announcements::lesen(eingebauter_text(KABINE)?)?,
         kabine_json: eingebauter_text(KABINE)?,
         endpunkte: paket_endpunkte::lesen(eingebauter_text(ENDPUNKTE)?)?,
+        hilfe_formular: crate::hilfe::hilfe_formular_lesen(eingebauter_text(HILFE_FORMULAR)?)?,
         msfs_profile: sim_core::msfs_paketprofil::lesen(eingebauter_text(MSFS_PROFILE)?)?,
         bewertung: eingebaute_datei(BEWERTUNG).ok_or(BEWERTUNG)?,
         kabine_modul: eingebaute_datei(KABINE_MODUL).ok_or(KABINE_MODUL)?,
@@ -678,6 +692,7 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
         (KLAPPEN, |t| klappen_lesen(t).map(|_| ())),
         (KABINE, |t| cabin_announcements::lesen(t).map(|_| ())),
         (ENDPUNKTE, |t| paket_endpunkte::lesen(t).map(|_| ())),
+        (HILFE_FORMULAR, |t| crate::hilfe::hilfe_formular_lesen(t).map(|_| ())),
         (MSFS_PROFILE, |t| sim_core::msfs_paketprofil::lesen(t).map(|_| ())),
     ] {
         let roh = p.datei(pfad).map_err(|e| e.to_string())?;
@@ -932,6 +947,8 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
             let text = paket_datei(format!("texte/{sprache}.json")).unwrap();
             assert!(serde_json::from_str::<serde_json::Value>(text).unwrap().is_object());
         }
+        // Die Hilfe-Seite liest ihre Zusatzfelder aus demselben Stand.
+        assert_eq!(paket_datei(HILFE_FORMULAR.into()).unwrap().as_bytes(), eingebaute_datei(HILFE_FORMULAR).unwrap());
         assert!(paket_datei(CPDLC.into()).is_err());
         assert!(paket_datei("../geheim".into()).is_err());
     }
@@ -939,6 +956,26 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     #[test]
     fn eingebauter_stand_besteht_den_selbsttest() {
         assert_eq!(selbsttest(&eingebaut().paket().unwrap()), Ok(()));
+    }
+
+    /// Ein Zusatzfeld im Paket aendert, was der Kern annimmt — ohne
+    /// Programmaenderung; ein Feld mit Geheimnis-Namen verwirft das Paket.
+    #[test]
+    fn hilfe_formular_kommt_aus_dem_paket() {
+        let neu = br#"{"format":1,"felder":[{"name":"flugnummer","typ":"text","bezeichnung":{"de":"Flugnummer"}}]}"#;
+        let p = eingebaut_mit(&[(HILFE_FORMULAR, neu)]).paket().unwrap();
+        assert_eq!(selbsttest(&p), Ok(()));
+        assert_eq!(stand_aus_paket(&p).unwrap().hilfe_formular.namen, ["flugnummer"]);
+        let boese = br#"{"format":1,"felder":[{"name":"api_key","typ":"text"}]}"#;
+        let fehler = selbsttest(&eingebaut_mit(&[(HILFE_FORMULAR, boese)]).paket().unwrap()).unwrap_err();
+        assert!(fehler.contains("hilfe-formular.json"), "{fehler}");
+        // Pfad aus dem Paket: anderer Pfad geht, fremder Host nicht.
+        let mut e: serde_json::Value = serde_json::from_slice(eingebaute_datei(ENDPUNKTE).unwrap()).unwrap();
+        e["helpdesk_pfad"] = "/api/helpdesk/v2/tickets".into();
+        let p = eingebaut_mit(&[(ENDPUNKTE, e.to_string().as_bytes())]).paket().unwrap();
+        assert_eq!(stand_aus_paket(&p).unwrap().endpunkte.helpdesk_pfad(), "/api/helpdesk/v2/tickets");
+        e["helpdesk_pfad"] = "https://evil.example/api/t".into();
+        assert!(selbsttest(&eingebaut_mit(&[(ENDPUNKTE, e.to_string().as_bytes())]).paket().unwrap()).is_err());
     }
 
     /// P-3.21/P-13.02: Das Paket traegt den ganzen Korpus (je Simulator

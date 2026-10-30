@@ -23,7 +23,8 @@ vi.mock("../lib/hilfeBilder", async (orig) => ({
   bildVorbereiten: (...a: unknown[]) => vorbereitenMock(...a),
 }));
 
-import { HilfeSeite, istHilfeTaste, type HilfeErgebnis, type HilfeVorschau } from "./HilfeSeite";
+import { HilfeSeite, formularLesen, istHilfeTaste, type HilfeErgebnis, type HilfeVorschau } from "./HilfeSeite";
+import HILFE_FORMULAR_EINGEBAUT from "../../../bundle/tabellen/hilfe-formular.json";
 
 const VORSCHAU: HilfeVorschau = {
   meta: {
@@ -392,5 +393,109 @@ describe("HilfeSeite", () => {
     expect(codes.length).toBeGreaterThan(15);
     const fehler = (deCommon as unknown as { hilfe: { fehler: Record<string, string> } }).hilfe.fehler;
     expect(codes.filter((c) => typeof fehler[c] !== "string")).toEqual([]);
+  });
+});
+
+/** Formularbeschreibung, wie sie ein Paket in `tabellen/hilfe-formular.json` trägt. */
+const FORMULAR = {
+  format: 1,
+  notiz: ["Test"],
+  felder: [
+    {
+      name: "flugnummer",
+      typ: "text",
+      pflicht: true,
+      max: 12,
+      bezeichnung: { de: "Flugnummer", en: "Flight number" },
+      hinweis: { de: "z. B. GSG1234" },
+    },
+    {
+      name: "simulator",
+      typ: "auswahl",
+      bezeichnung: { de: "Simulator" },
+      optionen: [
+        { wert: "msfs2024", bezeichnung: { de: "MSFS 2024" } },
+        { wert: "xp12", bezeichnung: { de: "X-Plane 12" } },
+      ],
+    },
+    { name: "bemerkung", typ: "mehrzeilig", bezeichnung: { de: "Bemerkung" } },
+  ],
+};
+
+function oeffnenMitFormular(formular: unknown) {
+  invokeMock.mockImplementation((cmd: string, args?: { pfad?: string }) => {
+    if (cmd === "hilfe_vorschau") return Promise.resolve(VORSCHAU);
+    if (cmd === "paket_datei" && args?.pfad === "tabellen/hilfe-formular.json") return Promise.resolve(JSON.stringify(formular));
+    if (cmd === "hilfe_anfordern") {
+      return Promise.resolve({ kennung: null, link: null, diagnose_fehler: null, ticket: { id: 1, ticket_number: "HD-1", url: null }, ticket_fehler: null });
+    }
+    return Promise.reject(new Error(cmd));
+  });
+  render(<HilfeSeite />);
+}
+
+describe("HilfeSeite: Zusatzfelder aus dem Paket", () => {
+  it("zeigt die Felder der Beschreibung und schickt sie als zusatz mit", async () => {
+    oeffnenMitFormular(FORMULAR);
+    await flush();
+    const flug = screen.getByLabelText(/^Flugnummer/) as HTMLInputElement;
+    expect(flug.placeholder).toBe("z. B. GSG1234");
+    expect(flug.maxLength).toBe(12);
+    expect(screen.getByTestId("hilfe-zusatz-flugnummer").textContent).toContain("Pflichtfeld");
+    const sim = screen.getByLabelText("Simulator") as HTMLSelectElement;
+    expect([...sim.options].map((o) => o.textContent)).toEqual(["Bitte wählen", "MSFS 2024", "X-Plane 12"]);
+    expect(screen.getByLabelText("Bemerkung").tagName).toBe("TEXTAREA");
+
+    // Pflichtfeld leer: Senden gesperrt, auch mit Betreff und Text.
+    fireEvent.change(screen.getByLabelText("Betreff"), { target: { value: "Landung fehlt" } });
+    fireEvent.change(screen.getByLabelText("Was ist passiert?"), { target: { value: "Nach dem Aufsetzen keine Note." } });
+    expect(screen.getByRole("button", { name: "Senden" })).toBeDisabled();
+    fireEvent.change(flug, { target: { value: "  " } });
+    expect(screen.getByRole("button", { name: "Senden" })).toBeDisabled();
+
+    fireEvent.change(flug, { target: { value: " GSG1234 " } });
+    fireEvent.change(sim, { target: { value: "xp12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Senden" }));
+    await flush();
+    // Leere Felder (Bemerkung) gehen nicht mit, Werte getrimmt.
+    expect(invokeMock).toHaveBeenCalledWith("hilfe_anfordern", {
+      betreff: "Landung fehlt",
+      text: "Nach dem Aufsetzen keine Note.",
+      zusatz: { flugnummer: "GSG1234", simulator: "xp12" },
+    });
+  });
+
+  it("ohne Beschreibung im Paket: keine Zusatzfelder, Argumente wie bisher", async () => {
+    oeffnen({ kennung: null, link: null, diagnose_fehler: null, ticket: { id: 1, ticket_number: "HD-1", url: null }, ticket_fehler: null });
+    await flush();
+    expect(screen.queryAllByTestId(/^hilfe-zusatz-/)).toEqual([]);
+    await ausfuellenUndSenden();
+    expect(invokeMock).toHaveBeenCalledWith("hilfe_anfordern", { betreff: "Landung fehlt", text: "Nach dem Aufsetzen keine Note." });
+  });
+
+  it("die eingebaute Beschreibung ist gültig und ändert die Seite nicht", async () => {
+    expect(formularLesen(HILFE_FORMULAR_EINGEBAUT)).toEqual([]);
+    oeffnenMitFormular(HILFE_FORMULAR_EINGEBAUT);
+    await flush();
+    expect(screen.queryAllByTestId(/^hilfe-zusatz-/)).toEqual([]);
+  });
+
+  it("liest die Beschreibung nachsichtig und mit denselben Grenzen wie der Kern", () => {
+    expect(formularLesen({ format: 2, felder: FORMULAR.felder })).toEqual([]);
+    expect(formularLesen("kein objekt")).toEqual([]);
+    const felder = formularLesen({
+      format: 1,
+      felder: [
+        { name: "Flug", typ: "text" },
+        { name: "ok", typ: "zahl", max: 99999 },
+        { name: "ok", typ: "text" },
+        { name: "leer", typ: "auswahl", optionen: [] },
+        { name: "x".repeat(33), typ: "text" },
+      ],
+    });
+    // Nur das erste gültige „ok“; unbekannter Typ bleibt (Seite zeigt ein Textfeld), max gedeckelt.
+    expect(felder.map((f) => [f.name, f.typ, f.max])).toEqual([["ok", "zahl", 2000]]);
+    const viele = formularLesen({ format: 1, felder: Array.from({ length: 13 }, (_, i) => ({ name: `f${i}`, typ: "text" })) });
+    expect(viele.length).toBe(12);
   });
 });
