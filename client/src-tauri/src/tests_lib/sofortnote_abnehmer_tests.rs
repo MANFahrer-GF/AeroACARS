@@ -295,6 +295,16 @@
         let leitung = serde_json::to_value(&ohne).unwrap();
         assert!(leitung.get("seq").is_none() && leitung.get("input_sha256").is_none(), "ohne Wert nicht auf der Leitung");
         assert_eq!((ohne.seq, ohne.input_sha256), (None, None));
+        // Codex 30.10.: Fenster da, aber kein Landungsdatensatz (keine Note,
+        // nicht als „nicht bewertbar“ markiert) → kein Dokument, keine Kennung.
+        {
+            let mut st = f.stats.lock().unwrap();
+            st.landung_fenster = vec![TouchdownWindowSample::from(TelemetrySample::default())];
+            st.landing_score = None;
+            assert!(build_landing_record(&f, &st, None, Some("A321"), None, "YYYY", None, |_| None).is_none());
+        }
+        let ohne = build_pirep_payload(&f, &api_client::FileBody::default(), "YYYY", "YYYY");
+        assert_eq!((ohne.seq, ohne.input_sha256), (None, None), "kein Dokument der Landung");
     }
 
     /// P-5.10: Der Touchdown traegt die Nummer des Aufsetzers (nach einem

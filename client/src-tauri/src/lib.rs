@@ -13433,6 +13433,25 @@ fn diagnose_kandidaten(
         .collect()
 }
 
+/// P-7.23: Reiht jedes eingereichte Protokoll ein, das laut Server fehlt
+/// (Besitzer `besitzer`); gibt die Zahl der eingereihten zurueck. Abgebrochene
+/// Fluege (nicht in `flug_kandidaten`) bleiben draussen.
+fn fehlende_einreihen(
+    daten: &std::path::Path,
+    status: &[aeroacars_mqtt::pirep_status::PirepPruefstatus],
+    flug_kandidaten: &[String],
+    besitzer: &str,
+) -> usize {
+    let mut n = 0;
+    for pirep_id in fehlt_auf_dem_server(status).into_iter().filter(|id| flug_kandidaten.contains(id)) {
+        match upload_warteschlange::protokoll_einreihen(daten, &pirep_id, besitzer) {
+            Ok(_) => n += 1,
+            Err(e) => tracing::warn!(pirep_id = %pirep_id, error = %e, "Nachreichen: nicht einreihbar"),
+        }
+    }
+    n
+}
+
 /// P-7.23: alle Kandidaten ohne Stueckgrenze, Diagnose zuerst, jede ID
 /// einmal, in Abfragen zu hoechstens `NACHREICHEN_ABFRAGE_MAX` IDs.
 fn abfrage_bloecke(diagnose: &[String], flug: &[String]) -> Vec<Vec<String>> {
@@ -13590,24 +13609,16 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
     // Fluege — deren VOLLES Flugprotokoll darf nicht hochgehen, sonst legt
     // der Import eine Sitzung fuer einen Flug an, den es in phpVMS nie gab
     // (Cloud-QS 23.09.2026). Symmetrisch zum Diagnose-Zweig weiter unten.
-    let fehlend: Vec<String> = fehlt_auf_dem_server(&status)
-        .into_iter()
-        .filter(|id| flug_kandidaten.contains(id))
-        .collect();
+    let fehlend = fehlt_auf_dem_server(&status).into_iter().filter(|id| flug_kandidaten.contains(id)).count();
     tracing::info!(
         geprueft,
-        fehlend = fehlend.len(),
+        fehlend,
         "Nachreichen: Flugprotokolle mit dem Server abgeglichen"
     );
     // P-7.23: in die Warteschlange (Besitzer = angemeldetes Konto); der
     // Arbeiter sendet sie einzeln und wiederholt, bis sie ankommen.
-    if !fehlend.is_empty() {
-        if let Ok(daten) = app.path().app_data_dir() {
-            for pirep_id in &fehlend {
-                if let Err(e) = upload_warteschlange::protokoll_einreihen(&daten, pirep_id, &angemeldet.to_string()) {
-                    tracing::warn!(pirep_id = %pirep_id, error = %e, "Nachreichen: nicht einreihbar");
-                }
-            }
+    if let Ok(daten) = app.path().app_data_dir() {
+        if fehlende_einreihen(&daten, &status, &flug_kandidaten, &angemeldet.to_string()) > 0 {
             upload_warteschlange_anstossen();
         }
     }
@@ -24289,6 +24300,16 @@ fn touchdown_input_sha256(flight: &ActiveFlight, stats: &FlightStats) -> String 
     landungs_eingabe::input_sha256(&eingabe, &landungs_herkunft(flight, stats, &eingabe, &arr))
 }
 
+/// Entsteht beim Einreichen ein Landungsdatensatz (und damit das
+/// Eingabe-Dokument der Landung)? Dieselben Bedingungen wie
+/// `build_landing_record`, das sie zuerst prueft.
+fn landungsdatensatz_moeglich(stats: &FlightStats) -> bool {
+    let nicht_bewertbar = stats.landung_abdeckung_fehlt.is_some();
+    stats.landing_at.is_some()
+        && (stats.canonical_landing_rate_fpm().is_some() || nicht_bewertbar)
+        && (stats.landing_score.is_some() || nicht_bewertbar)
+}
+
 /// v3 (P-5.10): `seq` und `input_sha256` des Eingabe-Dokuments der Landung
 /// dieser Einreichung — dieselbe Rechnung (`einreichungs_rechnung`) und
 /// dieselbe Herkunft wie in `eingabe_teile`. Ohne Aufsetzfenster gibt es kein
@@ -24298,7 +24319,9 @@ fn pirep_eingabe_kennung(
     stats: &FlightStats,
     rechnung: &PirepRechnung,
 ) -> (Option<u32>, Option<String>) {
-    if stats.landung_fenster.is_empty() {
+    // Genau dann gibt es ein Dokument der Landung (`eingabe_teile` mit
+    // `record.is_some()`), Codex 30.10.
+    if stats.landung_fenster.is_empty() || !landungsdatensatz_moeglich(stats) {
         return (None, None);
     }
     let herkunft = landungs_herkunft(flight, stats, &rechnung.eingabe, &rechnung.arr);
@@ -26264,6 +26287,9 @@ fn build_landing_record<F>(
 where
     F: Fn(&str) -> Option<(f64, f64)>,
 {
+    if !landungsdatensatz_moeglich(stats) {
+        return None;
+    }
     let touchdown_at = stats.landing_at?;
     // v0.7.21 (MS713-QS): SSoT-Methode statt direkten Feld-Zugriff.
     // Damit der LandingRecord (= was im Pilot-Client Tab Landung
@@ -26947,7 +26973,7 @@ fn record_landing_for_filed_flight(
     };
     let (record, teile) = record;
     // Bewertung fuer die Dokumente AUSSERHALB der Sperre der Flugdaten.
-    let konto = crate::live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
+    let konto = upload_konto(app);
     if let (Some(konto), Ok(daten)) = (konto, app.path().app_data_dir()) {
         let mut abgelegt = false;
         for (i, (art, eingabe, fenster, begleitung, ergebnis)) in teile.iter().enumerate() {
@@ -32370,6 +32396,16 @@ fn flugprotokoll_pfad(app_daten: &std::path::Path, pirep_id: &str) -> std::path:
     app_daten.join("flight_logs").join(format!("{stamm}.jsonl"))
 }
 
+/// Konto der Eingabe-Warteschlange: das angemeldete phpVMS-Konto (stabil
+/// ueber Token-Erneuerungen, Codex 30.10.).
+fn upload_konto(app: &AppHandle) -> Option<String> {
+    app.state::<AppState>()
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock")
+        .map(|id| landungs_eingabe::konto(&id.to_string()))
+}
+
 /// Stoesst den Arbeiter der Upload-Warteschlange an (sofortiger Durchlauf).
 fn upload_warteschlange_anstossen() {
     upload_anstoss().notify_one();
@@ -32400,7 +32436,7 @@ fn spawn_upload_arbeiter(app: &AppHandle) {
 /// je Flug P-7.21).
 async fn uploads_durchlauf(app: &AppHandle) {
     let Ok(daten) = app.path().app_data_dir() else { return };
-    landungs_eingabe::nachsenden(daten.clone(), std::time::Duration::from_secs(30)).await;
+    landungs_eingabe::nachsenden(daten.clone(), upload_konto(app), std::time::Duration::from_secs(30), false).await;
     flugprotokolle_senden(app, &daten).await;
 }
 
@@ -32410,7 +32446,7 @@ async fn uploads_durchlauf(app: &AppHandle) {
 /// der Warteschlange; der PIREP wartet nicht auf live.
 async fn eingabe_vor_dem_bericht(app: &AppHandle) {
     let Ok(daten) = app.path().app_data_dir() else { return };
-    let senden = landungs_eingabe::nachsenden(daten, std::time::Duration::from_secs(10));
+    let senden = landungs_eingabe::nachsenden(daten, upload_konto(app), std::time::Duration::from_secs(10), true);
     if tokio::time::timeout(std::time::Duration::from_secs(15), senden).await.is_err() {
         tracing::info!("Eingabe vor dem Bericht: live antwortet nicht — die Warteschlange sendet spaeter");
     }
@@ -32442,7 +32478,7 @@ async fn flugprotokolle_senden(app: &AppHandle, daten: &std::path::Path) {
         .map(|f| f.pirep_id.clone());
     let pireps_offen: std::collections::HashSet<String> =
         pirep_queue::list_all(app).into_iter().map(|q| q.pirep_id).collect();
-    let konto = live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
+    let konto = angemeldet.map(|id| landungs_eingabe::konto(&id.to_string()));
     let eingaben_offen = uw::eingaben_offen(daten, konto.as_deref());
     // Nur mit Zugangsdaten DIESES Kontos (siehe `MQTT_KEYRING_PHPVMS_PILOT`).
     let zugang = angemeldet.and_then(|id| {
@@ -32477,10 +32513,19 @@ async fn flugprotokolle_senden(app: &AppHandle, daten: &std::path::Path) {
         // Erst lesen, wenn alles geschrieben ist (Schreib-Faden, siehe
         // `record_event`) — sonst fehlten Aufsetzfenster und Analyse.
         let _ = tokio::task::spawn_blocking(flugprotokoll_abwarten).await;
-        if !log_path.exists() {
-            tracing::warn!(pirep_id = %e.pirep_id, "Flugprotokoll fehlt lokal — Eintrag entfernt");
-            uw::erledigt(&pfad);
-            continue;
+        // Nur ein sicher fehlendes Protokoll beendet den Eintrag; ein
+        // Lesefehler ist ein Fehlversuch (Codex 30.10.).
+        match std::fs::metadata(&log_path) {
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!(pirep_id = %e.pirep_id, "Flugprotokoll fehlt lokal — Eintrag entfernt");
+                uw::erledigt(&pfad);
+                continue;
+            }
+            Err(err) => {
+                uw::fehlschlag(&pfad, Utc::now().timestamp_millis(), &format!("Protokoll nicht lesbar: {err}"));
+                continue;
+            }
         }
         let _sperre = UPLOAD_SPERRE.lock().await;
         // Kontowechsel waehrend des Durchlaufs: nichts mit fremden Daten senden.
@@ -32576,7 +32621,7 @@ fn uploads_ausstehend(app: AppHandle) -> Vec<upload_warteschlange::Ausstehend> {
         .lock()
         .expect("authenticated_pilot_id lock")
         .map(|id| id.to_string());
-    let konto = live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
+    let konto = besitzer.as_deref().map(landungs_eingabe::konto);
     upload_warteschlange::ausstehend(&daten, konto.as_deref(), besitzer.as_deref())
 }
 

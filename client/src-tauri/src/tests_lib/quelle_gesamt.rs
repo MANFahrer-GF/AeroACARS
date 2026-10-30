@@ -198,6 +198,14 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// — plus P-3.04: `aktualisieren_im_hintergrund` bekommt den Melder
 /// `paket_pruefung_hinweis` (Aktivitaetsprotokoll nach ueber 30 Tagen ohne
 /// erfolgreiche Pruefung). Test `laufzeit_paket::tests::hinweis_nach_dreissig_tagen_ohne_pruefung`.
+/// — plus Codex 30.10. zur Warteschlange: Konto der Eingaben = phpVMS-Pilot-ID
+/// (`upload_konto`, stabil ueber Token-Erneuerungen); Vorversuch vor dem PIREP
+/// ignoriert den Abstand; fehlendes Protokoll beendet den Eintrag nur bei
+/// `NotFound`; `landungsdatensatz_moeglich` gemeinsam fuer
+/// `build_landing_record` und `pirep_eingabe_kennung`; `fehlende_einreihen`.
+/// Tests `nachreichen_tests::fehlende_werden_alle_eingereiht`,
+/// `landungs_eingabe::tests::abgelehntes_geht_nie_verloren`,
+/// `sofortnote_abnehmer_tests::pirep_nutzlast_nennt_das_eingabe_dokument`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -208,4 +216,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "2eef8da83c20fa44d0e3702802a69f6d4533c602df4d092acb8ce7edcffd4374";
+const HASH_VOR_DER_ZERLEGUNG: &str = "bfc56a86a8c4ffa65e2170ee3fa06ebbc557e65b71784343cfd4ab76b4058555";

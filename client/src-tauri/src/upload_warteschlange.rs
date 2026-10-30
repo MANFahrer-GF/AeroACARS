@@ -113,16 +113,13 @@ pub(crate) struct ProtokollEintrag {
     pub seit_ms: i64,
 }
 
-fn sicher(s: &str) -> String {
-    s.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect()
-}
-
 /// Reiht das Flugprotokoll `pirep_id` ein. Ein schon offener Eintrag bleibt
 /// (mit seinem Merker) unveraendert.
 pub(crate) fn protokoll_einreihen(app_daten: &Path, pirep_id: &str, owner_identity: &str) -> std::io::Result<PathBuf> {
     let ordner = protokoll_ordner(app_daten);
     std::fs::create_dir_all(&ordner)?;
-    let ziel = ordner.join(format!("{}.json", sicher(pirep_id)));
+    // Dieselbe Abbildung wie die Protokolldatei (Codex 30.10.).
+    let ziel = ordner.join(format!("{}.json", protokoll_stamm(pirep_id)));
     if ziel.exists() {
         return Ok(ziel);
     }
@@ -339,7 +336,7 @@ mod tests {
     fn einreihen_und_anzeige_je_konto() {
         let d = ordner("anzeige");
         let p = protokoll_einreihen(&d, "AB/C", "7").unwrap();
-        assert_eq!(p.file_name().unwrap(), "ABC.json");
+        assert_eq!(p.file_name().unwrap(), "AB_C.json", "wie die Protokolldatei AB_C.jsonl");
         fehlschlag(&p, 0, "HTTP 502");
         protokoll_einreihen(&d, "AB/C", "7").unwrap();
         assert_eq!(versuch(&p).versuche, 1, "zweites Einreihen setzt den Merker nicht zurueck");

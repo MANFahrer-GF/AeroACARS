@@ -1,5 +1,5 @@
     use super::{
-        abfrage_bloecke, fehlt_auf_dem_server, nachreich_kandidaten, protokoll_ist_eingereicht,
+        abfrage_bloecke, fehlende_einreihen, fehlt_auf_dem_server, nachreich_kandidaten, protokoll_ist_eingereicht,
         LokalesProtokoll,
     };
     use aeroacars_mqtt::pirep_status::PirepPruefstatus;
@@ -59,6 +59,24 @@
         assert_eq!(alle.len(), 121);
         let liste = [p("neu", 24 * 29, true), p("zu_alt", 24 * 31, true)];
         assert_eq!(nachreich_kandidaten(&liste, None, super::NACHREICHEN_MAX_ALTER, usize::MAX), vec!["neu"]);
+    }
+
+    /// P-7.23 (Codex 30.10.): Alle als fehlend gemeldeten, eingereichten
+    /// Protokolle landen in der Warteschlange — auch ueber 100; vorhandene und
+    /// abgebrochene nicht.
+    #[test]
+    fn fehlende_werden_alle_eingereiht() {
+        let d = std::env::temp_dir().join(format!("aeroacars-fehlende-einreihen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let mut stand: Vec<PirepPruefstatus> = (0..120).map(|i| status(&format!("F{i}"), Some(false))).collect();
+        stand.push(status("DA", Some(true)));
+        stand.push(status("ABGEBROCHEN", Some(false)));
+        let flug: Vec<String> = (0..120).map(|i| format!("F{i}")).chain(["DA".to_string()]).collect();
+        assert_eq!(fehlende_einreihen(&d, &stand, &flug, "7"), 120);
+        let offen = crate::upload_warteschlange::offene_protokolle(&d);
+        assert_eq!(offen.len(), 120);
+        assert!(!offen.contains("DA") && !offen.contains("ABGEBROCHEN"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     fn status(id: &str, da: Option<bool>) -> PirepPruefstatus {

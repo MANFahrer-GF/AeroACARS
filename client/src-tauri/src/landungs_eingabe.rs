@@ -3,8 +3,9 @@
 //!
 //! Das Dokument wird beim Abgeben gebaut und ZUERST auf die Platte gelegt
 //! (Warteschlange `pending_uploads/eingabe/<konto>/`, P-7.21; `<konto>` =
-//! Kurzhash des Pilot-Tokens: nach einem Kontowechsel warten fremde
-//! Dokumente, statt mit dem falschen Token abgelehnt zu werden), dann
+//! Kurzhash der phpVMS-Pilot-ID — stabil, auch wenn das Token erneuert wird;
+//! nach einem Kontowechsel warten fremde Dokumente, statt mit dem falschen
+//! Token abgelehnt zu werden, Codex 30.10.), dann
 //! gesendet. Ohne Aufsetzfenster gibt es kein Dokument (der Server verlangt
 //! mindestens eine Probe). Immer nur EIN Sendevorgang; geloescht wird nur,
 //! wenn die Datei noch genau das Gesendete enthaelt. Scheitert das Senden
@@ -140,9 +141,10 @@ fn sicher(s: &str) -> String {
 /// Aufbewahrung des Abgelehnten (offene Eintraege bleiben, P-7.21).
 const AUFBEWAHREN: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
 
-/// Kontoordner: Kurzhash des Pilot-Tokens (keine Kennung im Klartext).
-pub(crate) fn konto(token: &str) -> String {
-    hex(&Sha256::digest(token.as_bytes()))[..16].to_string()
+/// Kontoordner: Kurzhash der phpVMS-Pilot-ID (keine Kennung im Klartext,
+/// stabil ueber Token-Erneuerungen — Codex 30.10.).
+pub(crate) fn konto(pilot_id: &str) -> String {
+    hex(&Sha256::digest(format!("pilot:{pilot_id}").as_bytes()))[..16].to_string()
 }
 
 /// Legt das Dokument gzip-gepackt in die Warteschlange des Kontos.
@@ -175,6 +177,14 @@ pub(crate) fn folge(status: Option<u16>) -> Folge {
     }
 }
 
+/// Legt ein abgelehntes Dokument nach `abgelehnt/`. Bei Fehler bleibt es, wo
+/// es ist.
+fn nach_abgelehnt(ordner: &Path, pfad: &Path) -> std::io::Result<()> {
+    let abgelehnt = ordner.join("abgelehnt");
+    std::fs::create_dir_all(&abgelehnt)?;
+    std::fs::rename(pfad, abgelehnt.join(pfad.file_name().unwrap_or_default()))
+}
+
 /// Altes Abgelehntes aufraeumen. Offene Eintraege bleiben, egal wie alt
 /// (P-7.21: gibt nie auf).
 fn aufraeumen(ordner: &Path) {
@@ -187,25 +197,28 @@ fn aufraeumen(ordner: &Path) {
     }
 }
 
-/// Sendet alle faelligen Dokumente des angemeldeten Kontos (je Anfrage
-/// hoechstens `zeit`). Ohne Pilot-Token passiert nichts (die Dateien bleiben
-/// liegen). Immer nur ein Durchlauf gleichzeitig (Codex 29.10.).
-pub(crate) async fn nachsenden(app_daten: PathBuf, zeit: std::time::Duration) {
+/// Sendet alle faelligen Dokumente des Kontos `konto` (des angemeldeten
+/// Piloten; je Anfrage hoechstens `zeit`). Ohne Konto oder Pilot-Token
+/// passiert nichts (die Dateien bleiben liegen). `trotz_abstand`: auch
+/// Eintraege, deren naechster Termin noch nicht erreicht ist (der eine
+/// Versuch unmittelbar vor dem PIREP, Codex 30.10.). Immer nur ein Durchlauf
+/// gleichzeitig (Codex 29.10.).
+pub(crate) async fn nachsenden(app_daten: PathBuf, konto: Option<String>, zeit: std::time::Duration, trotz_abstand: bool) {
     use crate::upload_warteschlange as uw;
     static NUR_EINER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _einer = NUR_EINER.lock().await;
-    let Some(token) = crate::live_zugang::pilot_token() else {
+    let (Some(konto), Some(token)) = (konto, crate::live_zugang::pilot_token()) else {
         return;
     };
-    let ordner = uw::eingabe_ordner(&app_daten, &konto(&token));
+    let ordner = uw::eingabe_ordner(&app_daten, &konto);
     aufraeumen(&ordner);
     uw::verwaiste_merker_raeumen(&ordner);
     let url = format!("{}/api/landing-input", crate::live_zugang::live_basis());
     let Ok(client) = reqwest::Client::builder().timeout(zeit).build() else {
         return;
     };
-    for pfad in uw::eingaben(&app_daten, &konto(&token)) {
-        if !uw::faellig(&pfad, chrono::Utc::now().timestamp_millis()) {
+    for pfad in uw::eingaben(&app_daten, &konto) {
+        if !trotz_abstand && !uw::faellig(&pfad, chrono::Utc::now().timestamp_millis()) {
             continue;
         }
         let Ok(koerper) = std::fs::read(&pfad) else { continue };
@@ -228,13 +241,18 @@ pub(crate) async fn nachsenden(app_daten: PathBuf, zeit: std::time::Duration) {
                 tracing::info!(datei = %pfad.display(), "Eingabe-Dokument an live uebergeben");
             }
             Folge::Ablehnen => {
-                let abgelehnt = ordner.join("abgelehnt");
-                let _ = std::fs::create_dir_all(&abgelehnt);
-                if let Some(name) = pfad.file_name() {
-                    let _ = std::fs::rename(&pfad, abgelehnt.join(name));
+                // Nur wenn das Verschieben gelingt, ist der Eintrag erledigt —
+                // sonst bleibt er liegen (Codex 30.10.: kein Datenverlust).
+                match nach_abgelehnt(&ordner, &pfad) {
+                    Ok(()) => {
+                        uw::erledigt(&pfad);
+                        tracing::warn!(datei = %pfad.display(), ?status, "Eingabe-Dokument von live abgelehnt");
+                    }
+                    Err(e) => {
+                        uw::fehlschlag(&pfad, chrono::Utc::now().timestamp_millis(), &format!("abgelehnt, nicht verschiebbar: {e}"));
+                        tracing::warn!(datei = %pfad.display(), error = %e, "Abgelehntes Eingabe-Dokument nicht verschiebbar — bleibt liegen");
+                    }
                 }
-                uw::erledigt(&pfad);
-                tracing::warn!(datei = %pfad.display(), ?status, "Eingabe-Dokument von live abgelehnt");
             }
             Folge::Behalten => {
                 let grund = match (&antwort, status) {
@@ -378,6 +396,24 @@ mod tests {
         }
     }
 
+    /// Codex 30.10.: Laesst sich ein abgelehntes Dokument nicht verschieben
+    /// (hier: `abgelehnt` ist eine Datei), bleibt es liegen. Gegenprobe: mit
+    /// Ordner wird es verschoben.
+    #[test]
+    fn abgelehntes_geht_nie_verloren() {
+        let ordner = std::env::temp_dir().join(format!("aeroacars-li-abg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ordner);
+        std::fs::create_dir_all(&ordner).unwrap();
+        let doc = ordner.join("P1_1.json.gz");
+        std::fs::write(&doc, b"x").unwrap();
+        std::fs::write(ordner.join("abgelehnt"), b"keine Mappe").unwrap();
+        assert!(nach_abgelehnt(&ordner, &doc).is_err());
+        assert!(doc.exists(), "bleibt liegen");
+        std::fs::remove_file(ordner.join("abgelehnt")).unwrap();
+        nach_abgelehnt(&ordner, &doc).unwrap();
+        assert!(!doc.exists() && ordner.join("abgelehnt").join("P1_1.json.gz").exists());
+    }
+
     /// P-7.21: offene Eintraege werden nie wegen ihres Alters geloescht,
     /// altes Abgelehntes schon (Gegenprobe).
     #[test]
@@ -402,8 +438,8 @@ mod tests {
         let p = einreihen(&ordner, "k1", "AB/../C", 2, &d).unwrap();
         assert_eq!(p.file_name().unwrap(), "ABC_2.json.gz");
         assert!(p.starts_with(ordner.join("pending_uploads").join("eingabe").join("k1")), "je Konto ein Ordner");
-        assert_ne!(konto("token-a"), konto("token-b"));
-        assert_eq!(konto("token-a").len(), 16);
+        assert_ne!(konto("7"), konto("8"));
+        assert_eq!(konto("7").len(), 16);
         let mut text = String::new();
         std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(std::fs::File::open(&p).unwrap()), &mut text).unwrap();
         assert_eq!(text, d.to_string());
