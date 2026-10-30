@@ -5,6 +5,8 @@ name: Dev Build (unsigned, manual)
 # (createUpdaterArtifacts wird nur fuer diesen Lauf per --config auf false
 # gesetzt, tauri.conf.json bleibt unberuehrt). v3 (P-11.21): dieselbe
 # Beikonfiguration tauri.lokal.conf.json gibt dem Dev-Build die eigene Kennung
+# (Eingang beta=true: tauri.beta.conf.json, Produktionskennung com.aeroacars.app3
+# fuer Beta-Installer an Vorab-Piloten, weiter ohne Updater-Dateien)
 # com.aeroacars.app3.dev und den Namen "AeroACARS 3 Dev" — eigener Datenordner,
 # ein Probestart beruehrt nie Sitzung oder Flug der Beta. Fuer schnelle Iterationen
 # (z. B. Aircraft-Scan-Fixes), die Thomas auf seiner echten Maschine mit
@@ -23,6 +25,10 @@ on:
     inputs:
       apple_signieren:
         description: 'macOS mit Apple Developer ID signieren + notarisieren (Secrets noetig)'
+        type: boolean
+        default: false
+      beta:
+        description: 'Beta-Installer: Produktionskennung com.aeroacars.app3 (tauri.beta.conf.json) statt Dev-Kennung; weiter ohne Tag, Release und Updater-Dateien'
         type: boolean
         default: false
 
@@ -54,7 +60,7 @@ jobs:
       - name: Build (unsigned, no updater artifacts)
         shell: bash
         working-directory: client
-        run: npx tauri build --bundles nsis --config src-tauri/tauri.lokal.conf.json
+        run: npx tauri build --bundles nsis --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Upload installer
         uses: actions/upload-artifact@v7
@@ -104,7 +110,7 @@ jobs:
       - name: Build (no updater artifacts)
         shell: bash
         working-directory: client
-        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/tauri.lokal.conf.json
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Apple-Signatur pruefen
         if: inputs.apple_signieren
