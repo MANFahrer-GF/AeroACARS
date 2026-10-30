@@ -105,6 +105,7 @@ const CpdlcPanel = lazy(loadCpdlcPanel);
 import { UpdateButton } from "./components/UpdateButton";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { WartungsBand } from "./components/WartungsBand";
+import { PaketHinweis } from "./components/PaketHinweis";
 import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
@@ -995,6 +996,9 @@ function App() {
       {/* v3 (P-9.12) — Wartung geplant/läuft und Störungen aus status.json
           von live (beim Start und alle 10 Minuten). Ohne Netz: nichts. */}
       <WartungsBand />
+      {/* v3 (30.10.) — neue Paket-Generation bereit: Band mit „Jetzt neu
+          starten“, nicht im Flug (PaketHinweis.tsx, prüft alle 30 Min.). */}
+      <PaketHinweis imFlug={activeFlight != null} />
       {/* v1.7.6 — Pflicht-Riegel. Sperrt die Oberfläche, wenn beim Start
           eine neuere Version vorlag: erst aktualisieren, dann fliegen.
           Hält sich selbst zurück bei fehlendem Netz, bei einem Update,

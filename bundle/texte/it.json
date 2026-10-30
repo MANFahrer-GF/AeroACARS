@@ -1849,7 +1849,10 @@
     "ergebnis_fehler": "Controllo non riuscito: {{fehler}}",
     "ergebnis_flug_offen": "Durante un volo non viene scaricato alcun pacchetto.",
     "letzte_fehler": "Ultimo controllo non riuscito: {{fehler}}",
-    "neustart_fehler": "Riavvio non possibile."
+    "neustart_fehler": "Riavvio non possibile.",
+    "hinweis_titel": "Nuovo pacchetto pronto: generazione {{n}}",
+    "hinweis_text": "Un riavvio lo attiva.",
+    "hinweis_spaeter": "Più tardi"
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

@@ -1849,7 +1849,10 @@
     "ergebnis_fehler": "Prüfung fehlgeschlagen: {{fehler}}",
     "ergebnis_flug_offen": "Während eines Flugs wird kein Paket geladen.",
     "letzte_fehler": "Letzte Prüfung fehlgeschlagen: {{fehler}}",
-    "neustart_fehler": "Neustart nicht möglich."
+    "neustart_fehler": "Neustart nicht möglich.",
+    "hinweis_titel": "Neues Paket bereit: Generation {{n}}",
+    "hinweis_text": "Ein Neustart aktiviert es.",
+    "hinweis_spaeter": "Später"
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
