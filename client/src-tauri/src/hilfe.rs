@@ -726,8 +726,13 @@ pub(crate) async fn hilfe_anfordern(
 /// nur im Kern. Fehler kommen als Schluessel unter `hilfe.fehler.*`.
 #[tauri::command]
 pub(crate) async fn hilfe_tickets(app: AppHandle) -> Result<Vec<TicketEintrag>, UiError> {
-    let schluessel = angemeldet(&app).and_then(|_| crate::secrets_load_phpvms_key());
-    let Some(schluessel) = schluessel else {
+    // An den Piloten binden: wechselt die Anmeldung waehrend des Abrufs,
+    // wird die Antwort verworfen (Codex 30.10.: sonst saehe Pilot B die
+    // Tickets von Pilot A).
+    let Some(pilot) = angemeldet(&app) else {
+        return Err(UiError::new("ticket_anmeldung", "no active session"));
+    };
+    let Some(schluessel) = crate::secrets_load_phpvms_key() else {
         return Err(UiError::new("ticket_anmeldung", "no active session"));
     };
     let url = ticket_url(paket_endpunkte::endpunkte().helpdesk_pfad());
@@ -744,6 +749,9 @@ pub(crate) async fn hilfe_tickets(app: AppHandle) -> Result<Vec<TicketEintrag>, 
         Some((s, r.text().await.unwrap_or_default()))
     }
     .await;
+    if angemeldet(&app) != Some(pilot) {
+        return Err(UiError::new("ticket_anmeldung", "session changed"));
+    }
     match antwort.map(|(s, b)| ticket_liste_antwort(s, &b)) {
         Some(Ok(liste)) => Ok(liste),
         Some(Err(code)) => Err(UiError::new(code, "ticket list")),

@@ -32,11 +32,11 @@
 (function () {
   var sprache = (navigator.language || "de").slice(0, 2).toLowerCase();
   var T = {
-    de: { pruefen: "Suche nach einem neuen Paket …", laden: "Paket wird geladen … Generation ", installieren: "Paket wird geprüft und installiert …", weiter: "Überspringen", von: " von " },
-    en: { pruefen: "Checking for a new package …", laden: "Loading package … generation ", installieren: "Verifying and installing package …", weiter: "Skip", von: " of " },
-    it: { pruefen: "Ricerca di un nuovo pacchetto …", laden: "Caricamento del pacchetto … generazione ", installieren: "Verifica e installazione del pacchetto …", weiter: "Salta", von: " di " }
+    de: { pruefen: "Suche nach einem neuen Paket …", laden: "Paket wird geladen … Generation ", installieren: "Paket wird geprüft und installiert …", weiter: "Überspringen", von: " von ", fehler: "AeroACARS konnte das Hauptfenster nicht öffnen. Bitte das Programm beenden und neu starten." },
+    en: { pruefen: "Checking for a new package …", laden: "Loading package … generation ", installieren: "Verifying and installing package …", weiter: "Skip", von: " of ", fehler: "AeroACARS could not open its main window. Please quit and restart the program." },
+    it: { pruefen: "Ricerca di un nuovo pacchetto …", laden: "Caricamento del pacchetto … generazione ", installieren: "Verifica e installazione del pacchetto …", weiter: "Salta", von: " di ", fehler: "AeroACARS non è riuscito ad aprire la finestra principale. Chiudi e riavvia il programma." }
   }[sprache] || null;
-  if (!T) { T = { pruefen: "Suche nach einem neuen Paket …", laden: "Paket wird geladen … Generation ", installieren: "Paket wird geprüft und installiert …", weiter: "Überspringen", von: " von " }; sprache = "de"; }
+  if (!T) { T = { pruefen: "Suche nach einem neuen Paket …", laden: "Paket wird geladen … Generation ", installieren: "Paket wird geprüft und installiert …", weiter: "Überspringen", von: " von ", fehler: "AeroACARS konnte das Hauptfenster nicht öffnen. Bitte das Programm beenden und neu starten." }; sprache = "de"; }
   document.documentElement.lang = sprache;
   var text = document.getElementById("text"), spur = document.getElementById("spur"),
       balken = document.getElementById("balken"), zahl = document.getElementById("zahl"),
@@ -58,7 +58,9 @@
       balken.style.width = "";
       zahl.textContent = "";
     }
-    weiter.hidden = z.phase === "installieren";
+    weiter.hidden = z.phase === "installieren" || z.phase === "fehler";
+    // Fehler: kein laufender Balken, nur der Hinweis.
+    spur.hidden = z.phase === "fehler";
   };
   window.aeroStart({ phase: "pruefen", generation: null, geladen: 0, gesamt: 0 });
 })();

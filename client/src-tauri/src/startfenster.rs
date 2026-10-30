@@ -63,6 +63,12 @@ impl Einmal {
     fn erster(&self) -> bool {
         !self.0.swap(true, Ordering::SeqCst)
     }
+
+    /// Nach einem gescheiterten Bau: der naechste Versuch darf wieder
+    /// (Codex 30.10.: sonst blieb die App ohne Hauptfenster).
+    fn freigeben(&self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 static HAUPTFENSTER_GEBAUT: Einmal = Einmal(AtomicBool::new(false));
@@ -100,17 +106,27 @@ fn melder<R: Runtime>(app: AppHandle<R>, letzter: Arc<Mutex<Option<Fortschritt>>
 }
 
 /// Hauptfenster aus `tauri.conf.json` bauen (`create: false`): dieselben
-/// Eigenschaften wie frueher, nur erst jetzt. Schon vorhanden = nichts tun.
-fn hauptfenster_bauen<R: Runtime>(app: &AppHandle<R>) {
-    if !HAUPTFENSTER_GEBAUT.erster() || app.get_webview_window(HAUPT).is_some() {
-        return;
+/// Eigenschaften wie frueher, nur erst jetzt. `true` = es existiert danach.
+/// Scheitert der Bau, wird die Sperre wieder freigegeben.
+fn hauptfenster_bauen<R: Runtime>(app: &AppHandle<R>) -> bool {
+    if app.get_webview_window(HAUPT).is_some() {
+        return true;
+    }
+    if !HAUPTFENSTER_GEBAUT.erster() {
+        return app.get_webview_window(HAUPT).is_some();
     }
     let Some(cfg) = app.config().app.windows.iter().find(|w| w.label == HAUPT).cloned() else {
         tracing::error!("Hauptfenster: nicht in tauri.conf.json");
-        return;
+        HAUPTFENSTER_GEBAUT.freigeben();
+        return false;
     };
-    if let Err(e) = WebviewWindowBuilder::from_config(app, &cfg).and_then(|b| b.build()) {
-        tracing::error!(error = %e, "Hauptfenster: nicht anlegbar");
+    match WebviewWindowBuilder::from_config(app, &cfg).and_then(|b| b.build()) {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::error!(error = %e, "Hauptfenster: nicht anlegbar");
+            HAUPTFENSTER_GEBAUT.freigeben();
+            false
+        }
     }
 }
 
@@ -121,10 +137,16 @@ fn abschliessen(app: &AppHandle, daten: Option<&Path>) {
         // Wirkt nur, wenn der Stand noch nicht feststeht (z. B. ohne Startfenster).
         laufzeit_paket::starten(d);
     }
-    hauptfenster_bauen(app);
+    // Ein zweiter Versuch, falls der erste Bau scheitert.
+    let da = hauptfenster_bauen(app) || hauptfenster_bauen(app);
     crate::nach_dem_stand(app, daten);
     if let Some(w) = app.get_webview_window(START) {
-        let _ = w.destroy();
+        if da {
+            let _ = w.destroy();
+        } else {
+            // Nie unsichtbar weiterlaufen: das Startfenster bleibt und sagt es.
+            let _ = w.eval(r#"window.aeroStart&&window.aeroStart({"phase":"fehler","generation":null,"geladen":0,"gesamt":0})"#);
+        }
     }
 }
 
@@ -205,6 +227,10 @@ mod tests {
         let e = Einmal::default();
         assert!(e.erster());
         assert!(!e.erster());
+        assert!(!e.erster());
+        // Gescheiterter Bau gibt frei: genau ein neuer Versuch.
+        e.freigeben();
+        assert!(e.erster());
         assert!(!e.erster());
     }
 
