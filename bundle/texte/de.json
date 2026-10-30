@@ -1813,6 +1813,10 @@
       "sinklauf": "Sinkrate {{s}} s am Stück stärker als {{grenze}} ({{von}} → {{bis}} ft über der Schwelle, bis {{spitze}})",
       "nicht_aufgezeichnet": "Wind im Anflug wurde bei diesem Flug noch nicht aufgezeichnet (erst ab Score-Version 24).",
       "wind_nicht_gemessen": "Der Simulator hat in diesem Anflug keinen Wind geliefert."
+    },
+    "vermerk": {
+      "bewertet_2x": "bewertet mit 2.x",
+      "titel_2x": "Mit AeroACARS 2.x bewertet; die gespeicherte Note bleibt unverändert und wird nicht neu gerechnet."
     }
   },
   "about": {

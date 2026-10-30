@@ -329,6 +329,9 @@ export interface LandingRecord {
    *  (LDA-basierter Score). UI rendert die neuen extra-Lines + erweiterten
    *  Rationale-/Warning-Keys nur wenn `>= 2`. */
   score_algorithm_version?: number | null;
+  /** v3 (P-4.33): woher die Note kam — `endgueltig`, `vorlaeufig`,
+   *  `modulfehler` (Rust `bewertung_status`); fehlt bei 2.x-Datensaetzen. */
+  bewertung_status?: string | null;
   /** v3 (P-4.21): Farbgrenzen aus der Modulausgabe (`grenzen`). Fehlt bei
    *  2.x-Datensaetzen — dann gelten `GRENZEN_ALTBESTAND_2X`. */
   modul_grenzen?: Grenzen | null;

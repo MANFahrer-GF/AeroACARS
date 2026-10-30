@@ -2,10 +2,11 @@
 // Flugzeug, Messgüte), Unfall- und Divert-Banner, Hinweis-Marken,
 // Teilnoten mit Erklärungen und Coach-Tipp.
 //
-// GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). Bis
-// 05.10.2026 lebte das in LandingPanel.tsx; die Webapp hatte eigene Fassungen
-// (anderer Kopf ohne Buchstaben, Teilnoten ohne Erklärungen, eigene
-// Banner). Jetzt zeigen beide Seiten dasselbe aus demselben Code.
+// Bis 2.x GESPIEGELT in die Webapp. Bis 05.10.2026 lebte das in
+// LandingPanel.tsx; die Webapp hatte eigene Fassungen (anderer Kopf ohne
+// Buchstaben, Teilnoten ohne Erklärungen, eigene Banner). Seit 3.0 je Seite
+// eigen (scripts/anzeige-sync.mjs, GETRENNT_3_0): gleiche Anzeige, je eigene
+// Quelle des Urteils; der Text wird im Gleichstand THY39 verglichen.
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,6 +19,7 @@ import { rolloutLdaMeters } from "../lib/runwayGeometry";
 import { scoreBasisVs } from "./SinkrateForensik";
 import { istBewertbar } from "../lib/landungsFormat";
 import { deckelText } from "../lib/landungsUrteil";
+import { bewertetMit2x } from "../lib/bewertungsFassung";
 import { ForensicsBadge } from "./ForensicsBadge";
 import { SpritBadge } from "./SpritSektion";
 import { InfoBadge } from "./InfoBadge";
@@ -1003,7 +1005,14 @@ export function LandungsKopf({
                 ohneAltHinweis={(record.score_algorithm_version ?? 0) < 19}
               />
             </>
-          ) : null}{" "}
+          ) : null}
+          {/* P-14.02: wie die Webapp (Bewertet2xVermerk/LandungsKopf). */}
+          {bewertetMit2x(record) && (
+            <span data-testid="kopf-bewertet-mit-2x" title={t("landing.vermerk.titel_2x")} style={{ color: "var(--text-muted)" }}>
+              {" · "}
+              {t("landing.vermerk.bewertet_2x")}
+            </span>
+          )}{" "}
           ·{" "}
           {fmtDateTime(record.touchdown_at, i18n.language)}
           {isPreview && (

@@ -1813,6 +1813,10 @@
       "sinklauf": "Rateo di discesa oltre {{grenze}} per {{s}} s di fila ({{von}} → {{bis}} ft sopra la soglia, fino a {{spitze}})",
       "nicht_aufgezeichnet": "Il vento in avvicinamento non era ancora registrato per questo volo (solo dalla versione di punteggio 24).",
       "wind_nicht_gemessen": "Il simulatore non ha fornito il vento in questo avvicinamento."
+    },
+    "vermerk": {
+      "bewertet_2x": "valutato con 2.x",
+      "titel_2x": "Valutato con AeroACARS 2.x; il voto salvato resta invariato e non viene ricalcolato."
     }
   },
   "about": {

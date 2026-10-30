@@ -5663,6 +5663,18 @@ input:disabled {
   text-transform: uppercase;
   white-space: nowrap;
 }
+/* P-14.02: dezenter Vermerk „bewertet mit 2.x" unter dem Buchstaben. */
+.landing-ov-vermerk {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.85;
+  white-space: nowrap;
+  font-family: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+}
 .landing-ov-grade--smooth { color: var(--sem-ok); }
 .landing-ov-grade--acceptable { color: var(--sem-info); }
 .landing-ov-grade--firm { color: var(--sem-warn); }

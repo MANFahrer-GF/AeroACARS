@@ -64,6 +64,7 @@ import { RohdatenAbschnitt } from "./RohdatenAbschnitt";
 export { scoreG };
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus, type PirepPruefstatus } from "./PirepPruefstatus";
 import { gateAus, gateMarke } from "../lib/stableGate";
+import { bewertetMit2x } from "../lib/bewertungsFassung";
 // Datensatz-Typen: lib/landungsDatensatz.ts (gespiegelt in die Webapp).
 import type {
   ApproachSample,
@@ -1602,6 +1603,12 @@ export function LandingPanel() {
                         so a11y's "never colour alone" concern still holds. */}
                     <td className={`landing-ov-table__num landing-ov-grade landing-ov-grade--${cat}`}>
                       {r.grade_letter}
+                      {/* P-14.02: wie die Webapp-Listen (Bewertet2xVermerk). */}
+                      {bewertetMit2x(r) && (
+                        <span className="landing-ov-vermerk" data-testid="bewertet-mit-2x" title={t("landing.vermerk.titel_2x")}>
+                          {t("landing.vermerk.bewertet_2x")}
+                        </span>
+                      )}
                     </td>
                     <td className="landing-ov-chevron" aria-hidden="true">
                       ›

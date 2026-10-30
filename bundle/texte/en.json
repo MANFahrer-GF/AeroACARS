@@ -1813,6 +1813,10 @@
       "sinklauf": "Sink rate stronger than {{grenze}} for {{s}} s in a row ({{von}} → {{bis}} ft above the threshold, up to {{spitze}})",
       "nicht_aufgezeichnet": "Wind on approach was not yet recorded for this flight (only from score version 24).",
       "wind_nicht_gemessen": "The simulator did not provide wind on this approach."
+    },
+    "vermerk": {
+      "bewertet_2x": "rated with 2.x",
+      "titel_2x": "Rated with AeroACARS 2.x; the stored grade is unchanged and is not recalculated."
     }
   },
   "about": {
