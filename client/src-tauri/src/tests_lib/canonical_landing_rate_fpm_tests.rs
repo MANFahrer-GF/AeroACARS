@@ -317,6 +317,31 @@
         assert_eq!(vref_aus_dem_flugzeug(&snap), Some((141.0, "pmdg")));
     }
 
+    /// P-11.27 (B-033, A220-Auswertung): Die Landestellung kommt aus der
+    /// Raste (`flap_handle_index` / `flap_num_positions`), nie aus dem
+    /// skalierten `flaps_position` — beim A220 liest der Hebel-LVar 0.2 bei
+    /// voller Landestellung oder 0.0 den ganzen Flug.
+    #[test]
+    fn landestellung_kommt_aus_der_raste_nie_aus_flaps_position() {
+        let mut snap = SimSnapshot { vls_kt: Some(128.0), ..SimSnapshot::default() };
+        // Skaliert „voll", Raste 2 von 5: keine Landestellung.
+        snap.flaps_position = 1.0;
+        snap.flap_handle_index = Some(2);
+        snap.flap_num_positions = Some(5);
+        assert_eq!(vref_aus_dem_flugzeug(&snap), None);
+        let (i, n) = (snap.flap_handle_index, snap.flap_num_positions);
+        assert_eq!(landing_scoring::vref::landeklappen(i, n), Some(false));
+        // Skaliert 0.2 (A220-LVar), Raste 5 von 5: Landestellung.
+        snap.flaps_position = 0.2;
+        snap.flap_handle_index = Some(5);
+        assert_eq!(vref_aus_dem_flugzeug(&snap), Some((128.0, "fmc")));
+        // Ohne Raste wird nichts aus `flaps_position` abgeleitet.
+        snap.flaps_position = 1.0;
+        snap.flap_handle_index = None;
+        snap.flap_num_positions = None;
+        assert_eq!(vref_aus_dem_flugzeug(&snap), None);
+    }
+
     /// Gegenprobe: ein bereits korrekter Datensatz darf sich nicht aendern,
     /// und die Normalisierung muss ueber die ganze Leiter stimmen.
     #[test]

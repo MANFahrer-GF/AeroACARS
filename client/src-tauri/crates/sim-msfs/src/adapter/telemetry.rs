@@ -9313,6 +9313,36 @@ mod tests {
         );
     }
 
+    /// P-11.27 (B-033, A220-Auswertung): Die Raste kommt aus den SimVars
+    /// `FLAPS NUM HANDLE POSITIONS` / `FLAPS HANDLE INDEX` des Datenblocks,
+    /// nie aus dem skalierten `FLAPS HANDLE PERCENT` (`flaps_position`).
+    #[test]
+    fn raste_kommt_aus_flap_num_positions_nie_aus_flaps_position() {
+        let block = |werte: &[(&str, f64)]| {
+            let mut buf: Vec<u8> = Vec::new();
+            for f in TELEMETRY_FIELDS {
+                let v = werte.iter().find(|(n, _)| *n == f.name).map_or(0.0, |(_, v)| *v);
+                match f.kind {
+                    FieldKind::Float64 => buf.extend_from_slice(&v.to_le_bytes()),
+                    FieldKind::Int32 => buf.extend_from_slice(&0i32.to_le_bytes()),
+                    FieldKind::String256 => buf.extend_from_slice(&[0u8; 256]),
+                }
+            }
+            telemetry_to_snapshot(Telemetry::from_block(&buf), Simulator::Msfs2024)
+        };
+        // Skaliert „voll", Raste 3 von 5: die Raste bleibt 3/5.
+        let snap = block(&[
+            ("FLAPS HANDLE PERCENT", 1.0),
+            ("FLAPS NUM HANDLE POSITIONS", 5.0),
+            ("FLAPS HANDLE INDEX", 3.0),
+        ]);
+        assert_eq!((snap.flap_handle_index, snap.flap_num_positions), (Some(3), Some(5)));
+        assert!((snap.flaps_position - 1.0).abs() < 1e-6);
+        // Ohne Rastenzahl keine Raste — auch nicht aus `flaps_position`.
+        let snap = block(&[("FLAPS HANDLE PERCENT", 1.0), ("FLAPS HANDLE INDEX", 3.0)]);
+        assert_eq!((snap.flap_handle_index, snap.flap_num_positions), (None, None));
+    }
+
     #[test]
     fn synaptic_a220_ap_master_and_submodes_from_fg_and_dedicated_lvar() {
         let mut t = synaptic_a220_telemetry();
