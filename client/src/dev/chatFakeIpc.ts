@@ -31,6 +31,7 @@ const nachrichten = Array.from({ length: anzahl }, (_, i) => ({
 
 export async function invoke<T>(cmd: string): Promise<T> {
   if (cmd === "chat_verlauf") return { nachrichten, kein_laufender_flug: false } as T;
+  if (cmd === "paket_info") return { generation: 57 } as T;
   if (cmd === "chat_teilnehmer") {
     return {
       teilnehmer: Array.from({ length: 6 }, (_, i) => ({

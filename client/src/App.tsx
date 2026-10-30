@@ -106,6 +106,7 @@ import { UpdateButton } from "./components/UpdateButton";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { WartungsBand } from "./components/WartungsBand";
 import { PaketHinweis } from "./components/PaketHinweis";
+import { PaketNeu } from "./components/PaketNeu";
 import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
@@ -999,6 +1000,9 @@ function App() {
       {/* v3 (30.10.) — neue Paket-Generation bereit: Band mit „Jetzt neu
           starten“, nicht im Flug (PaketHinweis.tsx, prüft alle 30 Min.). */}
       <PaketHinweis imFlug={activeFlight != null} />
+      {/* v3 (30.10.) — „Neu in Generation N“: Text aus den Paket-Texten,
+          einmal je Text, nicht im Flug (PaketNeu.tsx). */}
+      <PaketNeu imFlug={activeFlight != null} />
       {/* v1.7.6 — Pflicht-Riegel. Sperrt die Oberfläche, wenn beim Start
           eine neuere Version vorlag: erst aktualisieren, dann fliegen.
           Hält sich selbst zurück bei fehlendem Netz, bei einem Update,

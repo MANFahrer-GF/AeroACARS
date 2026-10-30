@@ -7,6 +7,7 @@ import { initReactI18next } from "react-i18next";
 import deCommon from "../../../bundle/texte/de.json";
 import "../App.css";
 import { ChatView } from "../components/ChatView";
+import { PaketNeu } from "../components/PaketNeu";
 import { sichtbereichHalten } from "../lib/sichtbereich";
 
 void i18n.use(initReactI18next).init({
@@ -42,6 +43,7 @@ createRoot(document.getElementById("root")!).render(
     <div className="shell" data-nav="wide">
       <aside className="nav" />
       <main className="app">
+        <PaketNeu imFlug={false} />
         <ChatView eigenePilotId="GSG0001" phase="CRUISE" onGelesen={() => undefined} />
       </main>
     </div>

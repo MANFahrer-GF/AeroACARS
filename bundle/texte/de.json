@@ -1852,7 +1852,11 @@
     "neustart_fehler": "Neustart nicht möglich.",
     "hinweis_titel": "Neues Paket bereit: Generation {{n}}",
     "hinweis_text": "Ein Neustart aktiviert es.",
-    "hinweis_spaeter": "Später"
+    "hinweis_spaeter": "Später",
+    "neu_titel": "Neu in Generation {{n}}",
+    "neu_titel_ohne": "Neu in diesem Paket",
+    "neu_verstanden": "Verstanden",
+    "neu_text": "Pilotenchat auf dem iPad über die LAN-Brücke: Nach dem Tippen bleibt der Chat jetzt vollständig sichtbar. Vorher konnte die Fläche schwarz werden und das Eingabefeld nach oben verschwinden."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",

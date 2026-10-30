@@ -1852,7 +1852,11 @@
     "neustart_fehler": "Restart not possible.",
     "hinweis_titel": "New package ready: generation {{n}}",
     "hinweis_text": "A restart activates it.",
-    "hinweis_spaeter": "Later"
+    "hinweis_spaeter": "Later",
+    "neu_titel": "New in generation {{n}}",
+    "neu_titel_ohne": "New in this package",
+    "neu_verstanden": "Got it",
+    "neu_text": "Pilot chat on the iPad via the LAN bridge: the chat now stays fully visible while you type. Before, the area could turn black and the input field slide out of view."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
