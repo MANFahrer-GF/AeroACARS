@@ -254,6 +254,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `neustart_nur_ohne_flug_und_mit_wartendem_paket`,
 /// `arrived_fallback_geometry_tests::kabinen_lage_traegt_das_flugbild_zum_modul`,
 /// `tests/befehlsliste.rs::paket_befehle_der_ui_befehle_4`.
+/// — plus „Meine Anfragen“ 30.10. (ui-befehle-4): EINE Zeile im
+/// `generate_handler!`, `hilfe::hilfe_tickets` (Stufe `fachlich`, nur lesen
+/// der eigenen HelpDesk-Tickets). Sonst nichts an `lib.rs`. Tests
+/// `hilfe::tests::ticket_liste_*`, `tests/befehlsliste.rs::hilfe_tickets_ist_fachlich`,
+/// vitest `MeineAnfragen.test.tsx`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -264,4 +269,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "7ec1492ef3e19017850beff0c27c94ff075dc12762a8262987fff8c587586ae1";
+const HASH_VOR_DER_ZERLEGUNG: &str = "f733bf250ef64bed8689bff2eadc0bdd48efeb999857144b8b4a6eabbc681b7f";

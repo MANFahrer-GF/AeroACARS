@@ -5098,7 +5098,8 @@
       "ticket_bild_ungueltig": "The HelpDesk rejected an image; the ticket was not created. Send again without the image.",
       "ticket_zu_gross": "The request is too large for german-sky-group.eu. Attach fewer or smaller images.",
       "hilfe_zusatz": "An additional field is invalid (name not allowed, too many fields, too long or not allowed characters).",
-      "ticket_zusatz_ungueltig": "The HelpDesk rejected an additional field. Please check your entry."
+      "ticket_zusatz_ungueltig": "The HelpDesk rejected an additional field. Please check your entry.",
+      "ticket_liste_fehlt": "The list of your requests needs a newer HelpDesk on german-sky-group.eu."
     },
     "kuerzel": "Request help (F1)",
     "zurueck": "Back to the request",
@@ -5129,6 +5130,14 @@
       }
     },
     "pflicht": "Required",
-    "zusatz_waehlen": "Please choose"
+    "zusatz_waehlen": "Please choose",
+    "anfragen": {
+      "titel": "My requests",
+      "aktualisieren": "Refresh",
+      "laedt": "Loading …",
+      "leer": "You have not sent a request yet.",
+      "neue_antwort": "New reply",
+      "ohne_status": "no status"
+    }
   }
 }

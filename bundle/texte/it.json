@@ -5098,7 +5098,8 @@
       "ticket_bild_ungueltig": "L'HelpDesk ha rifiutato un'immagine; il ticket non è stato creato. Invia di nuovo senza l'immagine.",
       "ticket_zu_gross": "La richiesta è troppo grande per german-sky-group.eu. Allega meno immagini o immagini più piccole.",
       "hilfe_zusatz": "Un campo aggiuntivo non è valido (nome non ammesso, troppi campi, troppo lungo o caratteri non ammessi).",
-      "ticket_zusatz_ungueltig": "L'HelpDesk ha rifiutato un campo aggiuntivo. Controlla il dato inserito."
+      "ticket_zusatz_ungueltig": "L'HelpDesk ha rifiutato un campo aggiuntivo. Controlla il dato inserito.",
+      "ticket_liste_fehlt": "L'elenco delle tue richieste richiede un HelpDesk più recente su german-sky-group.eu."
     },
     "kuerzel": "Richiedi assistenza (F1)",
     "zurueck": "Torna alla richiesta",
@@ -5129,6 +5130,14 @@
       }
     },
     "pflicht": "Obbligatorio",
-    "zusatz_waehlen": "Seleziona"
+    "zusatz_waehlen": "Seleziona",
+    "anfragen": {
+      "titel": "Le mie richieste",
+      "aktualisieren": "Aggiorna",
+      "laedt": "Caricamento …",
+      "leer": "Non hai ancora inviato richieste.",
+      "neue_antwort": "Nuova risposta",
+      "ohne_status": "senza stato"
+    }
   }
 }

@@ -34,6 +34,7 @@ import {
 } from "../lib/hilfeBilder";
 import { Notice } from "./ui";
 import { PaketUebersicht } from "./PaketUebersicht";
+import { MeineAnfragen } from "./MeineAnfragen";
 import "./hilfeSeite.css";
 
 export interface HilfeVorschau {
@@ -329,6 +330,10 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
         {/* Welches Paket, welche Bewertungsfassung — auf den ersten Blick. */}
         <PaketUebersicht sichtbar={sichtbar} />
       </header>
+
+      {/* Alle eigenen Tickets mit Nummer, Betreff und Status — bleibt auch nach
+          dem Senden stehen und lädt dann neu (Thomas 30.10.). */}
+      <MeineAnfragen sichtbar={sichtbar} neuLaden={ergebnis} oeffnen={(url) => void extern(url)} />
 
       {!ergebnis && (
         <>

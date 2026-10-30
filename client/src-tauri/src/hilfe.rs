@@ -480,6 +480,70 @@ pub(crate) fn ticket_antwort(status: u16, body: &str) -> Result<Ticket, &'static
     }
 }
 
+/// Status eines Tickets, wie ihn das HelpDesk fuehrt (Bezeichnung vom Admin).
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
+pub(crate) struct TicketStatus {
+    pub label: String,
+    pub offen: bool,
+    pub geschlossen: bool,
+    pub geloest: bool,
+    pub wartet_auf_pilot: bool,
+}
+
+/// Ein Eintrag der Liste „Meine Anfragen“ (HelpDesk ab 1.9.0,
+/// `GET /api/helpdesk/tickets`).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub(crate) struct TicketEintrag {
+    pub ticket_number: String,
+    pub betreff: String,
+    pub status: Option<TicketStatus>,
+    pub letzte_aktivitaet: Option<String>,
+    pub neue_antwort: bool,
+    pub url: Option<String>,
+}
+
+/// Hoechstens so viele Eintraege nimmt der Kern an (das Modul liefert 50).
+const TICKET_LISTE_MAX: usize = 100;
+
+/// Antwort der Ticketliste → Eintraege oder Fehlerschluessel. 404/405 = das
+/// Modul kennt die Liste noch nicht (vor HelpDesk 1.9.0: nur POST). Felder
+/// werden einzeln gelesen und gekuerzt; ein Link zaehlt nur auf dem festen
+/// phpVMS-Host.
+pub(crate) fn ticket_liste_antwort(status: u16, body: &str) -> Result<Vec<TicketEintrag>, &'static str> {
+    match status {
+        200 => {}
+        401 => return Err("ticket_anmeldung"),
+        403 => return Err("ticket_kein_recht"),
+        404 | 405 => return Err("ticket_liste_fehlt"),
+        _ => return Err("ticket_nicht_erreichbar"),
+    }
+    let v: serde_json::Value = serde_json::from_str(body).map_err(|_| "ticket_antwort")?;
+    let liste = v.get("tickets").and_then(|t| t.as_array()).ok_or("ticket_antwort")?;
+    let text = |x: &serde_json::Value, k: &str, max: usize| x.get(k).and_then(|s| s.as_str()).map(|s| s.chars().take(max).collect::<String>());
+    let ja = |x: &serde_json::Value, k: &str| x.get(k).and_then(|b| b.as_bool()).unwrap_or(false);
+    let host = format!("https://{}/", crate::ALLOWED_PHPVMS_HOST);
+    Ok(liste
+        .iter()
+        .take(TICKET_LISTE_MAX)
+        .filter_map(|t| {
+            Some(TicketEintrag {
+                ticket_number: text(t, "ticket_number", 40)?,
+                betreff: text(t, "subject", 255).unwrap_or_default(),
+                status: t.get("status").filter(|s| s.is_object()).map(|s| TicketStatus {
+                    label: text(s, "label", 60).unwrap_or_default(),
+                    offen: ja(s, "offen"),
+                    geschlossen: ja(s, "geschlossen"),
+                    geloest: ja(s, "geloest"),
+                    wartet_auf_pilot: ja(s, "wartet_auf_pilot"),
+                }),
+                letzte_aktivitaet: text(t, "letzte_aktivitaet", 40),
+                neue_antwort: ja(t, "neue_antwort"),
+                url: text(t, "url", 300).filter(|u| u.starts_with(&host)),
+            })
+        })
+        .collect())
+}
+
 fn letzte_flugdatei(app: &AppHandle) -> Option<String> {
     let ordner = app.path().app_data_dir().ok()?.join("flight_logs");
     std::fs::read_dir(ordner)
@@ -655,9 +719,80 @@ pub(crate) async fn hilfe_anfordern(
     Ok(erg)
 }
 
+/// „Meine Anfragen“: die eigenen Tickets des angemeldeten Piloten aus dem
+/// HelpDesk (Nummer, Betreff, Status), damit alte Anfragen sichtbar bleiben
+/// und zuzuordnen sind. Stufe „fachlich“: nur lesen, Host fest
+/// (`ALLOWED_PHPVMS_HOST`), Pfad wie beim Anlegen aus dem Paket, Schluessel
+/// nur im Kern. Fehler kommen als Schluessel unter `hilfe.fehler.*`.
+#[tauri::command]
+pub(crate) async fn hilfe_tickets(app: AppHandle) -> Result<Vec<TicketEintrag>, UiError> {
+    let schluessel = angemeldet(&app).and_then(|_| crate::secrets_load_phpvms_key());
+    let Some(schluessel) = schluessel else {
+        return Err(UiError::new("ticket_anmeldung", "no active session"));
+    };
+    let url = ticket_url(paket_endpunkte::endpunkte().helpdesk_pfad());
+    let antwort = async {
+        let c = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            // Der Schluessel darf nie einer Weiterleitung folgen.
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .ok()?;
+        let r = c.get(&url).header("X-API-Key", schluessel).header("Accept", "application/json").send().await.ok()?;
+        let s = r.status().as_u16();
+        Some((s, r.text().await.unwrap_or_default()))
+    }
+    .await;
+    match antwort.map(|(s, b)| ticket_liste_antwort(s, &b)) {
+        Some(Ok(liste)) => Ok(liste),
+        Some(Err(code)) => Err(UiError::new(code, "ticket list")),
+        None => Err(UiError::new("ticket_nicht_erreichbar", "ticket list")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ticket_liste_liest_nummer_betreff_status() {
+        let host = crate::ALLOWED_PHPVMS_HOST;
+        let body = serde_json::json!({ "tickets": [
+            { "id": 2, "ticket_number": "TKT-2026-00014", "subject": "Neu", "letzte_aktivitaet": "2026-10-30T13:00:00+00:00",
+              "neue_antwort": true, "url": format!("https://{host}/helpdesk/tickets/2"),
+              "status": { "slug": "open", "label": "Offen", "offen": true, "geschlossen": false, "geloest": false, "wartet_auf_pilot": false } },
+            { "id": 1, "ticket_number": "TKT-2026-00013", "subject": "Alt", "status": { "label": "Geschlossen", "geschlossen": true },
+              "url": "https://boese.example/helpdesk/tickets/1" },
+            { "id": 0, "subject": "ohne Nummer" },
+            { "id": 3, "ticket_number": "TKT-3", "subject": "x".repeat(400), "status": null }
+        ]})
+        .to_string();
+        let l = ticket_liste_antwort(200, &body).unwrap();
+        assert_eq!(l.len(), 3, "Eintrag ohne Nummer faellt weg: {l:?}");
+        assert_eq!((l[0].ticket_number.as_str(), l[0].betreff.as_str()), ("TKT-2026-00014", "Neu"));
+        assert!(l[0].neue_antwort && l[0].status.as_ref().unwrap().offen);
+        assert_eq!(l[0].url.as_deref(), Some(format!("https://{host}/helpdesk/tickets/2").as_str()));
+        let alt = &l[1];
+        assert!(alt.status.as_ref().unwrap().geschlossen, "geschlossenes Ticket bleibt sichtbar");
+        assert_eq!(alt.url, None, "Link auf fremden Host wird verworfen");
+        assert!(!alt.neue_antwort);
+        assert_eq!(l[2].betreff.chars().count(), 255);
+        assert_eq!(l[2].status, None);
+    }
+
+    #[test]
+    fn ticket_liste_fehlerwege() {
+        assert_eq!(ticket_liste_antwort(401, ""), Err("ticket_anmeldung"));
+        assert_eq!(ticket_liste_antwort(403, ""), Err("ticket_kein_recht"));
+        // HelpDesk vor 1.9.0: Route nur POST (405) bzw. fehlt (404).
+        assert_eq!(ticket_liste_antwort(405, "<html>"), Err("ticket_liste_fehlt"));
+        assert_eq!(ticket_liste_antwort(404, "<html>"), Err("ticket_liste_fehlt"));
+        assert_eq!(ticket_liste_antwort(500, ""), Err("ticket_nicht_erreichbar"));
+        assert_eq!(ticket_liste_antwort(200, "<html>"), Err("ticket_antwort"));
+        assert_eq!(ticket_liste_antwort(200, "{}"), Err("ticket_antwort"));
+        assert_eq!(ticket_liste_antwort(200, r#"{"tickets":[]}"#), Ok(vec![]));
+    }
 
     #[test]
     fn eingaben_werden_geprueft() {

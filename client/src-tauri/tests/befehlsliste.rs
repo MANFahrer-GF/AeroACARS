@@ -151,3 +151,13 @@ fn paket_befehle_der_ui_befehle_4() {
     assert_eq!(liste.get("paket_jetzt_pruefen").map(String::as_str), Some("fachlich"));
     assert_eq!(liste.get("paket_neu_starten").map(String::as_str), Some("fachlich"));
 }
+
+/// „Meine Anfragen“ (30.10.2026, Thomas: alte Tickets verschwanden, ohne
+/// Betreff und Status nicht zuzuordnen): `hilfe_tickets` liest nur die
+/// eigenen Tickets aus dem HelpDesk, Host fest, Schluessel im Kern — Stufe
+/// fachlich wie `hilfe_anfordern`, keine Rueckfrage der Huelle.
+#[test]
+fn hilfe_tickets_ist_fachlich() {
+    let liste = liste();
+    assert_eq!(liste.get("hilfe_tickets").map(String::as_str), Some("fachlich"));
+}

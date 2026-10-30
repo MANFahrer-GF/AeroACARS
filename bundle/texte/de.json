@@ -5098,7 +5098,8 @@
       "ticket_bild_ungueltig": "Das HelpDesk hat ein Bild abgelehnt; das Ticket wurde nicht angelegt. Ohne das Bild erneut senden.",
       "ticket_zu_gross": "Die Anfrage ist zu groß für german-sky-group.eu. Weniger oder kleinere Bilder anhängen.",
       "hilfe_zusatz": "Ein Zusatzfeld ist ungültig (Name nicht erlaubt, zu viele Felder, zu lang oder unzulässige Zeichen).",
-      "ticket_zusatz_ungueltig": "Das HelpDesk hat ein Zusatzfeld abgelehnt. Bitte die Angabe prüfen."
+      "ticket_zusatz_ungueltig": "Das HelpDesk hat ein Zusatzfeld abgelehnt. Bitte die Angabe prüfen.",
+      "ticket_liste_fehlt": "Die Liste deiner Anfragen gibt es erst mit einem neueren HelpDesk auf german-sky-group.eu."
     },
     "kuerzel": "Hilfe anfordern (F1)",
     "zurueck": "Zurück zur Anfrage",
@@ -5129,6 +5130,14 @@
       }
     },
     "pflicht": "Pflichtfeld",
-    "zusatz_waehlen": "Bitte wählen"
+    "zusatz_waehlen": "Bitte wählen",
+    "anfragen": {
+      "titel": "Meine Anfragen",
+      "aktualisieren": "Aktualisieren",
+      "laedt": "Lädt …",
+      "leer": "Du hast noch keine Anfrage gestellt.",
+      "neue_antwort": "Neue Antwort",
+      "ohne_status": "ohne Status"
+    }
   }
 }
