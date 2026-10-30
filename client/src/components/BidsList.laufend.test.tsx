@@ -26,6 +26,7 @@ const bid = (id: number, nr: string, dpt: string, arr: string): Bid =>
     },
   }) as unknown as Bid;
 
+let ofpZiel = "LSZH";
 const BIDS = [bid(11, "421", "EDDF", "LSZH"), bid(12, "422", "LSZH", "EDDF"), bid(13, "1910", "EDDF", "EGLL")];
 
 vi.mock("../lib/ipc", async (orig) => ({
@@ -36,7 +37,7 @@ vi.mock("../lib/ipc", async (orig) => ({
       return Promise.resolve({
         request_id: `r${args?.bidId}`, planned_block_fuel_kg: 5200, planned_burn_kg: 3100,
         planned_reserve_kg: 1450, planned_zfw_kg: 58200, planned_tow_kg: 63200, planned_ldw_kg: 60100,
-        alternate: "LSGG", ofp_flight_number: "421", ofp_origin_icao: "EDDF", ofp_destination_icao: "LSZH",
+        alternate: "LSGG", ofp_flight_number: "421", ofp_origin_icao: "EDDF", ofp_destination_icao: ofpZiel,
         ofp_generated_at: new Date().toISOString(), pax_count: 156, cargo_kg: 2100, freight_kg: 600,
         aircraft_icao: "A320", max_passengers: 180,
         // Abflug längst vorbei — im laufenden Flug darf das nicht warnen.
@@ -92,6 +93,22 @@ describe("BidsList — Buchung des laufenden Flugs im Flug-Briefing", () => {
     expect(k.getByRole("button", { name: deCommon.bids.open_flight_page })).toBeTruthy();
     // „Gebuchte Flüge“ zählt weiter nur die offenen Buchungen.
     expect(document.querySelector(".bids__count")?.textContent).toBe("2");
+  });
+
+  // SimBrief liefert den zuletzt erstellten OFP. Ist das schon der nächste
+  // Flug, darf die Karte des laufenden Flugs nicht „neuen OFP erstellen“ sagen.
+  it("fordert beim laufenden Flug keinen neuen OFP, wenn SimBrief schon den nächsten hat", async () => {
+    ofpZiel = "EGLL";
+    try {
+      liste(true);
+      const karte = await screen.findByTestId("bids-laufend");
+      await waitFor(() => expect(document.querySelector(".bids__count")?.textContent).toBe("2"));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(karte.textContent).not.toContain(deCommon.bids.ofp_mismatch_hint);
+      expect(karte.querySelector(".bid-card__ofp-compare")).toBeNull();
+    } finally {
+      ofpZiel = "LSZH";
+    }
   });
 
   it("ohne den Schalter bleibt alles wie bisher (Briefing vor dem Flug)", async () => {

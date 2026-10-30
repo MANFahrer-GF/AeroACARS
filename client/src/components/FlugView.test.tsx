@@ -20,8 +20,10 @@ vi.mock("../lib/ipc", async (orig) => ({
   openExternal: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("./BidsList", () => ({
-  BidsList: (p: { hasActiveFlight: boolean }) => (
-    <div data-testid="bids">{p.hasActiveFlight ? "liste-im-flug" : "liste-vor-flug"}</div>
+  BidsList: (p: { hasActiveFlight: boolean; laufendenFlugZeigen?: boolean; activeBidId?: number | null }) => (
+    <div data-testid="bids" data-laufend={String(!!p.laufendenFlugZeigen)} data-bid={String(p.activeBidId)}>
+      {p.hasActiveFlight ? "liste-im-flug" : "liste-vor-flug"}
+    </div>
   ),
 }));
 vi.mock("./PilotHeader", () => ({ PilotHeader: () => <div data-testid="pilot" /> }));
@@ -84,6 +86,7 @@ describe("FlugView — ein Reiter folgt dem Flug", () => {
     const r = render(ansicht(null));
     // Vor dem Flug: Briefing als ganze Seite, kein Cockpit, kein Aufklapper.
     expect(screen.getByTestId("bids").textContent).toBe("liste-vor-flug");
+    expect(screen.getByTestId("bids").getAttribute("data-laufend")).toBe("false");
     expect(screen.queryByTestId("cockpit-tafel")).toBeNull();
     expect(screen.queryByTestId("flug-briefing")).toBeNull();
 
@@ -110,6 +113,9 @@ describe("FlugView — ein Reiter folgt dem Flug", () => {
       fireEvent(aufklapper, new Event("toggle"));
     });
     expect(screen.getByTestId("bids").textContent).toBe("liste-im-flug");
+    // Im Flug zeigt die Liste die Buchung des laufenden Flugs (Karte oben).
+    expect(screen.getByTestId("bids").getAttribute("data-laufend")).toBe("true");
+    expect(screen.getByTestId("bids").getAttribute("data-bid")).toBe("7");
     expect(aufklapper.textContent).toContain("GSG421 läuft gerade");
     expect(aufklapper.textContent).not.toMatch(/Cockpit-Tab/);
     // Gemerkt für den nächsten Flug.
