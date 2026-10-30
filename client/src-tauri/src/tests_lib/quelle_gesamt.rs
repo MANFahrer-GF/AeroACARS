@@ -188,6 +188,13 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// nur ohne passende selbst; beide Felder fallen mit Touch-and-Go und
 /// verworfener Note. Tests `sofortnote_abnehmer_tests::pirep_uebernimmt_gespeicherte_ausgabe`,
 /// `neuer_aufsetzer_nimmt_keine_alte_rechnung`.
+/// — plus P-3.31: die Rechenstellen eines Flugs (`pirep_rechnung_bilden`,
+/// `endgueltige_rechnung_festhalten`, Landungsdatensatz ohne Rechnung,
+/// Touch-and-Go-Dokumente) rufen `bewertung::bewerten_fuer(pirep_id, …)`;
+/// `GespeicherteRechnung::pin_fehlte`, `gespeicherte_rechnung` verwirft sie,
+/// sobald der Stand nachgeholt ist. Tests
+/// `bewertung::tests::ohne_pinstand_vorlaeufig_nachgeholt_endgueltig`,
+/// `sofortnote_abnehmer_tests::ohne_pinstand_vorlaeufig_und_neu_vor_der_abgabe`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -198,4 +205,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "f5364e18fbc56bf70d44666f7b15ded43d9c8dd279a1b421e1af9a7fedc2edc8";
+const HASH_VOR_DER_ZERLEGUNG: &str = "638d845905ba30ee47f026974f066950e09c7be261c1f57050fedd1251545d95";

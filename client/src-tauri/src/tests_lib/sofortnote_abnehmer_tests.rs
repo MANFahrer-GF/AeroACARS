@@ -386,7 +386,39 @@
         st.landung_endgueltig = st.landung_sofort.clone();
         // Neuer Aufsetzer: anderer Zeitpunkt → keine gespeicherte gilt.
         st.landing_at = Some(Utc::now() + chrono::Duration::seconds(90));
-        assert!(gespeicherte_rechnung(&st, "YYYY").is_none(), "Schluessel haengt am Aufsetzer");
+        assert!(gespeicherte_rechnung(&st, "YYYY", true).is_none(), "Schluessel haengt am Aufsetzer");
+    }
+
+    /// P-3.31: Fehlt der Stand des Flugs, traegt die Note „vorläufig,
+    /// Fassung n“ (Meldung, Notiz). Solange er fehlt, uebernimmt die Abgabe
+    /// die gespeicherte Note (kein Aufruf); ist er nachgeholt, rechnet sie vor
+    /// der Abgabe neu — mit seinem Modul, `endgueltig`.
+    #[test]
+    fn ohne_pinstand_vorlaeufig_und_neu_vor_der_abgabe() {
+        use crate::bewertung::pin_erzwingen;
+        use crate::laufzeit_paket::PinStand;
+        let f = fixture();
+        mit_landung(&f);
+        let teile = || {
+            let mut st = f.stats.lock().unwrap();
+            pirep_bewertete_teile(&f, &mut st, "YYYY")
+        };
+        let fassung = crate::SCORE_ALGORITHMUS_VERSION;
+        {
+            let _p = pin_erzwingen(PinStand::Fehlt);
+            let b = touchdown_bewertung_festhalten(&f, &mut f.stats.lock().unwrap()).expect("Bewertung");
+            assert_eq!(bewertung_vermerk(&b), Some(format!("vorläufig, Fassung {fassung}")));
+            aufrufe_zuruecksetzen();
+            let (score, _, notiz) = teile();
+            assert_eq!(aufrufe(), 0, "Stand fehlt weiter: gespeicherte Note");
+            assert!(score.is_some(), "die Note bleibt im Feld");
+            assert!(notiz.contains(&format!("Bewertung     vorläufig, Fassung {fassung}")), "{notiz}");
+        }
+        let _p = pin_erzwingen(PinStand::Nachgeholt(crate::laufzeit_paket::eingebautes_bewertungsmodul().unwrap()));
+        aufrufe_zuruecksetzen();
+        let (_, _, notiz) = teile();
+        assert_eq!(aufrufe(), 1, "Stand nachgeholt: vor der Abgabe neu gerechnet");
+        assert!(!notiz.contains("vorläufig"), "{notiz}");
     }
 
     // ── Abgabe-Sperre: haengt nicht vom Modul ab ────────────────────────

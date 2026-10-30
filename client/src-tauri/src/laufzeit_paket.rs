@@ -113,6 +113,34 @@ pub(crate) fn ui_paket() -> Option<&'static Paket> {
 /// (fehlte lokal oder kam zu spaet). Gilt nur fuer genau diesen Flug (P-3.31).
 static PIN: OnceLock<(String, RuntimeBundleId)> = OnceLock::new();
 
+/// P-3.31: das Bewertungsmodul des gepinnten Stands, sobald `pin_nachholen`
+/// ihn im laufenden Programm abgelegt hat (aktiv wird der Stand erst beim
+/// naechsten Start, P-3.20 — die Bewertung des offenen Flugs braucht ihn
+/// aber vor der Abgabe).
+static PIN_MODUL: OnceLock<&'static [u8]> = OnceLock::new();
+
+/// P-3.31: Gilt fuer den Flug sein gepinnter Stand?
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PinStand {
+    /// Der Stand des Flugs ist der geltende.
+    Gilt,
+    /// Er fehlt: gerechnet wird mit der eingebauten Fassung, „vorlaeufig“.
+    Fehlt,
+    /// Er wurde nachgeholt: sein Bewertungsmodul.
+    Nachgeholt(&'static [u8]),
+}
+
+/// P-3.31: der Pinstand des Flugs `pirep_id`.
+pub(crate) fn pin_stand(pirep_id: &str) -> PinStand {
+    match PIN.get() {
+        Some((pirep, _)) if pirep == pirep_id => match PIN_MODUL.get() {
+            Some(m) => PinStand::Nachgeholt(m),
+            None => PinStand::Fehlt,
+        },
+        _ => PinStand::Gilt,
+    }
+}
+
 /// Der geltende Stand. Wer liest, bevor `starten` lief (z. B. Tests), legt
 /// damit den eingebauten Stand fest.
 pub(crate) fn stand() -> &'static AktiverStand {
@@ -542,8 +570,16 @@ async fn pin_nachholen(app_daten: &Path, pin: &RuntimeBundleId) -> Result<(), St
                 &kontext(),
                 &mut |d| geholt.get(&d.sha256).cloned().ok_or_else(|| "nicht geholt".to_string()),
             )
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // P-3.31: ab jetzt rechnet der offene Flug mit dem Modul seines Stands
+        // (Neurechnung vor der Abgabe, `bewertung::bewerten_fuer`).
+        let l = ablage.laden(Some(&pin), &kontext(), &eingebaut()).map_err(|e| e.to_string())?;
+        if l.herkunft != Herkunft::Pin {
+            return Err(format!("nachgeholter Stand {pin} nicht ladbar: {:?}", l.hinweise));
+        }
+        let modul = l.paket.datei(BEWERTUNG).map_err(|e| e.to_string())?;
+        let _ = PIN_MODUL.set(Box::leak(modul.into_boxed_slice()));
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?

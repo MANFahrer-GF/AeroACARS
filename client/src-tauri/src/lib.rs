@@ -24253,7 +24253,8 @@ fn pirep_rechnung_bilden(flight: &ActiveFlight, stats: &FlightStats, effective_a
         muster_fuer_landung(stats, &flight.aircraft_icao),
         effective_arr_icao,
     );
-    let ergebnis = crate::bewertung::bewerten(&eingabe);
+    // P-3.31: mit dem Stand des Flugs; fehlt er, „vorlaeufig“.
+    let ergebnis = crate::bewertung::bewerten_fuer(&flight.pirep_id, &eingabe);
     PirepRechnung { arr: effective_arr_icao.to_string(), eingabe, ergebnis }
 }
 
@@ -24349,9 +24350,10 @@ fn touchdown_bewertung_festhalten(
         stats.landung_bewertung = None;
         return None;
     }
+    let pin_fehlte = crate::bewertung::pin_fehlt(&flight.pirep_id);
     let rechnung = pirep_rechnung_bilden(flight, stats, &aufsetz_flughafen(flight, stats));
     let b = landungs_bewertung_aus(stats, &rechnung.ergebnis);
-    stats.landung_sofort = rechnung_schluessel(stats).map(|schluessel| GespeicherteRechnung { schluessel, rechnung });
+    stats.landung_sofort = rechnung_schluessel(stats).map(|schluessel| GespeicherteRechnung { schluessel, pin_fehlte, rechnung });
     stats.landung_bewertung = b;
     b
 }
@@ -24362,6 +24364,8 @@ fn touchdown_bewertung_festhalten(
 #[derive(Debug, Clone)]
 pub(crate) struct GespeicherteRechnung {
     pub schluessel: (i64, u32),
+    /// P-3.31: gerechnet, waehrend der Stand des Flugs fehlte („vorlaeufig“).
+    pub pin_fehlte: bool,
     pub rechnung: PirepRechnung,
 }
 
@@ -24388,11 +24392,12 @@ fn endgueltige_rechnung_festhalten(flight: &ActiveFlight) {
         let eingabe = landungs_bewertungseingabe(flight, &stats, muster_fuer_landung(&stats, &flight.aircraft_icao), &arr);
         (schluessel, arr, eingabe)
     };
-    let ergebnis = crate::bewertung::bewerten(&eingabe);
+    let pin_fehlte = crate::bewertung::pin_fehlt(&flight.pirep_id);
+    let ergebnis = crate::bewertung::bewerten_fuer(&flight.pirep_id, &eingabe);
     let mut stats = flight.stats.lock().expect("flight stats");
     // Nur, wenn derselbe Aufsetzer mit demselben Bahnstand noch gilt.
     if rechnung_schluessel(&stats) == Some(schluessel) {
-        stats.landung_endgueltig = Some(GespeicherteRechnung { schluessel, rechnung: PirepRechnung { arr, eingabe, ergebnis } });
+        stats.landung_endgueltig = Some(GespeicherteRechnung { schluessel, pin_fehlte, rechnung: PirepRechnung { arr, eingabe, ergebnis } });
     }
 }
 
@@ -24401,13 +24406,15 @@ fn endgueltige_rechnung_festhalten(flight: &ActiveFlight) {
 /// Einreichung selbst, mit Logzeile), wenn nichts gespeichert ist (Neustart,
 /// Abgabe vor dem Ausrollen), ein anderer Ankunftsflughafen eingereicht wird
 /// als der, auf dem aufgesetzt wurde (andere Eingabe: `diverted`), oder sich
-/// die Bahnzuordnung seither geaendert hat (`bahn_revision`).
-fn gespeicherte_rechnung(stats: &FlightStats, effective_arr_icao: &str) -> Option<PirepRechnung> {
+/// die Bahnzuordnung seither geaendert hat (`bahn_revision`). P-3.31: Eine
+/// Rechnung ohne den Stand des Flugs gilt nicht mehr, sobald er da ist
+/// (`pin_jetzt_da`) — dann rechnet die Einreichung mit ihm neu.
+fn gespeicherte_rechnung(stats: &FlightStats, effective_arr_icao: &str, pin_jetzt_da: bool) -> Option<PirepRechnung> {
     let schluessel = rechnung_schluessel(stats)?;
     [stats.landung_endgueltig.as_ref(), stats.landung_sofort.as_ref()]
         .into_iter()
         .flatten()
-        .find(|g| g.schluessel == schluessel && g.rechnung.arr == effective_arr_icao)
+        .find(|g| g.schluessel == schluessel && g.rechnung.arr == effective_arr_icao && !(g.pin_fehlte && pin_jetzt_da))
         .map(|g| g.rechnung.clone())
 }
 
@@ -26294,7 +26301,7 @@ where
     // Rechnung der Einreichung (Codex-Befund zu P-4.40).
     let bewertet = match rechnung {
         Some(r) => r.ergebnis.clone(),
-        None => crate::bewertung::bewerten(&landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao)),
+        None => crate::bewertung::bewerten_fuer(&flight.pirep_id, &landungs_bewertungseingabe(flight, stats, aircraft_icao, effective_arr_icao)),
     };
     let computed_sub_scores = bewertet.as_ref().map(|(a, _)| a.teilnoten.clone()).unwrap_or_default();
     let aggregate_master = bewertet.as_ref().and_then(|(a, _)| a.gesamt);
@@ -26949,7 +26956,7 @@ fn record_landing_for_filed_flight(
             // Sperre. Die Landung bringt ihr Ergebnis aus der Einreichung mit.
             let ergebnis = match ergebnis {
                 Some(e) => e.clone(),
-                None => crate::bewertung::bewerten(eingabe),
+                None => crate::bewertung::bewerten_fuer(&flight.pirep_id, eingabe),
             };
             let doc = landungs_eingabe::dokument(
                 &flight.pirep_id,
@@ -48215,7 +48222,8 @@ fn pirep_bewertete_teile(
     // v3 (P-4.10): die letzte gespeicherte Ausgabe ohne Neurechnung; nur ohne
     // passende gespeicherte rechnet die Einreichung selbst. Datensatz,
     // MQTT-PIREP und Dokument lesen sie danach aus `stats.pirep_rechnung`.
-    let rechnung = match gespeicherte_rechnung(stats, effective_arr_icao) {
+    let pin_jetzt_da = !crate::bewertung::pin_fehlt(&flight.pirep_id);
+    let rechnung = match gespeicherte_rechnung(stats, effective_arr_icao, pin_jetzt_da) {
         Some(r) => r,
         None => {
             tracing::info!(

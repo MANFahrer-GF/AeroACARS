@@ -128,6 +128,76 @@ pub(crate) fn status_text(b: &Option<(Ausgabe, Status)>) -> &'static str {
     }
 }
 
+// Nur fuer Tests: erzwingt den Pinstand (P-3.31) auf diesem Thread.
+#[cfg(test)]
+thread_local! {
+    static PIN_ERZWUNGEN: std::cell::Cell<Option<crate::laufzeit_paket::PinStand>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) struct PinWache;
+
+#[cfg(test)]
+impl Drop for PinWache {
+    fn drop(&mut self) {
+        PIN_ERZWUNGEN.with(|c| c.set(None));
+    }
+}
+
+/// Nur fuer Tests: Pinstand `p` fuer jeden Flug, bis die Wache faellt.
+#[cfg(test)]
+pub(crate) fn pin_erzwingen(p: crate::laufzeit_paket::PinStand) -> PinWache {
+    PIN_ERZWUNGEN.with(|c| c.set(Some(p)));
+    PinWache
+}
+
+fn pin_stand(pirep_id: &str) -> crate::laufzeit_paket::PinStand {
+    #[cfg(test)]
+    if let Some(p) = PIN_ERZWUNGEN.with(std::cell::Cell::get) {
+        return p;
+    }
+    crate::laufzeit_paket::pin_stand(pirep_id)
+}
+
+/// Ob die Bewertung dieses Flugs ohne seinen gepinnten Stand rechnet (P-3.31).
+pub(crate) fn pin_fehlt(pirep_id: &str) -> bool {
+    pin_stand(pirep_id) == crate::laufzeit_paket::PinStand::Fehlt
+}
+
+/// Bewertet eine Landung des Flugs `pirep_id` (P-3.31): Gilt sein gepinnter
+/// Stand, wie [`bewerten`]. Fehlt er, rechnet die eingebaute Fassung und die
+/// Note ist `vorlaeufig` („vorlaeufig, Fassung n“). Wurde er nachgeholt,
+/// rechnet sein eigenes Modul (`endgueltig`); scheitert das, wie [`bewerten`]
+/// mit `vorlaeufig`.
+pub(crate) fn bewerten_fuer(pirep_id: &str, landung: &LandingScoringInput) -> Option<(Ausgabe, Status)> {
+    use crate::laufzeit_paket::PinStand;
+    let vorlaeufig = |b: Option<(Ausgabe, Status)>| b.map(|(a, _)| (a, Status::Vorlaeufig));
+    match pin_stand(pirep_id) {
+        PinStand::Gilt => bewerten(landung),
+        PinStand::Fehlt => vorlaeufig(bewerten(landung)),
+        PinStand::Nachgeholt(modul) => {
+            #[cfg(test)]
+            AUFRUFE.with(|c| c.set(c.get() + 1));
+            static H: OnceLock<Option<Host>> = OnceLock::new();
+            let host = H.get_or_init(|| match Host::neu(modul) {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    tracing::error!(error = %e, "Bewertungsmodul des nachgeholten Stands nicht ladbar");
+                    None
+                }
+            });
+            let json = serde_json::to_string(&Eingabe { landung: landung.clone() }).ok()?;
+            match host.as_ref().map(|h| rechnen(h, &json)) {
+                Some(Ok(a)) => Some((a, Status::Endgueltig)),
+                _ => {
+                    tracing::error!("Bewertung mit dem nachgeholten Stand gescheitert — vorlaeufig");
+                    vorlaeufig(bewerten(landung))
+                }
+            }
+        }
+    }
+}
+
 /// Bewertet eine Landung im Modul. `None` = `modulfehler` (beide Module
 /// gescheitert) — dann gibt es keine Note.
 pub(crate) fn bewerten(landung: &LandingScoringInput) -> Option<(Ausgabe, Status)> {
@@ -166,6 +236,26 @@ mod tests {
         assert_eq!(a.fassung, 27);
         assert_eq!(status_text(&Some((a, status))), "endgueltig");
         assert_eq!(status_text(&None), "modulfehler");
+    }
+
+    /// P-3.31: Fehlt der Stand des Flugs, rechnet die eingebaute Fassung und
+    /// die Note heisst `vorlaeufig` (Gegenprobe: gilt er, `endgueltig`). Ist er
+    /// nachgeholt, rechnet sein Modul `endgueltig` — hier das eingebaute als
+    /// Stellvertreter, das Ergebnis muss dasselbe sein.
+    #[test]
+    fn ohne_pinstand_vorlaeufig_nachgeholt_endgueltig() {
+        use crate::laufzeit_paket::PinStand;
+        let e = LandingScoringInput { vs_fpm: Some(-210.0), peak_g_load: Some(1.3), bounce_count: Some(0), ..Default::default() };
+        let (normal, s) = bewerten_fuer("P", &e).expect("Modul rechnet");
+        assert_eq!(s, Status::Endgueltig, "Gegenprobe: Stand gilt");
+        let _w = pin_erzwingen(PinStand::Fehlt);
+        let (a, s) = bewerten_fuer("P", &e).expect("eingebaute Fassung rechnet");
+        assert_eq!((s, a.gesamt, a.fassung), (Status::Vorlaeufig, normal.gesamt, 27));
+        assert!(pin_fehlt("P"));
+        let _w = pin_erzwingen(PinStand::Nachgeholt(crate::laufzeit_paket::eingebautes_bewertungsmodul().unwrap()));
+        let (a, s) = bewerten_fuer("P", &e).expect("nachgeholtes Modul rechnet");
+        assert_eq!((s, a.gesamt), (Status::Endgueltig, normal.gesamt));
+        assert!(!pin_fehlt("P"));
     }
 
     /// P-4.50: Die Fassung, die der Client schreibt, ist die des eingebauten
