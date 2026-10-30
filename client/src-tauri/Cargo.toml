@@ -311,6 +311,8 @@ workspace = true
 flate2 = "1"
 # v3 Etappe 4: Ersatzmodul im Test „Kabinenablauf ohne Release geaendert“.
 wat = "1"
+# v3 (P-13.20): Testanwendung (MockRuntime) fuer den Lader der Oberflaeche.
+tauri = { version = "2", features = ["test"] }
 
 [lints]
 workspace = true

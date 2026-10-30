@@ -62,9 +62,67 @@ jobs:
         working-directory: client/src-tauri
         shell: bash
         run: cargo test --release -p bewertung-host --test selbsttest_korpus -- --ignored --nocapture rechenzeit_je_aufruf | tee -a "$GITHUB_STEP_SUMMARY"
+      # P-12.03 (6): native Verdichtung aus dem Replay-Korpus, Vergleich mit
+      # macOS im Job `mac-gleich-windows`.
+      - name: Replay-Korpus ausgeben (P-12.03)
+        working-directory: client/src-tauri
+        shell: bash
+        run: REPLAY_AUSGABE="$RUNNER_TEMP/replay.txt" cargo test -p aeroacars-app --test touchdown_v2_replay replay_korpus_ausgabe_fuer_den_plattformvergleich
+      - uses: actions/upload-artifact@v7
+        with:
+          name: replay-Windows
+          path: ${{ runner.temp }}/replay.txt
+          retention-days: 7
       - name: cargo clippy (informativ — Baseline erst pruefen, dann ggf. -D warnings)
         working-directory: client/src-tauri
         run: cargo clippy --workspace --all-targets
+
+  # ─── macOS: alle Rust-Tests (P-13.20, P-12.03 (2)/(3)) ───────────────
+  # Derselbe Workspace-Lauf wie auf Windows (ohne den Windows-only
+  # MSFS-Adapter): Selbsttest-Korpus des Bewertungsmoduls auf wasmi/Mac,
+  # Laden, Rueckfall und Flug-Pin. Dazu die Replay-Ausgabe fuer den
+  # Vergleich mit Windows.
+  rust-macos:
+    name: Rust (macOS — Workspace + Replay)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri -> target
+      - name: cargo test (workspace)
+        working-directory: client/src-tauri
+        run: cargo test --workspace
+      - name: Replay-Korpus ausgeben (P-12.03)
+        working-directory: client/src-tauri
+        run: REPLAY_AUSGABE="$RUNNER_TEMP/replay.txt" cargo test -p aeroacars-app --test touchdown_v2_replay replay_korpus_ausgabe_fuer_den_plattformvergleich
+      - uses: actions/upload-artifact@v7
+        with:
+          name: replay-macOS
+          path: ${{ runner.temp }}/replay.txt
+          retention-days: 7
+
+  # P-12.03 (6): Mac und Windows verdichten das Replay-Korpus gleich.
+  mac-gleich-windows:
+    name: Replay Mac = Windows (P-12.03)
+    needs: [rust-windows, rust-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: replay-*
+      - name: Vergleichen
+        run: |
+          if cmp -s replay-Windows/replay.txt replay-macOS/replay.txt; then
+            echo "Replay-Korpus: Mac = Windows ($(wc -l < replay-macOS/replay.txt) Fixtures, SHA-256 $(sha256sum replay-macOS/replay.txt | cut -c1-16))" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Replay-Korpus: Mac und Windows WEICHEN AB" | tee -a "$GITHUB_STEP_SUMMARY"
+            diff replay-Windows/replay.txt replay-macOS/replay.txt | head -40
+            exit 1
+          fi
 
   # ─── Etappe 5 (P-8.03, P-13.20): Oberflaeche ueber aeroui:// ──────────
   # Baut die App (debug, Frontend eingebettet wie im Release) und startet

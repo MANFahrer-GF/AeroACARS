@@ -632,3 +632,47 @@ fn vorabversion_3_0_liegt_in_beiden_bereichen() {
     }
     assert!(version("2.1.24").unwrap() < version("3.0.0-0").unwrap());
 }
+
+/// P-13.10 „Platte voll": Kann die Ablage nicht schreiben, scheitert die
+/// Installation, ohne den geltenden Stand anzufassen (Zeiger, Dateien,
+/// Laden). Nachgestellt, indem der Zwischenordner `tmp` eine Datei ist —
+/// jeder Schreibversuch scheitert so auf jedem Betriebssystem (ein
+/// Schreibschutz auf Ordnern wirkt unter Windows nicht). Ist wieder Platz,
+/// gelingt dieselbe Installation.
+#[test]
+fn platte_voll_laesst_den_geltenden_stand_stehen() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let k = kontext(&[&s]);
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let (m4, i4) = paket(4, &[("a", b"4")]);
+    installieren(&a, &s, &k, &m4, &i4).unwrap();
+    let zustand = |a: &Ablage| (a.aktuell(), a.vorher(), a.laden(None, &k, &eingebaut()).unwrap().paket.datei("a").unwrap());
+    let vorher = zustand(&a);
+    let tmp = dir.path().join("tmp");
+    std::fs::remove_dir_all(&tmp).unwrap();
+    std::fs::write(&tmp, b"voll").unwrap();
+    let (m5, i5) = paket(5, &[("a", b"5")]);
+    assert!(installieren(&a, &s, &k, &m5, &i5).is_err());
+    assert_eq!(zustand(&a), vorher);
+    assert!(!dir.path().join("gen").join("5").exists());
+    // Wieder Platz: dieselbe Installation gelingt.
+    std::fs::remove_file(&tmp).unwrap();
+    std::fs::create_dir(&tmp).unwrap();
+    assert_eq!(installieren(&a, &s, &k, &m5, &i5).unwrap().generation, 5);
+    assert_eq!(a.laden(None, &k, &eingebaut()).unwrap().paket.datei("a").unwrap(), b"5");
+}
+
+/// P-2.30: Ein alter Client prueft das neue Paket gegen seine Fassung und
+/// Faehigkeiten — eine fehlende Faehigkeit oder Fassung ausserhalb des
+/// Bereichs heisst „sauber uebergangen" (kein Absturz, Stand bleibt; siehe
+/// `fehlende_faehigkeit_und_falsche_clientversion`), sonst „uebernommen".
+#[test]
+fn vertraeglichkeit_fuer_alte_clients() {
+    let (m, _) = paket(5, &[("a", b"x")]);
+    let f = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(vertraeglich(&m, "3.0.0", &f(&["wasm-host-1"])).is_ok());
+    assert!(matches!(vertraeglich(&m, "3.0.0", &f(&[])), Err(Fehler::Unpassend(_))));
+    assert!(matches!(vertraeglich(&m, "2.1.24", &f(&["wasm-host-1"])), Err(Fehler::Unpassend(_))));
+    assert!(!matches!(vertraeglich(b"kein json", "3.0.0", &f(&["wasm-host-1"])), Ok(()) | Err(Fehler::Unpassend(_))));
+}

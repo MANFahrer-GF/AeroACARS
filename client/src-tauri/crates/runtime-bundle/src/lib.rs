@@ -547,6 +547,21 @@ pub fn signatur_pruefen(daten: &[u8], signatur: &str, schluessel: &[String]) -> 
     Err(Fehler::Signatur)
 }
 
+/// P-2.30: Wie ein Client mit dieser Fassung und diesen Faehigkeiten ein
+/// Paket behandelt (Signatur und Dateien prueft erst die Installation):
+/// `Ok` = uebernommen, `Err(Fehler::Unpassend)` = sauber uebergangen (der
+/// Client behaelt seinen Stand), jeder andere Fehler = Manifest unlesbar.
+pub fn vertraeglich(manifest: &[u8], client_version: &str, faehigkeiten: &[String]) -> Result<(), Fehler> {
+    let m = Manifest::lesen(manifest)?;
+    let k = Kontext {
+        client_version: client_version.to_string(),
+        faehigkeiten: faehigkeiten.to_vec(),
+        schluessel: Vec::new(),
+        jetzt: chrono::Utc::now(),
+    };
+    passt(&m, &k)
+}
+
 fn passt(m: &Manifest, k: &Kontext) -> Result<(), Fehler> {
     let v = manifest::version(&k.client_version)?;
     if v < manifest::version(&m.client_min)? || v > manifest::version(&m.client_max)? {

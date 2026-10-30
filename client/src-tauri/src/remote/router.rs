@@ -126,14 +126,7 @@ async fn serve_spa(app: &AppHandle, spa_dir: &std::path::Path, uri: Uri, host: O
     // 1) v3 (Etappe 5, P-8.20): derselbe Lader wie Haupt- und
     //    Telemetriefenster — ui/ der aktiven Generation oder das eingebaute
     //    Frontend. Ein Pfad ohne Endung (SPA-Deep-Link) bekommt index.html.
-    let datei = crate::ui_lader::datei(app, path).or_else(|e| {
-        if crate::ui_lader::mime(path).is_none() {
-            crate::ui_lader::datei(app, "/index.html")
-        } else {
-            Err(e)
-        }
-    });
-    if let Ok(d) = datei {
+    if let Ok(d) = spa_datei(app, path) {
         let mut antwort = (StatusCode::OK, [(header::CONTENT_TYPE, d.mime.clone())], d.bytes).into_response();
         // Dieselbe CSP wie im Hauptfenster (P-8.12: eine Paketoberflaeche darf
         // den LAN-Schluessel im localStorage nicht an fremde Hosts schicken).
@@ -154,6 +147,18 @@ async fn serve_spa(app: &AppHandle, spa_dir: &std::path::Path, uri: Uri, host: O
 
     // 3) Nothing embedded and nothing on disk — genuine miss.
     (StatusCode::NOT_FOUND, "not found").into_response()
+}
+
+/// Die Datei der LAN-Webapp zu `path`: derselbe Lader wie Haupt- und
+/// Telemetriefenster; ein Pfad ohne Endung (SPA-Deep-Link) bekommt index.html.
+pub(crate) fn spa_datei<R: tauri::Runtime>(app: &AppHandle<R>, path: &str) -> Result<crate::ui_lader::Datei, String> {
+    crate::ui_lader::datei(app, path).or_else(|e| {
+        if crate::ui_lader::mime(path).is_none() {
+            crate::ui_lader::datei(app, "/index.html")
+        } else {
+            Err(e)
+        }
+    })
 }
 
 /// Die CSP der Oberflaeche fuer das Tablet: zusaetzlich der eigene WebSocket

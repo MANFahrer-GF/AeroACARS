@@ -743,7 +743,10 @@ mod tests {
     #[test]
     fn paket_workflow_verlangt_nur_bekannte_faehigkeiten() {
         let wf = include_str!("../../../.github/workflows/bundle.yml");
-        let liste = wf.split("--requires ").nth(1).expect("--requires").split_whitespace().next().unwrap();
+        let liste = wf.split("REQUIRES: ").nth(1).expect("REQUIRES").split_whitespace().next().unwrap();
+        // Jeder Bau-Laeufer nimmt genau diese Liste (P-3.03: gleiche Pakete).
+        let bauten: Vec<&str> = wf.split("--requires ").skip(1).collect();
+        assert!(bauten.len() >= 2 && bauten.iter().all(|r| r.starts_with("\"$REQUIRES\"")), "jeder Bau mit $REQUIRES");
         for f in liste.split(',') {
             assert!(FAEHIGKEITEN.contains(&f), "bundle.yml verlangt {f}, das Programm kennt es nicht");
         }

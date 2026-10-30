@@ -720,3 +720,29 @@ fn dlh304_touchdown_window_captures_full_post_td_span() {
         "Post-TD-Window sollte ~10 s erfassen, war nur +{post_span_s:.2} s"
     );
 }
+
+/// P-12.03 (6): Die native Verdichtung ergibt aus dem Replay-Korpus auf Mac
+/// und Windows dieselben Werte. Je Fixture die Episoden in fester Form;
+/// mit `REPLAY_AUSGABE=<datei>` schreibt der Test sie dorthin — die CI legt
+/// beide Laeufer nebeneinander und vergleicht Byte fuer Byte.
+#[test]
+fn replay_korpus_ausgabe_fuer_den_plattformvergleich() {
+    let ordner = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut namen: Vec<String> = std::fs::read_dir(&ordner)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".jsonl.gz") && !n.starts_with("phase_"))
+        .collect();
+    namen.sort();
+    let mut aus = String::new();
+    let mut episoden = 0;
+    for n in &namen {
+        let eps = run_pipeline(&load_fixture(n));
+        episoden += eps.len();
+        aus.push_str(&format!("{n}: {eps:?}\n"));
+    }
+    assert!(namen.len() >= 10 && episoden >= 10, "{} Fixtures, {episoden} Episoden", namen.len());
+    if let Some(ziel) = std::env::var_os("REPLAY_AUSGABE") {
+        std::fs::write(ziel, aus).unwrap();
+    }
+}

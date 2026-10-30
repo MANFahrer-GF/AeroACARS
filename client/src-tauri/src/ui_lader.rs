@@ -302,6 +302,39 @@ mod tests {
         assert!(!macht_defekt(&p, "ui/robots.txt"));
     }
 
+    /// P-13.20: Hauptfenster, Telemetriefenster, LAN-Webapp und HUD lesen
+    /// ueber denselben Lader aus derselben Generation. Gilt ein Paket mit
+    /// Oberflaeche, liefert es jedem Ziel seine Dateien — kein Ziel greift
+    /// am Lader vorbei auf das eingebaute Frontend (die Testanwendung hat
+    /// keins: ein Umweg waere hier ein Fehler).
+    #[test]
+    fn alle_ziele_zeigen_dieselbe_generation() {
+        let app = tauri::test::mock_app();
+        let app = app.handle();
+        let _ = SELBSTTEST.set((
+            PathBuf::new(),
+            paket_aus(&[
+                ("ui/index.html", b"<p>G-Test</p>"),
+                ("ui/hud/panel.js", b"/* G-Test */"),
+                ("ui/hud/panel.css", b"/* G-Test css */"),
+            ]),
+        ));
+        let haupt = adresse("index.html");
+        let telemetrie = adresse("index.html?fenster=telemetrie");
+        for url in [&haupt, &telemetrie] {
+            let pfad = format!("{}?{}", url.path(), url.query().unwrap_or(""));
+            assert_eq!(datei(app, &pfad).unwrap().bytes, b"<p>G-Test</p>", "{url}");
+        }
+        // LAN: Wurzel und SPA-Deep-Link.
+        for pfad in ["/", "/logbook"] {
+            assert_eq!(crate::remote::router::spa_datei(app, pfad).unwrap().bytes, b"<p>G-Test</p>", "LAN {pfad}");
+        }
+        assert_eq!(
+            crate::panel_server::hud_dateien(app).unwrap(),
+            ("/* G-Test */".to_string(), "/* G-Test css */".to_string())
+        );
+    }
+
     #[test]
     fn fehlerseite_ohne_skript_und_maskiert() {
         let s = fehlerseite("ui/<x>.js");

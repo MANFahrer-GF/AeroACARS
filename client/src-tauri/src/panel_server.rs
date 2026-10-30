@@ -138,12 +138,9 @@ struct PanelCtx {
 /// automatisch den "nativen" Einstieg des Skripts (kein Flow-`run()`),
 /// und `aa2-nativ` am Body waehlt die fuellende Positionierung.
 async fn hud_handler(State(ctx): State<PanelCtx>) -> Response {
-    let text = |pfad: &str| {
-        crate::ui_lader::datei(&ctx.app, pfad).and_then(|d| String::from_utf8(d.bytes).map_err(|e| e.to_string()))
-    };
-    match (text("hud/panel.js"), text("hud/panel.css")) {
-        (Ok(js), Ok(css)) => axum::response::Html(hud_seite(&js, &css)).into_response(),
-        (Err(e), _) | (_, Err(e)) => {
+    match hud_dateien(&ctx.app) {
+        Ok((js, css)) => axum::response::Html(hud_seite(&js, &css)).into_response(),
+        Err(e) => {
             tracing::warn!(error = %e, "panel_server: HUD nicht in der Oberflaeche");
             (StatusCode::SERVICE_UNAVAILABLE, "HUD nicht verfuegbar").into_response()
         }
@@ -151,6 +148,13 @@ async fn hud_handler(State(ctx): State<PanelCtx>) -> Response {
 }
 
 /// Die HUD-Seite aus Widget-Skript und -Stil.
+/// `panel.js` und `panel.css` des HUD aus dem Lader (dieselbe Generation wie
+/// Hauptfenster und LAN, P-8.20).
+pub(crate) fn hud_dateien<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(String, String), String> {
+    let text = |pfad: &str| crate::ui_lader::datei(app, pfad).and_then(|d| String::from_utf8(d.bytes).map_err(|e| e.to_string()));
+    Ok((text("hud/panel.js")?, text("hud/panel.css")?))
+}
+
 fn hud_seite(js: &str, css: &str) -> String {
     // v1.5.3 (Thomas, 11.08.2026): NUR der Kasten, sonst nichts.
     //

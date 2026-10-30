@@ -45,12 +45,18 @@ concurrency:
 permissions:
   contents: read
 
+# Faehigkeiten, die jedes Paket verlangt (P-2.15) — eine Stelle fuer alle
+# Bau-Laeufer; laufzeit_paket.rs prueft sie gegen das Programm.
+env:
+  REQUIRES: ourairports-1,grenzwerte-1,xplane-profile-1,cpdlc-1,flotte-1,texte-1,spurweiten-1,vref-1,hoehengruppen-1,klappen-1,kabine-1,endpunkte-1,msfs-profile-1,bewertung-1,kabine-modul-1,ui-befehle-1
+
 jobs:
   bauen:
     name: Bauen, testen, signieren
     runs-on: ubuntu-latest
     outputs:
       generation: ${{ steps.gen.outputs.generation }}
+      erstellt: ${{ steps.gen.outputs.erstellt }}
       signiert: ${{ steps.signieren.outputs.signiert }}
       umgebung: ${{ steps.umgebung.outputs.umgebung }}
     steps:
@@ -83,7 +89,10 @@ jobs:
       - name: Generation festlegen
         id: gen
         # Steigt mit jedem Lauf dieses Workflows; 0 ist der eingebaute Stand.
-        run: echo "generation=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+        # P-3.03: derselbe Zeitstempel auch fuer die Vergleichsbauten.
+        run: |
+          echo "generation=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "erstellt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: Paket bauen
         working-directory: client/src-tauri
         # P-9.44: OurAirports-Commit des Stands (schreibt der Wochenlauf) als
@@ -96,9 +105,9 @@ jobs:
           cargo run -q -p runtime-bundle --bin paket-bauen -- \
             "$GITHUB_WORKSPACE/bundle" "$GITHUB_WORKSPACE/paket" \
             --generation "${{ steps.gen.outputs.generation }}" \
-            --erstellt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --erstellt "${{ steps.gen.outputs.erstellt }}" \
             --repo-commit "${{ github.sha }}" ${OA[@]+"${OA[@]}"} \
-            --requires ourairports-1,grenzwerte-1,xplane-profile-1,cpdlc-1,flotte-1,texte-1,spurweiten-1,vref-1,hoehengruppen-1,klappen-1,kabine-1,endpunkte-1,msfs-profile-1,bewertung-1,kabine-modul-1,ui-befehle-1
+            --requires "$REQUIRES"
       - name: Signieren
         id: signieren
         env:
@@ -136,6 +145,139 @@ jobs:
           path: paket/
           retention-days: 30
 
+  # P-3.03 / P-12.03 (1), (5): Das Paket ist fuer Mac und Windows
+  # byte-gleich. Beide Laeufer bauen es aus demselben Stand mit derselben
+  # Generation und demselben Zeitstempel; das Manifest (Pfade, Groessen,
+  # SHA-256 jeder Datei) muss mit dem des Bau-Laeufers uebereinstimmen.
+  plattformen:
+    name: Paketbau auf ${{ matrix.os }} (P-3.03)
+    needs: bauen
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Oberflaeche bauen (ui/)
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+          rm -rf "$GITHUB_WORKSPACE/bundle/ui"
+          cp -R dist "$GITHUB_WORKSPACE/bundle/ui"
+      - name: Paket bauen
+        working-directory: client/src-tauri
+        run: |
+          OA=()
+          if [ -s "$GITHUB_WORKSPACE/scripts/ourairports/stand.txt" ]; then
+            OA=(--ourairports-commit "$(head -1 "$GITHUB_WORKSPACE/scripts/ourairports/stand.txt")")
+          fi
+          cargo run -q -p runtime-bundle --bin paket-bauen -- \
+            "$GITHUB_WORKSPACE/bundle" "$GITHUB_WORKSPACE/paket" \
+            --generation "${{ needs.bauen.outputs.generation }}" \
+            --erstellt "${{ needs.bauen.outputs.erstellt }}" \
+            --repo-commit "${{ github.sha }}" ${OA[@]+"${OA[@]}"} \
+            --requires "$REQUIRES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manifest-${{ runner.os }}
+          path: paket/manifest.json
+          retention-days: 7
+
+  plattform-vergleich:
+    name: Paket Mac = Windows = Linux (P-3.03)
+    needs: [bauen, plattformen]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: laufzeit-paket-g${{ needs.bauen.outputs.generation }}
+          path: linux
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: manifest-*
+      - name: Manifeste vergleichen
+        run: |
+          for os in Windows macOS; do
+            if cmp -s linux/manifest.json "manifest-$os/manifest.json"; then
+              echo "$os: Paket byte-gleich (Manifest-SHA-256 $(sha256sum linux/manifest.json | cut -c1-16))" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "$os: Paket WEICHT AB" | tee -a "$GITHUB_STEP_SUMMARY"
+              diff <(python3 -c 'import json,sys;[print(f["path"],f["sha256"]) for f in json.load(open(sys.argv[1]))["files"]]' linux/manifest.json) \
+                   <(python3 -c 'import json,sys;[print(f["path"],f["sha256"]) for f in json.load(open(sys.argv[1]))["files"]]' "manifest-$os/manifest.json") | head -40
+              exit 1
+            fi
+          done
+
+  # P-2.30: jedes neue Paket gegen die letzten zwei veroeffentlichten
+  # Client-Fassungen (Tags v3.*). Erwartet wird je Fassung „uebernommen"
+  # oder „sauber uebergangen" (fehlende Faehigkeit/Fassung ausserhalb des
+  # Bereichs, der Client behaelt seinen Stand); rot nur, wenn ein Client das
+  # Paket gar nicht lesen koennte. Fassung und Faehigkeiten kommen aus dem
+  # Stand des Tags (tauri.conf.json, FAEHIGKEITEN in laufzeit_paket.rs).
+  client-tags:
+    name: Letzte zwei Client-Fassungen
+    runs-on: ubuntu-latest
+    outputs:
+      liste: ${{ steps.tags.outputs.liste }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: tags
+        run: |
+          LISTE=$(git tag -l 'v3.*' --sort=-v:refname | head -2 | python3 -c 'import json,sys;print(json.dumps([l.strip() for l in sys.stdin if l.strip()] or ["keiner"]))')
+          echo "liste=$LISTE" >> "$GITHUB_OUTPUT"
+          echo "Client-Fassungen: $LISTE"
+
+  alte-clients:
+    name: Neues Paket gegen Client ${{ matrix.tag }} (P-2.30)
+    needs: [bauen, client-tags]
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: ${{ fromJSON(needs.client-tags.outputs.liste) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Noch kein veroeffentlichter 3.x-Client
+        if: matrix.tag == 'keiner'
+        run: echo "Noch kein Tag v3.* — nichts zu pruefen (P-2.30 greift ab dem ersten 3.0-Release)." | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.tag != 'keiner'
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.tag != 'keiner'
+        with:
+          workspaces: client/src-tauri
+      - uses: actions/download-artifact@v4
+        if: matrix.tag != 'keiner'
+        with:
+          name: laufzeit-paket-g${{ needs.bauen.outputs.generation }}
+          path: paket
+      - name: Paket mit Fassung und Faehigkeiten von ${{ matrix.tag }} pruefen
+        if: matrix.tag != 'keiner'
+        working-directory: client/src-tauri
+        env:
+          TAG: ${{ matrix.tag }}
+        run: |
+          V=$(git show "$TAG:client/src-tauri/tauri.conf.json" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')
+          F=$(git show "$TAG:client/src-tauri/src/laufzeit_paket.rs" | python3 -c 'import re,sys;t=sys.stdin.read();m=re.search(r"const FAEHIGKEITEN: &\[&str\] = &\[(.*?)\];",t,re.S);print(",".join(re.findall(r"\"([^\"]+)\"",m.group(1))))')
+          cargo run -q -p runtime-bundle --bin paket-pruefen -- "$GITHUB_WORKSPACE/paket/manifest.json" \
+            --client-version "$V" --faehigkeiten "$F" | tee -a "$GITHUB_STEP_SUMMARY"
+
   vorab:
     name: Als Vorabstand auf live ablegen (nur Vorab-Piloten, P-3.13)
     needs: bauen
@@ -168,7 +310,9 @@ jobs:
 
   freigeben:
     name: Für alle freigeben (Freigabe Thomas bzw. P-9.43)
-    needs: [bauen, vorab]
+    # P-3.03/P-2.30: Freigegeben wird nur ein Paket, das auf Mac und Windows
+    # gleich gebaut wird und die letzten Client-Fassungen nicht bricht.
+    needs: [bauen, vorab, plattform-vergleich, alte-clients]
     runs-on: ubuntu-latest
     environment: ${{ needs.bauen.outputs.umgebung }}
     steps:

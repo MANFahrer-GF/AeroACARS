@@ -8452,6 +8452,28 @@ mod auffrischung_tests {
         assert_eq!(notizen(&st, "auffrischen_ende")[0]["ergebnis"], "frisch");
     }
 
+    /// P-13.10 „Kabinentexte im Flug aufgefrischt, ohne den gepinnten Stand
+    /// zu stören": Die frischen Texte und Töne kommen vom Server in den
+    /// Ablauf dieses Flugs; Laufzeit-Paket, Kabinentabelle und die Kennung
+    /// des Flugs bleiben genau die vom Start.
+    #[test]
+    fn auffrischen_im_flug_laesst_den_gepinnten_stand_stehen() {
+        let stand = crate::laufzeit_paket::stand();
+        let pin = crate::laufzeit_paket::flug_pin("TEST-PIREP");
+        let tabelle = stand.kabine_json;
+        let mut st = welt(45);
+        let start = takt(&mut st, &tk(UM - 170, Cruise, 37_000.0, 0.0)).0.expect("Start");
+        auffrischen_texte(&mut st.kabinen_lauf, start.generation, Ok(frisches_drehbuch(true, &["de-DE", "en-GB"])));
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "de-DE", Ok(ton("neu-de")));
+        auffrischen_ton(&mut st.kabinen_lauf, start.generation, "en-GB", Ok(ton("neu-en")));
+        // Die Auffrischung hat gewirkt …
+        assert_eq!(st.kabinen_lauf.texte[&(Slot::KapitaenSinkflug, "de-DE".to_string())], "frisch de-DE");
+        // … und der Stand des Flugs ist derselbe.
+        assert!(std::ptr::eq(crate::laufzeit_paket::stand(), stand));
+        assert_eq!(crate::laufzeit_paket::flug_pin("TEST-PIREP"), pin);
+        assert_eq!(crate::laufzeit_paket::stand().kabine_json, tabelle);
+    }
+
     /// Nur eine Sprache fertig, wenn die Frist abläuft: alter Ton für beide.
     /// Der späte zweite Ton wird verworfen.
     #[test]
