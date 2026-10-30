@@ -4,5 +4,12 @@
   "identifier": "com.aeroacars.app3.dev",
   "bundle": {
     "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/MANFahrer-GF/AeroACARS/releases/download/aeroacars3-dev-kanal-gibt-es-nicht/latest.json"
+      ]
+    }
   }
 }
