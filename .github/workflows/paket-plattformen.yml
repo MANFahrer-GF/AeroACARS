@@ -1,0 +1,93 @@
+# AeroACARS 3.0 — Paket auf Linux, Mac und Windows bauen und vergleichen
+# (Pflichtenheft P-3.03, P-12.03 (1), (5)).
+#
+# Nur beim Client-Bau (Tag v3.*, auch Betas) oder von Hand. Thomas 30.10.2026:
+# Bei einer neuen Generation wird ausschliesslich das eine Linux-Paket aus
+# bundle.yml ausgeliefert, alle Clients laden dieselben Bytes — dort braucht es
+# den Vergleich nicht, und er hielt jede Freigabe auf. Gebraucht wird er, wenn
+# Mac- und Windows-Clients gebaut werden: Deren eingebauter Stand (build.rs)
+# entsteht aus demselben bundle/ auf dem jeweiligen Rechner und muss dasselbe
+# Paket ergeben (Zeilenenden, Pfade, Gross-/Kleinschreibung).
+#
+# Generation und Zeitstempel sind fest — verglichen wird nur, ob alle drei
+# Laeufer dasselbe Manifest (Pfade, Groessen, SHA-256 jeder Datei) bauen.
+
+name: Paket Mac = Windows = Linux
+
+on:
+  push:
+    tags: ['v3.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bauen:
+    name: Paketbau auf ${{ matrix.os }} (P-3.03)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Oberflaeche bauen (ui/)
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+          rm -rf "$GITHUB_WORKSPACE/bundle/ui"
+          cp -R dist "$GITHUB_WORKSPACE/bundle/ui"
+      - name: Paket bauen
+        working-directory: client/src-tauri
+        run: |
+          # Dieselben Faehigkeiten wie der Auslieferungsbau (eine Quelle).
+          REQUIRES=$(sed -n 's/^  REQUIRES: //p' "$GITHUB_WORKSPACE/.github/workflows/bundle.yml")
+          test -n "$REQUIRES"
+          OA=()
+          if [ -s "$GITHUB_WORKSPACE/scripts/ourairports/stand.txt" ]; then
+            OA=(--ourairports-commit "$(head -1 "$GITHUB_WORKSPACE/scripts/ourairports/stand.txt")")
+          fi
+          cargo run -q -p runtime-bundle --bin paket-bauen -- \
+            "$GITHUB_WORKSPACE/bundle" "$GITHUB_WORKSPACE/paket" \
+            --generation 1 \
+            --erstellt "2026-01-01T00:00:00Z" \
+            --repo-commit "${{ github.sha }}" ${OA[@]+"${OA[@]}"} \
+            --requires "$REQUIRES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manifest-${{ runner.os }}
+          path: paket/manifest.json
+          retention-days: 7
+
+  vergleich:
+    name: Paket Mac = Windows = Linux (P-3.03)
+    needs: bauen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: manifest-*
+      - name: Manifeste vergleichen
+        run: |
+          for os in Windows macOS; do
+            if cmp -s manifest-Linux/manifest.json "manifest-$os/manifest.json"; then
+              echo "$os: Paket byte-gleich (Manifest-SHA-256 $(sha256sum manifest-Linux/manifest.json | cut -c1-16))" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "$os: Paket WEICHT AB" | tee -a "$GITHUB_STEP_SUMMARY"
+              diff <(python3 -c 'import json,sys;[print(f["path"],f["sha256"]) for f in json.load(open(sys.argv[1]))["files"]]' manifest-Linux/manifest.json) \
+                   <(python3 -c 'import json,sys;[print(f["path"],f["sha256"]) for f in json.load(open(sys.argv[1]))["files"]]' "manifest-$os/manifest.json") | head -40
+              exit 1
+            fi
+          done

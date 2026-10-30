@@ -1438,9 +1438,13 @@ mod tests {
     fn paket_workflow_verlangt_nur_bekannte_faehigkeiten() {
         let wf = include_str!("../../../.github/workflows/bundle.yml");
         let liste = wf.split("REQUIRES: ").nth(1).expect("REQUIRES").split_whitespace().next().unwrap();
-        // Jeder Bau-Laeufer nimmt genau diese Liste (P-3.03: gleiche Pakete).
-        let bauten: Vec<&str> = wf.split("--requires ").skip(1).collect();
+        // Jeder Bau nimmt genau diese Liste (P-3.03: gleiche Pakete) — der
+        // Auslieferungsbau hier und der Vergleichsbau beim Client-Bau
+        // (paket-plattformen.yml liest REQUIRES aus bundle.yml).
+        let vergleich = include_str!("../../../.github/workflows/paket-plattformen.yml");
+        let bauten: Vec<&str> = wf.split("--requires ").skip(1).chain(vergleich.split("--requires ").skip(1)).collect();
         assert!(bauten.len() >= 2 && bauten.iter().all(|r| r.starts_with("\"$REQUIRES\"")), "jeder Bau mit $REQUIRES");
+        assert!(vergleich.contains("REQUIRES: //p' \"$GITHUB_WORKSPACE/.github/workflows/bundle.yml\""), "Vergleichsbau liest REQUIRES aus bundle.yml");
         for f in liste.split(',') {
             assert!(FAEHIGKEITEN.contains(&f), "bundle.yml verlangt {f}, das Programm kennt es nicht");
         }
