@@ -35,8 +35,14 @@ pub(crate) fn live_basis() -> &'static str {
 static LAUFENDES_TOKEN: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
 pub(crate) fn token_setzen(token: Option<String>) {
+    let da = token.as_deref().is_some_and(|t| !t.trim().is_empty());
     if let Ok(mut t) = LAUFENDES_TOKEN.write() {
         *t = token.filter(|t| !t.trim().is_empty());
+    }
+    // Der Paketabruf beim Start kann vor dem Token gelaufen sein: einmal mit
+    // Token nachholen (Vorabstand, P-3.13). Nur anstossen, nichts blockieren.
+    if da {
+        crate::laufzeit_paket::token_bereit();
     }
 }
 

@@ -527,6 +527,7 @@ pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf, hinweis: impl FnO
     if PRUEFSCHLUESSEL.is_empty() {
         return;
     }
+    let _ = APP_DATEN.set(app_daten.clone());
     if flug_offen(&app_daten) {
         if let Some(tage) = pruefung_ueberfaellig(&app_daten, chrono::Utc::now()) {
             hinweis(tage);
@@ -544,19 +545,96 @@ pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf, hinweis: impl FnO
         return;
     }
     tauri::async_runtime::spawn(async move {
-        match aktualisieren(&app_daten).await {
-            Ok(Some(id)) => {
-                pruefung_vermerken(&app_daten, chrono::Utc::now());
-                tracing::info!(stand = %id, "Laufzeit-Paket: neuer Stand, aktiv ab naechstem Start");
-            }
-            Ok(None) => pruefung_vermerken(&app_daten, chrono::Utc::now()),
-            Err(e) => tracing::warn!(error = %e, "Laufzeit-Paket: Aktualisierung nicht moeglich"),
-        }
+        abrufen(&app_daten, false).await;
         if let Some(tage) = pruefung_ueberfaellig(&app_daten, chrono::Utc::now()) {
             hinweis(tage);
         }
     });
 }
+
+/// App-Datenordner, gesetzt beim ersten Abruf (fuer den Abruf nach der Anmeldung).
+static APP_DATEN: OnceLock<PathBuf> = OnceLock::new();
+/// Ein Abruf lief schon MIT Pilot-Token bis zur Antwort von live (Vorab-
+/// Piloten haben dann ihren Vorabstand gesehen, P-3.13).
+static MIT_TOKEN_GEPRUEFT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Nur ein Abruf zur Zeit: Start und „Token da“ koennen sich ueberlappen;
+/// die Ablage-Sperre schuetzt nur das Installieren, nicht das Herunterladen.
+static ABRUF: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Wartezeit vor der einen Wiederholung nach einem gescheiterten Abruf
+/// (Netz noch nicht da, 401 vom Grundtor) — nicht erst beim naechsten Start.
+const WIEDERHOLEN_NACH: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Ein Abruf mit hoechstens EINER Wiederholung nach `warten`, wenn der erste
+/// scheitert. Vor der Wiederholung `noch_erlaubt` (kein Flug begonnen).
+async fn mit_einer_wiederholung<F, Fut>(
+    mut versuch: F,
+    warten: std::time::Duration,
+    noch_erlaubt: impl Fn() -> bool,
+) -> Result<Option<RuntimeBundleId>, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Option<RuntimeBundleId>, String>>,
+{
+    match versuch().await {
+        Err(e) => {
+            tracing::warn!(error = %e, "Laufzeit-Paket: Aktualisierung nicht moeglich, ein weiterer Versuch folgt");
+            tokio::time::sleep(warten).await;
+            if !noch_erlaubt() {
+                return Ok(None);
+            }
+            versuch().await
+        }
+        ok => ok,
+    }
+}
+
+/// Ein Abruf bei live (seriell), mit einer Wiederholung; vermerkt die
+/// erfolgreiche Pruefung (P-3.04). `nur_ohne_token`: entfaellt, wenn
+/// inzwischen (unter der Sperre geprueft) ein Abruf mit Token durchging.
+async fn abrufen(app_daten: &Path, nur_ohne_token: bool) {
+    let _sperre = ABRUF.lock().await;
+    if nur_ohne_token && MIT_TOKEN_GEPRUEFT.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    match mit_einer_wiederholung(|| aktualisieren(app_daten), WIEDERHOLEN_NACH, || !flug_offen(app_daten)).await {
+        Ok(Some(id)) => {
+            pruefung_vermerken(app_daten, chrono::Utc::now());
+            tracing::info!(stand = %id, "Laufzeit-Paket: neuer Stand, aktiv ab naechstem Start");
+        }
+        Ok(None) => pruefung_vermerken(app_daten, chrono::Utc::now()),
+        Err(e) => tracing::warn!(error = %e, "Laufzeit-Paket: Aktualisierung nicht moeglich"),
+    }
+}
+
+/// Soll nach dem Setzen des Pilot-Tokens noch einmal abgerufen werden? Nur
+/// wenn noch kein Abruf MIT Token durchging und kein Flug offen ist.
+fn nach_token_abrufen(mit_token_geprueft: bool, flug_offen: bool) -> bool {
+    !mit_token_geprueft && !flug_offen
+}
+
+/// Das Pilot-Token ist jetzt da (`live_zugang::token_setzen`). Der Start-
+/// abruf lief womoeglich noch ohne (Thomas' Protokoll 30.10.: Abfrage
+/// ~0,7 s vor den Zugangsdaten → 401) — dann genau einmal mit Token.
+pub(crate) fn token_bereit() {
+    if PRUEFSCHLUESSEL.is_empty() {
+        return;
+    }
+    let Some(daten) = APP_DATEN.get().cloned() else { return };
+    if !nach_token_abrufen(MIT_TOKEN_GEPRUEFT.load(std::sync::atomic::Ordering::SeqCst), flug_offen(&daten)) {
+        return;
+    }
+    // Im Test nur zaehlen — kein Netz.
+    #[cfg(test)]
+    {
+        NACH_TOKEN_ANGESTOSSEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        drop(daten);
+    }
+    #[cfg(not(test))]
+    tauri::async_runtime::spawn(async move { abrufen(&daten, true).await });
+}
+
+#[cfg(test)]
+static NACH_TOKEN_ANGESTOSSEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[derive(serde::Deserialize)]
 struct AktuellAntwort {
@@ -574,15 +652,23 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
         .map_err(|e| e.to_string())?;
     // Mit Pilot-Token: Vorab-Piloten bekommen den neueren Vorabstand (P-3.13).
     let mut anfrage = client.get(format!("{basis}/api/bundle/current"));
-    if let Some(token) = crate::live_zugang::pilot_token() {
+    let mit_token = crate::live_zugang::pilot_token();
+    if let Some(token) = &mit_token {
         anfrage = anfrage.bearer_auth(token);
     }
     let antwort = anfrage.send().await.map_err(|e| e.to_string())?;
     if antwort.status() == reqwest::StatusCode::NOT_FOUND {
+        if mit_token.is_some() {
+            MIT_TOKEN_GEPRUEFT.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         return Ok(None);
     }
     let a: AktuellAntwort =
         antwort.error_for_status().map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    // live hat geantwortet: Mit Token war das der Stand fuer DIESEN Piloten.
+    if mit_token.is_some() {
+        MIT_TOKEN_GEPRUEFT.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     let ablage = Ablage::oeffnen(app_daten.join("laufzeit-paket")).map_err(|e| e.to_string())?;
     if ablage.aktuell().is_some_and(|g| g >= a.generation) {
         return Ok(None);
@@ -1094,6 +1180,61 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert_eq!(pruefung_ueberfaellig(&dir, jetzt), Some(31), "letzter Erfolg vor 31 Tagen");
         pruefung_vermerken(&dir, jetzt - tag * 29);
         assert_eq!(pruefung_ueberfaellig(&dir, jetzt), None, "Gegenprobe: 29 Tage");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Zusatz 30.10. (Thomas' Protokoll: Startabruf ~0,7 s vor dem Token,
+    /// 401): Ein gescheiterter Abruf wird genau EINMAL wiederholt, nicht erst
+    /// beim naechsten Start. Gegenproben: Erfolg → kein zweiter Versuch; zwei
+    /// Fehler → Schluss nach dem zweiten; Flug begonnen → keine Wiederholung.
+    #[tokio::test]
+    async fn gescheiterter_abruf_wird_einmal_wiederholt() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let lauf = |antworten: Vec<Result<Option<RuntimeBundleId>, String>>, erlaubt: bool| async move {
+            let n = AtomicUsize::new(0);
+            let a = std::sync::Mutex::new(antworten.into_iter());
+            let erg = mit_einer_wiederholung(
+                || {
+                    n.fetch_add(1, SeqCst);
+                    let x = a.lock().unwrap().next().expect("zu viele Versuche");
+                    async move { x }
+                },
+                std::time::Duration::ZERO,
+                || erlaubt,
+            )
+            .await;
+            (n.load(SeqCst), erg)
+        };
+        let id = RuntimeBundleId { generation: 54, manifest_sha256: "cd".repeat(32) };
+        assert_eq!(lauf(vec![Err("401".into()), Ok(Some(id.clone()))], true).await, (2, Ok(Some(id))));
+        assert_eq!(lauf(vec![Ok(None)], true).await, (1, Ok(None)), "Gegenprobe: Erfolg, kein zweiter Versuch");
+        assert_eq!(lauf(vec![Err("a".into()), Err("b".into())], true).await, (2, Err("b".into())), "hoechstens einmal");
+        assert_eq!(lauf(vec![Err("a".into())], false).await, (1, Ok(None)), "Flug begonnen: keine Wiederholung");
+    }
+
+    /// Kommt das Pilot-Token, wird genau einmal nachgefragt — solange noch
+    /// kein Abruf mit Token durchging. Gegenproben: Leeren des Tokens (Abmelden)
+    /// stoesst nichts an; nach einem Abruf mit Token auch kein neues Token.
+    #[test]
+    fn token_stoesst_den_abruf_genau_einmal_an() {
+        use std::sync::atomic::Ordering::SeqCst;
+        assert!(nach_token_abrufen(false, false));
+        assert!(!nach_token_abrufen(true, false));
+        assert!(!nach_token_abrufen(false, true), "offener Flug: kein Abruf");
+        let dir = std::env::temp_dir().join(format!("aeroacars-token-abruf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let _ = APP_DATEN.set(dir.clone());
+        let vorher = NACH_TOKEN_ANGESTOSSEN.load(SeqCst);
+        crate::live_zugang::token_setzen(None);
+        assert_eq!(NACH_TOKEN_ANGESTOSSEN.load(SeqCst), vorher, "Abmelden stoesst nichts an");
+        // `token_setzen(Some)` ruft `token_bereit` (live_zugang.rs); das
+        // globale Token setzt der Test nicht — andere Tests lesen es.
+        token_bereit();
+        assert_eq!(NACH_TOKEN_ANGESTOSSEN.load(SeqCst), vorher + 1);
+        MIT_TOKEN_GEPRUEFT.store(true, SeqCst);
+        token_bereit();
+        assert_eq!(NACH_TOKEN_ANGESTOSSEN.load(SeqCst), vorher + 1, "schon mit Token geprueft");
+        MIT_TOKEN_GEPRUEFT.store(false, SeqCst);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
