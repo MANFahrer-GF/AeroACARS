@@ -39,8 +39,16 @@ class Bauen(unittest.TestCase):
         n = notiz.notiz_bauen(53, "713b", "  Hilfe-Formular  ", (47, "2290"), self.C, "letzter")
         self.assertEqual((n["kernaufgabe"], n["basis_generation"], len(n["commits"])), ("Hilfe-Formular", 47, 2))
 
-    def test_kernaufgabe_sonst_neuester_commit(self):
-        self.assertEqual(notiz.notiz_bauen(53, "713b", "", (47, "2290"), self.C, "letzter")["kernaufgabe"], "feat(ueber): aktive Paket-Generation")
+    def test_kernaufgabe_sonst_gebauter_commit(self):
+        # Gegenprobe: nicht der neueste Commit der Liste (kann aelter sein), sondern der gebaute.
+        self.assertEqual(notiz.notiz_bauen(53, "713b", "", (47, "2290"), self.C, "letzter")["kernaufgabe"], "letzter")
+
+    def test_pfade_wie_ausloeser(self):
+        yml = open(os.path.join(os.path.dirname(__file__), "..", "..", ".github", "workflows", "bundle.yml"), encoding="utf-8").read()
+        block = yml.split("paths:", 1)[1].split("workflow_dispatch", 1)[0]
+        ausloeser = [z.strip().strip("-").strip().strip("'").rstrip("*").rstrip("/") for z in block.splitlines() if z.strip().startswith("- ")]
+        for p in ausloeser:
+            self.assertTrue(any(p == q or p.startswith(q + "/") or (p.endswith("panel.") and p.startswith(q)) for q in notiz.PFADE), p)
 
     def test_ohne_basis_keine_commits_und_ehrlich_null(self):
         n = notiz.notiz_bauen(53, "713b", "", None, None, "letzter")

@@ -27,7 +27,12 @@ import subprocess
 import sys
 import urllib.request
 
-PFADE = ["bundle", "client/src", "client/src-tauri/befehle.json"]
+# Dieselben Pfade, die den Paket-Lauf ausloesen (bundle.yml, on.push.paths).
+PFADE = [
+    "bundle", "client/src-tauri/crates/runtime-bundle", ".github/workflows/bundle.yml", "client/src",
+    "client/index.html", "client/package.json", "client/package-lock.json", "client/vite.config.ts",
+    "client/src-tauri/befehle.json", "msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel",
+]
 FREIGABE_JOB = "Für alle freigeben"
 GRENZE = 200
 
@@ -83,7 +88,8 @@ def notiz_bauen(generation, repo_commit, kernaufgabe, basis, commits, letzter_ti
         "repo_commit": repo_commit,
         "basis_generation": basis[0] if basis and commits is not None else None,
         "basis_commit": basis[1] if basis and commits is not None else None,
-        "kernaufgabe": (kernaufgabe or "").strip() or (commits[0]["titel"] if commits else letzter_titel),
+        # Rueckfall: Ueberschrift des gebauten Commits selbst (nie ein aelterer).
+        "kernaufgabe": (kernaufgabe or "").strip() or letzter_titel,
         "commits": commits or [],
     }
 
@@ -104,9 +110,10 @@ def main(argv=None) -> int:
     commits = commits_seit(basis[1] if basis else None, a.repo_commit)
     letzter = git("log", "-1", "--format=%s", a.repo_commit).strip()
     n = notiz_bauen(a.generation, a.repo_commit, a.kernaufgabe, basis, commits, letzter)
-    with open(a.ausgabe, "w", encoding="utf-8") as f:
+    with open(a.ausgabe + ".neu", "w", encoding="utf-8") as f:
         json.dump(n, f, ensure_ascii=False, indent=1)
         f.write("\n")
+    os.replace(a.ausgabe + ".neu", a.ausgabe)
     print(f"notiz.json: Gen. {n['generation']}, Basis {n['basis_generation']}, {len(n['commits'])} Commits, Kernaufgabe: {n['kernaufgabe']}")
     return 0
 
