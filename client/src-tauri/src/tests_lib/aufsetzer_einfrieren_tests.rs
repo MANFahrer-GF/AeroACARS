@@ -182,11 +182,14 @@
         assert_eq!(s.aufsetzer_eingefroren.len(), 1);
     }
 
-    /// Server: `seq` hoechstens `SEQ_MAX`. Die letzte Nummer bleibt der
-    /// Landung; das Fenster des nicht mehr dokumentierten Aufsetzers ist
-    /// trotzdem weg. Gegenprobe: eine Stelle darunter wird eingefroren.
+    /// Server: `seq` hoechstens `SEQ_MAX` (200, wie `landingInput.ts`). Die
+    /// letzte Nummer bleibt der Landung; das Fenster des nicht mehr
+    /// dokumentierten Aufsetzers ist trotzdem weg. Gegenprobe: eine Stelle
+    /// darunter wird eingefroren — 199 Touch-and-Go + Landung = seq 200, ein
+    /// 201. Dokument entsteht nie.
     #[test]
     fn touch_and_go_ueber_der_dokumentgrenze() {
+        assert_eq!(landungs_eingabe::SEQ_MAX, 200, "Grenze des Servers");
         let f = flug();
         let mut s = f.stats.lock().unwrap();
         s.phase = FlightPhase::Landing;
@@ -199,6 +202,7 @@
         s.landung_fenster = vec![probe()];
         aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
         assert_eq!(s.aufsetzer_eingefroren.len(), landungs_eingabe::SEQ_MAX as usize - 1, "Platz fuer die Landung");
+        assert_eq!(s.aufsetzer_eingefroren.len() + 1, 200, "Landung bekommt seq 200, keine 201");
         assert!(s.landung_fenster.is_empty(), "Fenster nicht an die naechste Landung vererbt");
     }
 
