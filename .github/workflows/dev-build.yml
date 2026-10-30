@@ -74,6 +74,9 @@ jobs:
           # signieren. Ohne beta schaltet tauri.lokal.conf.json sie ab.
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.beta && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.beta && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # Beta an Piloten: Fehlerberichte wie im Release (release.yml).
+          AEROACARS_SENTRY_DSN: ${{ inputs.beta && secrets.AEROACARS_SENTRY_DSN || '' }}
+          VITE_SENTRY_DSN_CLIENT: ${{ inputs.beta && secrets.VITE_SENTRY_DSN_CLIENT || '' }}
         run: npx tauri build --bundles nsis --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Upload installer
@@ -140,6 +143,9 @@ jobs:
           # signieren. Ohne beta schaltet tauri.lokal.conf.json sie ab.
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.beta && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.beta && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # Beta an Piloten: Fehlerberichte wie im Release (release.yml).
+          AEROACARS_SENTRY_DSN: ${{ inputs.beta && secrets.AEROACARS_SENTRY_DSN || '' }}
+          VITE_SENTRY_DSN_CLIENT: ${{ inputs.beta && secrets.VITE_SENTRY_DSN_CLIENT || '' }}
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Apple-Signatur pruefen

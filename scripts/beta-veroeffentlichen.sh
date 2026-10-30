@@ -31,8 +31,9 @@ trap 'rm -rf "$TMP"' EXIT
 # Pre-Release-Status hart pruefen: ein v3-Release als "latest" bekaeme jeder
 # 2.x-Pilot als Update angeboten.
 pruefe_vorab() {
-  [[ $(gh release view "$1" -R "$REPO" --json isPrerelease -q .isPrerelease) == "true" ]] \
-    || fehler "Release $1 ist KEINE Pre-Release — abgebrochen, bitte von Hand pruefen"
+  # Auch kein Entwurf: dessen Dateien waeren fuer die Clients nicht abrufbar.
+  [[ $(gh release view "$1" -R "$REPO" --json isPrerelease,isDraft -q '.isPrerelease and (.isDraft | not)') == "true" ]] \
+    || fehler "Release $1 ist keine veroeffentlichte Pre-Release (Entwurf oder Latest-Kandidat) — abgebrochen, bitte von Hand pruefen"
 }
 
 # Kanal-Release anlegen (falls noetig) und latest.json ersetzen — immer zuletzt.
@@ -45,9 +46,11 @@ kanal_setzen() {
   fi
   pruefe_vorab "$KANAL"
   gh release upload "$KANAL" "$json" -R "$REPO" --clobber
+  # Kontrolle nur als Hinweis: der Upload ist durch, die Auslieferung kann
+  # kurz verzoegert noch den alten Stand liefern.
   local live
-  live=$(curl -fsSL "$KANAL_URL" | jq -r .version)
-  echo "Kanal $KANAL zeigt jetzt auf Version: $live"
+  live=$(curl -fsSL "$KANAL_URL" 2>/dev/null | jq -r .version 2>/dev/null) || live="(noch nicht abrufbar)"
+  echo "Kanal $KANAL liefert gerade Version: $live (erwartet: $(jq -r .version "$json"))"
 }
 
 if [[ $1 == "--final" ]]; then
@@ -73,7 +76,8 @@ VER=$(roh client/src-tauri/tauri.conf.json | jq -r .version)
 TAG="v$VER"
 # Der neue Tag loest release.yml aus — nur sicher, wenn dessen Fassung am
 # Commit die v3-Betas ausschliesst.
-roh .github/workflows/release.yml | grep -qF "'!v3.*-beta*'" \
+RELEASE_YML=$(roh .github/workflows/release.yml)
+grep -qE "^[[:space:]]*-[[:space:]]*'!v3\.\*-beta\*'" <<<"$RELEASE_YML" \
   || fehler "release.yml an $SHA schliesst v3-Beta-Tags nicht aus — Tag wuerde einen Release-Build ausloesen"
 
 gh run download "$RUN" -R "$REPO" -n AeroACARS-beta-kanal -D "$TMP/kanal" \
