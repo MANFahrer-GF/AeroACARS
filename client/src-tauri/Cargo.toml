@@ -313,6 +313,9 @@ workspace = true
 flate2 = "1"
 # v3 Etappe 4: Ersatzmodul im Test „Kabinenablauf ohne Release geaendert“.
 wat = "1"
+# P-4.14: Tests bauen die MSFS-Szenerie mit der echten `facility::bahn_paar`
+# des Adapters (das Modul uebersetzt auf jeder Plattform).
+sim-msfs.workspace = true
 
 # v3 (P-13.20): Testanwendung (MockRuntime) fuer den Lader der Oberflaeche.
 # Nicht unter Windows: Dort startet die Testdatei mit dem Merkmal `test`

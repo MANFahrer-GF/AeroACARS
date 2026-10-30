@@ -1750,6 +1750,11 @@ mod abfangen_verdrahtung_tests;
 #[path = "tests_lib/schnelle_ausfahrt_tests.rs"]
 mod schnelle_ausfahrt_tests;
 
+/// P-4.14: Korpustest CFG2001 (FQNP 23) — Achse durch die MSFS-Facility-Mitte.
+#[cfg(test)]
+#[path = "tests_lib/achse_msfs_cfg2001_tests.rs"]
+mod achse_msfs_cfg2001_tests;
+
 #[cfg(test)]
 #[path = "tests_lib/ofp_planzeiten_tests.rs"]
 mod ofp_planzeiten_tests;

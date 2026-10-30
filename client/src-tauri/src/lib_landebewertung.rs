@@ -1354,11 +1354,19 @@ fn scoring_eingang(
         // bestaetigt, ist eine Landung am Bahnrand genau das, was
         // bewertet werden soll — siehe die Begruendung an der
         // Achsenpruefung in sub_bahndisziplin.
+        //
+        // ⚠ P-4.14 (b): Nur, wenn die ACHSE der gelandeten Bahn aus der
+        // Szenerie stammt. Bis 3.0 genuegte irgendeine uebernommene Bahn —
+        // auch wenn nur ihre Breite kam (MSFS) —, und damit war das Netz
+        // `achse_fragwuerdig` gerade dann aus, wenn die Achse Navigraph war
+        // (CFG2001, FQNP 23). Ein OurAirports-Rueckfall rechnet nie gegen
+        // die Szenerie-Achse.
         bahn_geometrie_aus_szenerie: Some(
-            stats
-                .szenerie_uebernahme
-                .as_ref()
-                .is_some_and(|b| !b.uebernommen.is_empty()),
+            matches!(stats.runway_source, Some(runway::RunwaySource::Navigraph))
+                && match (stats.szenerie_uebernahme.as_ref(), stats.runway_match.as_ref()) {
+                    (Some(b), Some(rm)) => b.achse_aus_szenerie(&rm.runway_ident),
+                    _ => false,
+                },
         ),
         // v0.7.17 (N-002): Aircraft-ICAO fuer den aircraft-category-
         // sensitiven Bahn-Score. None → Light-Default-Schwellen

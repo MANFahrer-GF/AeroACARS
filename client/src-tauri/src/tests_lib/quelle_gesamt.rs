@@ -238,6 +238,13 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `grenzwerte_nachtrag_p3_55_wie_2_1_24`), Gegenproben
 /// `nachtrag_lange_bahn_und_strecken_grenzen_wirken` und an den
 /// Verhaltenstests (Schaetzer, TCH, Fahrwerk, Randluecke).
+/// — plus P-4.14 (Bahnachse MSFS): `bahn_geometrie_aus_szenerie` nur, wenn
+/// die ACHSE der gelandeten Bahn aus der Szenerie stammt
+/// (`UebernahmeBericht::achse_aus_szenerie`, Zuordnung ueber Navigraph);
+/// `anflug_forensik_bahn` nimmt bei MSFS-verschobener Achse fuer das ILS
+/// die Navigraph-Bahn vor der Uebernahme; `mod achse_msfs_cfg2001_tests`.
+/// Tests `achse_msfs_cfg2001_tests::*` (58, Gegenprobe 25, ILS mit
+/// Gegenprobe), `szenerie_bahn::tests::msfs_*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -248,4 +255,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "7efba2d05ebf6693998db4df8b71aae40e8b8066c9a9dc19b5842eddac6f8268";
+const HASH_VOR_DER_ZERLEGUNG: &str = "b7e1c1fd7198b06d560c17d2c350ab35a994745a23d5fe6bb8e0d56e8788f293";

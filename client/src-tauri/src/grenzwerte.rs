@@ -481,6 +481,9 @@ pub(crate) struct Bahnzuordnung {
 pub(crate) struct Szenerie {
     pub querabstand_hoechst_m: Grenzwert<f64>,
     pub laengsversatz_hoechst_m: Grenzwert<f64>,
+    /// P-4.14: Kurs aus der MSFS-Szenerie nur in dieser Naehe zu HEADING
+    /// bzw. zur Navdaten-Geometrie.
+    pub kurs_abweichung_hoechst_grad: Grenzwert<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1006,6 +1009,8 @@ mod tests {
         let g = &grenzwerte().szenerie;
         assert_eq!(g.querabstand_hoechst_m.wert, 100.0); // szenerie_bahn.rs:55
         assert_eq!(g.laengsversatz_hoechst_m.wert, 400.0); // szenerie_bahn.rs:66
+        // Neu in 3.0 (P-4.14), kein 2.1.24-Wert.
+        assert_eq!(g.kurs_abweichung_hoechst_grad.wert, 0.5);
     }
 
     // ─── P-3.63/P-13.04: je Bereich ein Verhaltenstest an der Schwelle ───
