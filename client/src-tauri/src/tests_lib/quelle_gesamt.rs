@@ -259,6 +259,14 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// der eigenen HelpDesk-Tickets). Sonst nichts an `lib.rs`. Tests
 /// `hilfe::tests::ticket_liste_*`, `tests/befehlsliste.rs::hilfe_tickets_ist_fachlich`,
 /// vitest `MeineAnfragen.test.tsx`.
+/// — plus Startfenster 30.10.: `.setup` zeigt das Startfenster und ruft
+/// `startfenster::beginnen`; der bisherige Rest von `.setup` steht
+/// unveraendert (nur `app.handle()` -> `app`) in `nach_dem_stand`, das
+/// `startfenster::abschliessen` nach dem Festlegen des Stands und dem Bau des
+/// Hauptfensters (`create: false`) aufruft; dazu `mod startfenster`, das
+/// Protokoll `aerostart` und der Fokus-Rueckfall im Single-Instance-Haken.
+/// Tests `startfenster::tests::*`, `laufzeit_paket::tests::startabruf_*`,
+/// `das_szenerie_verzeichnis_wird_beim_start_gebaut`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};

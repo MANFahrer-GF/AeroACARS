@@ -612,17 +612,31 @@ fn flug_offen(app_daten: &Path) -> bool {
 /// Muss vor jedem Zugriff auf die Bahntabellen laufen. Scheitert alles,
 /// gilt der eingebaute Stand — das Programm startet immer.
 pub(crate) fn starten(app_daten: &Path) {
-    // Einmalig auch bei gleichzeitigen Aufrufern (Codex 29.10.).
-    static EINMAL: std::sync::Once = std::sync::Once::new();
-    EINMAL.call_once(|| starten_einmal(app_daten));
+    starten_mit(app_daten, None);
 }
 
-fn starten_einmal(app_daten: &Path) {
+/// Wie `starten`, mit Fortschrittsmeldung und Abbruch fuer das Startfenster.
+/// Nur der erste Aufruf wirkt (auch `hilfe`); jeder spaetere kehrt zurueck,
+/// sobald der erste fertig ist.
+pub(crate) fn starten_mit(app_daten: &Path, hilfe: Option<StartHilfe>) {
+    // Einmalig auch bei gleichzeitigen Aufrufern (Codex 29.10.).
+    static EINMAL: std::sync::Once = std::sync::Once::new();
+    EINMAL.call_once(|| starten_einmal(app_daten, hilfe));
+}
+
+/// Lohnt sich ein Startfenster mit Abruf? Nein bei offenem Flug (P-3.20:
+/// kein Wechsel unter einem laufenden Flug), ohne Pruefschluessel und wenn
+/// schon ein Stand gilt — dann startet das Hauptfenster sofort.
+pub(crate) fn startabruf_noetig(app_daten: &Path) -> bool {
+    !PRUEFSCHLUESSEL.is_empty() && STAND.get().is_none() && !flug_offen(app_daten)
+}
+
+fn starten_einmal(app_daten: &Path, hilfe: Option<StartHilfe>) {
     // Abweichung P-3.20 (Thomas 30.10.: „installieren, schliessen und erst
     // dann die neue Version haben — das funktioniert nicht“): Ein neuerer
     // freigegebener Stand wird VOR dem Festlegen geholt und gilt schon in
     // diesem Lauf. Nicht bei offenem Flug (sein Pin gilt weiter).
-    beim_start_holen(app_daten);
+    beim_start_holen(app_daten, hilfe);
     // Vor allem anderen: X-Plane-Profile kommen ab jetzt aus DIESEM Stand.
     sim_xplane::profile_quelle_setzen(|| stand().xplane_profile);
     hoppie_protocol::elements_data::tabelle_quelle_setzen(|| stand().cpdlc);
@@ -684,19 +698,109 @@ fn starten_einmal(app_daten: &Path) {
     tracing::info!(stand = %wirksam, ?herkunft, "Laufzeit-Paket geladen");
 }
 
-/// Startabruf: Frist je Anfrage und insgesamt. Reicht sie nicht (langsame
-/// Leitung, grosser erster Download), startet das Programm mit dem
-/// vorhandenen Stand; der Abruf im Hintergrund holt den Rest, aktiv dann
-/// beim naechsten Start bzw. per „Jetzt neu starten“.
-const START_FRIST_ANFRAGE: std::time::Duration = std::time::Duration::from_secs(4);
-const START_FRIST_GESAMT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Startabruf: Frist je Anfrage und insgesamt. Mit sichtbarem Fortschritt im
+/// Startfenster (Thomas 30.10.) darf der Abruf laenger dauern: ein grosser
+/// erster Download (Oberflaeche, mehrere MB) soll noch im selben Lauf
+/// gelten, nicht erst nach „schliessen und neu starten“. Die Anfrage-Frist
+/// gilt je Abschnitt (Verbindung, Lesen), nicht fuer den ganzen Blob. Reicht
+/// auch die Gesamtfrist nicht, startet das Programm mit dem vorhandenen
+/// Stand; der Abruf im Hintergrund holt den Rest, aktiv dann beim naechsten
+/// Start bzw. per „Jetzt neu starten“.
+const START_FRIST_ANFRAGE: std::time::Duration = std::time::Duration::from_secs(15);
+const START_FRIST_GESAMT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Verbindungsaufbau: ohne Netz (kein Weg, Port zu) kommt der Fehler sofort;
+/// nur ein Weg ins Leere wartet, dann hoechstens so lange.
+const START_FRIST_VERBINDUNG: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// Wo der Startabruf gerade steht (fuer das Startfenster).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Phase {
+    /// Fragt live nach dem aktuellen Stand.
+    Pruefen,
+    /// Laedt die fehlenden Dateien (`geladen` von `gesamt` Bytes).
+    Laden,
+    /// Prueft und installiert; ab hier ist kein Abbruch mehr moeglich.
+    Installieren,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Fortschritt {
+    pub phase: Phase,
+    /// Nummer des Stands, den live nennt (ab `Laden`).
+    pub generation: Option<u64>,
+    pub geladen: u64,
+    /// Summe der Groessen der fehlenden Dateien laut Manifest.
+    pub gesamt: u64,
+}
+
+pub(crate) type Melder = std::sync::Arc<dyn Fn(Fortschritt) + Send + Sync>;
+
+/// Abbruch des Startabrufs („Ueberspringen“). Nach `sperren()` (Installieren
+/// beginnt) wirkt er nicht mehr: eine halbe Installation lassen wir nicht
+/// zurueck.
+#[derive(Default)]
+pub(crate) struct Abbruch {
+    signal: tokio::sync::Notify,
+    gesperrt: std::sync::atomic::AtomicBool,
+}
+
+impl Abbruch {
+    /// `true` = der Abruf wird abgebrochen.
+    pub(crate) fn ausloesen(&self) -> bool {
+        if self.gesperrt.load(std::sync::atomic::Ordering::SeqCst) {
+            return false;
+        }
+        // `notify_one` merkt sich den Ruf auch ohne wartenden Empfaenger.
+        self.signal.notify_one();
+        true
+    }
+
+    fn sperren(&self) {
+        self.gesperrt.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    async fn abgerufen(&self) {
+        self.signal.notified().await;
+    }
+}
+
+/// Meldeweg und Abbruch des Startfensters.
+#[derive(Clone)]
+pub(crate) struct StartHilfe {
+    pub melden: Melder,
+    pub abbruch: std::sync::Arc<Abbruch>,
+}
+
+/// Zaehlt die geladenen Bytes ueber alle Dateien eines Abrufs zusammen und
+/// meldet jeden Schritt (die Drosselung macht der Empfaenger).
+struct Zaehler<'a> {
+    hilfe: Option<&'a StartHilfe>,
+    generation: u64,
+    gesamt: u64,
+    geladen: std::sync::atomic::AtomicU64,
+}
+
+impl Zaehler<'_> {
+    fn dazu(&self, bytes: u64) {
+        let alt = self.geladen.fetch_add(bytes, std::sync::atomic::Ordering::SeqCst);
+        // Nie ueber 100 %: ein Server darf mehr schicken als das Manifest nennt.
+        let geladen = (alt + bytes).min(self.gesamt);
+        self.melden(Phase::Laden, geladen);
+    }
+
+    fn melden(&self, phase: Phase, geladen: u64) {
+        if let Some(h) = self.hilfe {
+            (h.melden)(Fortschritt { phase, generation: Some(self.generation), geladen, gesamt: self.gesamt });
+        }
+    }
+}
 
 /// Holt beim Start einen neueren Stand, bevor er festgelegt wird. Anonym
 /// (P-7.03; der Schluesselspeicher ist hier noch nicht eingerichtet) und von
 /// der eingebauten live-Adresse (die Quellen der Crates sind noch nicht
 /// angemeldet, `stand()` darf hier nicht laufen). Eigener Faden mit eigener
 /// Laufzeit: `setup` laeuft ausserhalb von tokio.
-fn beim_start_holen(app_daten: &Path) {
+fn beim_start_holen(app_daten: &Path, hilfe: Option<StartHilfe>) {
     if PRUEFSCHLUESSEL.is_empty() || STAND.get().is_some() {
         return;
     }
@@ -704,7 +808,16 @@ fn beim_start_holen(app_daten: &Path) {
     let daten = app_daten.to_path_buf();
     let lauf = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
-        let weg = Holweg { basis: &basis, token: None, frist: START_FRIST_ANFRAGE, kontext: kontext(), selbsttest, pins: Vec::new() };
+        let weg = Holweg {
+            basis: &basis,
+            token: None,
+            frist: START_FRIST_ANFRAGE,
+            je_abschnitt: true,
+            kontext: kontext(),
+            selbsttest,
+            pins: Vec::new(),
+            hilfe,
+        };
         rt.block_on(vorab_holen(&daten, weg, START_FRIST_GESAMT))
     });
     let Some(ergebnis) = lauf.join().ok().flatten() else { return };
@@ -720,14 +833,25 @@ fn beim_start_holen(app_daten: &Path) {
 }
 
 /// Der Startabruf mit Gesamtfrist; `None` bei offenem Flug (P-3.20 gilt
-/// fuer ihn weiter: kein Wechsel unter einem laufenden Flug).
+/// fuer ihn weiter: kein Wechsel unter einem laufenden Flug). „Ueberspringen“
+/// (`Abbruch`) beendet ihn vorzeitig mit einem Fehler.
 async fn vorab_holen(app_daten: &Path, weg: Holweg<'_>, gesamt: std::time::Duration) -> Option<Result<Option<RuntimeBundleId>, String>> {
     if flug_offen(app_daten) {
         return None;
     }
-    Some(match tokio::time::timeout(gesamt, holen_und_installieren(app_daten, weg)).await {
-        Ok(r) => r,
-        Err(_) => Err(format!("keine Antwort binnen {} s", gesamt.as_secs())),
+    let abbruch = weg.hilfe.as_ref().map(|h| h.abbruch.clone());
+    let abgebrochen = async {
+        match &abbruch {
+            Some(a) => a.abgerufen().await,
+            None => std::future::pending().await,
+        }
+    };
+    Some(tokio::select! {
+        r = tokio::time::timeout(gesamt, holen_und_installieren(app_daten, weg)) => match r {
+            Ok(r) => r,
+            Err(_) => Err(format!("keine Antwort binnen {} s", gesamt.as_secs())),
+        },
+        () = abgebrochen => Err("uebersprungen".to_string()),
     })
 }
 
@@ -1006,10 +1130,15 @@ struct Holweg<'a> {
     basis: &'a str,
     token: Option<String>,
     frist: std::time::Duration,
+    /// `true`: `frist` gilt je Abschnitt (Verbindung/Lesen), nicht fuer die
+    /// ganze Anfrage — ein grosser Blob darf laenger laden (Startabruf).
+    je_abschnitt: bool,
     kontext: Kontext,
     selbsttest: fn(&Paket) -> Result<(), String>,
     /// Staende, die das Aufraeumen behalten muss.
     pins: Vec<u64>,
+    /// Startfenster: Fortschritt und Abbruch.
+    hilfe: Option<StartHilfe>,
 }
 
 async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, String> {
@@ -1019,16 +1148,51 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
         basis: crate::live_zugang::live_basis(),
         token: crate::live_zugang::pilot_token(),
         frist: std::time::Duration::from_secs(60),
+        je_abschnitt: false,
         kontext: kontext(),
         selbsttest,
         pins,
+        hilfe: None,
     };
     holen_und_installieren(app_daten, weg).await
 }
 
+/// Liest die Antwort stueckweise: jedes Stueck zaehlt in den Fortschritt.
+/// Mit Token: Vorabstaende gibt es auch ueber die Nummer nur fuer
+/// Vorab-Piloten (P-3.13).
+async fn stueckweise_holen(
+    client: &reqwest::Client,
+    adresse: String,
+    token: Option<&str>,
+    zaehler: Option<&Zaehler<'_>>,
+) -> Result<Vec<u8>, String> {
+    let mut anfrage = client.get(adresse);
+    if let Some(token) = token {
+        anfrage = anfrage.bearer_auth(token);
+    }
+    let mut r = anfrage.send().await.map_err(|e| e.to_string())?.error_for_status().map_err(http_fehler)?;
+    let mut bytes = Vec::new();
+    while let Some(stueck) = r.chunk().await.map_err(|e| e.to_string())? {
+        if let Some(z) = zaehler {
+            z.dazu(stueck.len() as u64);
+        }
+        bytes.extend_from_slice(&stueck);
+    }
+    Ok(bytes)
+}
+
 async fn holen_und_installieren(app_daten: &Path, weg: Holweg<'_>) -> Result<Option<RuntimeBundleId>, String> {
-    let Holweg { basis, token: mit_token, frist, kontext: k, selbsttest: test, pins } = weg;
-    let client = reqwest::Client::builder().timeout(frist).build().map_err(|e| e.to_string())?;
+    let Holweg { basis, token: mit_token, frist, je_abschnitt, kontext: k, selbsttest: test, pins, hilfe } = weg;
+    let mut bauer = reqwest::Client::builder();
+    bauer = if je_abschnitt {
+        bauer.connect_timeout(frist.min(START_FRIST_VERBINDUNG)).read_timeout(frist)
+    } else {
+        bauer.timeout(frist)
+    };
+    let client = bauer.build().map_err(|e| e.to_string())?;
+    if let Some(h) = &hilfe {
+        (h.melden)(Fortschritt { phase: Phase::Pruefen, generation: None, geladen: 0, gesamt: 0 });
+    }
     let mut anfrage = client.get(format!("{basis}/api/bundle/current"));
     if let Some(token) = &mit_token {
         anfrage = anfrage.bearer_auth(token);
@@ -1050,27 +1214,29 @@ async fn holen_und_installieren(app_daten: &Path, weg: Holweg<'_>) -> Result<Opt
     if ablage.aktuell().is_some_and(|g| g >= a.generation) {
         return Ok(None);
     }
-    let holen = |pfad: String| {
-        let client = client.clone();
-        let token = mit_token.clone();
-        async move {
-            // Mit Token: Vorabstaende gibt es auch ueber die Nummer nur fuer
-            // Vorab-Piloten (P-3.13).
-            let mut anfrage = client.get(format!("{basis}{pfad}"));
-            if let Some(token) = token {
-                anfrage = anfrage.bearer_auth(token);
-            }
-            let r = anfrage.send().await.map_err(|e| e.to_string())?;
-            r.error_for_status().map_err(http_fehler)?.bytes().await.map_err(|e| e.to_string())
-        }
-    };
-    let manifest = holen(a.manifest).await?.to_vec();
-    let signatur = String::from_utf8(holen(a.signatur).await?.to_vec()).map_err(|e| e.to_string())?;
+    let token = mit_token.as_deref();
+    let manifest = stueckweise_holen(&client, format!("{basis}{}", a.manifest), token, None).await?;
+    let signatur = String::from_utf8(stueckweise_holen(&client, format!("{basis}{}", a.signatur), token, None).await?)
+        .map_err(|e| e.to_string())?;
     let m = Manifest::lesen(&manifest).map_err(|e| e.to_string())?;
+    let fehlend = ablage.fehlende(&m);
+    let zaehler = Zaehler {
+        hilfe: hilfe.as_ref(),
+        generation: a.generation,
+        gesamt: fehlend.iter().map(|d| d.size).sum(),
+        geladen: std::sync::atomic::AtomicU64::new(0),
+    };
+    zaehler.melden(Phase::Laden, 0);
     let mut geholt = HashMap::new();
-    for d in ablage.fehlende(&m) {
-        geholt.insert(d.sha256.clone(), holen(format!("{}{}", a.blobs, d.sha256)).await?.to_vec());
+    for d in fehlend {
+        let adresse = format!("{basis}{}{}", a.blobs, d.sha256);
+        geholt.insert(d.sha256.clone(), stueckweise_holen(&client, adresse, token, Some(&zaehler)).await?);
     }
+    // Ab hier ist der Abruf nicht mehr abbrechbar (siehe `Abbruch`).
+    if let Some(h) = &hilfe {
+        h.abbruch.sperren();
+    }
+    zaehler.melden(Phase::Installieren, zaehler.gesamt);
     let daten = app_daten.to_path_buf();
     tokio::task::spawn_blocking(move || {
         // Erneut unmittelbar davor: Ein Flug kann waehrend des Ladens begonnen haben.
@@ -1643,7 +1809,7 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         let basis = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let ok: fn(&Paket) -> Result<(), String> = |_| Ok(());
-        let weg = |basis: &str| Holweg { basis: Box::leak(basis.to_string().into_boxed_str()), token: None, frist: START_FRIST_ANFRAGE, kontext: k(), selbsttest: ok, pins: Vec::new() };
+        let weg = |basis: &str| Holweg { basis: Box::leak(basis.to_string().into_boxed_str()), token: None, frist: START_FRIST_ANFRAGE, je_abschnitt: true, kontext: k(), selbsttest: ok, pins: Vec::new(), hilfe: None };
         let ordner = |n: &str| {
             let d = std::env::temp_dir().join(format!("aeroacars-startabruf-{n}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&d);
@@ -1672,6 +1838,144 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         for d in [frisch, flug, offline] {
             let _ = std::fs::remove_dir_all(d);
         }
+    }
+
+    /// Startfenster (Thomas 30.10.): Der Abruf meldet seinen Fortschritt —
+    /// die Bytes ueber alle Dateien summieren sich genau auf die Groesse laut
+    /// Manifest, nie darueber, nie rueckwaerts. Gegenproben: offener Flug →
+    /// kein Abruf und keine Meldung; kein Netz → sofort Fehler (nicht erst
+    /// nach der Frist); Ueberspringen und Gesamtfrist beenden einen
+    /// haengenden Abruf; nach Beginn der Installation wirkt der Abbruch nicht.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn startabruf_meldet_fortschritt_und_bricht_ab() {
+        use std::io::Cursor;
+        use std::sync::{Arc, Mutex};
+        let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let k = || Kontext {
+            client_version: "3.0.0".into(),
+            faehigkeiten: vec!["probe-1".into()],
+            schluessel: vec![kp.pk.to_base64()],
+            jetzt: chrono::Utc::now(),
+        };
+        // Zwei Dateien, gross genug fuer mehrere Stuecke je Datei.
+        let gross = vec![7u8; 700_000];
+        let klein = vec![9u8; 300_000];
+        let eintrag = |pfad: &str, b: &[u8]| {
+            serde_json::json!({"path": pfad, "sha256": runtime_bundle::hex(&Sha256::digest(b)), "size": b.len(), "kind": "tabellen"})
+        };
+        let m = serde_json::to_vec(&serde_json::json!({
+            "bundle_schema": 1, "generation": 55, "created_at": chrono::Utc::now(),
+            "expires_at": chrono::Utc::now() + chrono::Duration::days(30),
+            "client_min": "3.0.0", "client_max": "3.99.0", "requires": ["probe-1"],
+            "score_version": 27, "input_schema": 1,
+            "files": [eintrag("tabellen/gross.bin", &gross), eintrag("tabellen/klein.bin", &klein)],
+        }))
+        .unwrap();
+        let sig = minisign::sign(Some(&kp.pk), &kp.sk, Cursor::new(&m), None, None).unwrap().into_string();
+        let mut inhalt: HashMap<String, Vec<u8>> = HashMap::new();
+        inhalt.insert("/api/bundle/current".into(), br#"{"generation":55,"manifest":"/m","signatur":"/s","blobs":"/b/"}"#.to_vec());
+        inhalt.insert("/m".into(), m);
+        inhalt.insert("/s".into(), sig.into_bytes());
+        inhalt.insert(format!("/b/{}", runtime_bundle::hex(&Sha256::digest(&gross))), gross.clone());
+        inhalt.insert(format!("/b/{}", runtime_bundle::hex(&Sha256::digest(&klein))), klein.clone());
+        let inhalt = Arc::new(inhalt);
+        let app = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+            let inhalt = inhalt.clone();
+            async move {
+                match inhalt.get(uri.path()) {
+                    Some(b) => (axum::http::StatusCode::OK, b.clone()),
+                    None => (axum::http::StatusCode::NOT_FOUND, Vec::new()),
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let basis = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        // Ein Ziel, das Verbindungen annimmt und nie antwortet.
+        let stumm = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stumm_basis = format!("http://{}", stumm.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut gehalten = Vec::new();
+            while let Ok((s, _)) = stumm.accept().await {
+                gehalten.push(s);
+            }
+        });
+        let ok: fn(&Paket) -> Result<(), String> = |_| Ok(());
+        let hilfe = || {
+            let ereignisse = Arc::new(Mutex::new(Vec::<Fortschritt>::new()));
+            let sammler = ereignisse.clone();
+            let melden: Melder = Arc::new(move |f| sammler.lock().unwrap().push(f));
+            (StartHilfe { melden, abbruch: Arc::new(Abbruch::default()) }, ereignisse)
+        };
+        let weg = |basis: &str, h: StartHilfe| Holweg {
+            basis: Box::leak(basis.to_string().into_boxed_str()),
+            token: None,
+            frist: START_FRIST_ANFRAGE,
+            je_abschnitt: true,
+            kontext: k(),
+            selbsttest: ok,
+            pins: Vec::new(),
+            hilfe: Some(h),
+        };
+        let ordner = |n: &str| {
+            let d = std::env::temp_dir().join(format!("aeroacars-startmeldung-{n}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            d
+        };
+        // 1. Erfolg: Summe der Bytes = Manifest, monoton, Phasen in Reihenfolge.
+        let d1 = ordner("ok");
+        let (h, ereignisse) = hilfe();
+        let abbruch = h.abbruch.clone();
+        let r = vorab_holen(&d1, weg(&basis, h), START_FRIST_GESAMT).await.expect("kein Flug offen");
+        assert_eq!(r.unwrap().map(|id| id.generation), Some(55));
+        let e = ereignisse.lock().unwrap().clone();
+        assert_eq!(e.first().map(|f| f.phase), Some(Phase::Pruefen));
+        assert_eq!(e.last().map(|f| f.phase), Some(Phase::Installieren));
+        let laden: Vec<_> = e.iter().filter(|f| f.phase == Phase::Laden).collect();
+        assert!(laden.len() > 3, "mehrere Stuecke erwartet: {}", laden.len());
+        assert!(laden.iter().all(|f| f.gesamt == 1_000_000 && f.generation == Some(55)));
+        assert!(laden.windows(2).all(|w| w[0].geladen <= w[1].geladen), "Fortschritt geht nie zurueck");
+        assert_eq!(laden.first().unwrap().geladen, 0);
+        assert_eq!(laden.last().unwrap().geladen, 1_000_000, "Summe der Bytes beider Dateien");
+        assert_eq!(e.last().unwrap().geladen, 1_000_000);
+        assert!(!abbruch.ausloesen(), "nach Beginn der Installation kein Abbruch mehr");
+        // 2. Offener Flug: kein Abruf, keine Meldung.
+        let d2 = ordner("flug");
+        std::fs::write(d2.join(crate::ACTIVE_FLIGHT_FILE), "{}").unwrap();
+        let (h, ereignisse) = hilfe();
+        assert!(vorab_holen(&d2, weg(&basis, h), START_FRIST_GESAMT).await.is_none());
+        assert!(ereignisse.lock().unwrap().is_empty());
+        // 3. Kein Netz: Fehler sofort, weit vor der Frist.
+        let d3 = ordner("offline");
+        let (h, _) = hilfe();
+        let t0 = std::time::Instant::now();
+        let r = vorab_holen(&d3, weg("http://127.0.0.1:9", h), START_FRIST_GESAMT).await.expect("kein Flug offen");
+        assert!(r.is_err());
+        assert!(t0.elapsed() < std::time::Duration::from_secs(5), "ohne Netz nicht auf die Frist warten: {:?}", t0.elapsed());
+        // 4. Ueberspringen beendet einen haengenden Abruf.
+        let d4 = ordner("ueberspringen");
+        let (h, _) = hilfe();
+        assert!(h.abbruch.ausloesen(), "vor der Installation wirkt der Abbruch");
+        let t0 = std::time::Instant::now();
+        let r = vorab_holen(&d4, weg(&stumm_basis, h), START_FRIST_GESAMT).await.expect("kein Flug offen");
+        assert_eq!(r, Err("uebersprungen".to_string()));
+        assert!(t0.elapsed() < std::time::Duration::from_secs(5));
+        // 5. Gesamtfrist beendet einen haengenden Abruf.
+        let d5 = ordner("frist");
+        let (h, _) = hilfe();
+        let r = vorab_holen(&d5, weg(&stumm_basis, h), std::time::Duration::from_millis(300)).await.expect("kein Flug offen");
+        assert!(r.unwrap_err().starts_with("keine Antwort binnen"));
+        for d in [d1, d2, d3, d4, d5] {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+
+    #[test]
+    fn startfristen_wie_vereinbart() {
+        assert_eq!(START_FRIST_GESAMT.as_secs(), 60);
+        assert_eq!(START_FRIST_ANFRAGE.as_secs(), 15);
+        assert!(START_FRIST_VERBINDUNG < START_FRIST_ANFRAGE);
     }
 
     /// „Jetzt neu starten“ nur ohne Flug und nur mit wartendem Stand

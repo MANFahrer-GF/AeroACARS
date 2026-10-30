@@ -37,6 +37,7 @@ mod grenzwerte;
 mod laufzeit_paket;
 // v3 (Etappe 5): Lader der Oberflaeche ueber aeroui:// (P-8.02, P-8.20).
 mod ui_lader;
+mod startfenster;
 // v3 (Etappe 5): Huelle — Systembefehle nur nach Bestaetigung (P-8.01, P-8.10).
 mod huelle;
 mod datenuebernahme;
@@ -614,6 +615,285 @@ fn install_panic_logging() {
 #[path = "tests_lib/logging_tests.rs"]
 mod logging_tests;
 
+
+/// Der Rest des Starts, sobald der Stand des Laufzeit-Pakets feststeht und
+/// das Hauptfenster existiert (frueher der Rest von `setup`; ruft
+/// `startfenster::abschliessen` auf der Ereignisschleife).
+pub(crate) fn nach_dem_stand(app: &AppHandle, daten: Option<&std::path::Path>) {
+    if let Some(daten) = daten { laufzeit_paket::aktualisieren_im_hintergrund(daten.to_path_buf(), paket_pruefung_hinweis(app)); spawn_upload_arbeiter(app); }
+    // v3 (Etappe 5): Einstellungen der Huelle anwenden.
+    huelle::beim_start_anwenden(app);
+
+            // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
+            // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
+            // geschrieben werden, an denen ein frueherer Lauf erkannt wird.
+            sim_config_bei_neuinstallation(app);
+            // ⚠ Das Szenerie-Verzeichnis GLEICH BEIM START bauen.
+            //
+            // Auf macOS fragt das System beim ersten Zugriff auf die
+            // X-Plane-Installation um Erlaubnis, wenn sie an einem
+            // geschuetzten Ort liegt. Einmal erteilt bleibt sie — aber
+            // bis v1.7.12 kam die Frage im AUFSETZMOMENT, weil das
+            // Verzeichnis erst dort gebaut wurde (Pilotenmeldung
+            // 31.08.2026). Hier sitzt der Pilot noch am Schreibtisch.
+            //
+            // Laeuft im eigenen Faden und blockiert den Start nicht.
+            szenerie_bahn::szenerie_vorbereiten();
+            // v0.5.15: initialize file-based secrets storage BEFORE
+            // anything else touches the secrets API. We resolve the
+            // app data dir from the Tauri PathResolver. If this fails
+            // (extremely unlikely — only if the OS denies the user's
+            // own appdata dir), secret reads/writes will return
+            // SecretError::NotInitialized and the app degrades to
+            // "no persistent login" but keeps running.
+            //
+            // v0.7.13: Der `migrate_from_keyring`-Aufruf ist entfernt
+            // (Audit CC1) — die v0.5.15-Einmal-Migration ist 30+ Releases
+            // her; verbleibende Pilots ohne JSON-Datei loggen sich frisch
+            // ein. Keyring-Dep ist ebenfalls raus.
+            match app.path().app_data_dir() {
+                Ok(dir) => {
+                    if let Err(e) = secrets::init(&dir) {
+                        tracing::error!(error = %e, "secrets init failed");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "could not resolve app_data_dir for secrets");
+                }
+            }
+
+            // v1.9.14: Waechter fuer die Simulator-Automatik.
+            sim_automatik_starten(app.clone());
+
+            // v0.7.14: alte Pilot-Local-Webhook-Datei `discord-webhook.txt`
+            // aus v0.7.13 loeschen. Discord-Posts macht ab v0.7.14 der
+            // Recorder auf live.kant.ovh zentral (Webapp-Admin-Settings).
+            // Audit Q4-2026-05 (C1).
+            migrate_remove_discord_webhook_file(&app);
+
+            // Resolve the activity-log persistence path now that we
+            // have an AppHandle. After this, save_activity_log() can
+            // run without a handle (uses the OnceLock cache).
+            init_activity_log_path(&app);
+
+            // v0.20 (Process-Integrity): check whether the PREVIOUS run left
+            // its sentinel behind (= did not exit cleanly) BEFORE writing
+            // this run's own sentinel — order matters, otherwise we'd only
+            // ever see our own fresh sentinel and never the prior run's.
+            {
+                let previous_exit_clean = !run_sentinel_present(&app);
+                let state = app.state::<AppState>();
+                *state.previous_run_exit_clean.lock().expect("previous_run_exit_clean lock") =
+                    Some(previous_exit_clean);
+                // 21.09.2026: ausserhalb eines Flugs blieb ein Abbruch bisher
+                // unsichtbar. Einordnen (Abbruch vs. Update) und melden.
+                let vorher = run_sentinel_path(&app)
+                    .ok()
+                    .and_then(|p| std::fs::read_to_string(p).ok());
+                vorlauf_melden(&vorlauf_einordnen(vorher.as_deref(), env!("CARGO_PKG_VERSION")));
+            }
+            write_run_sentinel(&app);
+
+            // v0.15.26: restore the activity log from disk now that the path is
+            // resolved cross-platform (ACTIVITY_LOG_PATH), so a mid-flight client
+            // close/crash/update keeps the full flight history on the next launch
+            // (was Windows-only via APPDATA before → empty on macOS/Linux). Then
+            // append the boot banner on top; the save block below persists it.
+            {
+                let state = app.state::<AppState>();
+                let mut log = state.activity_log.lock().expect("activity_log lock");
+                for entry in load_persisted_activity_log() {
+                    log.push_back(entry);
+                    while log.len() > ACTIVITY_LOG_CAPACITY {
+                        log.pop_front();
+                    }
+                }
+                let banner = ActivityEntry {
+                    timestamp: Utc::now(),
+                    level: ActivityLevel::Info,
+                    message: format!("AeroACARS v{} gestartet", env!("CARGO_PKG_VERSION")),
+                    // Tiny credit line — keeps the tool feeling human-made.
+                    detail: Some("Made with ❤️ in Gifhorn — by Thomas Kant".into()),
+                };
+                tracing::info!(message = %banner.message, "activity");
+                log.push_back(banner);
+                while log.len() > ACTIVITY_LOG_CAPACITY {
+                    log.pop_front();
+                }
+            }
+
+            // v0.9.0 (#Discord-RPC): Manager initialisieren + ggf. die
+            // persistente Pilot-Entscheidung anwenden. Default = aus, also
+            // nichts passiert solang der Pilot nicht in Settings zustimmt.
+            discord_rpc::init(&app);
+            // v0.2.0 (#msfs-panel, round 2b): unconditional, no toggle —
+            // see panel_server's module doc for why this one is NOT
+            // gated behind an opt-in setting the way remote::start_server
+            // (below) is.
+            panel_server::spawn(app.clone());
+            // ADR-0005: Takt fuer das X-Plane-HUD-Band (baut nur bei Bedarf).
+            xplane_band::spawn(app.clone());
+            // ACARS-Postausgang: stellt auch Reste früherer Läufe zu.
+            spawn_acars_postausgang(app);
+            // Persist the boot-time state (restored log + banner)
+            // immediately so a crash before any activity event still
+            // keeps the banner visible on next launch.
+            let state = app.state::<AppState>();
+            let log = state.activity_log.lock().expect("activity_log lock");
+            save_activity_log(&log);
+            drop(log);
+            // Spawn the auto-start watcher exactly once, here, for the
+            // lifetime of the app. The watcher itself short-circuits when
+            // the toggle flag is off — flipping the flag at runtime is
+            // enough, no need to spawn-on-toggle. Earlier versions did
+            // spawn-on-toggle; that had a Mac-first-launch failure mode
+            // where the very first toggle's IPC call lost the spawn race
+            // and the user had to restart the app to recover.
+            // v0.3.0: Persistierten Auto-Start-Stand laden bevor der
+            // Watcher startet. Ohne diesen Read würde der AppState
+            // mit Default-`false` initialisiert und der Frontend-Hook
+            // `auto_start_get_enabled` würde immer `false` zurückgeben,
+            // egal ob der Pilot ihn vorher aktiviert hatte.
+            {
+                let persisted = read_auto_start_persisted(&app);
+                let state = app.state::<AppState>();
+                state
+                    .auto_start_enabled
+                    .store(persisted, Ordering::Relaxed);
+                if persisted {
+                    tracing::info!("auto-start restored from persisted settings");
+                }
+                // v0.12.6: Auto-File default-on, passend zum Frontend-
+                // Default. Das Frontend überschreibt das beim Mount mit
+                // dem echten localStorage-Wert via `set_auto_file_enabled`.
+                state.auto_file_enabled.store(true, Ordering::Relaxed);
+            }
+            spawn_auto_start_watcher(app.clone());
+            // v1.8: Telemetrie-Monitor. Schreibt den Verlauf immer mit,
+            // sendet nur bei offenem Monitor.
+            spawn_telemetrie_takt(app.clone());
+            // Build the system-tray icon + menu. On Windows this lands
+            // in the system tray (bottom-right); on Mac in the menubar
+            // (top-right). The icon click toggles window visibility,
+            // and the right-click context menu has Show / Quit. See
+            // `minimize_to_tray_enabled` for the behaviour gate.
+            if let Err(e) = build_tray_icon(&app) {
+                tracing::warn!(error = %e, "tray icon setup failed — minimize-to-tray will not work");
+            } else {
+                // Periodic updater for the tray's tooltip / status
+                // header / colored badge. Reads active flight stats
+                // every TRAY_UPDATE_INTERVAL_SECS, fires a system
+                // notification on critical-state transitions.
+                spawn_tray_updater(app.clone());
+            }
+            // v1.9.24: eingefrorene Oberflaeche sichtbar machen (Anlass Adrian, 04.10.2026).
+            hauptfaden_waechter::starten(app.clone());
+            // v0.5.11: try to start MQTT live-tracking publisher in
+            // the background. Non-fatal — if no API key is present
+            // yet (fresh install, user hasn't logged in) it just
+            // returns and we'll retry after login.
+            {
+                // v1.7.41: Altlasten aus der Ablage raeumen, BEVOR zum
+                // ersten Mal gesendet wird — siehe `nachtrag_queue::aufraeumen`.
+                let (geschrumpft, aussortiert) = nachtrag_queue::aufraeumen(&app);
+                if geschrumpft > 0 || aussortiert > 0 {
+                    tracing::warn!(
+                        geschrumpft,
+                        aussortiert,
+                        "Ablage beim Start geraeumt — zu grosse Bahnkorrekturen haben die \
+                         Verbindung im Minutentakt gekostet"
+                    );
+                }
+                let app_for_mqtt = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    init_mqtt_publisher_via_provisioning(app_for_mqtt).await;
+                });
+            }
+            // v0.5.49 — Background-Worker für den persistenten PIREP-
+            // Queue. Tickt alle 60s, versucht jeden in pending_pireps/
+            // liegenden PIREP einzureichen sobald die Verbindung wieder
+            // steht. Persistiert Attempt-Count pro PIREP damit nach App-
+            // Restart einfach weiter retried wird.
+            spawn_pirep_queue_worker(app.clone());
+
+            // v0.16.0 (#LAN-Remote): headless autostart hook. If
+            // `AEROACARS_LAN_AUTOSTART` parses as a port, start the LAN
+            // remote-control server on launch on that port — same start
+            // path as the `remote_server_start` command, just driven by an
+            // env var instead of the GUI toggle. Lets the server be tested
+            // (and run) without touching the window, and doubles as a small
+            // power-user feature. No env var → no-op (the normal case;
+            // pilots never set it, so production is unaffected).
+            //
+            // v0.16.16: calls `remote::start_server` (the shared path)
+            // instead of the `remote_server_start` command, because the
+            // command now also persists the Settings toggle ON — a
+            // test/headless env hook must not silently flip the pilot's
+            // stored preference.
+            if let Some(port) = std::env::var("AEROACARS_LAN_AUTOSTART")
+                .ok()
+                .and_then(|v| v.trim().parse::<u16>().ok())
+            {
+                let app_for_lan = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    // Persist the requested port so the shared start path
+                    // (which reads the persisted port) binds it, then start.
+                    let _ = remote::remote_server_set_port(
+                        port,
+                        app_for_lan.clone(),
+                        app_for_lan.state::<AppState>(),
+                    )
+                    .await;
+                    match remote::start_server(&app_for_lan).await {
+                        Ok(status) => tracing::info!(
+                            port = status.port,
+                            "LAN remote-control server autostarted (AEROACARS_LAN_AUTOSTART)"
+                        ),
+                        Err(e) => tracing::error!(
+                            error = %e.message,
+                            "LAN autostart failed"
+                        ),
+                    }
+                });
+            }
+
+            // v0.16.16 (#LAN-Remote): the Settings toggle persists. If the
+            // pilot left the LAN remote-control server switched ON, start
+            // it again automatically — paired tablets keep working across
+            // restarts/updates because the bearer token persists in the
+            // secrets store. Goes through the SAME shared start path as
+            // the `remote_server_start` command (mirroring how the bridge
+            // calls commands outside IPC via `app.state()`), spawned async
+            // so a slow/failed bind can never delay or crash startup. A
+            // failure (e.g. port already busy) is only logged; the stored
+            // `enabled` flag stays untouched, and the Settings toggle
+            // simply shows OFF because it reads the live running state
+            // via `remote_server_status` on mount.
+            if remote::read_persisted_enabled(app) {
+                let app_for_lan = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    match remote::start_server(&app_for_lan).await {
+                        Ok(status) => log_activity_handle(
+                            &app_for_lan,
+                            ActivityLevel::Info,
+                            format!(
+                                "LAN-Fernbedienung automatisch gestartet (Port {})",
+                                status.port
+                            ),
+                            None,
+                        ),
+                        Err(e) => log_activity_handle(
+                            &app_for_lan,
+                            ActivityLevel::Warn,
+                            "LAN-Fernbedienung konnte nicht automatisch starten",
+                            Some(e.message.clone()),
+                        ),
+                    }
+                });
+            }
+
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // v0.15.10: rustls-Crypto-Provider EINMAL explizit als Process-Default
@@ -680,6 +960,9 @@ pub fn run() {
                 let _ = w.show();
                 let _ = w.unminimize();
                 let _ = w.set_focus();
+            } else {
+                // Hauptfenster entsteht erst nach dem Startabruf.
+                startfenster::nach_vorn(app);
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -691,6 +974,8 @@ pub fn run() {
         .plugin(fenster::zustand_plugin())
         // v3 (Etappe 5): Oberflaeche aus der aktiven Generation (ui_lader.rs).
         .register_asynchronous_uri_scheme_protocol(ui_lader::SCHEMA, |ctx, req, antwort| ui_lader::anfrage(ctx, req, antwort))
+        // Startfenster mit Fortschrittsbalken (eingebaute Seite, nicht aus dem Paket).
+        .register_uri_scheme_protocol(startfenster::SCHEMA, |ctx, req| startfenster::protokoll(ctx, req))
         .manage(app_state)
         .manage(aircraft_scan::AircraftScanState::default())
         // v1.5.6 (#lan-bruecke-1zu1): gespiegelter UI-Zustand (SimBrief-Konto,
@@ -735,278 +1020,17 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // CI-Messlauf P-8.03 (nur Fenster `ui`): wie bisher synchron, ohne Startfenster.
+            if ui_lader::selbsttest_gewuenscht() {
+                // v3 (Etappe 1a): Laufzeit-Paket zuerst — legt OurAirports fest, bevor jemand Bahnen liest.
+                if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten.clone(), paket_pruefung_hinweis(app.handle())); spawn_upload_arbeiter(app.handle()); }
+                if ui_lader::selbsttest_starten(app) { return Ok(()); }
+            }
             // v3 (Etappe 1a): Laufzeit-Paket zuerst — legt OurAirports fest, bevor jemand Bahnen liest.
-            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten.clone(), paket_pruefung_hinweis(app.handle())); spawn_upload_arbeiter(app.handle()); }
-            // v3 (Etappe 5): CI-Messlauf P-8.03 (nur Fenster `ui`), sonst Einstellungen der Huelle anwenden.
-            if ui_lader::selbsttest_starten(app) { return Ok(()); } else { huelle::beim_start_anwenden(app.handle()); }
-            // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
-            // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
-            // geschrieben werden, an denen ein frueherer Lauf erkannt wird.
-            sim_config_bei_neuinstallation(app.handle());
-            // ⚠ Das Szenerie-Verzeichnis GLEICH BEIM START bauen.
-            //
-            // Auf macOS fragt das System beim ersten Zugriff auf die
-            // X-Plane-Installation um Erlaubnis, wenn sie an einem
-            // geschuetzten Ort liegt. Einmal erteilt bleibt sie — aber
-            // bis v1.7.12 kam die Frage im AUFSETZMOMENT, weil das
-            // Verzeichnis erst dort gebaut wurde (Pilotenmeldung
-            // 31.08.2026). Hier sitzt der Pilot noch am Schreibtisch.
-            //
-            // Laeuft im eigenen Faden und blockiert den Start nicht.
-            szenerie_bahn::szenerie_vorbereiten();
-            // v0.5.15: initialize file-based secrets storage BEFORE
-            // anything else touches the secrets API. We resolve the
-            // app data dir from the Tauri PathResolver. If this fails
-            // (extremely unlikely — only if the OS denies the user's
-            // own appdata dir), secret reads/writes will return
-            // SecretError::NotInitialized and the app degrades to
-            // "no persistent login" but keeps running.
-            //
-            // v0.7.13: Der `migrate_from_keyring`-Aufruf ist entfernt
-            // (Audit CC1) — die v0.5.15-Einmal-Migration ist 30+ Releases
-            // her; verbleibende Pilots ohne JSON-Datei loggen sich frisch
-            // ein. Keyring-Dep ist ebenfalls raus.
-            match app.path().app_data_dir() {
-                Ok(dir) => {
-                    if let Err(e) = secrets::init(&dir) {
-                        tracing::error!(error = %e, "secrets init failed");
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "could not resolve app_data_dir for secrets");
-                }
-            }
-
-            // v1.9.14: Waechter fuer die Simulator-Automatik.
-            sim_automatik_starten(app.handle().clone());
-
-            // v0.7.14: alte Pilot-Local-Webhook-Datei `discord-webhook.txt`
-            // aus v0.7.13 loeschen. Discord-Posts macht ab v0.7.14 der
-            // Recorder auf live.kant.ovh zentral (Webapp-Admin-Settings).
-            // Audit Q4-2026-05 (C1).
-            migrate_remove_discord_webhook_file(&app.handle());
-
-            // Resolve the activity-log persistence path now that we
-            // have an AppHandle. After this, save_activity_log() can
-            // run without a handle (uses the OnceLock cache).
-            init_activity_log_path(&app.handle());
-
-            // v0.20 (Process-Integrity): check whether the PREVIOUS run left
-            // its sentinel behind (= did not exit cleanly) BEFORE writing
-            // this run's own sentinel — order matters, otherwise we'd only
-            // ever see our own fresh sentinel and never the prior run's.
-            {
-                let previous_exit_clean = !run_sentinel_present(&app.handle());
-                let state = app.state::<AppState>();
-                *state.previous_run_exit_clean.lock().expect("previous_run_exit_clean lock") =
-                    Some(previous_exit_clean);
-                // 21.09.2026: ausserhalb eines Flugs blieb ein Abbruch bisher
-                // unsichtbar. Einordnen (Abbruch vs. Update) und melden.
-                let vorher = run_sentinel_path(&app.handle())
-                    .ok()
-                    .and_then(|p| std::fs::read_to_string(p).ok());
-                vorlauf_melden(&vorlauf_einordnen(vorher.as_deref(), env!("CARGO_PKG_VERSION")));
-            }
-            write_run_sentinel(&app.handle());
-
-            // v0.15.26: restore the activity log from disk now that the path is
-            // resolved cross-platform (ACTIVITY_LOG_PATH), so a mid-flight client
-            // close/crash/update keeps the full flight history on the next launch
-            // (was Windows-only via APPDATA before → empty on macOS/Linux). Then
-            // append the boot banner on top; the save block below persists it.
-            {
-                let state = app.state::<AppState>();
-                let mut log = state.activity_log.lock().expect("activity_log lock");
-                for entry in load_persisted_activity_log() {
-                    log.push_back(entry);
-                    while log.len() > ACTIVITY_LOG_CAPACITY {
-                        log.pop_front();
-                    }
-                }
-                let banner = ActivityEntry {
-                    timestamp: Utc::now(),
-                    level: ActivityLevel::Info,
-                    message: format!("AeroACARS v{} gestartet", env!("CARGO_PKG_VERSION")),
-                    // Tiny credit line — keeps the tool feeling human-made.
-                    detail: Some("Made with ❤️ in Gifhorn — by Thomas Kant".into()),
-                };
-                tracing::info!(message = %banner.message, "activity");
-                log.push_back(banner);
-                while log.len() > ACTIVITY_LOG_CAPACITY {
-                    log.pop_front();
-                }
-            }
-
-            // v0.9.0 (#Discord-RPC): Manager initialisieren + ggf. die
-            // persistente Pilot-Entscheidung anwenden. Default = aus, also
-            // nichts passiert solang der Pilot nicht in Settings zustimmt.
-            discord_rpc::init(&app.handle());
-            // v0.2.0 (#msfs-panel, round 2b): unconditional, no toggle —
-            // see panel_server's module doc for why this one is NOT
-            // gated behind an opt-in setting the way remote::start_server
-            // (below) is.
-            panel_server::spawn(app.handle().clone());
-            // ADR-0005: Takt fuer das X-Plane-HUD-Band (baut nur bei Bedarf).
-            xplane_band::spawn(app.handle().clone());
-            // ACARS-Postausgang: stellt auch Reste früherer Läufe zu.
-            spawn_acars_postausgang(app.handle());
-            // Persist the boot-time state (restored log + banner)
-            // immediately so a crash before any activity event still
-            // keeps the banner visible on next launch.
-            let state = app.state::<AppState>();
-            let log = state.activity_log.lock().expect("activity_log lock");
-            save_activity_log(&log);
-            drop(log);
-            // Spawn the auto-start watcher exactly once, here, for the
-            // lifetime of the app. The watcher itself short-circuits when
-            // the toggle flag is off — flipping the flag at runtime is
-            // enough, no need to spawn-on-toggle. Earlier versions did
-            // spawn-on-toggle; that had a Mac-first-launch failure mode
-            // where the very first toggle's IPC call lost the spawn race
-            // and the user had to restart the app to recover.
-            // v0.3.0: Persistierten Auto-Start-Stand laden bevor der
-            // Watcher startet. Ohne diesen Read würde der AppState
-            // mit Default-`false` initialisiert und der Frontend-Hook
-            // `auto_start_get_enabled` würde immer `false` zurückgeben,
-            // egal ob der Pilot ihn vorher aktiviert hatte.
-            {
-                let persisted = read_auto_start_persisted(&app.handle());
-                let state = app.state::<AppState>();
-                state
-                    .auto_start_enabled
-                    .store(persisted, Ordering::Relaxed);
-                if persisted {
-                    tracing::info!("auto-start restored from persisted settings");
-                }
-                // v0.12.6: Auto-File default-on, passend zum Frontend-
-                // Default. Das Frontend überschreibt das beim Mount mit
-                // dem echten localStorage-Wert via `set_auto_file_enabled`.
-                state.auto_file_enabled.store(true, Ordering::Relaxed);
-            }
-            spawn_auto_start_watcher(app.handle().clone());
-            // v1.8: Telemetrie-Monitor. Schreibt den Verlauf immer mit,
-            // sendet nur bei offenem Monitor.
-            spawn_telemetrie_takt(app.handle().clone());
-            // Build the system-tray icon + menu. On Windows this lands
-            // in the system tray (bottom-right); on Mac in the menubar
-            // (top-right). The icon click toggles window visibility,
-            // and the right-click context menu has Show / Quit. See
-            // `minimize_to_tray_enabled` for the behaviour gate.
-            if let Err(e) = build_tray_icon(&app.handle()) {
-                tracing::warn!(error = %e, "tray icon setup failed — minimize-to-tray will not work");
-            } else {
-                // Periodic updater for the tray's tooltip / status
-                // header / colored badge. Reads active flight stats
-                // every TRAY_UPDATE_INTERVAL_SECS, fires a system
-                // notification on critical-state transitions.
-                spawn_tray_updater(app.handle().clone());
-            }
-            // v1.9.24: eingefrorene Oberflaeche sichtbar machen (Anlass Adrian, 04.10.2026).
-            hauptfaden_waechter::starten(app.handle().clone());
-            // v0.5.11: try to start MQTT live-tracking publisher in
-            // the background. Non-fatal — if no API key is present
-            // yet (fresh install, user hasn't logged in) it just
-            // returns and we'll retry after login.
-            {
-                // v1.7.41: Altlasten aus der Ablage raeumen, BEVOR zum
-                // ersten Mal gesendet wird — siehe `nachtrag_queue::aufraeumen`.
-                let (geschrumpft, aussortiert) = nachtrag_queue::aufraeumen(&app.handle());
-                if geschrumpft > 0 || aussortiert > 0 {
-                    tracing::warn!(
-                        geschrumpft,
-                        aussortiert,
-                        "Ablage beim Start geraeumt — zu grosse Bahnkorrekturen haben die \
-                         Verbindung im Minutentakt gekostet"
-                    );
-                }
-                let app_for_mqtt = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    init_mqtt_publisher_via_provisioning(app_for_mqtt).await;
-                });
-            }
-            // v0.5.49 — Background-Worker für den persistenten PIREP-
-            // Queue. Tickt alle 60s, versucht jeden in pending_pireps/
-            // liegenden PIREP einzureichen sobald die Verbindung wieder
-            // steht. Persistiert Attempt-Count pro PIREP damit nach App-
-            // Restart einfach weiter retried wird.
-            spawn_pirep_queue_worker(app.handle().clone());
-
-            // v0.16.0 (#LAN-Remote): headless autostart hook. If
-            // `AEROACARS_LAN_AUTOSTART` parses as a port, start the LAN
-            // remote-control server on launch on that port — same start
-            // path as the `remote_server_start` command, just driven by an
-            // env var instead of the GUI toggle. Lets the server be tested
-            // (and run) without touching the window, and doubles as a small
-            // power-user feature. No env var → no-op (the normal case;
-            // pilots never set it, so production is unaffected).
-            //
-            // v0.16.16: calls `remote::start_server` (the shared path)
-            // instead of the `remote_server_start` command, because the
-            // command now also persists the Settings toggle ON — a
-            // test/headless env hook must not silently flip the pilot's
-            // stored preference.
-            if let Some(port) = std::env::var("AEROACARS_LAN_AUTOSTART")
-                .ok()
-                .and_then(|v| v.trim().parse::<u16>().ok())
-            {
-                let app_for_lan = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    // Persist the requested port so the shared start path
-                    // (which reads the persisted port) binds it, then start.
-                    let _ = remote::remote_server_set_port(
-                        port,
-                        app_for_lan.clone(),
-                        app_for_lan.state::<AppState>(),
-                    )
-                    .await;
-                    match remote::start_server(&app_for_lan).await {
-                        Ok(status) => tracing::info!(
-                            port = status.port,
-                            "LAN remote-control server autostarted (AEROACARS_LAN_AUTOSTART)"
-                        ),
-                        Err(e) => tracing::error!(
-                            error = %e.message,
-                            "LAN autostart failed"
-                        ),
-                    }
-                });
-            }
-
-            // v0.16.16 (#LAN-Remote): the Settings toggle persists. If the
-            // pilot left the LAN remote-control server switched ON, start
-            // it again automatically — paired tablets keep working across
-            // restarts/updates because the bearer token persists in the
-            // secrets store. Goes through the SAME shared start path as
-            // the `remote_server_start` command (mirroring how the bridge
-            // calls commands outside IPC via `app.state()`), spawned async
-            // so a slow/failed bind can never delay or crash startup. A
-            // failure (e.g. port already busy) is only logged; the stored
-            // `enabled` flag stays untouched, and the Settings toggle
-            // simply shows OFF because it reads the live running state
-            // via `remote_server_status` on mount.
-            if remote::read_persisted_enabled(app.handle()) {
-                let app_for_lan = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    match remote::start_server(&app_for_lan).await {
-                        Ok(status) => log_activity_handle(
-                            &app_for_lan,
-                            ActivityLevel::Info,
-                            format!(
-                                "LAN-Fernbedienung automatisch gestartet (Port {})",
-                                status.port
-                            ),
-                            None,
-                        ),
-                        Err(e) => log_activity_handle(
-                            &app_for_lan,
-                            ActivityLevel::Warn,
-                            "LAN-Fernbedienung konnte nicht automatisch starten",
-                            Some(e.message.clone()),
-                        ),
-                    }
-                });
-            }
-
+            // Mit Abruf zeigt das Startfenster den Fortschritt und gibt die
+            // Ereignisschleife frei; das Hauptfenster (create: false) und der
+            // Rest (`nach_dem_stand`) folgen, sobald der Stand feststeht.
+            startfenster::beginnen(app.handle(), app.path().app_data_dir().ok());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

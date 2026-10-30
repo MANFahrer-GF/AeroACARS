@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AeroACARS 3</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body { background: #0b1220; color: #e6edf6; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: flex; flex-direction: column; justify-content: center; padding: 0 28px; box-sizing: border-box; user-select: none; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 4px; letter-spacing: .02em; }
+  #text { font-size: 13px; opacity: .8; margin: 0 0 16px; min-height: 1.3em; }
+  .spur { height: 8px; border-radius: 4px; background: #1a2436; overflow: hidden; position: relative; }
+  #balken { height: 100%; width: 0; background: #4da3ff; border-radius: 4px; transition: width .12s linear; }
+  .spur.offen #balken { width: 35%; position: absolute; animation: lauf 1.2s ease-in-out infinite alternate; }
+  @keyframes lauf { from { left: 0; } to { left: 65%; } }
+  @media (prefers-reduced-motion: reduce) { .spur.offen #balken { animation: none; left: 32%; } }
+  #zahl { font-size: 12px; opacity: .6; margin-top: 8px; min-height: 1.2em; font-variant-numeric: tabular-nums; }
+  .fuss { margin-top: 18px; text-align: right; min-height: 22px; }
+  #weiter { font-size: 12px; color: #7cc4ff; text-decoration: none; }
+  #weiter[hidden] { display: none; }
+</style>
+</head>
+<body>
+<h1>AeroACARS 3</h1>
+<p id="text"></p>
+<div class="spur offen" id="spur"><div id="balken"></div></div>
+<div id="zahl"></div>
+<div class="fuss"><a id="weiter" href="aerostart://localhost/ueberspringen"></a></div>
+<script>
+(function () {
+  var sprache = (navigator.language || "de").slice(0, 2).toLowerCase();
+  var T = {
+    de: { pruefen: "Suche nach einem neuen Paket …", laden: "Paket wird geladen … Generation ", installieren: "Paket wird geprüft und installiert …", weiter: "Überspringen", von: " von " },
+    en: { pruefen: "Checking for a new package …", laden: "Loading package … generation ", installieren: "Verifying and installing package …", weiter: "Skip", von: " of " },
+    it: { pruefen: "Ricerca di un nuovo pacchetto …", laden: "Caricamento del pacchetto … generazione ", installieren: "Verifica e installazione del pacchetto …", weiter: "Salta", von: " di " }
+  }[sprache] || null;
+  if (!T) { T = { pruefen: "Suche nach einem neuen Paket …", laden: "Paket wird geladen … Generation ", installieren: "Paket wird geprüft und installiert …", weiter: "Überspringen", von: " von " }; sprache = "de"; }
+  document.documentElement.lang = sprache;
+  var text = document.getElementById("text"), spur = document.getElementById("spur"),
+      balken = document.getElementById("balken"), zahl = document.getElementById("zahl"),
+      weiter = document.getElementById("weiter");
+  weiter.textContent = T.weiter;
+  function mb(b) { return (b / 1048576).toFixed(1); }
+  window.aeroStart = function (z) {
+    if (z.phase === "laden") {
+      text.textContent = T.laden + (z.generation == null ? "" : z.generation);
+    } else {
+      text.textContent = T[z.phase] || T.pruefen;
+    }
+    var bestimmt = z.gesamt > 0 && (z.phase === "laden" || z.phase === "installieren");
+    spur.className = bestimmt ? "spur" : "spur offen";
+    if (bestimmt) {
+      balken.style.width = Math.min(100, Math.round(z.geladen * 100 / z.gesamt)) + "%";
+      zahl.textContent = mb(z.geladen) + T.von + mb(z.gesamt) + " MB";
+    } else {
+      balken.style.width = "";
+      zahl.textContent = "";
+    }
+    weiter.hidden = z.phase === "installieren";
+  };
+  window.aeroStart({ phase: "pruefen", generation: null, geladen: 0, gesamt: 0 });
+})();
+</script>
+</body>
+</html>

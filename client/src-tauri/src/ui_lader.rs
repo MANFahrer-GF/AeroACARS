@@ -229,6 +229,11 @@ fn paket_aus(dateien: &[(&str, &[u8])]) -> Paket {
 /// Kleinstes gueltiges WASM-Modul (Magic + Version).
 const MINI_WASM: &[u8] = b"\0asm\x01\0\0\0";
 
+/// Ist der CI-Selbsttest angefordert (`AEROACARS_UI_SELBSTTEST`)?
+pub(crate) fn selbsttest_gewuenscht() -> bool {
+    std::env::var_os("AEROACARS_UI_SELBSTTEST").is_some()
+}
+
 /// Startet den Selbsttest, wenn `AEROACARS_UI_SELBSTTEST` gesetzt ist: das
 /// Hauptfenster wird geschlossen, nur `ui` mit der Testseite geoeffnet.
 /// `true` = Selbsttest laeuft, der Rest von `setup` entfaellt.

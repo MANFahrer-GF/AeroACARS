@@ -443,21 +443,33 @@
         );
 
         // Und er muss im Start-Haken stehen, nicht irgendwo — sonst
-        // waere die Frage nur verschoben, nicht vorgezogen. In ZEILEN
-        // gemessen; der erklaerende Kommentar dazwischen ist lang, und
-        // ein Zeichenabstand wuerde daran scheitern.
+        // waere die Frage nur verschoben, nicht vorgezogen. Seit dem
+        // Startfenster (30.10.2026) ist der Start-Haken zweiteilig: `.setup`
+        // zeigt das Fenster und ruft `startfenster::beginnen`; der Rest
+        // steht in `nach_dem_stand` (Hauptfenster existiert, Stand steht).
+        // Dort direkt am Anfang. In ZEILEN gemessen; der erklaerende
+        // Kommentar dazwischen ist lang, und ein Zeichenabstand wuerde
+        // daran scheitern.
         let zeilen: Vec<&str> = LIB_QUELLE.lines().collect();
-        let start = zeilen
+        let setup = zeilen
             .iter()
             .position(|z| z.contains(&format!(".setup(|{}|", "app")))
             .expect(".setup nicht gefunden");
+        assert!(
+            zeilen[setup..setup + 20].iter().any(|z| z.contains("startfenster::beginnen(")),
+            "`.setup` muss den Start ueber das Startfenster fuehren"
+        );
+        let start = zeilen
+            .iter()
+            .position(|z| z.contains("fn nach_dem_stand("))
+            .expect("nach_dem_stand nicht gefunden");
         let stelle = zeilen
             .iter()
             .position(|z| z.contains(&format!("szenerie_vorbereiten{}", "()")))
             .expect("Aufruf nicht gefunden");
         assert!(
-            stelle > start && stelle - start <= 20,
-            "der Vorabbau steht {} Zeilen nach `.setup(` — er gehoert direkt hinein",
+            stelle > start && stelle - start <= 24,
+            "der Vorabbau steht {} Zeilen nach `nach_dem_stand` — er gehoert direkt hinein",
             stelle.saturating_sub(start)
         );
     }
