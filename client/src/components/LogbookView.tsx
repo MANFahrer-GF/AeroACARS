@@ -12,6 +12,7 @@ import { FlightProfile } from "./FlightProfile";
 import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
 import { ohneDatumsgrenzenSprung } from "../lib/datumsgrenze";
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus } from "./PirepPruefstatus";
+import { UploadKasten, UploadMarke, useUploadsAusstehend } from "./UploadAusstehend";
 import { BordbuchRoutine } from "./bordbuch/BordbuchRoutine";
 // Flugkarte (Etappe 3): erst beim Öffnen laden — deck.gl soll den Start nicht bremsen
 const FlugkarteFenster = lazy(() => import("../flugkarte/FlugkarteFenster"));
@@ -149,6 +150,8 @@ export function LogbookView() {
   // Das Logbuch listet ALLE eingereichten PIREPs — auch solche, zu denen der
   // Landungs-Tab keinen Datensatz hat, weil das Aufsetzen nicht erkannt wurde.
   const pruefstatus = usePirepPruefstatus(items.map((f) => f.id));
+  // P-7.24: noch nicht bei live angekommene Eingaben und Flugprotokolle.
+  const uploads = useUploadsAusstehend();
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapElRef = useRef<HTMLDivElement | null>(null);
 
@@ -243,6 +246,7 @@ export function LogbookView() {
           </div>
         </div>
         <PruefstatusKasten status={pruefstatus[detail.id]} />
+        <UploadKasten eintraege={uploads[detail.id]} />
         <div className="aa-lb-det-row">
           <div className="aa-lb-map" ref={mapElRef} />
           <div className="aa-lb-panel aa-lb-logpanel">
@@ -330,6 +334,7 @@ export function LogbookView() {
                 <td>
                   <span dangerouslySetInnerHTML={{ __html: badge(f.status, t) }} />
                   <PruefstatusMarke status={pruefstatus[f.id]} />
+                  <UploadMarke eintraege={uploads[f.id]} />
                 </td>
                 {/* Der Pfeil wird zum Kreisel — an genau der Stelle, auf die
                     man geklickt hat, statt irgendwo sonst auf der Seite. */}

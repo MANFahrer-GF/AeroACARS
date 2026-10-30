@@ -160,6 +160,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Tests `upload_warteschlange::tests`, `landungs_eingabe::tests::aufraeumen_laesst_offene_eintraege_stehen`,
 /// `nachreichen_tests::abgleich_ohne_stueckgrenze_ueber_dreissig_tage`,
 /// `recorder::purge_tests`.
+/// — plus P-7.24: Lese-Befehl `uploads_ausstehend` (eine Zeile im
+/// `generate_handler!`, Stufe `lesen` in befehle.json, LAN-Bruecke); liest
+/// `upload_warteschlange::ausstehend` fuer das angemeldete Konto. Tests
+/// `upload_warteschlange::tests::einreihen_und_anzeige_je_konto`,
+/// `tests/befehlsliste.rs`, vitest `UploadAusstehend.test.tsx`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -170,4 +175,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "72bdf1904b2e560b1593ec43c7b4b77be4017eb519af8fb04565cdbf9c2b10b8";
+const HASH_VOR_DER_ZERLEGUNG: &str = "d86bb59ec10b2d35847f2d289c14e562f10019d100945e55e622b067a8fd7dbc";

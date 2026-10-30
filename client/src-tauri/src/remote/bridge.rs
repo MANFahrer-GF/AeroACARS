@@ -158,6 +158,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
     let result: Result<Value, UiError> = match name {
         // ============================ READS ==============================
         "app_info" => ok_json(crate::app_info()),
+        "uploads_ausstehend" => ok_json(crate::uploads_ausstehend(app.clone())),
         // Reine Auskunft ueber die Platte des Hosts. Ueber die Bruecke
         // erlaubt, weil das Tablet dieselbe Frage stellen darf wie der
         // PC — es liest nichts, was der Pilot nicht ohnehin sieht.

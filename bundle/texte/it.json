@@ -2155,7 +2155,13 @@
     "detail_profile_title": "Profilo di volo",
     "status_accepted": "accettato",
     "status_pending": "in attesa",
-    "status_rejected": "rifiutato"
+    "status_rejected": "rifiutato",
+    "upload_titel": "Caricamento sul server live in sospeso",
+    "upload_ausstehend": "Caricamento in sospeso dal {{seit}}",
+    "upload_grund": "Ultimo errore: {{grund}}",
+    "upload_noch_kein_versuch": "Non ancora inviato",
+    "upload_art_eingabe": "Dati di atterraggio",
+    "upload_art_protokoll": "Registro di volo"
   },
   "error_reporting": {
     "section_title": "Telemetria errori (anonima)",

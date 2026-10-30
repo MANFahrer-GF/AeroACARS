@@ -58,6 +58,8 @@ vi.mock("../lib/ipc", () => ({
     // Bordbuch-Routine im Logbuch (seit 26.09.2026) — ebenfalls ohne Belang.
     if (cmd === "bordbuch_liste") return Promise.resolve([]);
     if (cmd === "bordbuch_einstellungen_holen") return Promise.resolve({ regeln: {} });
+    // Ausstehende Uploads (P-7.24) — ebenfalls ohne Belang.
+    if (cmd === "uploads_ausstehend") return Promise.resolve([]);
     // Der Detailabruf bleibt offen, bis der Test ihn auflöst.
     return new Promise((resolve) => h.pending.push(resolve));
   },

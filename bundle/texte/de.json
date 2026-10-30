@@ -2169,7 +2169,13 @@
     "detail_profile_title": "Flugprofil",
     "status_accepted": "akzeptiert",
     "status_pending": "ausstehend",
-    "status_rejected": "abgelehnt"
+    "status_rejected": "abgelehnt",
+    "upload_titel": "Upload an den Live-Server ausstehend",
+    "upload_ausstehend": "Upload ausstehend seit {{seit}}",
+    "upload_grund": "Letzter Fehlschlag: {{grund}}",
+    "upload_noch_kein_versuch": "Noch nicht gesendet",
+    "upload_art_eingabe": "Landungsdaten",
+    "upload_art_protokoll": "Flugprotokoll"
   },
   "error_reporting": {
     "section_title": "Fehler-Telemetrie (anonym)",

@@ -32386,6 +32386,22 @@ async fn flugprotokolle_senden(app: &AppHandle, daten: &std::path::Path) {
     }
 }
 
+/// v3 (P-7.24): ausstehende Uploads des angemeldeten Kontos — je Flug Art,
+/// „seit“, Zahl der Fehlversuche und Grund des letzten Fehlschlags. Fremde
+/// Konten bleiben verborgen.
+#[tauri::command]
+fn uploads_ausstehend(app: AppHandle) -> Vec<upload_warteschlange::Ausstehend> {
+    let Ok(daten) = app.path().app_data_dir() else { return Vec::new() };
+    let besitzer = app
+        .state::<AppState>()
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock")
+        .map(|id| id.to_string());
+    let konto = live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
+    upload_warteschlange::ausstehend(&daten, konto.as_deref(), besitzer.as_deref())
+}
+
 /// Reiht das Flugprotokoll ein (P-7.21; der Arbeiter sendet es) und laedt
 /// das DIAGNOSE-Log hoch.
 ///
@@ -55599,6 +55615,7 @@ pub fn run() {
             bordbuch_einstellungen_setzen,
             bordbuch_wiederherstellen,
             app_info,
+            uploads_ausstehend,
             aircraft_scan::ascan_list_aircraft,
             aircraft_scan::ascan_collect,
             aircraft_scan::ascan_submit,

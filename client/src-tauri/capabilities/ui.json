@@ -145,6 +145,7 @@
     "allow-ui-state-get-all",
     "allow-ui-state-seed",
     "allow-ui-state-set",
+    "allow-uploads-ausstehend",
     "allow-va-live-flights",
     "allow-vdgs-fenster-offen",
     "allow-vdgs-stand",

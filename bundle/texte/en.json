@@ -2169,7 +2169,13 @@
     "detail_profile_title": "Flight profile",
     "status_accepted": "accepted",
     "status_pending": "pending",
-    "status_rejected": "rejected"
+    "status_rejected": "rejected",
+    "upload_titel": "Upload to the live server pending",
+    "upload_ausstehend": "Upload pending since {{seit}}",
+    "upload_grund": "Last failure: {{grund}}",
+    "upload_noch_kein_versuch": "Not sent yet",
+    "upload_art_eingabe": "Landing data",
+    "upload_art_protokoll": "Flight log"
   },
   "error_reporting": {
     "section_title": "Error telemetry (anonymous)",
