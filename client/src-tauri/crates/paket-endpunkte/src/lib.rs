@@ -110,7 +110,9 @@ pub fn lesen(json: &str) -> Result<Endpunkte, String> {
     Ok(e)
 }
 
-/// Ein Pfad auf dem festen phpVMS-Host: beginnt mit `/api/`, nur ASCII
+/// Ein Pfad auf dem festen phpVMS-Host: beginnt mit `/api/helpdesk/` (der
+/// Schluessel des Piloten geht so an keine andere phpVMS-Schnittstelle), kein
+/// `.`-Segment, nur ASCII
 /// `[A-Za-z0-9/_.-]` (also kein `?`, `#`, `@`, `%`, Leerzeichen, `\` — eine
 /// Abfrage mit Geheimnissen oder ein anderer Host sind so ausgeschlossen),
 /// kein `..`, kein `//`, kein abschliessender Schraegstrich, hoechstens
@@ -119,13 +121,13 @@ fn pruefe_pfad(pfad: &str) -> Result<(), String> {
     if pfad.len() > HELPDESK_PFAD_MAX {
         return Err("zu lang".into());
     }
-    if !pfad.starts_with("/api/") || pfad.ends_with('/') {
-        return Err("muss mit /api/ beginnen und ohne / enden".into());
+    if !pfad.starts_with("/api/helpdesk/") || pfad.ends_with('/') {
+        return Err("muss mit /api/helpdesk/ beginnen und ohne / enden".into());
     }
     if !pfad.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'.' | b'-')) {
         return Err("Zeichen ungueltig".into());
     }
-    if pfad.contains("..") || pfad.contains("//") {
+    if pfad.contains("..") || pfad.contains("//") || pfad.split('/').any(|s| s == ".") {
         return Err("Form ungueltig".into());
     }
     Ok(())
@@ -170,7 +172,7 @@ mod tests {
         let mut neu = gut.clone();
         neu["helpdesk_pfad"] = "/api/helpdesk/v2/tickets".into();
         assert_eq!(lesen(&neu.to_string()).unwrap().helpdesk_pfad(), "/api/helpdesk/v2/tickets");
-        let lang = format!("/api/{}", "a".repeat(HELPDESK_PFAD_MAX - 5));
+        let lang = format!("/api/helpdesk/{}", "a".repeat(HELPDESK_PFAD_MAX - 14));
         assert_eq!(lang.len(), HELPDESK_PFAD_MAX);
         neu["helpdesk_pfad"] = lang.clone().into();
         assert!(lesen(&neu.to_string()).is_ok(), "genau an der Grenze");
@@ -179,19 +181,25 @@ mod tests {
             "/helpdesk/tickets".into(),
             "api/helpdesk/tickets".into(),
             "/api/".into(),
+            "/api/helpdesk/".into(),
+            // andere phpVMS-Schnittstelle mit dem Schluessel des Piloten
+            "/api/user".into(),
+            "/api/pireps/1/comments".into(),
+            "/api/helpdesk/./tickets".into(),
+            "/api/helpdesk/.".into(),
             "/api/helpdesk/tickets/".into(),
             "/api/../admin".into(),
             "/api/helpdesk/..".into(),
             "/api//helpdesk".into(),
-            "/api/t?api_key=x".into(),
-            "/api/t#x".into(),
-            "/api/t%2F..".into(),
-            "/api/t@evil.example".into(),
-            "/api/t x".into(),
-            "/api/t\\x".into(),
+            "/api/helpdesk/t?api_key=x".into(),
+            "/api/helpdesk/t#x".into(),
+            "/api/helpdesk/t%2F..".into(),
+            "/api/helpdesk/t@evil.example".into(),
+            "/api/helpdesk/t x".into(),
+            "/api/helpdesk/t\\x".into(),
             "https://evil.example/api/t".into(),
             "//evil.example/api/t".into(),
-            "/api/tick\u{e4}ts".into(),
+            "/api/helpdesk/tick\u{e4}ts".into(),
         ] {
             let mut v = gut.clone();
             v["helpdesk_pfad"] = boese.clone().into();

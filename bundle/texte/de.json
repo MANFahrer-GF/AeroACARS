@@ -5082,7 +5082,7 @@
       "hilfe_bild_typ": "Ein Bild ist kein PNG, JPEG oder WebP.",
       "ticket_bild_ungueltig": "Das HelpDesk hat ein Bild abgelehnt; das Ticket wurde nicht angelegt. Ohne das Bild erneut senden.",
       "ticket_zu_gross": "Die Anfrage ist zu groß für german-sky-group.eu. Weniger oder kleinere Bilder anhängen.",
-      "hilfe_zusatz": "Ein Zusatzfeld ist ungültig (zu lang oder unzulässige Zeichen).",
+      "hilfe_zusatz": "Ein Zusatzfeld ist ungültig (Name nicht erlaubt, zu viele Felder, zu lang oder unzulässige Zeichen).",
       "ticket_zusatz_ungueltig": "Das HelpDesk hat ein Zusatzfeld abgelehnt. Bitte die Angabe prüfen."
     },
     "kuerzel": "Hilfe anfordern (F1)",

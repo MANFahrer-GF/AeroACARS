@@ -65,6 +65,9 @@ const TEXT_MAX = 20000;
 const ZUSATZ_MAX_ANZAHL = 12;
 const ZUSATZ_WERT_MAX = 2000;
 const ZUSATZ_NAME = /^[a-z][a-z0-9_]{0,31}$/;
+/** Steuerzeichen, die der Kern ablehnt (Zeilenumbruch und Tab bleiben). */
+// eslint-disable-next-line no-control-regex
+const STEUERZEICHEN = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
 
 type Sprachtext = Partial<Record<string, string>>;
 
@@ -104,6 +107,7 @@ export function formularLesen(json: unknown): ZusatzFeld[] {
       ? f.optionen
           .filter((o): o is Record<string, unknown> => !!o && typeof o === "object" && typeof (o as { wert?: unknown }).wert === "string")
           .map((o) => ({ wert: o.wert as string, bezeichnung: sprachtext(o.bezeichnung) }))
+          .filter((o, i, alle) => alle.findIndex((x) => x.wert === o.wert) === i)
       : [];
     const typ = typeof f.typ === "string" ? f.typ : "text";
     if (typ === "auswahl" && optionen.length === 0) continue;
@@ -355,7 +359,7 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
             </label>
             {zusatzFelder.map((f) => {
               const wert = zusatz[f.name] ?? "";
-              const setzen = (v: string) => setZusatz((alt) => ({ ...alt, [f.name]: v }));
+              const setzen = (v: string) => setZusatz((alt) => ({ ...alt, [f.name]: v.replace(STEUERZEICHEN, "") }));
               const hinweis = inSprache(f.hinweis, "") || undefined;
               return (
                 <label key={f.name} className="settings__field hilfe-seite__feld" data-testid={`hilfe-zusatz-${f.name}`}>
