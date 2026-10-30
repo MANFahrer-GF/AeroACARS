@@ -610,16 +610,31 @@ impl IlsNavigraph {
 /// Bahndisziplin rechnen weiter gegen die Szenerie — die sieht der Pilot.
 ///
 /// Nur der VERSATZ kommt aus Navigraph, die Geometrie bleibt die der
-/// Zuordnung: Unter MSFS ist sie ohnehin Navigraph (die Szenerie liefert
-/// dort keine Achse), unter X-Plane bleibt die Forensik so auf derselben
-/// Achse wie Spur, Aufsetzpunkt und `spaetes_final` (Codex, 16.10.2026).
+/// Zuordnung: Unter X-Plane bleibt die Forensik so auf derselben Achse wie
+/// Spur, Aufsetzpunkt und `spaetes_final` (Codex, 16.10.2026).
+///
+/// ⚠ P-4.14: Unter MSFS wird die Navdaten-Achse seit 3.0 durch die
+/// Facility-Mitte gelegt (verschoben, ggf. gedreht). Das ILS ist in den
+/// Navdaten definiert und darf damit NICHT mitwandern (Regel aus dem Fall
+/// Sven, RJAA 34L) — dort gilt die Navigraph-Bahn vor der Übernahme
+/// (`ils.bahn`) samt Geometrie.
 fn anflug_forensik_bahn(stats: &FlightStats) -> Option<anflug_forensik::Bahnbezug> {
     if let Some(ils) = stats
         .runway_ils_navigraph
         .as_ref()
         .filter(|i| i.bahn.ils.is_some())
     {
-        let bahn = stats.runway_nav_geometry.as_ref().unwrap_or(&ils.bahn);
+        let achse_verschoben = stats.szenerie_uebernahme.as_ref().is_some_and(|b| {
+            b.achsen.iter().any(|a| {
+                a.bahn == ils.bahn.designator
+                    && a.herkunft == szenerie_bahn::AchsenHerkunft::SzenerieMitte
+            })
+        });
+        let bahn = if achse_verschoben {
+            &ils.bahn
+        } else {
+            stats.runway_nav_geometry.as_ref().unwrap_or(&ils.bahn)
+        };
         return Some(anflug_forensik::Bahnbezug::aus_navdaten(
             bahn,
             ils.versatz_ft as f64,

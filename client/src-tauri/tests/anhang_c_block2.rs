@@ -2,7 +2,9 @@
 //! oeffentlichen Modul `szenerie_bahn`, je Regel ein Test, benannt nach der
 //! Regelnummer.
 
-use aeroacars_app_lib::szenerie_bahn::{test_navairport, uebernimm_szenerie, Quelle, UebernahmeBericht};
+use aeroacars_app_lib::szenerie_bahn::{
+    test_navairport, uebernimm_szenerie, AchsenHerkunft, AchsenUebernahme, KursHerkunft, Quelle, UebernahmeBericht,
+};
 use sim_core::szenerie::{KursQuelle, SzenerieBahn, SzenerieFlughafen};
 
 fn edhe() -> aeroacars_mqtt::navdata::NavAirport {
@@ -65,12 +67,29 @@ fn s6_038_uebernahmebericht_ueberlebt_den_neustart_verworfen_getrennt() {
         groesste_kursabweichung_grad: 3.72,
         groesste_breitenabweichung_m: 15.1,
         groesste_schwellenabweichung_m: 573.0,
+        // P-4.14 (c): Herkunft der Achse samt Facility-Mitte und Verschiebung.
+        achsen: vec![AchsenUebernahme {
+            bahn: "09".into(),
+            herkunft: AchsenHerkunft::SzenerieMitte,
+            kurs_quelle: KursHerkunft::Heading,
+            szenerie_mitte: Some((-15.105524, 39.2817712)),
+            verschiebung_quer_m: Some(-16.3),
+            verschiebung_laengs_m: Some(0.3),
+            laengs_gemessen_m: Some(0.3),
+            grund: Some("laengs_nicht_angewandt(versetzte_schwelle)".into()),
+        }],
     };
     let json = serde_json::to_string(&voll).unwrap();
     let zurueck: UebernahmeBericht = serde_json::from_str(&json).unwrap();
     assert_eq!(zurueck, voll, "kein Feld darf beim Speichern verloren gehen");
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["groesste_schwellenabweichung_m"], 573.0);
+    assert_eq!(v["achsen"][0]["herkunft"], "szenerie_mitte");
+    assert_eq!(v["achsen"][0]["verschiebung_quer_m"], -16.3);
+    // Ein Bericht von vor P-4.14 (ohne `achsen`) laedt weiter — als „Achse Navigraph".
+    let alt: UebernahmeBericht = serde_json::from_str(r#"{"uebernommen":["09"],"ohne_treffer":[],"verworfen":[],"groesste_kursabweichung_grad":0.0,"groesste_breitenabweichung_m":0.0,"groesste_schwellenabweichung_m":0.0}"#).unwrap();
+    assert!(!alt.achse_aus_szenerie("09"));
+    assert!(zurueck.achse_aus_szenerie("9"), "Gegenprobe: mit Eintrag aus der Szenerie");
 }
 
 // ---------------- Bordbuch (oeffentliches Modul `bordbuch`) ----------------

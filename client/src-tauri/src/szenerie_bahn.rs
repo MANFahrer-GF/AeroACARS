@@ -110,6 +110,83 @@ pub struct UebernahmeBericht {
     /// LAN273), verschiebt sich die Bewertung um eine halbe
     /// Bahnlänge — das darf nicht still geschehen.
     pub groesste_schwellenabweichung_m: f64,
+    /// P-4.14 (c): Woher die ACHSE jeder zugeordneten Bahn kommt — je Bahn
+    /// aus `uebernommen` ein Eintrag. Geht als `korrekturen` ins
+    /// Eingabe-Dokument (P-9.44) und mit dem Flugzustand auf die Platte.
+    ///
+    /// ⚠ Getrennt von `uebernommen`: Bis P-4.14 hiess „übernommen" bei MSFS
+    /// nur Breite/Länge/Schwelle/Belag, die Achse blieb Navigraph — und
+    /// `bahn_geometrie_aus_szenerie` hielt sie trotzdem für bestätigt (Fund
+    /// CFG2001, FQNP 23). Ein Bericht von vor P-4.14 (ohne dieses Feld)
+    /// gilt deshalb als „Achse Navigraph".
+    #[serde(default)]
+    pub achsen: Vec<AchsenUebernahme>,
+}
+
+impl UebernahmeBericht {
+    /// P-4.14 (b): Stammt die Achse DIESER Bahn aus der Szenerie?
+    ///
+    /// Nur dann ist sie gegen das geprüft, was der Pilot sieht. Dass Breite
+    /// oder Länge übernommen wurden, sagt über die Lage der Mittellinie
+    /// nichts.
+    pub fn achse_aus_szenerie(&self, bezeichner: &str) -> bool {
+        let ziel = normiert(bezeichner);
+        self.achsen
+            .iter()
+            .any(|a| normiert(&a.bahn) == ziel && a.herkunft != AchsenHerkunft::Navigraph)
+    }
+}
+
+/// Woher die Mittellinie einer Bahn kommt (P-4.14).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AchsenHerkunft {
+    /// Navdaten (Navigraph), unverändert.
+    #[default]
+    Navigraph,
+    /// X-Plane: beide Schwellen aus der `apt.dat`.
+    SzenerieDatei,
+    /// MSFS: Navdaten-Achse durch die gemeldete Facility-Mitte gelegt.
+    SzenerieMitte,
+}
+
+/// Woher der Kurs der Achse kommt (P-4.14).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KursHerkunft {
+    /// Richtung der Navdaten-Geometrie (Schwelle → Gegenende).
+    #[default]
+    Navigraph,
+    /// X-Plane: aus den beiden Schwellen der `apt.dat`.
+    SzenerieDatei,
+    /// MSFS: unabhängig bestätigter wahrer Kurs (`kurs_bestaetigt_grad`).
+    Bestaetigt,
+    /// MSFS: `HEADING` der Facility (rechtweisend, Schattenmodus-Auswertung
+    /// 30.10.2026: 1 842 Bahnenden, Median 0,01°).
+    Heading,
+}
+
+/// P-4.14 (c): Achse einer Bahn — Herkunft, Facility-Mitte, Verschiebung.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AchsenUebernahme {
+    /// Bezeichner der Bahn (Navdaten).
+    pub bahn: String,
+    pub herkunft: AchsenHerkunft,
+    pub kurs_quelle: KursHerkunft,
+    /// Mitte der Szenerie-Bahn (Breite, Länge). Bei MSFS die gemeldete
+    /// Facility-Mitte (`LATITUDE`/`LONGITUDE`).
+    pub szenerie_mitte: Option<(f64, f64)>,
+    /// Lage der Szenerie-Mitte zur Navdaten-Mitte QUER zur Navdaten-Achse,
+    /// in Metern, positiv = rechts in Landerichtung. Bei
+    /// `SzenerieMitte` ist das die angewandte seitliche Verschiebung.
+    pub verschiebung_quer_m: Option<f64>,
+    /// Angewandte Verschiebung LÄNGS der Achse, in Metern (positiv in
+    /// Landerichtung). `0` heisst: nicht angewandt, Grund in `grund`.
+    pub verschiebung_laengs_m: Option<f64>,
+    /// Gemessener Längsabstand der Szenerie-Mitte zur Navdaten-Mitte.
+    pub laengs_gemessen_m: Option<f64>,
+    /// Warum etwas nicht (ganz) übernommen wurde.
+    pub grund: Option<String>,
 }
 
 fn winkelabstand(a: f64, b: f64) -> f64 {
@@ -344,6 +421,205 @@ mod plausibel {
     }
 }
 
+/// Ebener Rahmen um die Mitte einer Navdaten-Bahn (P-4.14).
+///
+/// Ebene Näherung wie `achsenversatz_m`: auf Bahnlänge millimetergenau.
+struct Rahmen {
+    mitte: (f64, f64),
+    cos_breite: f64,
+    /// Einheitsvektor Schwelle → Gegenende (Ost, Nord).
+    achse: (f64, f64),
+    /// Abstand Schwelle → Gegenende in Metern.
+    laenge_m: f64,
+}
+
+const M_JE_GRAD_BREITE: f64 = 111_320.0;
+
+impl Rahmen {
+    fn aus(bahn: &NavRunway) -> Option<Self> {
+        let t = (bahn.threshold.lat, bahn.threshold.lon);
+        let e = (bahn.far_end.lat, bahn.far_end.lon);
+        let mitte = ((t.0 + e.0) / 2.0, (t.1 + e.1) / 2.0);
+        let mut r = Self {
+            mitte,
+            cos_breite: mitte.0.to_radians().cos(),
+            achse: (0.0, 0.0),
+            laenge_m: 0.0,
+        };
+        let (tx, ty) = r.eben(t);
+        let (ex, ey) = r.eben(e);
+        let laenge_m = (ex - tx).hypot(ey - ty);
+        if !laenge_m.is_finite() || laenge_m < 1.0 {
+            return None;
+        }
+        r.achse = ((ex - tx) / laenge_m, (ey - ty) / laenge_m);
+        r.laenge_m = laenge_m;
+        Some(r)
+    }
+    fn eben(&self, p: (f64, f64)) -> (f64, f64) {
+        (
+            (p.1 - self.mitte.1) * M_JE_GRAD_BREITE * self.cos_breite,
+            (p.0 - self.mitte.0) * M_JE_GRAD_BREITE,
+        )
+    }
+    fn zurueck(&self, (x, y): (f64, f64)) -> (f64, f64) {
+        (
+            self.mitte.0 + y / M_JE_GRAD_BREITE,
+            self.mitte.1 + x / (M_JE_GRAD_BREITE * self.cos_breite),
+        )
+    }
+    /// (längs, quer) eines Punkts zur Mitte; quer positiv = rechts.
+    fn lage(&self, p: (f64, f64)) -> (f64, f64) {
+        let (x, y) = self.eben(p);
+        let (ux, uy) = self.achse;
+        (x * ux + y * uy, x * uy - y * ux)
+    }
+    /// Kurs der Navdaten-Geometrie in Grad `[0, 360)`.
+    fn kurs_grad(&self) -> f64 {
+        self.achse.0.atan2(self.achse.1).to_degrees().rem_euclid(360.0)
+    }
+}
+
+/// Neue Achse einer Bahn: Schwelle, Gegenende und — falls aus der Szenerie
+/// — der Kurs.
+struct NeueAchse {
+    schwelle: (f64, f64),
+    gegenende: (f64, f64),
+    kurs_grad: Option<f64>,
+}
+
+/// P-4.14 (a): Die Navdaten-Achse bei MSFS durch die Facility-Mitte legen.
+///
+/// # Warum die Mitte
+///
+/// MSFS meldet je Bahn MITTE, KURS und LÄNGE; die Schwellen der
+/// `SzenerieBahn` rechnet `bahn_paar` daraus. Die Mitte ist die einzige
+/// direkt gemeldete Lage und hängt an keinem Bezug (missweisend oder
+/// rechtweisend) — anders als der Kurs. Navigraph führt manche Schwellen
+/// nur auf ganze Bogensekunden: FQNP 05/23 lag 15,6 m (Schwelle 23) bis
+/// 17,1 m (Schwelle 05) neben der Bahn, Joel (CFG2001) bekam „neben der
+/// Bahn" für eine Landung auf der Mitte.
+///
+/// # Kurs
+///
+/// Erst der unabhängig bestätigte Kurs, dann `HEADING` — je nur, wenn er
+/// höchstens `kurs_abweichung_hoechst_grad` (Paket) neben `HEADING` bzw.
+/// der Navdaten-Geometrie liegt. Sonst bleibt die Richtung der
+/// Navdaten-Geometrie, und die Achse wird nur verschoben, nicht gedreht.
+/// Verglichen wird mit der GEOMETRIE (Schwelle → Gegenende), nicht mit
+/// `true_course`: Gegen die Geometrie wird gemessen, und `true_course`
+/// ist bei tausenden Bahnen ein Platzhalter (0,0).
+///
+/// # Warum längs nur ohne versetzte Schwelle
+///
+/// Bei 87,5 % der Navigraph-Bahnen mit Versatz steckt der Versatz schon im
+/// Schwellenpunkt (`geometry_implied_displacement_ft`). Dann ist die
+/// Navdaten-Mitte NICHT die Mitte des Belags, sondern um den halben
+/// Versatz-Unterschied verschoben — gewollt, deshalb lässt die Zuordnung
+/// 400 m längs zu. Sie auf die Facility-Mitte zu schieben, versetzte die
+/// LANDEschwelle (Nullpunkt der Aufsetzzone) um bis zu 287 m (TJPS 12).
+/// Längs wird deshalb nur verschoben, wenn beide Enden laut Navdaten und
+/// laut Geometrie keinen Versatz haben; sonst nur quer, mit Grund.
+///
+/// # Plausibilität
+///
+/// Liegt die Mitte weiter als die halbe Navdaten-Bahnlänge von der
+/// Navdaten-Mitte entfernt, bleibt die Navdaten-Achse, mit Grund.
+fn msfs_achse(
+    nav: &NavAirport,
+    orig: &NavRunway,
+    s: &SzenerieBahn,
+) -> (AchsenUebernahme, Option<NeueAchse>) {
+    let mut a = AchsenUebernahme {
+        bahn: orig.designator.clone(),
+        ..Default::default()
+    };
+    let Some(r) = Rahmen::aus(orig) else {
+        a.grund = Some("navdaten_achse_entartet".into());
+        return (a, None);
+    };
+    let mitte = match (plausibel::koordinate(s.schwelle), plausibel::koordinate(s.gegenende)) {
+        (Some(p), Some(q)) => ((p.0 + q.0) / 2.0, (p.1 + q.1) / 2.0),
+        _ => {
+            a.grund = Some("mitte_ungueltig".into());
+            return (a, None);
+        }
+    };
+    a.szenerie_mitte = Some(mitte);
+    let (laengs, quer) = r.lage(mitte);
+    a.laengs_gemessen_m = Some(laengs);
+    a.verschiebung_quer_m = Some(quer);
+    let abstand = laengs.hypot(quer);
+    let halbe_m = orig.length_ft as f64 * 0.3048 / 2.0;
+    if !(abstand <= halbe_m) {
+        a.verschiebung_quer_m = None;
+        a.grund = Some(format!(
+            "mitte_zu_weit(abstand_m={abstand:.1}, halbe_laenge_m={halbe_m:.1})"
+        ));
+        return (a, None);
+    }
+
+    // Längs nur, wenn kein Versatz in den Navdaten-Schwellen steckt.
+    let ohne_versatz = |b: &NavRunway| crate::runway::navigraph_versatz_ft(nav, b) == (0, 0);
+    let gegen = nav
+        .runways
+        .iter()
+        .find(|o| o.threshold.lat == orig.far_end.lat && o.threshold.lon == orig.far_end.lon);
+    let mut gruende = Vec::new();
+    let laengs_anw = match gegen {
+        Some(g) if ohne_versatz(orig) && ohne_versatz(g) => laengs,
+        Some(_) => {
+            gruende.push("laengs_nicht_angewandt(versetzte_schwelle)".to_string());
+            0.0
+        }
+        None => {
+            gruende.push("laengs_nicht_angewandt(gegenschwelle_unbekannt)".to_string());
+            0.0
+        }
+    };
+
+    // Kurs (Auftrag P-4.14 Abschnitt 4.1).
+    let toleranz = crate::grenzwerte::grenzwerte().szenerie.kurs_abweichung_hoechst_grad.wert;
+    let geometrie = r.kurs_grad();
+    let heading = plausibel::kurs_grad(s.kurs_grad);
+    let bestaetigt = s.kurs_bestaetigt_grad.and_then(plausibel::kurs_grad);
+    let nahe = |k: f64, bezug: Option<f64>| bezug.is_some_and(|b| winkelabstand(k, b) <= toleranz);
+    let (kurs, quelle) = match (bestaetigt, heading) {
+        (Some(b), h) if nahe(b, h) || nahe(b, Some(geometrie)) => (Some(b), KursHerkunft::Bestaetigt),
+        (b, Some(h)) if nahe(h, b) || nahe(h, Some(geometrie)) => (Some(h), KursHerkunft::Heading),
+        _ => {
+            gruende.push("kurs_navigraph(szenerie_kurs_ausser_toleranz)".to_string());
+            (None, KursHerkunft::Navigraph)
+        }
+    };
+    let richtung = match kurs {
+        Some(k) => (k.to_radians().sin(), k.to_radians().cos()),
+        None => r.achse,
+    };
+    // Die Achse läuft exakt durch die Facility-Mitte (gedreht wird um sie);
+    // ihre neue Mitte ist die Facility-Mitte, um den NICHT angewandten
+    // Längsanteil entlang der neuen Richtung zurückgesetzt.
+    let (mx, my) = r.eben(mitte);
+    let rest = laengs - laengs_anw;
+    let neue_mitte = (mx - rest * richtung.0, my - rest * richtung.1);
+    let halb = r.laenge_m / 2.0;
+    let schwelle = r.zurueck((neue_mitte.0 - halb * richtung.0, neue_mitte.1 - halb * richtung.1));
+    let gegenende = r.zurueck((neue_mitte.0 + halb * richtung.0, neue_mitte.1 + halb * richtung.1));
+
+    a.herkunft = AchsenHerkunft::SzenerieMitte;
+    a.kurs_quelle = quelle;
+    a.verschiebung_laengs_m = Some(laengs_anw);
+    a.grund = (!gruende.is_empty()).then(|| gruende.join(", "));
+    (
+        a,
+        Some(NeueAchse {
+            schwelle,
+            gegenende,
+            kurs_grad: kurs,
+        }),
+    )
+}
+
 /// Die Geometrie aus der Szenerie übernehmen.
 ///
 /// Gibt den ergänzten Flughafen und einen Bericht zurück. Ist die
@@ -360,30 +636,19 @@ pub fn uebernimm_szenerie(
     // dokumentiert sie als rechtweisend. Da ist alles belastbar.
     //
     // MSFS meldet nur MITTE, KURS und LAENGE — die Schwellen rechnen WIR
-    // daraus. Und die Facility-Doku sagt zu `HEADING` nur „the runway
-    // heading, in degrees"; ob missweisend oder rechtweisend, steht
-    // nirgends. (Die Runway-XML-Doku nennt True North, aber das ist ein
-    // anderes Format und beweist nichts ueber die Facility-API.)
-    //
-    // Seit v1.7.13 verhindert eine Kursabweichung die Zuordnung NICHT
-    // mehr — das war noetig, damit ueberhaupt zugeordnet wird. Genau
-    // dadurch wuerde ein falscher Kurs aber jetzt UEBERNOMMEN, und aus
-    // „keine Bewertung" wuerde eine falsche. Deshalb gilt fuer MSFS:
-    //
-    //   uebernommen  — Laenge, Breite, versetzte Schwelle, Belag
-    //                  (direkt gemeldet, bezugsfrei)
-    //   NICHT        — Kurs und beide Schwellenkoordinaten
-    //                  (aus dem Kurs gerechnet, Bezug unbewiesen)
-    //
-    // Die Abweichung wird trotzdem gemessen und mitgeschrieben. Sobald
-    // der Bestand zeigt, dass sie der oertlichen Missweisung entspricht
-    // (oder eben nicht), ist die Frage entschieden — dann kann der
-    // Riegel fallen.
+    // daraus. Bis P-4.14 (3.0) kam bei MSFS deshalb nur Laenge, Breite,
+    // versetzte Schwelle und Belag aus der Szenerie; die Lage der
+    // Mittellinie blieb Navigraph. Das ging an FQNP 05/23 um 15,6–17,1 m
+    // daneben (CFG2001, 30.10.2026). Seit P-4.14 wird die Navdaten-Achse
+    // durch die gemeldete MITTE gelegt (bezugsfrei); den Kurs nimmt sie
+    // nur in enger Toleranz zur Navdaten-Geometrie — siehe `msfs_achse`.
     let achse_belastbar = quelle == Quelle::XPlaneDatei;
     let mut aus = nav.clone();
     let mut b = UebernahmeBericht::default();
 
-    for bahn in &mut aus.runways {
+    for (i, bahn) in aus.runways.iter_mut().enumerate() {
+        // Die UNVERAENDERTE Navdaten-Bahn — Bezug fuer Mitte und Versatz.
+        let orig = &nav.runways[i];
         let (treffer, bezeichner_passte) = passende_szenerie_bahn(bahn, sz);
         let Some(s) = treffer else {
             if bezeichner_passte {
@@ -430,14 +695,52 @@ pub fn uebernimm_szenerie(
             bahn.displaced_threshold_ft = (v / 0.3048).round() as i32;
         }
         if achse_belastbar {
-            if let Some((lat, lon)) = plausibel::koordinate(s.schwelle) {
+            let schwelle = plausibel::koordinate(s.schwelle);
+            let gegenende = plausibel::koordinate(s.gegenende);
+            if let Some((lat, lon)) = schwelle {
                 bahn.threshold.lat = lat;
                 bahn.threshold.lon = lon;
             }
-            if let Some((lat, lon)) = plausibel::koordinate(s.gegenende) {
+            if let Some((lat, lon)) = gegenende {
                 bahn.far_end.lat = lat;
                 bahn.far_end.lon = lon;
             }
+            // P-4.14 (c): Herkunft mitschreiben, samt Lage der Mitte zur
+            // Navdaten-Mitte (Messung „Navigraph gegen Szenerie").
+            let mut a = AchsenUebernahme {
+                bahn: bahn.designator.clone(),
+                ..Default::default()
+            };
+            match (schwelle, gegenende) {
+                (Some(p), Some(q)) => {
+                    let mitte = ((p.0 + q.0) / 2.0, (p.1 + q.1) / 2.0);
+                    a.herkunft = AchsenHerkunft::SzenerieDatei;
+                    a.kurs_quelle = KursHerkunft::SzenerieDatei;
+                    a.szenerie_mitte = Some(mitte);
+                    if let Some(r) = Rahmen::aus(orig) {
+                        let (laengs, quer) = r.lage(mitte);
+                        a.verschiebung_quer_m = Some(quer);
+                        a.verschiebung_laengs_m = Some(laengs);
+                        a.laengs_gemessen_m = Some(laengs);
+                    }
+                }
+                // Nur ein Ende gueltig: die Achse ist ein Gemisch aus beiden
+                // Quellen und gilt nicht als aus der Szenerie bestaetigt.
+                _ => a.grund = Some("schwelle_ungueltig".into()),
+            }
+            b.achsen.push(a);
+        } else {
+            let (a, neu) = msfs_achse(nav, orig, s);
+            if let Some(neu) = neu {
+                bahn.threshold.lat = neu.schwelle.0;
+                bahn.threshold.lon = neu.schwelle.1;
+                bahn.far_end.lat = neu.gegenende.0;
+                bahn.far_end.lon = neu.gegenende.1;
+                if let Some(k) = neu.kurs_grad {
+                    bahn.true_course = k;
+                }
+            }
+            b.achsen.push(a);
         }
         // Der Belag ist der EINE Wert, den die Szenerie nicht bestimmt.
         //
@@ -472,6 +775,53 @@ pub fn uebernimm_szenerie(
             }
         }
         b.uebernommen.push(bahn.designator.clone());
+    }
+
+    // ⚠ Gegenrichtungen bit-gleich halten. Die Zuordnung findet die
+    // Gegenschwelle per KOORDINATENVERGLEICH (`lookup_runway_in_nav`,
+    // `navigraph_versatz_ft`); in den Navdaten ist das Gegenende der 23
+    // bit-gleich die Schwelle der 05. `msfs_achse` rechnet beide Enden
+    // getrennt — fast gleich, aber nicht bit-gleich, und dann fehlte der
+    // Versatz der Gegenschwelle. Die zuerst geführte Richtung gibt die Lage
+    // vor, die andere übernimmt sie umgekehrt.
+    if !achse_belastbar {
+        for i in 0..aus.runways.len() {
+            let (ti, ei) = (&nav.runways[i].threshold, &nav.runways[i].far_end);
+            let partner = (0..i).find(|&j| {
+                let (tj, ej) = (&nav.runways[j].threshold, &nav.runways[j].far_end);
+                tj.lat == ei.lat && tj.lon == ei.lon && ej.lat == ti.lat && ej.lon == ti.lon
+            });
+            let Some(j) = partner else { continue };
+            if !(b.achse_aus_szenerie(&aus.runways[i].designator)
+                && b.achse_aus_szenerie(&aus.runways[j].designator))
+            {
+                continue;
+            }
+            let (t, e) = (
+                (aus.runways[j].far_end.lat, aus.runways[j].far_end.lon),
+                (aus.runways[j].threshold.lat, aus.runways[j].threshold.lon),
+            );
+            let vorgabe_kurs = aus.runways[j].true_course;
+            let r = &mut aus.runways[i];
+            (r.threshold.lat, r.threshold.lon) = t;
+            (r.far_end.lat, r.far_end.lon) = e;
+            // Der Bericht von i beschreibt jetzt die Geometrie von j.
+            let (di, dj) = (aus.runways[i].designator.clone(), aus.runways[j].designator.clone());
+            let quelle_j = b.achsen.iter().find(|a| a.bahn == dj).map(|a| a.kurs_quelle);
+            if let (Some(q), Some(a)) = (quelle_j, b.achsen.iter_mut().find(|a| a.bahn == di)) {
+                a.kurs_quelle = q;
+                let zusatz = format!("geometrie_von({dj})");
+                a.grund = Some(match a.grund.take() {
+                    Some(g) => format!("{g}, {zusatz}"),
+                    None => zusatz,
+                });
+                aus.runways[i].true_course = if q == KursHerkunft::Navigraph {
+                    nav.runways[i].true_course
+                } else {
+                    (vorgabe_kurs + 180.0).rem_euclid(360.0)
+                };
+            }
+        }
     }
 
     (aus, b)
@@ -707,6 +1057,14 @@ pub(crate) mod tests {
         };
         assert!(verworfen(85.0).is_empty());
         assert_eq!(verworfen(115.0), vec!["09"]);
+        // P-4.14: MSFS-Kurs nur bis 0,5° neben der Navdaten-Geometrie.
+        let geo = Rahmen::aus(&nav.runways[0]).unwrap().kurs_grad();
+        let quelle = |k: f64| {
+            let sz = szenerie_aus_mitte("09", (53.6459, 9.7042), k, 1100.0);
+            uebernimm_szenerie(&nav, &sz, Quelle::MsfsFacility).1.achsen[0].kurs_quelle
+        };
+        assert_eq!(quelle(geo + 0.45), KursHerkunft::Heading);
+        assert_eq!(quelle(geo + 0.55), KursHerkunft::Navigraph);
     }
 
     #[test]
@@ -771,27 +1129,173 @@ pub(crate) mod tests {
         assert!(b.groesste_kursabweichung_grad > 3.0);
     }
 
-    /// Auch die SCHWELLEN kommen bei MSFS nicht aus der Szenerie.
-    ///
-    /// ⚠ Sie werden dort aus Mitte, Kurs und Laenge gerechnet — ein
-    /// falscher Kursbezug verschiebt sie mit. Was direkt gemeldet wird
-    /// (Breite, Laenge, versetzte Schwelle, Belag), gilt weiterhin.
+    /// P-4.14 (a): Bei MSFS wird die Navdaten-Achse durch die gemeldete
+    /// MITTE gelegt — verschoben, nicht durch die (aus dem Kurs
+    /// gerechneten) Szenerie-Schwellen ersetzt. Liegt der gemeldete Kurs
+    /// ausserhalb der Toleranz (hier 93,72° gegen 90,0°), bleibt die
+    /// Richtung der Navdaten, und die Achse wird nur parallel verschoben.
     #[test]
-    fn die_schwellen_kommen_bei_msfs_nicht_aus_der_szenerie() {
+    fn msfs_achse_laeuft_durch_die_facility_mitte() {
         let nav = edhe_nav();
-        let alt_lat = nav.runways[0].threshold.lat;
-        let alt_lon = nav.runways[0].threshold.lon;
-        // Eine Szenerie-Bahn, deren Schwelle 80 m daneben liegt.
+        let alt = nav.runways[0].clone();
+        // Szenerie-Bahn 80 m noerdlich, also LINKS der Landerichtung 09.
         let sz = szenerie("09", 93.72, 55.0, (53.6459 + 80.0 / 111_320.0, 9.6942));
 
-        let (aus, _) = uebernimm_szenerie(&nav, &sz, Quelle::MsfsFacility);
-        assert!((aus.runways[0].threshold.lat - alt_lat).abs() < 1e-9);
-        assert!((aus.runways[0].threshold.lon - alt_lon).abs() < 1e-9);
-        // Die Breite dagegen schon.
-        assert_eq!(
-            aus.runways[0].width_ft,
-            Some((55.0_f64 / 0.3048).round() as i32)
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::MsfsFacility);
+        let neu = &aus.runways[0];
+        // Parallel 80 m nach Norden, nicht gedreht.
+        let nord = 80.0 / 111_320.0;
+        assert!((neu.threshold.lat - (alt.threshold.lat + nord)).abs() < 1e-9);
+        assert!((neu.far_end.lat - (alt.far_end.lat + nord)).abs() < 1e-9);
+        assert!((neu.threshold.lon - alt.threshold.lon).abs() < 1e-9, "laengs verschoben");
+        assert!((neu.true_course - alt.true_course).abs() < 1e-9, "Kurs gedreht");
+        // Die Mitte der Szenerie liegt jetzt auf der Achse.
+        let (_, quer) = crate::runway::projiziere_auf_bahn(
+            neu.threshold.lat,
+            neu.threshold.lon,
+            neu.far_end.lat,
+            neu.far_end.lon,
+            53.6459 + nord,
+            9.7042,
         );
+        assert!(quer.abs() < 0.05, "Mitte {quer:.3} m neben der neuen Achse");
+        // Bericht: Herkunft, Mitte, Verschiebung (links = negativ), Gruende.
+        assert!(b.achse_aus_szenerie("09"));
+        let a = &b.achsen[0];
+        assert_eq!(a.herkunft, AchsenHerkunft::SzenerieMitte);
+        assert_eq!(a.kurs_quelle, KursHerkunft::Navigraph);
+        assert!((a.verschiebung_quer_m.unwrap() + 80.0).abs() < 0.05, "{a:?}");
+        assert_eq!(a.verschiebung_laengs_m, Some(0.0));
+        let grund = a.grund.as_deref().unwrap();
+        assert!(grund.contains("kurs_navigraph") && grund.contains("gegenschwelle_unbekannt"), "{grund}");
+        // Die Breite kommt weiter aus der Szenerie.
+        assert_eq!(neu.width_ft, Some((55.0_f64 / 0.3048).round() as i32));
+    }
+
+    /// EDHE 09/27 als Paar — fuer Laengsverschiebung und Paarung.
+    fn edhe_paar() -> NavAirport {
+        let mut nav = edhe_nav();
+        let mut gegen = nav.runways[0].clone();
+        gegen.designator = "27".into();
+        gegen.true_course = 269.9957;
+        gegen.threshold = nav.runways[0].far_end.clone();
+        gegen.far_end = nav.runways[0].threshold.clone();
+        nav.runways.push(gegen);
+        nav
+    }
+
+    fn msfs_szenerie(mitte: (f64, f64), heading_09: f64, bestaetigt_09: Option<f64>) -> SzenerieFlughafen {
+        let [a, b] = sim_msfs::facility::bahn_paar(mitte, heading_09, 1100.0, 55.0, 1, (9, 0, 0.0), (27, 0, 0.0));
+        let mut a = a;
+        a.kurs_bestaetigt_grad = bestaetigt_09;
+        SzenerieFlughafen {
+            icao: "EDHE".into(),
+            quelle: "Test".into(),
+            bahnen: vec![a, b],
+            ..Default::default()
+        }
+    }
+
+    /// Kurs: bestaetigt vor HEADING, beides nur in der Toleranz (Paket
+    /// 0,5°). In der Toleranz wird die Achse um die Mitte gedreht.
+    #[test]
+    fn msfs_kurs_bestaetigt_vor_heading_nur_in_der_toleranz() {
+        let nav = edhe_paar();
+        let geo = Rahmen::aus(&nav.runways[0]).unwrap().kurs_grad();
+        let mitte = (53.6459, 9.7042);
+        let kurs_von = |aus: &NavAirport| Rahmen::aus(&aus.runways[0]).unwrap().kurs_grad();
+
+        // HEADING 0,3° neben der Geometrie: uebernommen, Achse gedreht.
+        let (aus, b) = uebernimm_szenerie(&nav, &msfs_szenerie(mitte, geo + 0.3, None), Quelle::MsfsFacility);
+        assert_eq!(b.achsen[0].kurs_quelle, KursHerkunft::Heading);
+        assert!((kurs_von(&aus) - (geo + 0.3)).abs() < 0.001, "{}", kurs_von(&aus));
+        assert!((aus.runways[0].true_course - (geo + 0.3)).abs() < 1e-9);
+
+        // Bestaetigt 0,4° daneben und nahe HEADING: der bestaetigte gewinnt.
+        let (aus, b) = uebernimm_szenerie(&nav, &msfs_szenerie(mitte, geo + 0.3, Some(geo + 0.4)), Quelle::MsfsFacility);
+        assert_eq!(b.achsen[0].kurs_quelle, KursHerkunft::Bestaetigt);
+        assert!((kurs_von(&aus) - (geo + 0.4)).abs() < 0.001);
+
+        // HEADING 0,6° daneben, nichts bestaetigt: Navdaten-Richtung, nur verschoben.
+        let (aus, b) = uebernimm_szenerie(&nav, &msfs_szenerie(mitte, geo + 0.6, None), Quelle::MsfsFacility);
+        assert_eq!(b.achsen[0].kurs_quelle, KursHerkunft::Navigraph);
+        assert!((kurs_von(&aus) - geo).abs() < 1e-6);
+        assert!(b.achse_aus_szenerie("09"), "die Lage kommt trotzdem aus der Mitte");
+    }
+
+    /// Laengs nur ohne versetzte Schwelle: Steckt der Versatz im
+    /// Navdaten-Schwellenpunkt, ist die Navdaten-Mitte gewollt nicht die
+    /// Belagsmitte — dann wird nur quer verschoben.
+    #[test]
+    fn msfs_laengs_nur_ohne_versetzte_schwelle() {
+        let nav = edhe_paar();
+        let geo = Rahmen::aus(&nav.runways[0]).unwrap().kurs_grad();
+        // Mitte 30 m laengs (Landerichtung 09 = Osten) und 10 m nach Sueden (rechts).
+        let cos_b = 53.6459_f64.to_radians().cos();
+        let mitte = (53.6459 - 10.0 / 111_320.0, 9.7042 + 30.0 / (111_320.0 * cos_b));
+        let (aus, b) = uebernimm_szenerie(&nav, &msfs_szenerie(mitte, geo + 0.1, None), Quelle::MsfsFacility);
+        let a = &b.achsen[0];
+        assert!((a.verschiebung_laengs_m.unwrap() - 30.0).abs() < 0.05, "{a:?}");
+        assert!((a.verschiebung_quer_m.unwrap() - 10.0).abs() < 0.05, "{a:?}");
+        assert!(a.grund.is_none(), "{a:?}");
+        let r = Rahmen::aus(&aus.runways[0]).unwrap();
+        assert!(r.lage(mitte).0.abs() < 0.05 && r.lage(mitte).1.abs() < 0.05);
+        // ⚠ Gegenrichtung bit-gleich gepaart — sonst findet die Zuordnung
+        // den Versatz der Gegenschwelle nicht.
+        assert_eq!(aus.runways[1].threshold.lat, aus.runways[0].far_end.lat);
+        assert_eq!(aus.runways[1].threshold.lon, aus.runways[0].far_end.lon);
+        assert_eq!(aus.runways[1].far_end.lat, aus.runways[0].threshold.lat);
+        assert_eq!(aus.runways[1].far_end.lon, aus.runways[0].threshold.lon);
+
+        // Mit versetzter Schwelle an der 27: nur quer, mit Grund.
+        let mut versetzt = nav.clone();
+        versetzt.runways[1].displaced_threshold_ft = 500;
+        let (aus, b) = uebernimm_szenerie(&versetzt, &msfs_szenerie(mitte, geo + 0.1, None), Quelle::MsfsFacility);
+        let a = &b.achsen[0];
+        assert_eq!(a.verschiebung_laengs_m, Some(0.0));
+        assert!((a.laengs_gemessen_m.unwrap() - 30.0).abs() < 0.05);
+        assert!(a.grund.as_deref().unwrap().contains("versetzte_schwelle"));
+        let (laengs, quer) = Rahmen::aus(&aus.runways[0]).unwrap().lage(mitte);
+        assert!((laengs - 30.0).abs() < 0.05 && quer.abs() < 0.05, "{laengs} {quer}");
+    }
+
+    /// Plausibilitaet: Mitte weiter als die halbe Navdaten-Bahnlaenge von
+    /// der Navdaten-Mitte → Navdaten-Achse, Grund im Bericht. Die Breite
+    /// kommt trotzdem — und genau dann darf die Achse NICHT als aus der
+    /// Szenerie gelten (P-4.14 b).
+    #[test]
+    fn msfs_mitte_zu_weit_bleibt_navigraph_mit_grund() {
+        let mut nav = edhe_nav();
+        // Kurze Bahn: 600 m. Mitte 350 m laengs — die Zuordnung (400 m)
+        // passt, die halbe Laenge (300 m) nicht.
+        nav.runways[0].length_ft = (600.0 / 0.3048) as i32;
+        let cos_b = 53.6459_f64.to_radians().cos();
+        let mitte = (53.6459, 9.7042 + 350.0 / (111_320.0 * cos_b));
+        let sz = szenerie_aus_mitte("09", mitte, 90.0, 600.0);
+        let (aus, b) = uebernimm_szenerie(&nav, &sz, Quelle::MsfsFacility);
+        assert_eq!(b.uebernommen, vec!["09"]);
+        assert_eq!(aus.runways[0].threshold.lon, nav.runways[0].threshold.lon);
+        assert_eq!(aus.runways[0].width_ft, Some((55.0_f64 / 0.3048).round() as i32));
+        assert!(!b.achse_aus_szenerie("09"));
+        let grund = b.achsen[0].grund.as_deref().unwrap();
+        assert!(grund.starts_with("mitte_zu_weit(abstand_m=350"), "{grund}");
+
+        // Gegenprobe: 250 m laengs liegt in der halben Laenge.
+        let mitte = (53.6459, 9.7042 + 250.0 / (111_320.0 * cos_b));
+        let (_, b) = uebernimm_szenerie(&nav, &szenerie_aus_mitte("09", mitte, 90.0, 600.0), Quelle::MsfsFacility);
+        assert!(b.achse_aus_szenerie("09"));
+    }
+
+    /// X-Plane: die Achse kommt aus der Datei und wird so mitgeschrieben.
+    #[test]
+    fn xplane_achse_wird_als_szenerie_datei_mitgeschrieben() {
+        let nav = edhe_nav();
+        let sz = szenerie_aus_mitte("09", (53.6459 - 12.0 / 111_320.0, 9.7042), 93.0, 1100.0);
+        let (_, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
+        let a = &b.achsen[0];
+        assert_eq!(a.herkunft, AchsenHerkunft::SzenerieDatei);
+        assert!((a.verschiebung_quer_m.unwrap() - 12.0).abs() < 0.05, "{a:?}");
+        assert!(b.achse_aus_szenerie("09"));
     }
 
     #[test]
