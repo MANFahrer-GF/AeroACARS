@@ -206,6 +206,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Tests `nachreichen_tests::fehlende_werden_alle_eingereiht`,
 /// `landungs_eingabe::tests::abgelehntes_geht_nie_verloren`,
 /// `sofortnote_abnehmer_tests::pirep_nutzlast_nennt_das_eingabe_dokument`.
+/// — plus P-11.21: `BUNDLE_IDENTIFIER` = `env!("AEROACARS_KENNUNG")` aus
+/// build.rs (`tauri.conf.json`, ueberlagert von `TAURI_CONFIG`), damit ein
+/// Dev-Build (`com.aeroacars.app3.dev`) auch Log-Ordner und Datenuebernahme
+/// getrennt hat. Test `logging_tests::log_dir_identifier_matches_tauri_conf`
+/// (Gegenprobe mit `TAURI_CONFIG` der Dev-Kennung -> rot).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -216,4 +221,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "bfc56a86a8c4ffa65e2170ee3fa06ebbc557e65b71784343cfd4ab76b4058555";
+const HASH_VOR_DER_ZERLEGUNG: &str = "b7a6bab0d889361d5f676d1b22e7d7839a82af9afb6c191a0045418c5808d33c";

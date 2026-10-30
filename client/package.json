@@ -14,7 +14,8 @@
     "tauri": "tauri",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "build:lokal": "tauri build --config src-tauri/tauri.lokal.conf.json"
+    "build:lokal": "tauri build --config src-tauri/tauri.lokal.conf.json",
+    "dev:app": "tauri dev --config src-tauri/tauri.lokal.conf.json"
   },
   "dependencies": {
     "@deck.gl/core": "9.2.11",

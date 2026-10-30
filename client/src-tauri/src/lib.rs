@@ -55185,8 +55185,9 @@ fn spawn_tray_updater(app: AppHandle) {
 /// keinen `AppHandle`, über den sich `app_config_dir()` auflösen ließe.
 /// Der Test `log_dir_identifier_matches_tauri_conf` unten hält beide
 /// Stellen zusammen, damit ein Umbenennen nicht stillschweigend das
-/// Log-Verzeichnis vom Rest der App abkoppelt.
-const BUNDLE_IDENTIFIER: &str = "com.aeroacars.app3";
+/// Log-Verzeichnis vom Rest der App abkoppelt. v3 (P-11.21): aus build.rs,
+/// damit ein Dev-Build (`com.aeroacars.app3.dev`) auch hier seinen Ordner hat.
+const BUNDLE_IDENTIFIER: &str = env!("AEROACARS_KENNUNG");
 
 /// Unterverzeichnis der Logdateien unterhalb des App-Konfigverzeichnisses
 /// — dort, wo auch `activity_log.json` und `run_active.lock` liegen.

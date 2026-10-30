@@ -29,18 +29,41 @@ describe("Updater-Signatur", () => {
   it("schaltet nur die lokale Beikonfiguration ab", () => {
     const l = lies("src-tauri/tauri.lokal.conf.json");
     expect(l.bundle.createUpdaterArtifacts).toBe(false);
-    // Sie darf NICHTS anderes umstellen — sonst weicht der lokale Build
+    // Sie darf sonst nur die Kennung umstellen — sonst weicht der lokale Build
     // still vom Release ab und man testet etwas anderes als man ausliefert.
     expect(Object.keys(l.bundle)).toEqual(["createUpdaterArtifacts"]);
-    expect(Object.keys(l).filter((k) => k !== "$schema")).toEqual(["bundle"]);
+    expect(Object.keys(l).filter((k) => k !== "$schema").sort()).toEqual(["bundle", "identifier", "productName"]);
   });
 
-  it("nutzt die Beikonfiguration nur im lokalen Skript", () => {
+  it("nutzt die Beikonfiguration nur in den lokalen Skripten", () => {
     const pkg = lies("package.json");
     expect(pkg.scripts["build:lokal"]).toContain("tauri.lokal.conf.json");
+    expect(pkg.scripts["dev:app"]).toContain("tauri.lokal.conf.json");
     // Kein anderes Skript darf sie ziehen, damit ein Release-Build sie nie sieht.
     const andere = Object.entries(pkg.scripts as Record<string, string>)
-      .filter(([k, v]) => k !== "build:lokal" && v.includes("tauri.lokal"));
+      .filter(([k, v]) => k !== "build:lokal" && k !== "dev:app" && v.includes("tauri.lokal"));
     expect(andere).toEqual([]);
+  });
+});
+
+/** P-11.21 (B-159): Ein Dev-Build hat eine eigene Kennung und damit einen
+ *  eigenen Datenordner — ein Probestart beruehrt nie Sitzung oder Flug der
+ *  Beta (`com.aeroacars.app3`). Der Rust-Teil (Log-Ordner, Datenuebernahme)
+ *  folgt derselben Kennung ueber build.rs (`AEROACARS_KENNUNG`). */
+describe("Dev-Kennung (P-11.21)", () => {
+  it("unterscheidet sich von der Beta in Kennung und Name", () => {
+    const c = lies("src-tauri/tauri.conf.json");
+    const l = lies("src-tauri/tauri.lokal.conf.json");
+    expect(c.identifier).toBe("com.aeroacars.app3");
+    expect(l.identifier).toBe("com.aeroacars.app3.dev");
+    expect(l.productName).not.toBe(c.productName);
+  });
+
+  it("gilt fuer beide Laeufer des Dev-Builds, nie fuer das Release", () => {
+    const dev = readFileSync("../.github/workflows/dev-build.yml", "utf8");
+    const bauen = dev.split("\n").filter((z) => z.includes("tauri build"));
+    expect(bauen.length).toBe(2);
+    for (const z of bauen) expect(z).toContain("--config src-tauri/tauri.lokal.conf.json");
+    expect(readFileSync("../.github/workflows/release.yml", "utf8")).not.toContain("tauri.lokal");
   });
 });

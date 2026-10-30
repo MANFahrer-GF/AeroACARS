@@ -9,6 +9,7 @@ fn main() {
     // fuer AEROACARS_DISCORD_APP_ID. Bewusst.
     produktion_zusammensetzen();
     eingebautes_paket_auflisten();
+    kennung_festlegen();
     // v3 (Etappe 5, P-8.02/P-8.10): Mit App-Manifest prueft Tauri JEDEN
     // App-Befehl gegen die Capability des Fensters (ohne Manifest gar keinen,
     // tauri-2.11.0 webview/mod.rs:1817). Die Liste kommt aus befehle.json —
@@ -16,6 +17,26 @@ fn main() {
     let attribute = tauri_build::Attributes::new()
         .app_manifest(tauri_build::AppManifest::new().commands(befehle_aus_liste()));
     tauri_build::try_build(attribute).expect("tauri_build");
+}
+
+/// v3 (P-11.21): die Kennung dieses Baus als `AEROACARS_KENNUNG` fuer den
+/// Rust-Teil (Log-Ordner, Datenuebernahme), der sie vor dem `AppHandle`
+/// braucht. Gleiche Quelle wie Tauri: `tauri.conf.json`, ueberlagert von
+/// `TAURI_CONFIG` (setzt die CLI bei `--config`, z. B. die Dev-Kennung aus
+/// `tauri.lokal.conf.json`). So nutzt ein Dev-Build nie den Ordner der Beta.
+fn kennung_festlegen() {
+    println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
+    let pfad = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("tauri.conf.json");
+    println!("cargo:rerun-if-changed={}", pfad.display());
+    let haupt: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&pfad).expect("tauri.conf.json")).expect("tauri.conf.json ist JSON");
+    let ueber: Option<serde_json::Value> = std::env::var("TAURI_CONFIG").ok().and_then(|t| serde_json::from_str(&t).ok());
+    let kennung = ueber
+        .as_ref()
+        .and_then(|u| u["identifier"].as_str())
+        .or(haupt["identifier"].as_str())
+        .expect("identifier in tauri.conf.json");
+    println!("cargo:rustc-env=AEROACARS_KENNUNG={kennung}");
 }
 
 /// Alle Befehlsnamen aus `befehle.json` (sortiert, fuer das App-Manifest).
