@@ -227,6 +227,17 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `landungs_eingabe::landung_nachbewertung` (Stufe `fachlich`, nur lesen von
 /// live mit dem Pilot-Token). Tests `landungs_eingabe::tests::nachbewertung_*`,
 /// vitest `bewertungsFassung.test.tsx`.
+/// — plus P-3.55 Nachtrag (Grenzwerte, Faehigkeit grenzwerte-2):
+/// `TD_WINDOW_TIERS_MS` -> `landung.td_window_tiers_ms` (Schleife ueber den
+/// Paketwert, `window_ms` ohne Deref), `AGL_FENSTER_MS` -> lokales
+/// `agl_fenster_ms` aus `aufsetzen.luecken_fenster_vor_ms`,
+/// `TCH_PLAUSIBEL_FT` -> `ausrollen.tch_plausibel_min_ft/max_ft`,
+/// `ODOMETER_LIMITS`/`RESET_LIMITS` -> `odometer_limits()`/`reset_limits()`
+/// aus `abgabe.*` (Hoehensprung des Reset-Erkenners = vorhandenes
+/// `reset_max_alt_jump_ft`). Werte gleich (Test
+/// `grenzwerte_nachtrag_p3_55_wie_2_1_24`), Gegenproben
+/// `nachtrag_lange_bahn_und_strecken_grenzen_wirken` und an den
+/// Verhaltenstests (Schaetzer, TCH, Fahrwerk, Randluecke).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -237,4 +248,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "117c93d848821fcced52b6f9f555aeb357915e53452c977e51a33fda1b8d27fe";
+const HASH_VOR_DER_ZERLEGUNG: &str = "7efba2d05ebf6693998db4df8b71aae40e8b8066c9a9dc19b5842eddac6f8268";

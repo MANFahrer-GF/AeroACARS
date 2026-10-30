@@ -39,5 +39,6 @@
   "sampler_gear_touchdown_threshold_n": {"wert": 1.0, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:45825 (v2.1.24)"},
   "sampler_water_contact_agl_ft": {"wert": 3.0, "einheit": "ft", "quelle": "client/src-tauri/src/lib.rs:45829 (v2.1.24)"},
   "aufsetzprobe_toleranz_ms": {"wert": 2000, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:45874 (v2.1.24)"},
-  "abfang_fenster_s": {"wert": 180, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:49050 (v2.1.24)"}
+  "abfang_fenster_s": {"wert": 180, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:49050 (v2.1.24)"},
+  "td_window_tiers_ms": {"wert": [[750, 5], [1000, 5], [1500, 5], [2000, 4], [3000, 3], [12000, 3]], "einheit": "[ms, min. Proben]", "quelle": "client/src-tauri/src/lib.rs:11472 (v2.1.24)"}
 }

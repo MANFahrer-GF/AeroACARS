@@ -28,7 +28,10 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 /// Release + `ui-befehle-2` im Paket-Workflow.
 /// `ui-befehle-2` (P-9.22): `hilfe_vorschau`, `hilfe_anfordern` dazu; die
 /// Liste ist eine Obermenge von 1, ein Paket fuer 1 laeuft weiter.
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-1", "ui-befehle-2"];
+/// `grenzwerte-2` (P-3.55 Nachtrag): zwoelf neue Felder in fuenf Bereichen;
+/// ersetzt `grenzwerte-1`, denn ein Paket ohne sie liest dieses Programm
+/// nicht (`deny_unknown_fields`, fehlende Felder -> eingebauter Stand).
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-2", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-1", "ui-befehle-2"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -764,6 +767,7 @@ mod tests {
             assert!(FAEHIGKEITEN.contains(&f), "bundle.yml verlangt {f}, das Programm kennt es nicht");
         }
         assert!(liste.split(',').any(|f| f == "ui-befehle-2"), "Paket mit ui/ ohne ui-befehle-2");
+        assert!(liste.split(',').any(|f| f == "grenzwerte-2"), "Paket mit den Grenzwerten dieses Stands ohne grenzwerte-2");
     }
 
     use super::*;

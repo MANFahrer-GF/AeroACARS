@@ -38,7 +38,7 @@
 
 /// FAA AIM aim-point switchover: at or above this length, the standard
 /// aim-point shifts from 300 m to 400 m past the threshold.
-const LONG_RUNWAY_FT: f64 = 7874.0; // = 2400 m
+// Wert seit v3: bundle/grenzwerte/bahnbewertung.json -> long_runway_ft (v2.1.24: 7874.0 = 2400 m)
 
 // ICAO Annex 14: TDZ markings are only painted on runways ≥ 1200 m.
 // Below that there's no defined "touchdown zone" and we surface "n/a"
@@ -153,7 +153,7 @@ pub struct AimResult {
 
 /// Classify the touchdown distance against the standard aim point.
 pub fn classify_aim(td_distance_m: f64, runway_length_m: f64) -> AimResult {
-    let aim_point_m = if runway_length_m * FT_PER_M >= LONG_RUNWAY_FT {
+    let aim_point_m = if runway_length_m * FT_PER_M >= crate::grenzwerte::grenzwerte().bahnbewertung.long_runway_ft.wert {
         crate::grenzwerte::grenzwerte().bahnbewertung.aim_long_m.wert
     } else {
         crate::grenzwerte::grenzwerte().bahnbewertung.aim_short_m.wert

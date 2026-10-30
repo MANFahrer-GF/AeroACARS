@@ -19,5 +19,6 @@
   "min_ground_truth_samples": {"wert": 2, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:787 (v2.1.24)"},
   "min_settle_g_force_peak": {"wert": 1.02, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:820 (v2.1.24)"},
   "max_coverage_gap_ms": {"wert": 200, "einheit": "", "quelle": "client/src-tauri/src/touchdown_v2.rs:847 (v2.1.24)"},
-  "vs_floor_fpm": {"wert": -3000.0, "einheit": "fpm", "quelle": "client/src-tauri/src/touchdown_v2.rs:1154 (v2.1.24)"}
+  "vs_floor_fpm": {"wert": -3000.0, "einheit": "fpm", "quelle": "client/src-tauri/src/touchdown_v2.rs:1154 (v2.1.24)"},
+  "luecken_fenster_vor_ms": {"wert": 310, "einheit": "ms", "quelle": "client/src-tauri/src/touchdown_v2.rs:499 (v2.1.24)"}
 }

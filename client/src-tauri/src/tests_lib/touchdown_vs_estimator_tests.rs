@@ -66,6 +66,11 @@
             "expected steep descent (~-1500 fpm), got {} fpm",
             est.fpm
         );
+        // P-3.55: Staffel aus dem Paket — kuerzestes Fenster zuerst; verstellt -> anderes Fenster.
+        assert_eq!(est.window_ms, 750);
+        crate::grenzwerte::mit_ersatz(|g| g.landung.td_window_tiers_ms.wert = vec![(1000, 5)], || {
+            assert_eq!(estimate_xplane_touchdown_vs_from_agl(&buffer, td).unwrap().window_ms, 1000);
+        });
     }
 
     /// Test 2: Pre-flare steep descent (-1300 fpm @ 900 ft AGL)

@@ -35,5 +35,9 @@
   "bahn_richtung_fenster_m": {"wert": 100.0, "einheit": "m", "quelle": "client/src-tauri/src/lib.rs:48085 (v2.1.24)"},
   "bahn_richtung_min_versatz_m": {"wert": 2.0, "einheit": "m", "quelle": "client/src-tauri/src/lib.rs:48091 (v2.1.24)"},
   "bahn_spur_rand_m": {"wert": 80.0, "einheit": "m", "quelle": "client/src-tauri/src/lib.rs:48161 (v2.1.24)"},
-  "bahn_spur_stop_gs_kt": {"wert": 5.0, "einheit": "kt", "quelle": "client/src-tauri/src/lib.rs:48167 (v2.1.24)"}
+  "bahn_spur_stop_gs_kt": {"wert": 5.0, "einheit": "kt", "quelle": "client/src-tauri/src/lib.rs:48167 (v2.1.24)"},
+  "tch_plausibel_min_ft": {"wert": -5.0, "einheit": "ft", "quelle": "client/src-tauri/src/lib.rs:47393 (v2.1.24)"},
+  "tch_plausibel_max_ft": {"wert": 300.0, "einheit": "ft", "quelle": "client/src-tauri/src/lib.rs:47393 (v2.1.24)"},
+  "fahrwerk_spur_plausibel_min_m": {"wert": 1.5, "einheit": "m", "quelle": "client/src-tauri/src/fahrwerk.rs:65 (v2.1.24)"},
+  "fahrwerk_spur_plausibel_max_m": {"wert": 16.0, "einheit": "m", "quelle": "client/src-tauri/src/fahrwerk.rs:65 (v2.1.24)"}
 }

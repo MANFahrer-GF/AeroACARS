@@ -92,6 +92,8 @@ pub(crate) struct Aufsetzen {
     pub min_settle_g_force_peak: Grenzwert<f32>,
     pub max_coverage_gap_ms: Grenzwert<i64>,
     pub vs_floor_fpm: Grenzwert<f32>,
+    // P-3.55 Nachtrag: vorher `LUECKEN_FENSTER_VOR_MS` (speiste auch `AGL_FENSTER_MS`).
+    pub luecken_fenster_vor_ms: Grenzwert<i64>,
 }
 
 /// `arrival.rs`.
@@ -161,6 +163,8 @@ pub(crate) struct Bahnbewertung {
     pub wch_min_ft: Grenzwert<f64>,
     pub wch_max_ft: Grenzwert<f64>,
     pub wch_toleranz_ft: Grenzwert<f64>,
+    // P-3.55 Nachtrag: vorher `LONG_RUNWAY_FT`.
+    pub long_runway_ft: Grenzwert<f64>,
 }
 
 /// `anflug_forensik.rs`.
@@ -316,6 +320,8 @@ pub(crate) struct Landung {
     pub sampler_water_contact_agl_ft: Grenzwert<f64>,
     pub aufsetzprobe_toleranz_ms: Grenzwert<i64>,
     pub abfang_fenster_s: Grenzwert<i64>,
+    // P-3.55 Nachtrag: vorher `TD_WINDOW_TIERS_MS` — (Fenster ms, min. Proben), kuerzestes zuerst.
+    pub td_window_tiers_ms: Grenzwert<Vec<(i64, usize)>>,
 }
 
 /// Anflug-Plausibilitaet und -Stabilitaet im Kern (`lib.rs`).
@@ -385,6 +391,11 @@ pub(crate) struct Ausrollen {
     pub bahn_richtung_min_versatz_m: Grenzwert<f32>,
     pub bahn_spur_rand_m: Grenzwert<f64>,
     pub bahn_spur_stop_gs_kt: Grenzwert<f32>,
+    // P-3.55 Nachtrag: vorher `TCH_PLAUSIBEL_FT` (lib.rs) und `PLAUSIBEL_M` (fahrwerk.rs).
+    pub tch_plausibel_min_ft: Grenzwert<f32>,
+    pub tch_plausibel_max_ft: Grenzwert<f32>,
+    pub fahrwerk_spur_plausibel_min_m: Grenzwert<f64>,
+    pub fahrwerk_spur_plausibel_max_m: Grenzwert<f64>,
 }
 
 /// Sprit-Auswertung und Sprit-Signale (`lib.rs`).
@@ -444,6 +455,12 @@ pub(crate) struct Abgabe {
     pub simrate_strecke_max: Grenzwert<f64>,
     pub zeitraffer_gs_spielraum: Grenzwert<f64>,
     pub sim_referenz_fenster_s: Grenzwert<i64>,
+    // P-3.55 Nachtrag (30.10.2026): vorher `ODOMETER_LIMITS`/`RESET_LIMITS`.
+    pub odometer_max_luecke_s: Grenzwert<f64>,
+    pub odometer_max_kt: Grenzwert<f64>,
+    pub odometer_zuschlag_nm: Grenzwert<f64>,
+    pub reset_max_luecke_s: Grenzwert<f64>,
+    pub reset_max_strecke_nm: Grenzwert<f64>,
 }
 
 /// `runway.rs`.
@@ -500,6 +517,19 @@ pub(crate) fn grenzwerte() -> &'static Grenzwerte {
         return g;
     }
     &crate::laufzeit_paket::stand().grenzwerte
+}
+
+/// Nur Tests: `f` laeuft mit einer veraenderten Tabelle (nur dieser Faden).
+#[cfg(test)]
+pub(crate) fn mit_ersatz(aendern: impl FnOnce(&mut Grenzwerte), f: impl FnOnce()) {
+    let mut g = crate::laufzeit_paket::stand().grenzwerte.clone();
+    aendern(&mut g);
+    ERSATZ.with(|c| c.set(Some(Box::leak(Box::new(g)))));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    ERSATZ.with(|c| c.set(None));
+    if let Err(e) = r {
+        std::panic::resume_unwind(e);
+    }
 }
 
 // Nur Tests (P-3.63/P-13.04): eine veraenderte Tabelle fuer genau diesen
@@ -1149,6 +1179,58 @@ mod tests {
         }
         std::panic::set_hook(vorher);
         assert!(gruen_geblieben.is_empty(), "verstellt und trotzdem gruen: {gruen_geblieben:?}");
+    }
+
+    /// P-3.55 Nachtrag (30.10.2026): die bisher noch im Code stehenden
+    /// fachlichen Konstanten, Werte wie v2.1.24 (Fundstellen im Paket).
+    #[test]
+    fn grenzwerte_nachtrag_p3_55_wie_2_1_24() {
+        let g = grenzwerte();
+        assert_eq!(g.abgabe.odometer_max_luecke_s.wert, 120.0); // lib.rs:50194
+        assert_eq!(g.abgabe.odometer_max_kt.wert, 2200.0);
+        assert_eq!(g.abgabe.odometer_zuschlag_nm.wert, 1.0);
+        assert_eq!(g.abgabe.reset_max_luecke_s.wert, 2.0); // lib.rs:50205
+        assert_eq!(g.abgabe.reset_max_strecke_nm.wert, 10.0);
+        assert_eq!(g.ausrollen.tch_plausibel_min_ft.wert, -5.0); // lib.rs:47393
+        assert_eq!(g.ausrollen.tch_plausibel_max_ft.wert, 300.0);
+        assert_eq!(g.ausrollen.fahrwerk_spur_plausibel_min_m.wert, 1.5); // fahrwerk.rs:65
+        assert_eq!(g.ausrollen.fahrwerk_spur_plausibel_max_m.wert, 16.0);
+        assert_eq!(g.bahnbewertung.long_runway_ft.wert, 7874.0); // runway_assessment.rs:41
+        assert_eq!(g.landung.td_window_tiers_ms.wert, vec![(750, 5), (1000, 5), (1500, 5), (2000, 4), (3000, 3), (12000, 3)]); // lib.rs:11472
+        assert_eq!(g.aufsetzen.luecken_fenster_vor_ms.wert, 310); // touchdown_v2.rs:499
+    }
+
+    /// Gegenproben: verstellt im Paket -> anderes Verhalten.
+    #[test]
+    fn nachtrag_lange_bahn_und_strecken_grenzen_wirken() {
+        // 2401 m Bahn ist „lang" (>= 7874 ft): Zielpunkt 400 m.
+        assert_eq!(crate::runway_assessment::classify_aim(400.0, 2401.0).aim_point_m, 400.0);
+        mit_ersatz(|g| g.bahnbewertung.long_runway_ft.wert = 9000.0, || {
+            assert_eq!(crate::runway_assessment::classify_aim(400.0, 2401.0).aim_point_m, 300.0);
+        });
+        // Streckenzaehlung: 0,5 NM in 10 s ist Flug; Zuschlag 0 und 100 kt -> Sprung.
+        let (a, b) = ((52.0_f64, 13.0_f64), (52.0_f64 + 0.5 / 60.0, 13.0_f64));
+        assert!(matches!(crate::classify_segment(a, b, None, Some(10.0), crate::odometer_limits()), crate::SegmentVerdict::Flown));
+        mit_ersatz(|g| { g.abgabe.odometer_zuschlag_nm.wert = 0.0; g.abgabe.odometer_max_kt.wert = 100.0; }, || {
+            assert!(matches!(crate::classify_segment(a, b, None, Some(10.0), crate::odometer_limits()), crate::SegmentVerdict::Jump(_)));
+        });
+        mit_ersatz(|g| g.abgabe.odometer_max_luecke_s.wert = 5.0, || {
+            assert!(matches!(crate::classify_segment(a, b, None, Some(10.0), crate::odometer_limits()), crate::SegmentVerdict::Gap));
+        });
+        // Reset-Erkenner: 5 NM in 1 s ist kein Reset (Grenze 10 NM flach), bei 4 NM schon.
+        let c = (52.0_f64 + 5.0 / 60.0, 13.0_f64);
+        assert!(matches!(crate::classify_segment(a, c, Some(0.0), Some(1.0), crate::reset_limits()), crate::SegmentVerdict::Flown));
+        mit_ersatz(|g| g.abgabe.reset_max_strecke_nm.wert = 4.0, || {
+            assert!(matches!(crate::classify_segment(a, c, Some(0.0), Some(1.0), crate::reset_limits()), crate::SegmentVerdict::Jump(_)));
+        });
+        mit_ersatz(|g| g.abgabe.reset_max_luecke_s.wert = 0.5, || {
+            assert!(matches!(crate::classify_segment(a, c, Some(0.0), Some(1.0), crate::reset_limits()), crate::SegmentVerdict::Gap));
+        });
+        // Hoehensprung des Reset-Erkenners = vorhandenes reset_max_alt_jump_ft (kein Zwilling).
+        assert!(matches!(crate::classify_segment(a, a, Some(9_000.0), Some(1.0), crate::reset_limits()), crate::SegmentVerdict::Flown));
+        mit_ersatz(|g| g.abgabe.reset_max_alt_jump_ft.wert = 8_000.0, || {
+            assert!(matches!(crate::classify_segment(a, a, Some(9_000.0), Some(1.0), crate::reset_limits()), crate::SegmentVerdict::Jump(_)));
+        });
     }
 
     #[test]

@@ -500,7 +500,10 @@ fn deckt_fenster_durchgehend_ab(
 /// bewertbar, keine bisher bewertbare wird gesperrt. Die 8 übrigen haben im
 /// Messbereich gar keine oder kaum Proben und bleiben zu Recht gesperrt,
 /// ebenso CFG 2090 (0,92 s Lücke direkt vor dem Kontakt).
-pub const LUECKEN_FENSTER_VOR_MS: i64 = 310;
+// Wert seit v3: bundle/grenzwerte/aufsetzen.json -> luecken_fenster_vor_ms (v2.1.24: 310)
+pub(crate) fn luecken_fenster_vor_ms() -> i64 {
+    crate::grenzwerte::grenzwerte().aufsetzen.luecken_fenster_vor_ms.wert
+}
 
 /// Warum eine Landung nicht bewertet werden kann.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -535,7 +538,7 @@ pub fn pruefe_bewertbarkeit(
 ) -> Result<(), FehlendeAbdeckung> {
     let start = contact_at - chrono::Duration::milliseconds(crate::grenzwerte::grenzwerte().aufsetzen.bewertungs_fenster_vor_ms.wert);
     let ende = contact_at + chrono::Duration::milliseconds(crate::grenzwerte::grenzwerte().aufsetzen.bewertungs_fenster_nach_ms.wert);
-    let luecken_start = contact_at - chrono::Duration::milliseconds(LUECKEN_FENSTER_VOR_MS);
+    let luecken_start = contact_at - chrono::Duration::milliseconds(luecken_fenster_vor_ms());
 
     // Verwertbar heisst: im Fenster, mit endlichen Werten. Eine Probe mit
     // NaN-Sinkrate zählt nicht mit — sie trägt nichts zur Messung bei, und
@@ -2520,7 +2523,7 @@ mod tests {
         // Die 0,92-s-Lücke reicht über den ganzen Messbereich hinaus: vor
         // dem Kontakt liegt dort keine einzige Probe.
         assert!(
-            fehlt.groesste_luecke_ms >= LUECKEN_FENSTER_VOR_MS,
+            fehlt.groesste_luecke_ms >= luecken_fenster_vor_ms(),
             "die Lücke vor dem Kontakt muss gefunden werden, gemessen: {} ms",
             fehlt.groesste_luecke_ms
         );
@@ -2624,9 +2627,13 @@ mod tests {
         let fehlt = pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err();
         assert_eq!(
             fehlt.groesste_luecke_ms,
-            LUECKEN_FENSTER_VOR_MS - 50,
+            luecken_fenster_vor_ms() - 50,
             "die Randlücke muss zählen"
         );
+        // Gegenprobe P-3.55: Fensterbreite aus dem Paket verstellt -> andere Randlücke.
+        crate::grenzwerte::mit_ersatz(|g| g.aufsetzen.luecken_fenster_vor_ms.wert = 400, || {
+            assert_eq!(pruefe_bewertbarkeit(&proben, kontakt()).unwrap_err().groesste_luecke_ms, 350);
+        });
     }
 
     /// AFR 421 (Michel, X-Plane 12 auf dem Mac, 06.10.2026): die echte
@@ -2718,7 +2725,7 @@ mod tests {
         assert_eq!(fehlt.proben, 0);
         assert_eq!(
             fehlt.groesste_luecke_ms,
-            LUECKEN_FENSTER_VOR_MS + crate::grenzwerte::grenzwerte().aufsetzen.bewertungs_fenster_nach_ms.wert
+            luecken_fenster_vor_ms() + crate::grenzwerte::grenzwerte().aufsetzen.bewertungs_fenster_nach_ms.wert
         );
     }
 

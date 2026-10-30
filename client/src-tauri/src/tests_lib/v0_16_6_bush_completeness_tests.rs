@@ -272,7 +272,7 @@
     const NULL_ISLAND: (f64, f64) = (0.0, 0.0);
 
     fn urteil(von: (f64, f64), nach: (f64, f64), dt: Option<f64>) -> SegmentVerdict {
-        classify_segment(von, nach, None, dt, ODOMETER_LIMITS)
+        classify_segment(von, nach, None, dt, odometer_limits())
     }
 
     /// Reiseflug-GS fuer die Zeitraffer-Tests.
@@ -284,7 +284,7 @@
             nach,
             None,
             Some(dt),
-            ODOMETER_LIMITS,
+            odometer_limits(),
             Some((rate, GS_REISE)),
         )
     }
@@ -335,7 +335,7 @@
                 (52.0 + dlat, 13.5),
                 None,
                 Some(60.0),
-                ODOMETER_LIMITS,
+                odometer_limits(),
                 Some((8.0, 1000.0)),
             )
         };
@@ -390,7 +390,7 @@
                 FRA,
                 None,
                 Some(30.0),
-                ODOMETER_LIMITS,
+                odometer_limits(),
                 Some((16.0, 50_000.0))
             ),
             SegmentVerdict::Jump("Positionssprung"),
@@ -406,13 +406,13 @@
                 BER_5NM,
                 None,
                 Some(5.0),
-                ODOMETER_LIMITS,
+                odometer_limits(),
                 Some((8.0, 0.0))
             ),
             SegmentVerdict::Jump("Positionssprung")
         );
         assert_eq!(
-            classify_segment_rate(BER, BER_5NM, None, Some(5.0), ODOMETER_LIMITS, None),
+            classify_segment_rate(BER, BER_5NM, None, Some(5.0), odometer_limits(), None),
             SegmentVerdict::Jump("Positionssprung")
         );
     }
@@ -422,12 +422,12 @@
         assert_eq!(urteil_rate(BER, BER_NAH, 300.0, 16.0), SegmentVerdict::Gap);
     }
 
-    // ---- RESET_LIMITS: das erprobte Verhalten der Aufzeichnungsschleife
+    // ---- reset_limits(): das erprobte Verhalten der Aufzeichnungsschleife
     //      muss die gemeinsame Regel unveraendert wiedergeben.
 
     #[test]
     fn reset_toleranz_bleibt_bei_zehn_meilen() {
-        let reset = |von, nach, alt, dt| classify_segment(von, nach, alt, Some(dt), RESET_LIMITS);
+        let reset = |von, nach, alt, dt| classify_segment(von, nach, alt, Some(dt), reset_limits());
         // 0,55 NM: weit unter der flachen Grenze, egal wie kurz der Abstand.
         assert_eq!(reset(BER, BER_NAH, None, 0.02), SegmentVerdict::Flown);
         assert_eq!(reset(BER, BER_NAH, None, 2.0), SegmentVerdict::Flown);
@@ -443,7 +443,7 @@
         // Anders als die Streckenzaehlung: die flache Grenze gilt
         // unabhaengig vom Abstand, solange er unter 2 s bleibt. Genau so
         // arbeitete die Schleife vorher auch.
-        let reset = |dt| classify_segment(BER, FRA, None, Some(dt), RESET_LIMITS);
+        let reset = |dt| classify_segment(BER, FRA, None, Some(dt), reset_limits());
         assert!(matches!(reset(0.02), SegmentVerdict::Jump(_)));
         assert!(matches!(reset(1.99), SegmentVerdict::Jump(_)));
         // Darueber wird nicht mehr geurteilt, sondern neu angesetzt.
@@ -452,12 +452,12 @@
 
     #[test]
     fn reset_hoehensprung_wird_erkannt() {
-        let u = classify_segment(BER, BER_NAH, Some(12_000.0), Some(1.0), RESET_LIMITS);
+        let u = classify_segment(BER, BER_NAH, Some(12_000.0), Some(1.0), reset_limits());
         assert!(matches!(u, SegmentVerdict::Jump(_)));
         // Die Streckenzaehlung prueft die Hoehe bewusst NICHT — ein
         // Hoehensprung allein verfaelscht keinen Kilometerzaehler.
         assert_eq!(
-            classify_segment(BER, BER_NAH, Some(12_000.0), Some(1.0), ODOMETER_LIMITS),
+            classify_segment(BER, BER_NAH, Some(12_000.0), Some(1.0), odometer_limits()),
             SegmentVerdict::Flown
         );
     }

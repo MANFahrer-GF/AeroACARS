@@ -9746,14 +9746,7 @@ fn kurs_ruhig(stats: &FlightStats, now: DateTime<Utc>) -> bool {
 //   * Sample count ≥ MIN_SAMPLES (5 for short tiers, 3 for sparse)
 //   * Result < 0 fpm (no positive "landing rate" is physical)
 
-const TD_WINDOW_TIERS_MS: &[(i64, usize)] = &[
-    (750, 5),
-    (1000, 5),
-    (1500, 5),
-    (2000, 4),
-    (3000, 3),
-    (12000, 3),
-];
+// Wert seit v3: bundle/grenzwerte/landung.json -> td_window_tiers_ms (v2.1.24: TD_WINDOW_TIERS_MS)
 // Wert seit v3: bundle/grenzwerte/landung.json -> td_agl_max_at_touchdown_ft (v2.1.24: 5.0)
 // Wert seit v3: bundle/grenzwerte/landung.json -> td_agl_max_at_window_start_ft (v2.1.24: 250.0)
 
@@ -9779,13 +9772,13 @@ fn estimate_xplane_touchdown_vs_from_agl(
     buffer: &std::collections::VecDeque<TelemetrySample>,
     touchdown_at: DateTime<Utc>,
 ) -> Option<TouchdownVsEstimate> {
-    for (window_ms, min_samples) in TD_WINDOW_TIERS_MS {
-        let win_start = touchdown_at - chrono::Duration::milliseconds(*window_ms);
+    for &(window_ms, min_samples) in &crate::grenzwerte::grenzwerte().landung.td_window_tiers_ms.wert {
+        let win_start = touchdown_at - chrono::Duration::milliseconds(window_ms);
         let samples: Vec<&TelemetrySample> = buffer
             .iter()
             .filter(|s| s.at >= win_start && s.at <= touchdown_at)
             .collect();
-        if samples.len() < *min_samples {
+        if samples.len() < min_samples {
             continue;
         }
         // Touchdown sample (latest) must really be at the ground.
@@ -9823,7 +9816,7 @@ fn estimate_xplane_touchdown_vs_from_agl(
         }
         return Some(TouchdownVsEstimate {
             fpm,
-            source: match *window_ms {
+            source: match window_ms {
                 750 => "agl_750ms",
                 1000 => "agl_1000ms",
                 1500 => "agl_1500ms",
@@ -9832,7 +9825,7 @@ fn estimate_xplane_touchdown_vs_from_agl(
                 12000 => "agl_sparse_12s",
                 _ => "agl_unknown",
             },
-            window_ms: *window_ms,
+            window_ms,
             sample_count: samples.len(),
         });
     }
@@ -33554,7 +33547,8 @@ fn compute_landing_analysis(
     // verrauscht, länger mittelt es den späten flachen Teil des Abfangens
     // ein und liest zu nah an Null).
     // Dieselbe Konstante begrenzt die Lückenprüfung der Bewertbarkeit.
-    const AGL_FENSTER_MS: i64 = touchdown_v2::LUECKEN_FENSTER_VOR_MS;
+    // Wert seit v3: bundle/grenzwerte/aufsetzen.json -> luecken_fenster_vor_ms (v2.1.24: 310)
+    let agl_fenster_ms: i64 = crate::grenzwerte::grenzwerte().aufsetzen.luecken_fenster_vor_ms.wert;
     // Weniger Messpunkte im Fenster → keine belastbare Steigung.
     // Wert seit v3: bundle/grenzwerte/landung.json -> agl_min_samples (v2.1.24: 4)
     // Manche Zusatzflugzeuge frieren die Hoehe ein. Ohne Bewegung in der
@@ -33609,7 +33603,7 @@ fn compute_landing_analysis(
     // verlaere sie bei eingefrorener Spur genau den Kandidaten, den der
     // Kommentar dort ausdruecklich zusagt (QS-Befund Runde 4).
     let vs_aus_hoehenkurve_mit = |auch_bei_stillstand: bool| -> Option<f32> {
-        let lo = edge_ms - AGL_FENSTER_MS;
+        let lo = edge_ms - agl_fenster_ms;
         // `!s.on_ground` ist nicht kosmetisch: der Kontakt-Frame traegt schon
         // die beginnende Fahrwerkskompression und bei MSFS zusaetzlich einen
         // AGL-Sprung (im Fixture a320_vrnevnl 1,49 ft in 32 ms — das 17-fache
@@ -33769,7 +33763,7 @@ fn compute_landing_analysis(
     let steigung_ueber_fenster = |wert: &dyn Fn(&TouchdownWindowSample) -> Option<f32>,
                                   bewegung_pruefen: bool|
      -> Option<f32> {
-        let lo = edge_ms - AGL_FENSTER_MS;
+        let lo = edge_ms - agl_fenster_ms;
         let punkte: Vec<(f64, f64)> = samples
             .iter()
             .filter(|s| {
@@ -34761,7 +34755,7 @@ fn aufsetz_messen(
                     (snap.lat, snap.lon),
                     Some(alt_diff),
                     Some(dt),
-                    RESET_LIMITS,
+                    reset_limits(),
                 );
                 (alt_diff, dist_nm, u)
             }
@@ -42315,7 +42309,7 @@ fn schwellenspur_fuehren(stats: &mut FlightStats, probe: TelemetrySample) {
 /// Plausibler Bereich fuer eine Ueberflughoehe an der Schwelle. Leicht
 /// negativ ist erlaubt: die Hoehe ueber Grund schwankt um die Nullmarke
 /// (der 5-s-Puffer nimmt sie ebenfalls ungeprueft).
-const TCH_PLAUSIBEL_FT: std::ops::RangeInclusive<f32> = -5.0..=300.0;
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> tch_plausibel_min_ft/max_ft (v2.1.24: -5.0..=300.0)
 
 /// Entscheidet, welcher TCH-Wert nach dem Korrelieren gilt.
 ///
@@ -42378,7 +42372,8 @@ fn tch_interpoliert(
             }
         }
     }
-    letzter.filter(|h| h.is_finite() && TCH_PLAUSIBEL_FT.contains(h))
+    let g = &crate::grenzwerte::grenzwerte().ausrollen;
+    letzter.filter(|h| h.is_finite() && (g.tch_plausibel_min_ft.wert..=g.tch_plausibel_max_ft.wert).contains(h))
 }
 
 /// v0.8.0 F5 (Threshold-Crossing-Height Actual): scan the buffer
@@ -43660,7 +43655,7 @@ fn rollout_tick(stats: &mut FlightStats, snap: &SimSnapshot) {
                 (snap.lat, snap.lon),
                 None,
                 None,
-                ODOMETER_LIMITS,
+                odometer_limits(),
             ) == SegmentVerdict::Flown
             {
                 stats.rollout_distance_m = Some(stats.rollout_distance_m.unwrap_or(0.0) + delta);
@@ -45150,24 +45145,37 @@ struct SegmentLimits {
 /// Toleranz der Streckenzaehlung: eng, weil hier jeder Fehler dauerhaft im
 /// Logbuch steht. Weit ueber jedem Muster (SR-71 ~1900 kt), damit kein
 /// echter Flug beschnitten wird.
-const ODOMETER_LIMITS: SegmentLimits = SegmentLimits {
-    max_dt_secs: 120.0,
-    max_speed_kt: 2200.0,
-    slack_nm: 1.0,
-    max_alt_jump_ft: None,
-    flat_max_dist_nm: None,
-};
+/// Werte seit v3: bundle/grenzwerte/abgabe.json -> odometer_* (v2.1.24:
+/// `ODOMETER_LIMITS` 120 s, 2200 kt, 1 NM).
+fn odometer_limits() -> SegmentLimits {
+    let g = &crate::grenzwerte::grenzwerte().abgabe;
+    SegmentLimits {
+        max_dt_secs: g.odometer_max_luecke_s.wert,
+        max_speed_kt: g.odometer_max_kt.wert,
+        slack_nm: g.odometer_zuschlag_nm.wert,
+        max_alt_jump_ft: None,
+        flat_max_dist_nm: None,
+    }
+}
 
 /// Toleranz des Reset-Erkenners — unveraendert aus der Aufzeichnungs-
 /// schleife uebernommen (10 NM bei bis zu 2 s, 10.000 ft). Bewusst
 /// grosszuegig: hier kostet ein Fehlalarm eine ganze Sitzung.
-const RESET_LIMITS: SegmentLimits = SegmentLimits {
-    max_dt_secs: 2.0,
-    max_speed_kt: f64::INFINITY,
-    slack_nm: 0.0,
-    max_alt_jump_ft: Some(10_000.0),
-    flat_max_dist_nm: Some(10.0),
-};
+///
+/// Werte seit v3: bundle/grenzwerte/abgabe.json -> reset_max_luecke_s,
+/// reset_max_strecke_nm und das schon vorhandene reset_max_alt_jump_ft
+/// (v2.1.24: `RESET_LIMITS` 2 s, 10 NM, 10.000 ft). Geschwindigkeit und
+/// Zuschlag wirken hier nicht (feste Streckengrenze), deshalb kein Paketwert.
+fn reset_limits() -> SegmentLimits {
+    let g = &crate::grenzwerte::grenzwerte().abgabe;
+    SegmentLimits {
+        max_dt_secs: g.reset_max_luecke_s.wert,
+        max_speed_kt: f64::INFINITY,
+        slack_nm: 0.0,
+        max_alt_jump_ft: Some(g.reset_max_alt_jump_ft.wert),
+        flat_max_dist_nm: Some(g.reset_max_strecke_nm.wert),
+    }
+}
 
 /// Null-Position: das Flugzeug ist beim Laden kurz auf 0/0, bevor der
 /// Simulator es setzt. Der haeufigste Sprung ueberhaupt.
@@ -45606,7 +45614,7 @@ fn step_flight_at(
             (snap.lat, snap.lon),
             None,
             dt,
-            ODOMETER_LIMITS,
+            odometer_limits(),
             Some((rate, gs_kt)),
         );
         if d_m > crate::grenzwerte::grenzwerte().phasen_kern.distance_epsilon_m.wert && urteil == SegmentVerdict::Flown {

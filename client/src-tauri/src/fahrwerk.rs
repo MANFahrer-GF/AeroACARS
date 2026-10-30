@@ -62,7 +62,7 @@ const FT_M: f64 = 0.3048;
 /// 16 m: Die A380 hat 14,30 m. Ein Wert ausserhalb ist kein Fahrwerk,
 /// sondern ein Lesefehler — falsche Spalte, falsche Einheit, falscher
 /// Abschnitt. Dieselben Schranken prüft die Typtabelle für ihre Einträge.
-const PLAUSIBEL_M: std::ops::RangeInclusive<f64> = 1.5..=16.0;
+// Wert seit v3: bundle/grenzwerte/ausrollen.json -> fahrwerk_spur_plausibel_min_m/max_m (v2.1.24: 1.5..=16.0)
 
 /// Ein Fahrwerksbein, wie es aus einer Datei kommt.
 #[derive(Debug, Clone, Copy)]
@@ -255,7 +255,10 @@ fn spurweite_aus_beinen(beine: &[Bein]) -> Option<f64> {
         return None;
     }
     let spur = rechts - links;
-    PLAUSIBEL_M.contains(&spur).then_some(spur)
+    let g = &crate::grenzwerte::grenzwerte().ausrollen;
+    (g.fahrwerk_spur_plausibel_min_m.wert..=g.fahrwerk_spur_plausibel_max_m.wert)
+        .contains(&spur)
+        .then_some(spur)
 }
 
 // ─── Dateizugriff ─────────────────────────────────────────────────────
@@ -350,6 +353,10 @@ mod tests {
     #[test]
     fn xplane_zibo_stimmt_mit_der_messung() {
         let m = spurweite_aus_acf(&zibo_acf()).expect("Spurweite");
+        // Gegenprobe P-3.55: Obergrenze aus dem Paket unter die Spurweite -> keine Angabe.
+        crate::grenzwerte::mit_ersatz(|g| g.ausrollen.fahrwerk_spur_plausibel_max_m.wert = m - 0.1, || {
+            assert_eq!(spurweite_aus_acf(&zibo_acf()), None);
+        });
         assert!((m - 5.76).abs() < 0.02, "{m} m gegen die gemessenen 5,76 m");
         // …und liegt bei der Typtabelle (5,72 m) in der Toleranz, mit der
         // die Achse ohnehin rechnet.

@@ -25,5 +25,10 @@
   "reset_max_alt_jump_ft": {"wert": 10000.0, "einheit": "ft", "quelle": "client/src-tauri/src/lib.rs:39493 (v2.1.24)"},
   "simrate_strecke_max": {"wert": 16.0, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:50232 (v2.1.24)"},
   "zeitraffer_gs_spielraum": {"wert": 1.5, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:50238 (v2.1.24)"},
-  "sim_referenz_fenster_s": {"wert": 4, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:51779 (v2.1.24)"}
+  "sim_referenz_fenster_s": {"wert": 4, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:51779 (v2.1.24)"},
+  "odometer_max_luecke_s": {"wert": 120.0, "einheit": "s", "quelle": "client/src-tauri/src/lib.rs:50194 (v2.1.24)"},
+  "odometer_max_kt": {"wert": 2200.0, "einheit": "kt", "quelle": "client/src-tauri/src/lib.rs:50194 (v2.1.24)"},
+  "odometer_zuschlag_nm": {"wert": 1.0, "einheit": "nm", "quelle": "client/src-tauri/src/lib.rs:50194 (v2.1.24)"},
+  "reset_max_luecke_s": {"wert": 2.0, "einheit": "s", "quelle": "client/src-tauri/src/lib.rs:50205 (v2.1.24)"},
+  "reset_max_strecke_nm": {"wert": 10.0, "einheit": "nm", "quelle": "client/src-tauri/src/lib.rs:50205 (v2.1.24)"}
 }

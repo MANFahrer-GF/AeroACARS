@@ -3555,6 +3555,10 @@
         // Anteil 0,01 / 0,012 = 5/6 des Weges von 62 nach 48 ft.
         let tch = tch_interpoliert(&rw, &buffer).expect("Schwelle ueberflogen");
         assert!((tch - (62.0 - 14.0 * 5.0 / 6.0)).abs() < 0.2, "TCH {tch}");
+        // Gegenprobe P-3.55: Obergrenze aus dem Paket unter den Wert -> unplausibel.
+        crate::grenzwerte::mit_ersatz(|g| g.ausrollen.tch_plausibel_max_ft.wert = 50.0, || {
+            assert_eq!(tch_interpoliert(&rw, &buffer), None);
+        });
         // Der 5-s-Puffer-Weg liefert hier den Rohwert der ersten Probe dahinter —
         // die Interpolation ist genauer und darf davon abweichen.
         assert_eq!(tch_actual_from_buffer(&rw, &buffer), Some(48.0));
