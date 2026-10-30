@@ -1853,41 +1853,6 @@ button:disabled {
   color: #7dd3fc;
 }
 
-/* ===== Cockpit tab — empty state ===== */
-
-.cockpit-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 60px 20px;
-  background: var(--surface);
-  border: 1px dashed var(--border);
-  border-radius: 14px;
-  text-align: center;
-}
-
-.cockpit-empty__icon {
-  font-size: 56px;
-  color: var(--accent);
-  opacity: 0.6;
-}
-
-.cockpit-empty__title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.cockpit-empty__hint {
-  margin: 0 0 8px;
-  font-size: 14px;
-  color: var(--text-muted);
-  max-width: 420px;
-  line-height: 1.5;
-}
-
 /* ===== Settings — debug panel inline ===== */
 
 .settings__debug-panel {

@@ -27,14 +27,18 @@ interface Props {
    *  `flight_status`-Re-Fetch damit Cockpit + Loadsheet sofort den
    *  neuen Plan sehen. Spec docs/spec/ofp-refresh-during-boarding.md §6.5b. */
   onActiveFlightUpdated?: () => void;
+  /** Reiter „Flug“, aufgeklapptes Briefing im Flug: die Buchung des
+   *  laufenden Flugs mit OFP-Werten zeigen (BidsList). */
+  laufendenFlugZeigen?: boolean;
 }
 
 /**
- * Briefing tab — the pre-flight pilot view. Pilot identity card up
+ * Briefing — the pre-flight pilot view. Pilot identity card up
  * top (with the airline logo at a sensible size), then the booked-
- * flights list. When a flight is already active, a short banner
- * reminds the pilot to switch to the cockpit tab so they don't
- * accidentally start a second one.
+ * flights list. Seit 3.0 Teil des Reiters „Flug“ (FlugView): ohne Flug
+ * die ganze Seite, mit Flug ein zugeklappter Bereich unter dem Cockpit.
+ * When a flight is already active, a short hint says so, so the pilot
+ * doesn't look for a way to start a second one.
  */
 export function BriefingView({
   session,
@@ -45,6 +49,7 @@ export function BriefingView({
   simSnapshot,
   onProfileRefreshed,
   onActiveFlightUpdated,
+  laufendenFlugZeigen = false,
 }: Props) {
   const { t } = useTranslation();
   const [, setSelectedBid] = useState<Bid | null>(null);
@@ -69,6 +74,7 @@ export function BriefingView({
         simSnapshot={simSnapshot}
         hasActiveFlight={activeFlight !== null}
         activeBidId={activeFlight?.bid_id ?? null}
+        laufendenFlugZeigen={laufendenFlugZeigen}
         onSelect={setSelectedBid}
         onFlightStarted={setActiveFlight}
         onProfileRefreshed={onProfileRefreshed}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, listen, openExternal as openUrl } from "../lib/ipc";
 import type {
@@ -30,9 +30,13 @@ interface Props {
   activeFlight: ActiveFlightInfo | null;
   setActiveFlight: (info: ActiveFlightInfo | null) => void;
   simSnapshot: SimSnapshot | null;
-  /** Called when there's no active flight and the user wants to pick
-   *  one — UI nudges them to the briefing tab. */
-  onSwitchToBriefing: () => void;
+  /** Reiter „Flug“ (3.0): ohne aktiven Flug steht hier das Briefing
+   *  (gebuchte Flüge, OFP, Start-Knöpfe) — an der Stelle des früheren
+   *  Leerzustands „Kein aktiver Flug“. */
+  vorFlug: ReactNode;
+  /** Mit aktivem Flug: das Briefing als aufklappbarer Bereich unter dem
+   *  Cockpit — auch während der Wiederaufnahme. */
+  briefingImFlug: ReactNode;
   /** v0.5.38: Stable-Approach-Banner anzeigen. Default ON. */
   approachAdvisoriesEnabled: boolean;
   /** Ein Flug, der AUSSERHALB des Cockpits abgeschlossen wurde (Sprung-
@@ -43,7 +47,12 @@ interface Props {
 }
 
 /**
- * Cockpit tab — the in-flight pilot view. Shows the resume banner
+ * Cockpit-Ansicht des Reiters „Flug“ (bis 3.0 eigener Reiter „Cockpit“).
+ * Bleibt auch OHNE Flug eingehängt: Erfolgsmeldung nach dem PIREP und die
+ * Hörer auf `pirep_auto_filed`/`pirep_cancelled_remotely` leben hier und
+ * dürfen beim Wechsel zurück aufs Briefing nicht verloren gehen.
+ *
+ * Original: the in-flight pilot view. Shows the resume banner
  * (when a stale flight is detected on startup), the active-flight
  * panel with weather briefing and PIREP actions, and a friendly empty
  * state when no flight is running.
@@ -56,7 +65,8 @@ export function CockpitView({
   activeFlight,
   setActiveFlight,
   simSnapshot,
-  onSwitchToBriefing,
+  vorFlug,
+  briefingImFlug,
   approachAdvisoriesEnabled,
   abschlussVonAussen,
   onAbschlussGezeigt,
@@ -261,20 +271,7 @@ export function CockpitView({
       <>
         {/* v0.12.5 (LE7): post-flight notice — 8 s auto-dismiss. */}
         {noticeBanner}
-        <section className="cockpit-empty">
-          <div className="cockpit-empty__icon" aria-hidden="true">
-            ✈
-          </div>
-          <h2 className="cockpit-empty__title">{t("cockpit.empty_title")}</h2>
-          <p className="cockpit-empty__hint">{t("cockpit.empty_hint")}</p>
-          <button
-            type="button"
-            className="button button--primary"
-            onClick={onSwitchToBriefing}
-          >
-            {t("cockpit.go_briefing")}
-          </button>
-        </section>
+        {vorFlug}
         {quickActionRow}
         {weatherLoadToast}
       </>
@@ -370,6 +367,9 @@ export function CockpitView({
 
       {/* Live-Loadsheet wird seit v0.3.0 direkt im ActiveFlightPanel
           gerendert — siehe Import-Kommentar oben. */}
+
+      {/* Briefing des laufenden Flugs, zugeklappt (Reiter „Flug“, 3.0). */}
+      {briefingImFlug}
     </>
   );
 }

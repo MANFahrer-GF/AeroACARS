@@ -413,9 +413,8 @@
   },
   "tabs": {
     "kabine": "Cabina",
-    "cockpit": "Cockpit",
+    "flug": "Volo",
     "map": "Mappa",
-    "briefing": "Briefing",
     "logbook": "Logbook",
     "landing": "Atterraggio",
     "news": "Notizie",
@@ -1833,9 +1832,6 @@
     "thresholds_intro": "I limiti Smooth/Acceptable/Firm/Hard/Severe vengono dalla letteratura piloti reale:"
   },
   "cockpit": {
-    "empty_title": "Nessun volo attivo",
-    "empty_hint": "Vai al briefing per avviare un volo prenotato o adottare un PIREP aperto.",
-    "go_briefing": "Vai ai miei voli",
     "pirep_filed_title": "PIREP inviato con successo",
     "pirep_filed_detail": "{{callsign}} · {{dpt}} → {{arr}} — Volo trasmesso a phpVMS. Lo trovi ora nella tab Atterraggio e sul sito phpVMS.",
     "pirep_filed_dismiss": "Chiudi",
@@ -1930,7 +1926,9 @@
     "heading": "Rotta"
   },
   "briefing": {
-    "active_flight_hint": "{{callsign}} è attivo — vai alla tab Cockpit per concluderlo."
+    "active_flight_hint": "{{callsign}} è in corso (cockpit sopra). Gli altri voli prenotati si possono avviare solo dopo averlo concluso.",
+    "aufklapper_titel": "Briefing",
+    "aufklapper_inhalt": "Voli prenotati, OFP SimBrief, dati del pilota"
   },
   "weather": {
     "title": "Briefing meteo",
@@ -2833,7 +2831,8 @@
     },
     "empty_title": "Nessun volo prenotato",
     "empty_hint": "Prenota un volo su german-sky-group.eu e clicca qui su „Aggiorna\" — apparirà qui.",
-    "empty_action": "Prenota un volo"
+    "empty_action": "Prenota un volo",
+    "laufender_flug": "Volo in corso"
   },
   "flight": {
     "error": {
@@ -3398,7 +3397,7 @@
     "idle_detail_next": "Il tuo prossimo volo prenotato è {{ident}} · {{dep}} → {{arr}}, previsto dalle {{std}}. La mappa lo mostrerà appena il recorder sarà attivo.",
     "idle_detail_none": "Al momento nessun volo prenotato.",
     "idle_start_flight": "Avvia volo",
-    "idle_go_briefing": "Vai al Briefing",
+    "idle_go_briefing": "Vai ai miei voli",
     "sys_inactive": "Recorder inattivo",
     "sys_active": "Recorder attivo · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",

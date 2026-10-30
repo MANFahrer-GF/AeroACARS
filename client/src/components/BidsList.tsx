@@ -69,6 +69,14 @@ interface Props {
    *  weiter mit Countdown an — der irgendwann auf "überfällig seit X Min"
    *  kippte, obwohl der Pilot mitten im Flug war. */
   activeBidId?: number | null;
+  /** Reiter „Flug“ (3.0), aufgeklapptes Briefing im Flug: die Buchung des
+   *  laufenden Flugs (`activeBidId`) als eigene Karte ÜBER der Liste zeigen
+   *  — OFP-Werte, Route und die Links, ohne Start-Knöpfe. Der Ausschluss aus
+   *  „Gebuchte Flüge“ (v1.4.7) bleibt: Zähler, OFP-Statuszeile und
+   *  NÄCHSTER meinen weiter nur die noch zu fliegenden Buchungen. phpVMS
+   *  verbraucht die Buchung erst beim Einreichen (lib_bid_aufraeumen.rs),
+   *  im Flug ist sie also noch da. */
+  laufendenFlugZeigen?: boolean;
   /** Notify the parent when a bid is selected so it can drive the next step. */
   onSelect?: (bid: Bid | null) => void;
   /** Notify the parent that a flight just started. */
@@ -366,6 +374,7 @@ export function BidsList({
   simSnapshot,
   hasActiveFlight,
   activeBidId = null,
+  laufendenFlugZeigen = false,
   onActiveFlightUpdated,
   onSelect,
   onFlightStarted,
@@ -929,6 +938,10 @@ export function BidsList({
   // der "Gebuchte Flüge N"-Zähler weiterhin den gerade aktiv geflogenen Bid,
   // obwohl die Kartenliste selbst ihn schon korrekt ausblendete.
   const visibleBids = state.kind === "ready" ? state.bids.filter((b) => b.id !== activeBidId) : [];
+  const laufenderBid =
+    laufendenFlugZeigen && activeBidId !== null && state.kind === "ready"
+      ? (state.bids.find((b) => b.id === activeBidId) ?? null)
+      : null;
 
   // Briefing-2a §3: OFP-Statuszeile bezieht sich auf den NAECHSTEN Bid
   // (= die Hauptkarte, visibleBids[0]) — das ist der Flug, den der Pilot
@@ -963,6 +976,40 @@ export function BidsList({
 
   return (
     <section className="bids">
+      {laufenderBid && (
+        <div className="bids__laufend" data-testid="bids-laufend">
+          <h2 className="bids__laufend-titel">{t("bids.laufender_flug")}</h2>
+          <MainBidCard
+            bid={laufenderBid}
+            nurAnsicht
+            isNextFlight={false}
+            preview={bidPreviews.get(laufenderBid.id) ?? null}
+            nowMs={nowMs}
+            mode="ifr"
+            setMode={() => {}}
+            primaryDisabled
+            primaryHint=""
+            startTitle=""
+            starting={false}
+            startError={null}
+            startWarning={null}
+            distanceToDptNm={null}
+            tooFar={false}
+            dptIcao={laufenderBid.flight.dpt_airport_id}
+            onStart={() => {}}
+            onManualStart={() => {}}
+            onAcknowledgeMismatch={() => {}}
+            onOfp={() => void openOfp(laufenderBid.flight)}
+            onFlightPage={() => void openFlightPage(laufenderBid.flight)}
+            onWeather={() => {
+              setWeatherLoadHint(true);
+              window.setTimeout(() => setWeatherLoadHint(false), 5000);
+              void openUrl("https://german-sky-group.eu/weatherbriefing").catch(() => {});
+            }}
+          />
+        </div>
+      )}
+
       {ofpStatus && (
         <div className={`bids__ofp-status bids__ofp-status--${ofpStatus.tone}`}>
           <span className="bids__ofp-status-word">{ofpStatus.word}</span>
@@ -1352,10 +1399,14 @@ interface MainBidCardProps {
   onOfp: () => void;
   onFlightPage: () => void;
   onWeather: () => void;
+  /** Nur ansehen (Buchung des laufenden Flugs): keine IFR/VFR-Wahl, kein
+   *  Start-Knopf — die Links (OFP, Flugseite, Wetter) bleiben. */
+  nurAnsicht?: boolean;
 }
 
 function MainBidCard({
   bid,
+  nurAnsicht = false,
   isNextFlight,
   preview,
   nowMs,
@@ -1673,11 +1724,12 @@ function MainBidCard({
   // vergleicht. phpVMS' flight.dpt_time/arr_time nur ohne OFP, und nicht bei
   // einem OFP für einen anderen Flug (`ofpMismatch`). Erst wenn beides fehlt,
   // "--:--".
-  const { dptTimeDisplay, arrTimeDisplay, dptCountdown, ofpOffBlockVorbei } = briefingZeiten(
-    flight,
-    ofpMismatch ? null : preview,
-    nowMs,
-  );
+  const zeiten = briefingZeiten(flight, ofpMismatch ? null : preview, nowMs);
+  const { dptTimeDisplay, arrTimeDisplay } = zeiten;
+  // Laufender Flug (nurAnsicht): kein „in N Min“/„überfällig“ und kein
+  // „Off-Block vorbei, OFP neu erstellen“ — er ist ja abgeflogen.
+  const dptCountdown = nurAnsicht ? null : zeiten.dptCountdown;
+  const ofpOffBlockVorbei = nurAnsicht ? false : zeiten.ofpOffBlockVorbei;
 
   return (
     <article className="bid-card bid-card--main">
@@ -1882,6 +1934,7 @@ function MainBidCard({
       )}
 
       <div className="bid-card__actions">
+        {!nurAnsicht && (<>
         <div className="bid-card__mode-toggle" role="group" aria-label={t("bid_card.mode_toggle_label")}>
           <button
             type="button"
@@ -1901,6 +1954,7 @@ function MainBidCard({
           </button>
         </div>
         <span className="bid-card__mode-active-hint">{primaryHint}</span>
+        </>)}
         <span className="bid-card__actions-spacer" />
         <div className="bid-card__links">
           {hasSimBriefId && (
@@ -1920,6 +1974,7 @@ function MainBidCard({
             {t("bids.open_weather_briefing")}
           </button>
         </div>
+        {!nurAnsicht && (
         <button
           type="button"
           className="button button--primary bid-card__start"
@@ -1929,6 +1984,7 @@ function MainBidCard({
         >
           {starting ? t("bids.starting") : t("bid_card.start_flight")}
         </button>
+        )}
       </div>
 
       {distanceToDptNm !== null && (
