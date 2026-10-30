@@ -12897,6 +12897,1210 @@ mod tests {
             assert_eq!(aus.apu_switch, Some(false));
             assert_eq!(aus.autobrake.as_deref(), Some("RTO"));
         }
+
+        #[test]
+        fn s4_061_fss_autopilot_aus_fgp_lampen_und_vref_marke() {
+            let lampen = [
+                ("L:FSS_EXX_FGC_LT_AP", 1.0),
+                ("L:FSS_EXX_FGC_LT_HDG", 1.0),
+                ("L:FSS_EXX_FGC_LT_Alt", 1.0),
+                ("L:FSS_EXX_PFD_GV_AIRSPD_VREF_1", 132.0),
+            ];
+            let snap = s(FSS_E175, &lampen);
+            assert_eq!(snap.autopilot_master, Some(true));
+            assert_eq!(snap.autopilot_heading, Some(true));
+            assert_eq!(snap.autopilot_altitude, Some(true));
+            assert_eq!(snap.autopilot_nav, Some(false));
+            assert_eq!(snap.vref_kt, Some(132.0));
+            let fremd = s(ASOBO, &lampen);
+            assert_eq!(fremd.autopilot_master, Some(false));
+            assert_eq!(fremd.vref_kt, None);
+        }
+
+        #[test]
+        fn s4_062_a330_strobe_und_atc_schalter_vor_den_riskanten_simvars() {
+            for (roh, want) in [(0.0, Some(2u8)), (1.0, Some(1)), (2.0, Some(0)), (3.0, None)] {
+                assert_eq!(s(A330, &[("L:INI_STROBE_LIGHT_SWITCH", roh)]).strobe_state, want);
+            }
+            for (atc, want) in [(0.0, "STBY"), (1.0, "XPNDR"), (2.0, "XPNDR")] {
+                let snap = s(A330, &[("L:INI_TCAS_STBY_STATE", atc), ("L:INI_tcas_mode_pedestal", 0.0)]);
+                assert_eq!(snap.xpdr_mode_label.as_deref(), Some(want), "atc={atc}");
+            }
+            let riskant = feld_index("SEMIBODY LOADFACTOR Y");
+            assert!(feld_index("L:INI_STROBE_LIGHT_SWITCH") < riskant);
+            assert!(feld_index("L:INI_TCAS_STBY_STATE") < riskant);
+        }
+
+        #[test]
+        fn s4_064_fbw_a32nx_parkbremse_apu_tcas_strobe_aus_lvars() {
+            let lvars = s(
+                A32NX,
+                &[
+                    ("L:A32NX_PARK_BRAKE_LEVER_POS", 1.0),
+                    ("BRAKE PARKING POSITION", 0.0),
+                    ("L:A32NX_OVHD_APU_MASTER_SW_PB_IS_ON", 1.0),
+                    ("APU SWITCH", 0.0),
+                    ("L:A32NX_SWITCH_TCAS_POSITION", 1.0),
+                    ("TRANSPONDER STATE:1", 4.0),
+                    ("L:LIGHTING_STROBE_0", 1.0),
+                    ("LIGHT STROBE", 1.0),
+                ],
+            );
+            assert!(lvars.parking_brake);
+            assert_eq!(lvars.apu_switch, Some(true));
+            assert_eq!(lvars.xpdr_mode_label.as_deref(), Some("TA"));
+            assert_eq!(lvars.strobe_state, Some(1), "AUTO statt ON");
+            let std = s(
+                A32NX,
+                &[
+                    ("L:A32NX_PARK_BRAKE_LEVER_POS", 0.0),
+                    ("BRAKE PARKING POSITION", 1.0),
+                    ("APU SWITCH", 1.0),
+                ],
+            );
+            assert!(!std.parking_brake, "Standard bewegte sich nicht");
+            assert_eq!(std.apu_switch, Some(false));
+        }
+
+        #[test]
+        fn s4_065_ini_fcu_hdg_dashed_1_nav_0_hdg() {
+            let a380 = |dashed: f64, ap: f64| {
+                let snap = s(A380, &[("L:INI_FCU_HDG_DASHED", dashed), ("L:INI_ap1_on", ap)]);
+                (snap.autopilot_nav, snap.autopilot_heading)
+            };
+            assert_eq!(a380(1.0, 1.0), (Some(true), Some(false)));
+            assert_eq!(a380(0.0, 1.0), (Some(false), Some(true)));
+            assert_eq!(a380(1.0, 0.0), (Some(false), Some(false)), "nur mit eingerastetem AP");
+            assert_eq!(a380(0.0, 0.0), (Some(false), Some(false)), "HDG ebenso nur mit AP");
+        }
+
+        #[test]
+        fn s4_066_fenix_ap_aus_fcu_lampen_statt_standard() {
+            let snap = s(
+                FENIX,
+                &[("L:I_FCU_AP2", 1.0), ("L:I_FCU_ATHR", 1.0), ("AUTOPILOT MASTER", 0.0)],
+            );
+            assert_eq!(snap.autopilot_master, Some(true));
+            assert_eq!(snap.autothrottle_on, Some(true));
+            let aus = s(FENIX, &[("L:I_FCU_AP1", 0.0), ("L:I_FCU_ATHR", 0.0)]);
+            assert_eq!(aus.autopilot_master, Some(false));
+            assert_eq!(aus.autothrottle_on, Some(false));
+        }
+
+        #[test]
+        fn s4_067_bluebird_schalter_statt_lampen_kabinenlampe_nur_roh() {
+            assert!(TELEMETRY_FIELDS
+                .iter()
+                .filter(|f| f.name.contains("B757") || f.name.contains("BBS"))
+                .all(|f| !f.name.ends_with("_ON")));
+            let snap = s(
+                BBS_LTU,
+                &[
+                    ("L:B757_OVHD_BEACON_LIGHT", 1.0),
+                    ("L:B757_OVHD_LOGO_BUTTON", 1.0),
+                    ("L:B757_OVHD_WING_LIGHTS", 1.0),
+                    ("L:B757_OVHD_NOSE_LANDING_LIGHT", 1.0),
+                    ("L:B757_OVHD_APU_SWITCH", 1.0),
+                    ("L:BBS_AUTOBRAKE_KNOB", 4.0),
+                    ("L:B757_MCP_CMD_2_BUTTON", 1.0),
+                    ("L:BBS757_PASS_SEAT_BELT_SIGNS_CABIN", 1.0),
+                    ("L:AT_ARM_SWITCH", 1.0),
+                ],
+            );
+            assert_eq!(snap.light_beacon, Some(true));
+            assert_eq!(snap.light_logo, Some(true));
+            assert_eq!(snap.light_wing, Some(true));
+            assert_eq!(snap.light_landing, Some(true));
+            assert_eq!(snap.apu_switch, Some(true));
+            assert_eq!(snap.autobrake.as_deref(), Some("2"));
+            assert_eq!(snap.autopilot_master, Some(true));
+            // Kabinenlampe und A/T-ARM: nur roh, nicht gedeutet.
+            assert_eq!(snap.autothrottle_on, None);
+            let roh = snap.cockpit_rohwerte.unwrap().werte;
+            assert_eq!(roh.get("L:BBS757_PASS_SEAT_BELT_SIGNS_CABIN"), Some(&1.0));
+            assert_eq!(roh.get("L:AT_ARM_SWITCH"), Some(&1.0));
+        }
+
+        #[test]
+        fn s4_068_a220_licht_lvars_nur_zur_gegenprobe() {
+            let snap = s(
+                A220,
+                &[
+                    ("L:A22X Beacon Lights", 1.0),
+                    ("L:A22X Strobe Lights", 1.0),
+                    ("L:A22X L Landing Lights", 1.0),
+                    ("L:A22X Transponder Mode", 2.0),
+                    ("LIGHT BEACON", 0.0),
+                    ("LIGHT STROBE", 0.0),
+                    ("LIGHT LANDING", 0.0),
+                ],
+            );
+            assert_eq!(snap.light_beacon, Some(false));
+            assert_eq!(snap.light_strobe, Some(false));
+            assert_eq!(snap.light_landing, Some(false));
+            let roh = snap.cockpit_rohwerte.unwrap().werte;
+            assert_eq!(roh.get("L:A22X Beacon Lights"), Some(&1.0));
+            assert_eq!(roh.get("L:A22X Transponder Mode"), Some(&2.0));
+        }
+
+        #[test]
+        fn s4_088_fbw_wertetabellen_strobe_park_apu_tcas() {
+            for (roh, want) in [(2.0, 0u8), (1.0, 1), (0.0, 2)] {
+                assert_eq!(s(A32NX, &[("L:LIGHTING_STROBE_0", roh)]).strobe_state, Some(want));
+            }
+            assert!(s(A32NX, &[("L:A32NX_PARK_BRAKE_LEVER_POS", 1.0)]).parking_brake);
+            assert_eq!(s(A32NX, &[("L:A32NX_OVHD_APU_MASTER_SW_PB_IS_ON", 1.0)]).apu_switch, Some(true));
+            for (tcas, want) in [(0.0, "ALT"), (1.0, "TA"), (2.0, "TA-RA")] {
+                let snap = s(
+                    A32NX,
+                    &[("L:A32NX_SWITCH_TCAS_POSITION", tcas), ("TRANSPONDER STATE:1", 4.0)],
+                );
+                assert_eq!(snap.xpdr_mode_label.as_deref(), Some(want));
+            }
+        }
+
+        #[test]
+        fn s4_089_fenix_heading_dashed_1_nav_0_hdg() {
+            let snap = s(FENIX, &[("L:I_FCU_AP1", 1.0), ("L:B_FCU_HEADING_DASHED", 1.0)]);
+            assert_eq!((snap.autopilot_nav, snap.autopilot_heading), (Some(true), Some(false)));
+            let snap = s(FENIX, &[("L:I_FCU_AP1", 1.0), ("L:B_FCU_HEADING_DASHED", 0.0)]);
+            assert_eq!((snap.autopilot_nav, snap.autopilot_heading), (Some(false), Some(true)));
+        }
+
+        #[test]
+        fn s4_091_fenix_overrides_ohne_schalter_immer() {
+            // Kein Opt-in mehr: ein frischer Snapshot nutzt die LVars sofort.
+            let snap = s(
+                FENIX,
+                &[("L:S_OH_EXT_LT_LANDING_L", 2.0), ("L:S_OH_EXT_LT_WING", 1.0), ("LIGHT LANDING", 0.0)],
+            );
+            assert_eq!(snap.light_landing, Some(true));
+            assert_eq!(snap.light_wing, Some(true));
+            for title in ["FenixA319 IAE", "FenixA321 NEO LR"] {
+                let snap = s((title, ""), &[("L:S_OH_EXT_LT_WING", 1.0)]);
+                assert_eq!(snap.light_wing, Some(true), "{title}");
+            }
+        }
+
+        #[test]
+        fn s4_092_profil_ueber_den_cfg_pfad() {
+            let ohne = s(PMDG737, &[]);
+            assert_eq!(ohne.aircraft_profile, AircraftProfile::Default);
+            let mit = runde3(PMDG737.0, PMDG737.1, Some(PFAD_738), &[]);
+            assert_eq!(mit.aircraft_profile, AircraftProfile::Pmdg737);
+        }
+
+        #[test]
+        fn s4_094_standard_gurt_erst_nach_zweimal_an() {
+            let folge = anschnall_folge(
+                BARON.0,
+                BARON.1,
+                &[(STD_GURT, 0.0), (STD_GURT, 1.0), (STD_GURT, 0.0), (STD_GURT, 1.0), (STD_GURT, 1.0), (STD_GURT, 0.0)],
+            );
+            assert_eq!(folge, vec![None, None, None, None, Some(2), Some(0)]);
+            // Gleiche Sperre fuer die ungemessene BlueBird-LVar.
+            let bbs = anschnall_folge(
+                BBS_LTU.0,
+                BBS_LTU.1,
+                &[("L:B757_OVHD_SEATBELTS_SWITCH", 0.0), ("L:B757_OVHD_SEATBELTS_SWITCH", 2.0), ("L:B757_OVHD_SEATBELTS_SWITCH", 2.0)],
+            );
+            assert_eq!(bbs, vec![None, None, Some(2)]);
+            // Profil mit eigener Quelle: sofort gueltig.
+            let fenix = anschnall_folge(FENIX.0, FENIX.1, &[("L:S_OH_SIGNS", 0.0)]);
+            assert_eq!(fenix, vec![Some(0)]);
+        }
+
+        fn a380_ab(level: f64, b: &[(&str, f64)]) -> Option<String> {
+            mit_b(A380, &[("L:INI_AUTOBRAKE_LEVEL", level)], b).autobrake
+        }
+
+        #[test]
+        fn s4_095_a380_autobrake_knopf() {
+            for (k, want) in [(0.0, "DISARM"), (1.0, "BTV"), (2.0, "LO"), (3.0, "L2"), (4.0, "L3"), (5.0, "HI")] {
+                let got = a380_ab(9.0, &[("AIRLINER_MIP_LG_ABRK_KNOB", k)]);
+                assert_eq!(got.as_deref(), Some(want), "Knopf {k}");
+            }
+            assert_eq!(a380_ab(9.0, &[("AIRLINER_MIP_LG_ABRK_RTO", 1.0)]).as_deref(), Some("RTO"));
+        }
+
+        #[test]
+        fn s4_096_a380_rto_taste_klemmt_knopfstufe_hat_vorrang() {
+            let l2 = a380_ab(9.0, &[("AIRLINER_MIP_LG_ABRK_KNOB", 3.0), ("AIRLINER_MIP_LG_ABRK_RTO", 1.0)]);
+            assert_eq!(l2.as_deref(), Some("L2"));
+            let rto = a380_ab(9.0, &[("AIRLINER_MIP_LG_ABRK_KNOB", 0.0), ("AIRLINER_MIP_LG_ABRK_RTO", 1.0)]);
+            assert_eq!(rto.as_deref(), Some("RTO"));
+        }
+
+        #[test]
+        fn s4_097_a380_scharfer_zustand_aus_dem_level() {
+            for (lv, want) in [(1.0, "BTV"), (4.0, "RTO"), (5.0, "LO"), (6.0, "L2"), (7.0, "L3"), (8.0, "HI")] {
+                // Knopf steht woanders — das Level gewinnt.
+                let got = a380_ab(lv, &[("AIRLINER_MIP_LG_ABRK_KNOB", 0.0), ("AIRLINER_MIP_LG_ABRK_RTO", 1.0)]);
+                assert_eq!(got.as_deref(), Some(want), "Level {lv}");
+            }
+            // Level 0 = DISARM nur mit Knopf DISARM; Knopf auf Stufe gilt.
+            assert_eq!(a380_ab(0.0, &[("AIRLINER_MIP_LG_ABRK_KNOB", 0.0)]).as_deref(), Some("DISARM"));
+            assert_eq!(a380_ab(0.0, &[("AIRLINER_MIP_LG_ABRK_KNOB", 3.0)]).as_deref(), Some("L2"));
+            // Ausserhalb der Rastung (Toleranz 0,25) zaehlt das Level nicht.
+            assert_eq!(a380_ab(5.3, &[("AIRLINER_MIP_LG_ABRK_KNOB", 4.0)]).as_deref(), Some("L3"));
+        }
+
+        #[test]
+        fn s4_098_a346_hebel_0_oben_sonst_unten() {
+            let g = |roh: f64| s(A346, &[("L:AB_MPL_LANDING_GEAR_SELECTOR_LEVER", roh)]).gear_position;
+            assert_eq!(g(0.0), 0.0);
+            assert_eq!(g(1.0), 1.0);
+            assert_eq!(g(0.5), 1.0);
+            assert_eq!(g(2.0), 1.0);
+        }
+
+        #[test]
+        fn s4_100_null_ist_eine_stellung_unbelegtes_als_raute() {
+            assert_eq!(s(A220, &[("L:A22X Autobrake", 0.0)]).autobrake.as_deref(), Some("RTO"));
+            assert_eq!(s(MD11, &[("L:MD11_CTR_AUTOBRAKE_SW", 0.0)]).autobrake.as_deref(), Some("T.O."));
+            assert_eq!(s(A220, &[("L:A22X Autobrake", 9.0)]).autobrake.as_deref(), Some("#9"));
+            assert_eq!(enum_label_mit_null(-1.0, A220_AUTOBRAKE).as_deref(), Some("#-1"));
+        }
+
+        #[test]
+        fn s4_101_autobrake_tabellen_je_muster() {
+            let pruefe = |m: (&str, &str), name: &str, tabelle: &[&str]| {
+                for (i, want) in tabelle.iter().enumerate() {
+                    let got = s(m, &[(name, i as f64)]).autobrake;
+                    assert_eq!(got.as_deref(), Some(*want), "{} {name}={i}", m.0);
+                }
+            };
+            pruefe(A220, "L:A22X Autobrake", &["RTO", "OFF", "LO", "MED", "HI"]);
+            pruefe(MD11, "L:MD11_CTR_AUTOBRAKE_SW", &["T.O.", "OFF", "MIN", "MED", "MAX"]);
+            pruefe(
+                FBW_A380X,
+                "L:A32NX_AUTOBRAKES_ARMED_MODE",
+                &["DISARM", "BTV", "LOW", "L2", "L3", "HIGH", "RTO"],
+            );
+            pruefe(FSS_E190, "L:FSS_EXX_AUTOBRAKE", &["RTO", "OFF", "LO", "MED", "HI"]);
+            pruefe(
+                BBS_LTU,
+                "L:BBS_AUTOBRAKE_KNOB",
+                &["RTO", "OFF", "DISARM", "1", "2", "3", "4", "MAX"],
+            );
+        }
+
+        #[test]
+        fn s4_102_bluebird_schild_nur_auf_der_raste() {
+            assert_eq!(bbs757_schild(1.2), Some(1));
+            assert_eq!(bbs757_schild(1.3), None);
+            assert_eq!(bbs757_schild(3.0), None);
+            assert_eq!(bbs757_schild(-0.2), Some(0));
+            let snap = s(BBS_LTU, &[("L:B757_OVHD_NO_SMOKING_SWITCH", 1.5)]);
+            assert_eq!(snap.no_smoking_sign, None, "kein erfundenes OFF");
+        }
+
+        #[test]
+        fn s4_103_airbus_transponder_vokabular() {
+            assert_eq!(airbus_xpdr_mode_label(0.0, 2.0).as_deref(), Some("STBY"));
+            for atc in [1.0, 2.0] {
+                assert_eq!(airbus_xpdr_mode_label(atc, 0.0).as_deref(), Some("XPNDR"));
+                assert_eq!(airbus_xpdr_mode_label(atc, 1.0).as_deref(), Some("TA"));
+                assert_eq!(airbus_xpdr_mode_label(atc, 2.0).as_deref(), Some("TA-RA"));
+            }
+            assert_eq!(airbus_xpdr_mode_label(3.0, 0.0), None);
+            assert_eq!(airbus_xpdr_mode_label(1.0, 3.0), None);
+            let a346 = s(A346, &[("L:AB_PDS_XPDR_STBY_AUTO_ON", 2.0), ("L:AB_PDS_XPDR_STBY_TA_TARA", 1.0)]);
+            assert_eq!(a346.xpdr_mode_label.as_deref(), Some("TA"));
+        }
+
+        #[test]
+        fn s4_105_zehner_raster_mit_25_prozent_toleranz() {
+            assert_eq!(pmdg_lvar_raste(12.4, 10.0), Some(1));
+            assert_eq!(pmdg_lvar_raste(12.6, 10.0), None, "mitten im Weg");
+            assert_eq!(pmdg_lvar_raste(200.0, 10.0), Some(20));
+            assert_eq!(pmdg_lvar_raste(210.0, 10.0), None, "hoechstens Index 20");
+            assert_eq!(lvar_raste_0_10_20(20.0), Some(2));
+            assert_eq!(lvar_raste_0_10_20(30.0), None, "nur OFF/AUTO/ON");
+            assert_eq!(lvar_raste_zehner(30.0), Some(3));
+        }
+
+        #[test]
+        fn s4_106_ini_on_auto_off_gespiegelt() {
+            assert_eq!(ini_on_auto_off_gespiegelt(0.0), Some(2));
+            assert_eq!(ini_on_auto_off_gespiegelt(1.0), Some(1));
+            assert_eq!(ini_on_auto_off_gespiegelt(2.0), Some(0));
+            assert_eq!(ini_on_auto_off_gespiegelt(1.2), Some(1));
+            assert_eq!(ini_on_auto_off_gespiegelt(1.3), None);
+            assert_eq!(ini_on_auto_off_gespiegelt(3.0), None);
+        }
+
+        #[test]
+        fn s4_107_fbw_fma_tabellen() {
+            let lat = [
+                (10, "HDG"), (11, "TRACK"), (20, "NAV"), (30, "LOC*"), (31, "LOC"), (32, "LAND"),
+                (33, "FLARE"), (34, "ROLLOUT"), (40, "RWY"), (41, "RWY TRK"), (50, "GA TRK"),
+            ];
+            for (n, want) in lat {
+                assert_eq!(fbw_fma_lateral_label(n).as_deref(), Some(want), "lateral {n}");
+            }
+            let vert = [
+                (10, "ALT"), (11, "ALT CST"), (14, "VS"), (15, "FPA"), (20, "OP CLB"), (21, "OP DES"),
+                (22, "VS"), (23, "FPA"), (30, "SRS"), (31, "SRS GA"), (40, "CLB"), (41, "DES"),
+                (50, "G/S*"), (51, "G/S"), (52, "LAND"), (53, "FLARE"), (54, "ROLLOUT"),
+            ];
+            for (n, want) in vert {
+                assert_eq!(fbw_fma_vertical_label(n).as_deref(), Some(want), "vertikal {n}");
+            }
+            assert_eq!(fbw_fma_lateral_label(0), None);
+            assert_eq!(fbw_fma_vertical_label(0), None);
+            assert_eq!(fbw_fma_lateral_label(12).as_deref(), Some("#12"));
+            assert_eq!(fbw_fma_vertical_label(60).as_deref(), Some("#60"));
+        }
+
+        #[test]
+        fn s4_108_fbw_autothrust_mode_tabelle() {
+            let want = [
+                "MAN TOGA", "MAN GA SOFT", "MAN FLX", "MAN DTO", "MAN MCT", "MAN THR", "SPEED",
+                "MACH", "THR MCT", "THR CLB", "THR LVR", "THR IDLE", "A.FLOOR", "TOGA LK",
+            ];
+            for (i, w) in want.iter().enumerate() {
+                assert_eq!(fbw_fma_thrust_label(i as i32 + 1).as_deref(), Some(*w));
+            }
+            assert_eq!(fbw_fma_thrust_label(0), None);
+            assert_eq!(fbw_fma_thrust_label(15).as_deref(), Some("#15"));
+        }
+
+        #[test]
+        fn s4_110_null_frequenz_und_null_v_speed_sind_none() {
+            let snap = s(
+                ASOBO,
+                &[("NAV ACTIVE FREQUENCY:1", 0.0), ("COM ACTIVE FREQUENCY:2", 121.5)],
+            );
+            assert_eq!(snap.nav1_mhz, None);
+            assert_eq!(snap.com2_mhz, Some(121.5));
+            assert_eq!(s(A350, &[("L:INI_VLS_SPEED", 0.0)]).vls_kt, None);
+            assert_eq!(s(A350, &[("L:INI_VLS_SPEED", 128.0)]).vls_kt, Some(128.0));
+            assert_eq!(s(A350, &[("L:INI_FLEX_TEMPERATURE", 0.0)]).flex_temp_c, None);
+        }
+
+        #[test]
+        fn s4_111_a346_fwc_phasen_tabelle() {
+            let want = [
+                "ELEC PWR", "FIRST ENG STARTED", "FIRST ENG TO T/O POWER", "80 KT (T/O)",
+                "LIFT OFF", "1500 FT", "800 FT", "TOUCHDOWN", "80 KT (ROLLOUT)", "5 MIN AFTER",
+            ];
+            for (i, w) in want.iter().enumerate() {
+                let snap = s(A346, &[("L:TLS_FLIGHT_PHASE", i as f64 + 1.0)]);
+                assert_eq!(snap.flight_phase_aircraft.as_deref(), Some(*w), "Phase {}", i + 1);
+            }
+            assert_eq!(s(A346, &[("L:TLS_FLIGHT_PHASE", 0.0)]).flight_phase_aircraft, None);
+            assert_eq!(a346_fwc_phase_label(11).as_deref(), Some("#11"));
+        }
+
+        #[test]
+        fn s4_114_a220_klappenhebel_ersetzt_flaps_handle_percent() {
+            let snap = s(A220, &[("L:A22X Flap Lever", 5.0), ("FLAPS HANDLE PERCENT", 0.4)]);
+            assert_eq!(snap.flaps_position, 1.0, "Stufe 5 = voll, nicht 40 %");
+            let fremd = s(ASOBO, &[("L:A22X Flap Lever", 5.0), ("FLAPS HANDLE PERCENT", 0.4)]);
+            assert_eq!(fremd.flaps_position, 0.4);
+        }
+
+        #[test]
+        fn s4_115_fbw_a380x_erkennung_titel_icao_pfad() {
+            let ab = |m: (&str, &str), pfad: Option<&str>| {
+                runde3(m.0, m.1, pfad, &[("L:A32NX_AUTOBRAKES_ARMED_MODE", 1.0)]).autobrake
+            };
+            // A380X-Tabelle: 1 = BTV; A32NX-Tabelle: 1 = LO.
+            assert_eq!(ab(FBW_A380X, None).as_deref(), Some("BTV"), "Titel");
+            assert_eq!(ab(("FlyByWire Emirates A6-EDA", "A388"), None).as_deref(), Some("BTV"), "ICAO A388");
+            assert_eq!(ab(("FlyByWire A32NX", ""), Some(PFAD_FBW_A380X)).as_deref(), Some("BTV"), "Pfad");
+            // Rest-Pfad unter A32NX-Titel mit ausdruecklicher ICAO: A32NX.
+            assert_eq!(ab(A32NX, Some(PFAD_FBW_A380X)).as_deref(), Some("LO"));
+            assert_eq!(ab(A32NX, None).as_deref(), Some("LO"));
+        }
+
+        #[test]
+        fn s4_116_headwind_a339_landet_im_fbw_profil() {
+            // Headwind bedient die Standard-Gurt-SimVar, der A32NX nicht.
+            let gurt = |m: (&str, &str), pfad: Option<&str>| {
+                let snap = runde3(m.0, m.1, pfad, &[(STD_GURT, 1.0)]);
+                assert_eq!(snap.aircraft_profile, AircraftProfile::FbwA32nx, "{}", m.0);
+                snap.seatbelts_sign
+            };
+            assert_eq!(gurt(HEADWIND, None), Some(2), "Titel");
+            assert_eq!(gurt(("FlyByWire A330 Livery", "A339"), None), Some(2), "ICAO");
+            assert_eq!(
+                gurt(("FlyByWire A330 Livery", "A330"), Some(r"C:\Community\headwind-a339\aircraft.cfg")),
+                Some(2),
+                "Pfad"
+            );
+            assert_eq!(gurt(("FlyByWire A330 Livery", "A330"), None), None, "kein Marker");
+        }
+
+        #[test]
+        fn s4_117_overrides_nur_fuer_den_gemessenen_a32nx() {
+            let w = [
+                ("L:LIGHTING_STROBE_0", 0.0),
+                ("L:A32NX_OVHD_APU_MASTER_SW_PB_IS_ON", 1.0),
+                ("APU SWITCH", 0.0),
+            ];
+            let a32nx = s(A32NX, &w);
+            assert_eq!(a32nx.strobe_state, Some(2));
+            assert_eq!(a32nx.apu_switch, Some(true));
+            for m in [FBW_A380X, HEADWIND] {
+                let snap = s(m, &w);
+                assert_eq!(snap.strobe_state, None, "{}", m.0);
+                assert_eq!(snap.apu_switch, Some(false), "{}", m.0);
+            }
+        }
+
+        #[test]
+        fn s4_118_standard_rueckfall_nur_wo_bedient() {
+            let gurt = |m: (&str, &str)| s(m, &[(STD_GURT, 1.0)]).seatbelts_sign;
+            for m in [ASOBO, FBW_A380X, HEADWIND] {
+                assert_eq!(gurt(m), Some(2), "{}", m.0);
+            }
+            assert_eq!(gurt(A32NX), None);
+            // A380 bedient die SimVar gemessen nicht: eigene LVar auf OFF,
+            // Standard AN — es zaehlt die LVar.
+            let a380 = s(A380, &[(STD_GURT, 1.0), ("L:INI_SEATBELTS_SWITCH", 2.0)]);
+            assert_eq!(a380.seatbelts_sign, Some(0));
+            let xpdr = |m: (&str, &str), w: &[(&str, f64)]| s(m, w).xpdr_mode_label;
+            for m in [ASOBO, FBW_A380X, FSS_E190, A380] {
+                assert_eq!(xpdr(m, &[("TRANSPONDER STATE:1", 4.0)]).as_deref(), Some("ALT"), "{}", m.0);
+            }
+            // A220: ALT, aber nie ein erfundenes TA/TA-RA.
+            assert_eq!(xpdr(A220, &[("TRANSPONDER STATE:1", 4.0)]).as_deref(), Some("ALT"));
+            // A330: Rueckfall, wenn die Wahlschalter kein Label ergeben.
+            assert_eq!(
+                xpdr(A330, &[("L:INI_TCAS_STBY_STATE", 5.0), ("TRANSPONDER STATE:1", 4.0)]).as_deref(),
+                Some("ALT")
+            );
+            // Nicht bedient: kein Rueckfall.
+            assert_eq!(xpdr(MD11, &[("L:md11_ped_xpndr_mode_kb", 9.0), ("TRANSPONDER STATE:1", 4.0)]), None);
+        }
+
+        #[test]
+        fn s4_119_fsl_keine_zweiskalen_deutung() {
+            let ap = |v: f64| s(FSL, &[("L:VC_GSLD_FCU_AP2_Brt_Lt", v)]).autopilot_master;
+            assert_eq!(ap(0.8), Some(false), "Rest-Glimmen ist kein AP");
+            assert_eq!(ap(1.0), Some(false));
+            assert_eq!(ap(50.0), Some(true));
+        }
+
+        #[test]
+        fn s4_120_fsl_triebwerk_aus_master_ab_15() {
+            let n = |v: f64| s(FSL, &[("L:VC_PED_ENG_1_MSTR_Switch", v)]).engines_running;
+            assert_eq!(n(14.9), 0);
+            assert_eq!(n(15.0), 1);
+            assert_eq!(n(20.0), 1);
+        }
+
+        #[test]
+        fn s4_121_phenom_knopf_ueber_halb_und_cold_and_dark() {
+            let n = |k: f64| {
+                s(
+                    PHENOM,
+                    &[("L:FSR_300E_ENGINE1_KNOB_POS", k), ("GENERAL ENG COMBUSTION EX1:1", 1.0)],
+                )
+                .engines_running
+            };
+            assert_eq!(n(0.5), 0, "Cold&Dark: Standard liefert faelschlich > 0");
+            assert_eq!(n(0.6), 1);
+            // Ohne Profil gilt der Standard weiter.
+            let std = s(BARON, &[("L:FSR_300E_ENGINE1_KNOB_POS", 0.0), ("GENERAL ENG COMBUSTION:1", 1.0)]);
+            assert_eq!(std.engines_running, 1);
+        }
+
+        #[test]
+        fn s4_123_keine_null_eins_skala_fuer_n1() {
+            for roh in [0.1, 0.4, 1.0, 1.5] {
+                let snap = s(("Pilatus PC-12 Fly7", "PC12"), &[("TURB ENG N1:1", roh)]);
+                assert_eq!(snap.engines_running, 0, "Windmuehle {roh} %");
+            }
+        }
+
+        #[test]
+        fn s4_127_payload_ist_zfw_minus_oew() {
+            let snap = s(
+                ASOBO,
+                &[
+                    ("TOTAL WEIGHT", 150_000.0),
+                    ("FUEL TOTAL QUANTITY WEIGHT", 30_000.0),
+                    ("EMPTY WEIGHT", 90_000.0),
+                ],
+            );
+            let pl = snap.payload_kg.unwrap();
+            assert!((pl - 30_000.0 * 0.453_592_37).abs() < 1.0, "payload {pl}");
+            let schwer = s(
+                ASOBO,
+                &[
+                    ("TOTAL WEIGHT", 150_000.0),
+                    ("FUEL TOTAL QUANTITY WEIGHT", 30_000.0),
+                    ("EMPTY WEIGHT", 125_000.0),
+                ],
+            );
+            assert_eq!(schwer.payload_kg, None, "OEW ueber ZFW");
+        }
+
+        #[test]
+        fn s4_129_transponder_code_je_quelle() {
+            // 0x2532 BCD = 9522 dezimal.
+            assert_eq!(s(FENIX, &[("TRANSPONDER CODE:1", 9_522.0)]).transponder_code, None);
+            assert_eq!(s(A32NX, &[("L:A32NX_TRANSPONDER_CODE", 9_999.0)]).transponder_code, Some(7_777));
+            assert_eq!(s(ASOBO, &[("TRANSPONDER CODE:1", 9_522.0)]).transponder_code, Some(2_532));
+            assert_eq!(s(ASOBO, &[("TRANSPONDER CODE:1", 0.0)]).transponder_code, None);
+        }
+
+        #[test]
+        fn s4_130_ohne_profil_standard_ap_simvars() {
+            let snap = s(
+                BARON,
+                &[
+                    ("AUTOPILOT MASTER", 1.0),
+                    ("AUTOPILOT HEADING LOCK", 1.0),
+                    ("AUTOPILOT NAV1 LOCK", 0.0),
+                    ("AUTOPILOT ALTITUDE LOCK", 1.0),
+                    ("AUTOPILOT APPROACH HOLD", 0.0),
+                    ("L:A32NX_AUTOPILOT_LOC_MODE_ACTIVE", 1.0),
+                ],
+            );
+            assert_eq!(snap.autopilot_master, Some(true));
+            assert_eq!(snap.autopilot_heading, Some(true));
+            assert_eq!(snap.autopilot_nav, Some(false));
+            assert_eq!(snap.autopilot_altitude, Some(true));
+            assert_eq!(snap.autopilot_approach, Some(false));
+        }
+
+        #[test]
+        fn s4_131_fbw_ap_jede_quelle_genuegt() {
+            for name in ["L:A32NX_AUTOPILOT_ACTIVE", "L:A32NX_AUTOPILOT_1_ACTIVE", "L:A32NX_AUTOPILOT_2_ACTIVE", "AUTOPILOT MASTER"] {
+                assert_eq!(s(A32NX, &[(name, 1.0)]).autopilot_master, Some(true), "{name}");
+            }
+            let std = s(A32NX, &[("AUTOPILOT HEADING LOCK", 1.0), ("AUTOPILOT APPROACH HOLD", 1.0)]);
+            assert_eq!(std.autopilot_heading, Some(true));
+            assert_eq!(std.autopilot_approach, Some(true));
+            let lvar = s(A32NX, &[("L:A32NX_AUTOPILOT_ALTITUDE_HOLD_MODE", 1.0)]);
+            assert_eq!(lvar.autopilot_altitude, Some(true));
+        }
+
+        #[test]
+        fn s4_132_md11_master_aus_ap_state_submodi_nur_standard() {
+            assert_eq!(s(MD11, &[("L:MD11_AP_STATE", 0.4)]).autopilot_master, Some(false));
+            assert_eq!(s(MD11, &[("AUTOPILOT MASTER", 1.0)]).autopilot_master, Some(true));
+            let snap = s(MD11, &[("L:MD11_AP_STATE", 3.0)]);
+            assert_eq!(snap.autopilot_heading, Some(false));
+            assert_eq!(snap.autopilot_nav, Some(false));
+            assert_eq!(s(MD11, &[("AUTOPILOT NAV1 LOCK", 1.0)]).autopilot_nav, Some(true));
+        }
+
+        #[test]
+        fn s4_133_fenix_ap_wahrheitstabelle() {
+            assert!(!hat_feld("L:B_FCU_VERTICALSPEED_DASHED"));
+            let f = |w: &[(&str, f64)]| {
+                let snap = s(FENIX, w);
+                (
+                    snap.autopilot_master.unwrap(),
+                    snap.autopilot_heading.unwrap(),
+                    snap.autopilot_nav.unwrap(),
+                    snap.autopilot_approach.unwrap(),
+                    snap.autopilot_altitude.unwrap(),
+                )
+            };
+            // AP + gestrichelt + APPR: kein NAV (Anflug), kein HDG.
+            assert_eq!(
+                f(&[("L:I_FCU_AP1", 1.0), ("L:B_FCU_HEADING_DASHED", 1.0), ("L:I_FCU_APPR", 1.0)]),
+                (true, false, false, true, false)
+            );
+            // Ohne AP: Lampen-Deutung greift nicht.
+            assert_eq!(f(&[("L:B_FCU_HEADING_DASHED", 0.0)]), (false, false, false, false, false));
+            // Standard per ODER; ALT nur aus dem Standard.
+            assert_eq!(
+                f(&[("AUTOPILOT HEADING LOCK", 1.0), ("AUTOPILOT ALTITUDE LOCK", 1.0)]),
+                (false, true, false, false, true)
+            );
+        }
+
+        #[test]
+        fn s4_134_a346_lampen_master_und_anflug_rest_standard() {
+            let snap = s(A346, &[("L:AB_AP_AP1_LIGHT_ON", 1.0), ("L:AB_AP_APPR_LIGHT_ON", 1.0)]);
+            assert_eq!(snap.autopilot_master, Some(true));
+            assert_eq!(snap.autopilot_approach, Some(true));
+            assert_eq!(snap.autopilot_heading, Some(false));
+            assert_eq!(snap.autopilot_nav, Some(false));
+            assert_eq!(snap.autopilot_altitude, Some(false));
+            assert_eq!(s(A346, &[("AUTOPILOT HEADING LOCK", 1.0)]).autopilot_heading, Some(true));
+        }
+
+        #[test]
+        fn s4_135_a350_und_a380_aus_ini_leds() {
+            for m in [A350, A380] {
+                let snap = s(m, &[("L:INI_ap1_on", 1.0), ("L:INI_MCU_LOC_LIGHT", 1.0)]);
+                assert_eq!(snap.autopilot_master, Some(true), "{}", m.0);
+                assert_eq!(snap.autopilot_approach, Some(true), "{}", m.0);
+            }
+            // A380: ALT bleibt Standard, NAV aus dem gestrichelten HDG-Fenster.
+            let snap = s(A380, &[("L:INI_ap1_on", 1.0), ("L:INI_FCU_HDG_DASHED", 1.0), ("AUTOPILOT ALTITUDE LOCK", 1.0)]);
+            assert_eq!(snap.autopilot_nav, Some(true));
+            assert_eq!(snap.autopilot_altitude, Some(true));
+            // A350 deutet das HDG-Fenster nicht.
+            let a350 = s(A350, &[("L:INI_ap1_on", 1.0), ("L:INI_FCU_HDG_DASHED", 1.0)]);
+            assert_eq!(a350.autopilot_nav, Some(false));
+        }
+
+        #[test]
+        fn s4_136_ifly_cmd_leds_submodi_nur_standard() {
+            let snap = s(IFLY, &[("L:VC_CMD_B_SW_LIGHT_VAL", 1.0)]);
+            assert_eq!(snap.autopilot_master, Some(true));
+            assert_eq!(snap.autopilot_heading, Some(false));
+            assert_eq!(snap.autopilot_approach, Some(false));
+            assert_eq!(s(IFLY, &[("AUTOPILOT APPROACH HOLD", 1.0)]).autopilot_approach, Some(true));
+        }
+
+        #[test]
+        fn s4_137_fsl_ap_appr_loc_aus_leds_rest_standard() {
+            let snap = s(FSL, &[("L:VC_GSLD_FCU_AP1_Brt_Lt", 80.0), ("L:VC_GSLD_FCU_LOC_Brt_Lt", 80.0)]);
+            assert_eq!(snap.autopilot_master, Some(true));
+            assert_eq!(snap.autopilot_approach, Some(true));
+            assert_eq!(snap.autopilot_heading, Some(false));
+            assert_eq!(snap.autopilot_nav, Some(false));
+            assert_eq!(s(FSL, &[("L:VC_GSLD_FCU_APPR_Brt_Lt", 80.0)]).autopilot_approach, Some(true));
+        }
+
+        #[test]
+        fn s4_138_a220_master_und_fg_submodi_oder_standard() {
+            let snap = s(
+                A220,
+                &[
+                    ("L:A22X AP Master", 1.0),
+                    ("L:A22X FG LNAV", 1.0),
+                    ("L:A22X FG Approach", 1.0),
+                    ("AUTOPILOT HEADING LOCK", 1.0),
+                ],
+            );
+            assert_eq!(snap.autopilot_master, Some(true));
+            assert_eq!(snap.autopilot_nav, Some(true));
+            assert_eq!(snap.autopilot_approach, Some(true));
+            assert_eq!(snap.autopilot_heading, Some(true), "Standard per ODER");
+            assert_eq!(snap.autopilot_altitude, Some(false));
+        }
+
+        #[test]
+        fn s4_139_fss_fgp_lampen_oder_standard() {
+            assert_eq!(s(FSS_E190, &[("L:FSS_EXX_FGC_LT_NAV", 1.0)]).autopilot_nav, Some(true));
+            assert_eq!(s(FSS_E190, &[("L:FSS_EXX_FGC_LT_APP", 1.0)]).autopilot_approach, Some(true));
+            assert_eq!(s(FSS_E190, &[("AUTOPILOT MASTER", 1.0)]).autopilot_master, Some(true));
+            assert_eq!(s(FSS_E190, &[]).autopilot_master, Some(false));
+        }
+
+        #[test]
+        fn s4_140_bluebird_mcp_lampen() {
+            let snap = s(
+                BBS_LTU,
+                &[
+                    ("L:B757_MCP_CMD_3_BUTTON", 1.0),
+                    ("L:B757_MCP_HOLD_1_BUTTON", 1.0),
+                    ("L:B757_MCP_HOLD_2_BUTTON", 1.0),
+                    ("L:B757_MCP_LNAV_BUTTON", 1.0),
+                    ("L:B757_MCP_LOC_BUTTON", 1.0),
+                ],
+            );
+            assert_eq!(snap.autopilot_master, Some(true));
+            assert_eq!(snap.autopilot_heading, Some(true));
+            assert_eq!(snap.autopilot_altitude, Some(true));
+            assert_eq!(snap.autopilot_nav, Some(true));
+            assert_eq!(snap.autopilot_approach, Some(true), "LOC = Anflug");
+            assert_eq!(s(BBS_LTU, &[]).autopilot_master, Some(false));
+            assert_eq!(s(BBS_LTU, &[("AUTOPILOT MASTER", 1.0)]).autopilot_master, Some(true));
+        }
+
+        #[test]
+        fn s4_141_fenix_lichter_und_strobe_zustand() {
+            let l = |nl: f64| {
+                let snap = s(FENIX, &[("L:S_OH_EXT_LT_NAV_LOGO", nl), ("L:S_OH_EXT_LT_BEACON", 1.0)]);
+                (snap.light_nav, snap.light_logo, snap.light_beacon)
+            };
+            assert_eq!(l(0.0), (Some(false), Some(false), Some(true)));
+            assert_eq!(l(1.0), (Some(true), Some(false), Some(true)));
+            assert_eq!(l(2.0), (Some(true), Some(true), Some(true)));
+            // AUTO und ON getrennt, beide als Strobe an.
+            let auto = s(FENIX, &[("L:S_OH_EXT_LT_STROBE", 1.0)]);
+            let on = s(FENIX, &[("L:S_OH_EXT_LT_STROBE", 2.0)]);
+            assert_eq!((auto.light_strobe, auto.strobe_state), (Some(true), Some(1)));
+            assert_eq!((on.light_strobe, on.strobe_state), (Some(true), Some(2)));
+        }
+
+        #[test]
+        fn s4_142_lichter_fss_bluebird_a220() {
+            // FSS: Logo ohne LVar → Standard.
+            let fss = s(FSS_E190, &[("LIGHT LOGO", 1.0), ("LIGHT BEACON", 1.0)]);
+            assert_eq!(fss.light_logo, Some(true));
+            assert_eq!(fss.light_beacon, Some(false), "Overhead-LVar entscheidet");
+            // BlueBird: LVar ODER Standard; die alte NAV-LVar ist nicht der Beacon.
+            assert!(!hat_feld("L:B757_OVHD_BEACON"));
+            assert_eq!(s(BBS_LTU, &[("LIGHT STROBE", 1.0)]).light_strobe, Some(true));
+            assert_eq!(s(BBS_LTU, &[("L:B757_OVHD_NAV_LIGHTS", 1.0)]).light_nav, Some(true));
+            // A220: Input-Event nur als ODER.
+            let b = [("AIRLINER_OVH_LTS_BEACON", 1.0)];
+            assert_eq!(mit_b(A220, &[("LIGHT BEACON", 0.0)], &b).light_beacon, Some(true));
+            assert_eq!(mit_b(A220, &[("LIGHT BEACON", 1.0)], &[("AIRLINER_OVH_LTS_BEACON", 0.0)]).light_beacon, Some(true));
+        }
+
+        #[test]
+        fn s4_143_strobe_zustand_je_muster() {
+            assert_eq!(s(FSL, &[("L:VC_OVHD_EXTLT_Strobe_Switch", 15.0)]).strobe_state, None);
+            // A350: Event vor LVar, light_strobe bleibt Standard.
+            let a350 = mit_b(A350, &[("L:INI_LIGHTS_STROBE", 2.0), ("LIGHT STROBE", 0.0)], &[("AIRLINER_LIGHTS_EXT_STROBE", 1.0)]);
+            assert_eq!(a350.strobe_state, Some(1));
+            assert_eq!(a350.light_strobe, Some(false));
+            assert_eq!(
+                a350.cockpit_rohwerte.unwrap().werte.get("L:INI_LIGHTS_STROBE"),
+                Some(&2.0)
+            );
+            // A380: nur das Event.
+            assert_eq!(mit_b(A380, &[], &[("AIRLINER_LIGHTS_EXT_STROBE", 0.0)]).strobe_state, Some(2));
+            assert_eq!(mit_b(A380, &[("L:INI_LIGHTS_STROBE", 0.0)], &[]).strobe_state, None);
+            // Ohne eigene Quelle kein Zustand.
+            assert_eq!(s(ASOBO, &[("LIGHT STROBE", 1.0)]).strobe_state, None);
+        }
+
+        #[test]
+        fn s4_149_apu_quellen_ersetzen_statt_oder() {
+            let apu = |m: (&str, &str), w: &[(&str, f64)]| s(m, w).apu_switch;
+            // Ersetzen: Standard „an", Profil-Quelle „aus" → aus.
+            for (m, name) in [
+                (FENIX, "L:S_OH_ELEC_APU_MASTER"),
+                (BBS_LTU, "L:B757_OVHD_APU_SWITCH"),
+                (A220, "L:A22X APU Switch"),
+                (A350, "L:INI_APU_MASTER_SWITCH"),
+                (A330, "L:INI_APU_MASTER_SWITCH"),
+                (A346, "L:AB_VC_OVH_APU_MASTER_ON"),
+                (FSL, "L:VC_OVHD_APU_Master_Button_BOT"),
+                (FSS_E190, "L:FSS_EXX_OVHD_APU_MASTER"),
+                (A32NX, "L:A32NX_OVHD_APU_MASTER_SW_PB_IS_ON"),
+            ] {
+                assert_eq!(apu(m, &[("APU SWITCH", 1.0), (name, 0.0)]), Some(false), "{}", m.0);
+            }
+            // A380: Event vor LVar.
+            let a380 = mit_b(A380, &[("L:INI_APU_MASTER_SWITCH", 1.0)], &[("AIRLINER_APU_MASTER_SWITCH", 0.0)]);
+            assert_eq!(a380.apu_switch, Some(false));
+            // FA50: ODER, nicht ersetzen.
+            assert_eq!(mit_b(FA50, &[("APU SWITCH", 1.0)], &[("CP_COSIDE_SYS_APU_BUTTON_MASTER", 0.0)]).apu_switch, Some(true));
+            assert_eq!(mit_b(FA50, &[], &[("CP_COSIDE_SYS_APU_BUTTON_MASTER", 1.0)]).apu_switch, Some(true));
+            // Sonst Standard.
+            assert_eq!(apu(BARON, &[("APU SWITCH", 1.0)]), Some(true));
+        }
+
+        #[test]
+        fn s4_150_pitot_auto_nur_mit_laufendem_triebwerk() {
+            for (m, name) in [(FENIX, "L:S_OH_PROBE_HEAT"), (A346, "L:AB_OVH_ANTIICE_PROBEWINDOW")] {
+                let p = |stellung: f64, laeuft: f64| {
+                    s(m, &[(name, stellung), ("GENERAL ENG COMBUSTION:1", laeuft), ("PITOT HEAT", 1.0)]).pitot_heat
+                };
+                assert_eq!(p(0.0, 0.0), Some(false), "{} AUTO kalt", m.0);
+                assert_eq!(p(0.0, 1.0), Some(true), "{} AUTO laeuft", m.0);
+                assert_eq!(p(1.0, 0.0), Some(true), "{} ON", m.0);
+            }
+        }
+
+        #[test]
+        fn s4_151_fenix_batterie_eine_genuegt() {
+            let b = |b1: f64, b2: f64| {
+                s(FENIX, &[("L:S_OH_ELEC_BAT1", b1), ("L:S_OH_ELEC_BAT2", b2), ("ELECTRICAL MASTER BATTERY:1", 1.0)])
+                    .battery_master
+            };
+            assert_eq!(b(0.0, 0.0), Some(false), "Standard ignoriert");
+            assert_eq!(b(0.0, 1.0), Some(true));
+            assert_eq!(b(1.0, 0.0), Some(true));
+        }
+
+        #[test]
+        fn s4_152_enteisung_je_muster() {
+            assert_eq!(s(FENIX, &[("L:S_OH_PNEUMATIC_ENG2_ANTI_ICE", 1.0)]).engine_anti_ice, Some(true));
+            assert_eq!(s(FSL, &[("L:VC_OVHD_AI_Eng_1_Anti_Ice_Button", 1.0)]).engine_anti_ice, Some(true));
+            assert_eq!(s(A346, &[("L:AB_OVH_ANTIICE_ENGR2", 1.0)]).engine_anti_ice, Some(true));
+            assert_eq!(s(BARON, &[("ENG ANTI ICE:4", 1.0)]).engine_anti_ice, Some(true));
+            assert_eq!(s(A346, &[("ENG ANTI ICE:1", 1.0)]).engine_anti_ice, Some(false), "Schalter ersetzen");
+            assert_eq!(s(FENIX, &[("L:S_OH_PNEUMATIC_WING_ANTI_ICE", 1.0)]).wing_anti_ice, Some(true));
+            assert_eq!(s(A346, &[("L:AB_OVH_ANTIICE_WING", 1.0)]).wing_anti_ice, Some(true));
+            // A220: AUTO zaehlt, 0 faellt auf den Standard zurueck.
+            assert_eq!(s(A220, &[("L:A22X Wing Anti Ice", 1.0)]).wing_anti_ice, Some(true));
+            assert_eq!(s(A220, &[("L:A22X Wing Anti Ice", 0.0), ("STRUCTURAL DEICE SWITCH", 1.0)]).wing_anti_ice, Some(true));
+            assert_eq!(s(A220, &[("L:A22X Wing Anti Ice", 0.0)]).wing_anti_ice, Some(false));
+        }
+
+        #[test]
+        fn s4_153_schilder_auf_snapshot_konvention() {
+            assert_eq!(s(FENIX, &[("L:S_OH_SIGNS", 1.0)]).seatbelts_sign, Some(2), "binaer, nicht AUTO");
+            assert_eq!(s(FENIX, &[("L:S_OH_SIGNS", 0.0)]).seatbelts_sign, Some(0));
+            for roh in [0.0, 1.0, 2.0] {
+                assert_eq!(s(FENIX, &[("L:S_OH_SIGNS_SMOKING", roh)]).no_smoking_sign, Some(roh as u8));
+            }
+            assert_eq!(s(FENIX, &[("L:S_OH_SIGNS_SMOKING", 4.0)]).no_smoking_sign, Some(2));
+            assert_eq!(s(A220, &[("L:A22X Seat Belt Lights", 3.0)]).seatbelts_sign, Some(2));
+            assert_eq!(s(BBS_LTU, &[("L:B757_OVHD_SEATBELTS_SWITCH", 1.0)]).seatbelts_sign, Some(1));
+        }
+
+        #[test]
+        fn s4_154_ini_gurte_event_vor_lvar_a330_zweistufig() {
+            for m in [A350, A380] {
+                let snap = mit_b(m, &[("L:INI_SEATBELTS_SWITCH", 2.0)], &[("AIRLINER_SIGNS_SEAT_BELTS", 0.0)]);
+                assert_eq!(snap.seatbelts_sign, Some(2), "{} Event gewinnt", m.0);
+                let lvar = mit_b(m, &[("L:INI_SEATBELTS_SWITCH", 1.0)], &[]);
+                assert_eq!(lvar.seatbelts_sign, Some(1), "{} LVar Rueckfall", m.0);
+            }
+            assert_eq!(s(A330, &[("L:INI_SEATBELTS_SWITCH", 0.0)]).seatbelts_sign, Some(0));
+            assert_eq!(s(A330, &[("L:INI_SEATBELTS_SWITCH", 1.0)]).seatbelts_sign, Some(2));
+            assert_eq!(s(A330, &[("L:INI_SEATBELTS_SWITCH", 2.0)]).seatbelts_sign, None);
+        }
+
+        #[test]
+        fn s4_155_gurte_je_muster() {
+            assert_eq!(s(IFLY, &[("L:VC_Fasten_Belts_SW_VAL", 15.0)]).seatbelts_sign, None);
+            assert_eq!(s(MD11, &[("L:MD11_OVHD_LTS_SEAT_BELTS_SW", 1.5)]).seatbelts_sign, None);
+            assert_eq!(s(PHENOM, &[("L:FSR_300E_PAX_SWITCH_SETTING", 2.0)]).seatbelts_sign, Some(2));
+            let p737 = runde3(PMDG737.0, PMDG737.1, Some(PFAD_738), &[("L:switch_104_73X", 150.0)]);
+            assert_eq!(p737.seatbelts_sign, None, "Raster 50, hoechstens ON");
+            assert_eq!(s(FSS_E190, &[("L:FSS_EXX_OVHD_PSGR_FSTN_BELT_SWITCH", 2.0)]).seatbelts_sign, Some(2));
+            assert_eq!(mit_b(FA50, &[], &[("OVHD_INT_LT_BELTS", 1.0)]).seatbelts_sign, Some(2));
+            assert_eq!(mit_b(FA50, &[], &[("OVHD_INT_LT_BELTS", 0.0)]).seatbelts_sign, Some(0));
+            assert_eq!(mit_b(FA50, &[(STD_GURT, 1.0)], &[]).seatbelts_sign, None);
+        }
+
+        #[test]
+        fn s4_156_standard_gurt_zwei_stufen_und_fehlend_none() {
+            assert_eq!(s(ASOBO, &[(STD_GURT, 1.0)]).seatbelts_sign, Some(2));
+            assert_eq!(s(ASOBO, &[(STD_GURT, 0.0)]).seatbelts_sign, Some(0));
+            for m in [FSL, FENIX, IFLY, A350, A220] {
+                // Bedient die SimVar nicht: ein AN dort darf nicht durchschlagen.
+                let snap = s(m, &[(STD_GURT, 1.0), ("L:INI_SEATBELTS_SWITCH", 2.0)]);
+                assert_ne!(snap.seatbelts_sign, Some(2), "{}", m.0);
+            }
+            let mut t = Telemetry::default();
+            t.title = ASOBO.0.into();
+            t.atc_model = ASOBO.1.into();
+            t.std_cabin_seatbelts_alert = None;
+            assert_eq!(telemetry_to_snapshot(t, Simulator::Msfs2024).seatbelts_sign, None);
+        }
+
+        #[test]
+        fn s4_158_autobrake_fenix_a346_fbw_bluebird() {
+            let fx = |lo: f64, med: f64, max: f64| {
+                s(FENIX, &[("L:I_MIP_AUTOBRAKE_LO_L", lo), ("L:I_MIP_AUTOBRAKE_MED_L", med), ("L:I_MIP_AUTOBRAKE_MAX_L", max)])
+                    .autobrake
+            };
+            assert_eq!(fx(1.0, 1.0, 1.0).as_deref(), Some("MAX"));
+            assert_eq!(fx(1.0, 1.0, 0.0).as_deref(), Some("MED"));
+            assert_eq!(fx(1.0, 0.0, 0.0).as_deref(), Some("LO"));
+            assert_eq!(fx(0.0, 0.0, 0.0).as_deref(), Some("OFF"));
+            assert_eq!(s(A32NX, &[("L:A32NX_AUTOBRAKES_ARMED_MODE", 4.0)]).autobrake, None);
+            assert_eq!(s(FBW_A380X, &[("L:A32NX_AUTOBRAKES_ARMED_MODE", 0.0)]).autobrake.as_deref(), Some("DISARM"));
+            assert_eq!(s(BBS_LTU, &[("L:BBS_AUTOBRAKE_KNOB", 7.0)]).autobrake.as_deref(), Some("MAX"));
+        }
+
+        #[test]
+        fn s4_159_autobrake_a350_a330_a340() {
+            let a350 = |lvar: f64, b: &[(&str, f64)]| mit_b(A350, &[("L:INI_AUTOBRAKE_ARMED", lvar)], b).autobrake;
+            assert_eq!(a350(0.0, &[("AIRLINER_LDG_AUTO_BRK", 1.0)]).as_deref(), Some("ARMED"));
+            assert_eq!(a350(1.0, &[("AIRLINER_LDG_AUTO_BRK", 0.0)]).as_deref(), Some("OFF"), "Event gewinnt");
+            assert_eq!(a350(1.0, &[]).as_deref(), Some("ARMED"));
+            let a330 = mit_b(A330, &[], &[("AIRLINER_AUTOBRK_LO", 1.0)]);
+            assert_eq!(a330.autobrake, None, "Kippzustaende, kein Ratewert");
+            assert_eq!(s(A340, &[("L:INI_AUTOBRAKE_LEVEL", 2.0)]).autobrake.as_deref(), Some("#2"));
+        }
+
+        #[test]
+        fn s4_160_autobrake_md11_ifly_fsl_a220_fss_pmdg() {
+            for (roh, want) in [(0.0, "RTO"), (10.0, "OFF"), (20.0, "1"), (30.0, "2"), (40.0, "3"), (50.0, "MAX")] {
+                assert_eq!(s(IFLY, &[("L:VC_Autobrake_SW_VAL", roh)]).autobrake.as_deref(), Some(want));
+            }
+            // FSL: Zustand != 0, nicht > 50; keine Taste → None.
+            assert_eq!(s(FSL, &[("L:VC_MIP_BRAKES_AUTOBRK_MED_Button_BOT", 1.0)]).autobrake.as_deref(), Some("MED"));
+            assert_eq!(
+                s(FSL, &[("L:VC_MIP_BRAKES_AUTOBRK_LO_Button_BOT", 1.0), ("L:VC_MIP_BRAKES_AUTOBRK_MAX_Button_BOT", 1.0)])
+                    .autobrake
+                    .as_deref(),
+                Some("LO")
+            );
+            assert_eq!(s(FSL, &[]).autobrake, None);
+            assert_eq!(s(MD11, &[("L:MD11_CTR_AUTOBRAKE_SW", 4.0)]).autobrake.as_deref(), Some("MAX"));
+            let p737 = |roh: f64| runde3(PMDG737.0, PMDG737.1, Some(PFAD_738), &[("L:switch_460_73X", roh)]).autobrake;
+            assert_eq!(p737(10.0).as_deref(), Some("OFF"));
+            assert_eq!(p737(60.0), None, "hoechstens Raste 5");
+        }
+
+        #[test]
+        fn s4_162_fahrwerk_nur_a346_aus_dem_hebel() {
+            for m in [ASOBO, FENIX, A350] {
+                let snap = s(m, &[("GEAR POSITION", 0.5), ("L:AB_MPL_LANDING_GEAR_SELECTOR_LEVER", 1.0)]);
+                assert_eq!(snap.gear_position, 0.5, "{}", m.0);
+            }
+        }
+
+        #[test]
+        fn s4_163_a220_klappenhebel_beobachtete_skala() {
+            let k = |roh: f64| s(A220, &[("L:A22X Flap Lever", roh)]).flaps_position;
+            assert!((k(0.6) - 0.6).abs() < 1e-6, "schon normalisiert");
+            assert!((k(3.0) - 0.6).abs() < 1e-6, "Doku-Skala 0-5");
+            assert_eq!(k(1.0), 1.0, "exakt 1.0 = beobachtete Skala FULL");
+            assert_eq!(k(6.0), 1.0, "geklemmt");
+        }
+
+        #[test]
+        fn s4_166_athr_nur_mit_belegter_quelle() {
+            assert_eq!(s(A346, &[("L:AB_AP_ATHR_LIGHT_ON", 1.0)]).autothrottle_on, Some(true));
+            assert_eq!(s(A350, &[("L:INI_ATHR_LIGHT", 0.0)]).autothrottle_on, Some(false));
+            assert_eq!(s(FENIX, &[("L:S_FCU_ATHR", 1.0)]).autothrottle_on, Some(false));
+            for m in [ASOBO, BARON, A380, A330, FSS_E190] {
+                assert_eq!(s(m, &[("L:INI_ATHR_LIGHT", 1.0)]).autothrottle_on, None, "{}", m.0);
+            }
+        }
+
+        #[test]
+        fn s4_167_fbw_athr_nur_aktiv_ist_an() {
+            let a = |v: f64| s(A32NX, &[("L:A32NX_AUTOTHRUST_STATUS", v)]).autothrottle_on;
+            assert_eq!(a(0.0), None, "kein Phantom-OFF");
+            assert_eq!(a(1.0), Some(false));
+            assert_eq!(a(2.0), Some(true));
+        }
+
+        #[test]
+        fn s4_168_athr_md11_ifly_fsl_fa50_a220() {
+            assert_eq!(s(MD11, &[("L:MD11_ATS_STATE", 0.4)]).autothrottle_on, Some(false));
+            assert_eq!(s(IFLY, &[("L:VC_AT_ARM_LIGHT_VAL", 1.0)]).autothrottle_on, Some(true));
+            assert_eq!(s(FSL, &[("L:VC_GSLD_FCU_ATHR_Brt_Lt", 9.0)]).autothrottle_on, Some(false));
+            assert_eq!(s(FSL, &[("L:VC_GSLD_FCU_ATHR_Brt_Lt", 60.0)]).autothrottle_on, Some(true));
+            assert_eq!(s(FA50, &[("L:CTL_FA50_AUTOTHROTTLE_ACTIVE", 1.0)]).autothrottle_on, Some(true));
+            assert_eq!(s(FA50, &[]).autothrottle_on, Some(false));
+            assert_eq!(s(A220, &[("L:A22X AT Master", 1.0)]).autothrottle_on, Some(true));
+        }
+
+        #[test]
+        fn s4_169_fma_quellen_je_profil() {
+            assert_eq!(s(A32NX, &[("L:A32NX_FMA_LATERAL_MODE", 20.0)]).fma_lateral_mode.as_deref(), Some("NAV"));
+            assert_eq!(s(A340, &[("L:INI_PITCH_MODE_ACTIVE", 3.0)]).fma_vertical_mode.as_deref(), Some("#3"));
+            let fa50 = s(FA50, &[("L:EFIS_C86C_FMA_SLOT_LAT_ACTIVE", 4.0), ("L:EFIS_C86C_FMA_SLOT_LAT_ARMED", 3.0)]);
+            assert_eq!(fa50.fma_lateral_mode.as_deref(), Some("HDG (arm LOC)"));
+            assert_eq!(s(A220, &[("L:A22X FG Altitude", 1.0)]).fma_vertical_mode.as_deref(), Some("ALT"));
+            // Schub-Label nur FBW/INI.
+            assert_eq!(s(A32NX, &[("L:A32NX_AUTOTHRUST_MODE", 7.0)]).fma_thrust_mode.as_deref(), Some("SPEED"));
+            assert_eq!(s(A350, &[("L:INI_THROTTLE_MODE_ACTIVE", 2.0)]).fma_thrust_mode.as_deref(), Some("#2"));
+            for m in [FA50, A220, FENIX] {
+                let snap = s(m, &[("L:A32NX_AUTOTHRUST_MODE", 7.0), ("L:INI_THROTTLE_MODE_ACTIVE", 2.0)]);
+                assert_eq!(snap.fma_thrust_mode, None, "{}", m.0);
+            }
+        }
+
+        #[test]
+        fn s4_171_v_speed_quellen() {
+            assert_eq!(s(MD11, &[("L:MD11_V1", 150.0)]).v1_kt, Some(150.0));
+            assert_eq!(s(A32NX, &[("L:INI_V1", 150.0), ("L:N_MISC_PERF_TO_V1", 150.0)]).v1_kt, None, "FBW kein V1");
+            assert_eq!(s(A220, &[("L:FMS_VR_PERF", 130.0)]).vr_kt, Some(130.0));
+            assert_eq!(s(MD11, &[("L:MD11_V2", 160.0)]).v2_kt, Some(160.0));
+            assert_eq!(s(A220, &[("L:A32NX_SPEEDS_VLS", 120.0), ("L:INI_VLS_SPEED", 120.0)]).vls_kt, None);
+            assert_eq!(s(A220, &[("L:FMS_FLEX_PERF", 45.0)]).flex_temp_c, Some(45.0));
+            let fx = s(FENIX, &[("L:N_MISC_PERF_TO_FLEX", 50.0), ("L:INI_LEVER_IN_FLEX_MCT", 1.0)]);
+            assert_eq!(fx.flex_temp_c, Some(50.0));
+            assert_eq!(fx.thrust_gate, None, "Gate nur INI");
+        }
+
+        #[test]
+        fn s4_174_master_caution_warning_quellen() {
+            assert_eq!(s(FENIX, &[("L:I_MIP_MASTER_CAUTION_CAPT", 1.0)]).master_caution, Some(true));
+            assert_eq!(s(A350, &[("L:INI_MASTER_WARNING_CAPT_TOP", 1.0)]).master_warning, Some(true));
+            assert_eq!(s(A346, &[("L:AB_MPL_Master_Caution_Light", 1.0)]).master_caution, Some(true));
+            assert_eq!(s(FSL, &[("L:VC_GSLD_CP_Warning_Button_BOT", 1.0)]).master_warning, Some(true));
+            let fa50 = s(FA50, &[("L:CTL_FA50_LIGHT_WARN_FIRE_ENG3", 1.0)]);
+            assert_eq!(fa50.master_warning, Some(true), "drittes Triebwerk");
+            assert_eq!(fa50.master_caution, None);
+            assert_eq!(s(A220, &[("L:A22X Warning PBA", 1.0)]).master_warning, Some(true));
+            assert_eq!(s(ASOBO, &[("L:I_MIP_MASTER_CAUTION_CAPT", 1.0)]).master_caution, None);
+        }
+
+        #[test]
+        fn s4_175_managed_punkte() {
+            assert_eq!(s(FENIX, &[("L:I_FCU_SPEED_MANAGED", 1.0)]).managed_speed, Some(true));
+            assert_eq!(s(A32NX, &[("L:A32NX_FCU_HDG_MANAGED_DOT", 1.0)]).managed_heading, Some(true));
+            assert_eq!(s(A346, &[("L:TLS_FCU_SPD_MANAGED", 1.0)]).managed_speed, Some(true));
+            assert_eq!(s(FSL, &[("L:FSL_FCU_ALT_MANAGED", 1.0)]).managed_altitude, Some(true));
+            assert_eq!(s(A346, &[("L:TLS_FCU_VS_MANAGED", 0.0)]).managed_altitude, Some(false));
+            for m in [ASOBO, A350, IFLY] {
+                assert_eq!(s(m, &[("L:I_FCU_SPEED_MANAGED", 1.0)]).managed_speed, None, "{}", m.0);
+            }
+        }
+
+        #[test]
+        fn s4_176_umkehrschub_schwellen() {
+            assert_eq!(s(A346, &[("L:TLS_ENG4_REVERSER_RATIO", 0.051)]).reverser_deployed, Some(true));
+            assert_eq!(s(IFLY, &[("L:Animation_Engine_1_Reverser_VAL", 0.1)]).reverser_deployed, Some(false));
+            assert_eq!(s(IFLY, &[("L:Animation_Engine_1_Reverser_VAL", 0.11)]).reverser_deployed, Some(true));
+            assert_eq!(s(A220, &[("L:A22X Engine 2 Reverser", 0.11)]).reverser_deployed, Some(true));
+            let p737 = runde3(PMDG737.0, PMDG737.1, Some(PFAD_738), &[("L:Animation_Engine_1_Reverser_VAL", 1.0)]);
+            assert_eq!(p737.reverser_deployed, None, "PMDG ueber den SDK-Merge");
+        }
+
+        #[test]
+        fn s4_177_warnfelder_nie_some_false() {
+            let ruhig = s(A220, &[]);
+            assert_eq!(ruhig.takeoff_config_warning, None);
+            assert_eq!(ruhig.below_gs_alert, None);
+            let ruf = s(A220, &[("L:A22X Aural Config Trim", 1.0), ("L:A22X Aural Glideslope", 1.0)]);
+            assert_eq!(ruf.takeoff_config_warning, Some(true));
+            assert_eq!(ruf.below_gs_alert, Some(true));
+            // Andere Muster: die A220-Aurals wirken nicht.
+            assert_eq!(s(ASOBO, &[("L:A22X Aural Config Trim", 1.0)]).takeoff_config_warning, None);
+        }
+
+        #[test]
+        fn s4_178_bodenstoerklappen() {
+            assert_eq!(s(A32NX, &[("L:A32NX_SPOILERS_GROUND_SPOILERS_ACTIVE", 1.0)]).ground_spoilers_active, Some(true));
+            assert_eq!(s(A350, &[("L:INI_SPOILERS_GROUND_SPOILERS_ACTIVE", 1.0)]).ground_spoilers_active, Some(true));
+            let ifly = |boden: f64| {
+                s(IFLY, &[("SIM ON GROUND", boden), ("L:VC_FLTCTRL_LIGHT_SPEEDBRAKES_EXTENDED_LIGHT_VAL", 1.0)])
+                    .ground_spoilers_active
+            };
+            assert_eq!(ifly(1.0), Some(true));
+            assert_eq!(ifly(0.0), Some(false), "in der Luft Flight-Spoiler");
+            assert_eq!(s(A346, &[("L:TLS_SPD_BRK_LEVER_POS", 1.0)]).ground_spoilers_active, None);
+        }
+
+        #[test]
+        fn s4_181_spoiler_armed_standard_oder_profil() {
+            assert_eq!(s(A32NX, &[("L:A32NX_SPOILERS_ARMED", 1.0)]).spoilers_armed, Some(true));
+            assert_eq!(s(A32NX, &[("SPOILERS ARMED", 1.0)]).spoilers_armed, Some(true));
+            assert_eq!(s(A346, &[("L:TLS_SPOILER_LEVER_ARMED", 1.0)]).spoilers_armed, Some(true));
+            assert_eq!(s(FENIX, &[("L:A_FC_SPEEDBRAKE", 0.0)]).spoilers_armed, Some(true), "0 = ARMED");
+            assert_eq!(s(FENIX, &[("L:A_FC_SPEEDBRAKE", 1.0)]).spoilers_armed, Some(false), "1 = RET");
+            assert_eq!(s(A330, &[("L:INI_SPOILERS_ARMED", 1.0)]).spoilers_armed, Some(true));
+            assert_eq!(s(A380, &[("L:INI_SPOILERS_ARMED", 1.0)]).spoilers_armed, Some(true));
+            let p777 = |roh: f64| runde3(PMDG777.0, PMDG777.1, Some(PFAD_77W), &[("L:switch_498_a", roh)]).spoilers_armed;
+            assert_eq!(p777(204.0), Some(true));
+            assert_eq!(p777(206.0), Some(false));
+            assert_eq!(s(IFLY, &[("L:VC_Spoiler_Lever_VAL", 30.0)]).spoilers_armed, Some(true));
+            assert_eq!(s(IFLY, &[("L:VC_Spoiler_Lever_VAL", 41.0)]).spoilers_armed, Some(false));
+            for m in [A220, PHENOM, FSS_E190] {
+                assert_eq!(s(m, &[("SPOILERS ARMED", 1.0)]).spoilers_armed, None, "{}", m.0);
+            }
+        }
+
+        #[test]
+        fn s4_182_transponder_quellen() {
+            for (roh, want) in [(0.0, "STBY"), (1.0, "ALT-OFF"), (2.0, "XPNDR"), (3.0, "TA"), (4.0, "TA-RA")] {
+                assert_eq!(s(BBS_LTU, &[("L:B757_PED_TCAS_MODE_KNOB", roh)]).xpdr_mode_label.as_deref(), Some(want));
+            }
+            // A330 TCAS 2 = TA-RA (A350: 2 = TA/RA, 3 = TA).
+            let a330 = s(A330, &[("L:INI_TCAS_STBY_STATE", 1.0), ("L:INI_tcas_mode_pedestal", 1.0)]);
+            assert_eq!(a330.xpdr_mode_label.as_deref(), Some("TA"));
+            assert_eq!(s(IFLY, &[("L:VC_Transponder_Mode_SW_VAL", 15.0)]).xpdr_mode_label, None);
+            let p737 = runde3(PMDG737.0, PMDG737.1, Some(PFAD_738), &[("L:switch_800_73X", 15.0)]);
+            assert_eq!(p737.xpdr_mode_label, None, "zwischen den Rasten");
+        }
+
+        #[test]
+        fn s4_183_a350_tcas_null_ueber_transponder_state() {
+            let mit = |state: f64| {
+                s(A350, &[("L:INI_tcas_mode_pedestal", 0.0), ("TRANSPONDER STATE:1", state)]).xpdr_mode_label
+            };
+            assert_eq!(mit(1.0).as_deref(), Some("STBY"));
+            assert_eq!(mit(5.0).as_deref(), Some("ALT"));
+            // Ohne Standard-Wert keine Aussage.
+            let ohne = parse_mit_eingaben(
+                &runde2_puffer(A350.0, A350.1, &[("L:INI_tcas_mode_pedestal", 0.0)]),
+                Simulator::Msfs2024,
+                None,
+                &std::collections::BTreeMap::new(),
+                &OptionaleWerte::default(),
+                &[],
+                &mut StandardAnschnallSperre::offen(),
+            );
+            assert_eq!(ohne.xpdr_mode_label, None);
+        }
+
+        #[test]
+        fn s4_184_fa50_und_a32nx_transponder_gemessen() {
+            let fa50 = |state: f64, knopf: Option<f64>| {
+                let b: Vec<(&str, f64)> = knopf.map(|k| ("PDSTL_KNOB_MODE_SELECTOR", k)).into_iter().collect();
+                mit_b(FA50, &[("TRANSPONDER STATE:1", state)], &b).xpdr_mode_label
+            };
+            assert_eq!(fa50(0.0, None).as_deref(), Some("OFF"));
+            assert_eq!(fa50(1.0, Some(1.0)).as_deref(), Some("STBY"));
+            assert_eq!(fa50(4.0, Some(1.0)).as_deref(), Some("TA-RA"));
+            assert_eq!(fa50(4.0, Some(2.0)).as_deref(), Some("TA"));
+            assert_eq!(fa50(4.0, Some(3.0)).as_deref(), Some("ALT"));
+            let a32nx = |state: f64| s(A32NX, &[("TRANSPONDER STATE:1", state)]).xpdr_mode_label;
+            assert_eq!(a32nx(1.0).as_deref(), Some("STBY"));
+            assert_eq!(a32nx(5.0).as_deref(), Some("GND"));
+        }
+
+        #[test]
+        fn s4_185_standard_state_3_heisst_on_nur_ohne_eigenes_label() {
+            assert_eq!(s(FSS_E190, &[("TRANSPONDER STATE:1", 3.0)]).xpdr_mode_label.as_deref(), Some("ON"));
+            // Eigenes Label hat Vorrang vor dem Standard.
+            let a330 = s(A330, &[("L:INI_TCAS_STBY_STATE", 2.0), ("L:INI_tcas_mode_pedestal", 2.0), ("TRANSPONDER STATE:1", 3.0)]);
+            assert_eq!(a330.xpdr_mode_label.as_deref(), Some("TA-RA"));
+            // Nicht bedient (iFly): kein Rueckfall.
+            assert_eq!(s(IFLY, &[("L:VC_Transponder_Mode_SW_VAL", 15.0), ("TRANSPONDER STATE:1", 3.0)]).xpdr_mode_label, None);
+        }
+
+        #[test]
+        fn s4_186_baro_std_nur_fenix_und_fsl() {
+            assert_eq!(s(FENIX, &[("L:S_FCU_EFIS1_BARO_STD", 1.0)]).baro_std, Some(true));
+            assert_eq!(s(FENIX, &[]).baro_std, Some(false));
+            assert_eq!(s(FSL, &[("L:FSL_EFIS_CPT_BARO_STD", 1.0)]).baro_std, Some(true));
+            assert_eq!(s(A350, &[("L:S_FCU_EFIS1_BARO_STD", 1.0)]).baro_std, None);
+        }
+
+        #[test]
+        fn s4_188_rohwerte_nur_zur_gegenprobe() {
+            let a350 = s(A350, &[("L:INI_AUTOBRAKE_LEVEL", 4.0), ("L:INI_AUTOBRAKE_ENGAGED", 1.0)]);
+            let roh = a350.cockpit_rohwerte.unwrap().werte;
+            for k in ["L:INI_AUTOBRAKE_LEVEL", "L:INI_AUTOBRAKE_ENGAGED", "L:INI_AUTOBRAKE_DISCONNECTED", "AUTO BRAKE SWITCH CB"] {
+                assert!(roh.contains_key(k), "{k}");
+            }
+            let a380 = s(A380, &[("L:INI_AUTOBRAKE_ARMED", 1.0)]).cockpit_rohwerte.unwrap().werte;
+            assert_eq!(a380.get("L:INI_AUTOBRAKE_ARMED"), Some(&1.0));
+            // Fremde Input-Events nicht, Positivliste mit Praefix B:.
+            let erlaubt = crate::eingabe_events::POSITIVLISTE[0];
+            let mit = mit_b(ASOBO, &[], &[(erlaubt, 1.0), ("NICHT_IN_DER_LISTE", 1.0)]);
+            let w = mit.cockpit_rohwerte.unwrap().werte;
+            assert!(w.contains_key(&format!("B:{erlaubt}")));
+            assert!(!w.keys().any(|k| k.contains("NICHT_IN_DER_LISTE")));
+            // Der aircraft.cfg-Pfad laeuft mit.
+            let p = runde3(ASOBO.0, ASOBO.1, Some(PFAD_738), &[]);
+            assert_eq!(p.cockpit_rohwerte.unwrap().cfg_pfad.as_deref(), Some(PFAD_738));
+        }
+
+        #[test]
+        fn s4_191_geschwindigkeit_negativ_auf_null() {
+            let snap = s(FENIX, &[("AIRSPEED INDICATED", -3.0), ("AIRSPEED TRUE", -2.0)]);
+            assert_eq!(snap.indicated_airspeed_kt, 0.0);
+            assert_eq!(snap.true_airspeed_kt, 0.0);
+            let snap = s(FENIX, &[("AIRSPEED INDICATED", 140.0), ("AIRSPEED TRUE", 150.0)]);
+            assert_eq!(snap.indicated_airspeed_kt, 140.0);
+            assert_eq!(snap.true_airspeed_kt, 150.0);
+        }
+
+        #[test]
+        fn s4_197_funk_roh_auch_beim_fenix() {
+            let snap = s(FENIX, &[("COM ACTIVE FREQUENCY:1", 122.8), ("NAV ACTIVE FREQUENCY:2", 110.3)]);
+            assert!((snap.com1_mhz.unwrap() - 122.8).abs() < 1e-4);
+            assert!((snap.nav2_mhz.unwrap() - 110.3).abs() < 1e-4);
+            assert_eq!(s(FENIX, &[("COM ACTIVE FREQUENCY:1", 0.0)]).com1_mhz, None);
+        }
+
+        #[test]
+        fn s4_199_athr_als_arm_nur_beim_ifly() {
+            assert!(s(IFLY, &[]).autothrottle_is_arm);
+            for m in [FENIX, FSL, MD11, A220, ASOBO] {
+                assert!(!s(m, &[]).autothrottle_is_arm, "{}", m.0);
+            }
+        }
+
+        #[test]
+        fn s4_201_phenom_ohne_apu() {
+            let ph = s(PHENOM, &[("APU SWITCH", 1.0), ("APU PCT RPM", 100.0)]);
+            assert_eq!(ph.apu_switch, None);
+            assert_eq!(ph.apu_pct_rpm, None);
+            let std = s(BARON, &[("APU SWITCH", 1.0), ("APU PCT RPM", 100.0)]);
+            assert_eq!(std.apu_switch, Some(true));
+            assert_eq!(std.apu_pct_rpm, Some(100.0));
+        }
     }
 }
 
