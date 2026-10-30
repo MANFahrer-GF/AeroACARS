@@ -5081,7 +5081,7 @@
       "hilfe_bild_typ": "Un'immagine non è PNG, JPEG o WebP.",
       "ticket_bild_ungueltig": "L'HelpDesk ha rifiutato un'immagine; il ticket non è stato creato. Invia di nuovo senza l'immagine.",
       "ticket_zu_gross": "La richiesta è troppo grande per german-sky-group.eu. Allega meno immagini o immagini più piccole.",
-      "hilfe_zusatz": "Un campo aggiuntivo non è valido (troppo lungo o caratteri non ammessi).",
+      "hilfe_zusatz": "Un campo aggiuntivo non è valido (nome non ammesso, troppi campi, troppo lungo o caratteri non ammessi).",
       "ticket_zusatz_ungueltig": "L'HelpDesk ha rifiutato un campo aggiuntivo. Controlla il dato inserito."
     },
     "kuerzel": "Richiedi assistenza (F1)",

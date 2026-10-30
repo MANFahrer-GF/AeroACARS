@@ -3,7 +3,7 @@
  "notiz": [
   "Adressen der Gegenstellen (P-3.60). Der Host jedes Feldes ist im Crate paket-endpunkte fest gebunden (HOSTS); nur der Pfad darf sich aendern, ein anderer Host braucht ein Release.",
   "Form: https://<host>[/pfad], ohne Port, Zugangsdaten, Abfrage oder abschliessenden Schraegstrich.",
-  "helpdesk_pfad: nur der Pfad der Ticket-Schnittstelle des GSG-HelpDesk (Hilfe anfordern); der Host german-sky-group.eu ist im Programm fest. Beginnt mit /api/, nur A-Z a-z 0-9 / _ . -, kein .. und kein //, hoechstens 120 Zeichen. Fehlt das Feld, gilt /api/helpdesk/tickets."
+  "helpdesk_pfad: nur der Pfad der Ticket-Schnittstelle des GSG-HelpDesk (Hilfe anfordern); der Host german-sky-group.eu ist im Programm fest. Beginnt mit /api/helpdesk/, kein .-Segment, nur A-Z a-z 0-9 / _ . -, kein .. und kein //, hoechstens 120 Zeichen. Fehlt das Feld, gilt /api/helpdesk/tickets."
  ],
  "live": "https://live.kant.ovh",
  "hoppie": "https://www.hoppie.nl/acars/system/connect.html",

@@ -59,8 +59,15 @@ const HOEHENGRUPPEN: &str = "tabellen/hoehengruppen.json";
 const KLAPPEN: &str = "tabellen/klappen.json";
 const KABINE: &str = "tabellen/kabine.json";
 const ENDPUNKTE: &str = "endpunkte.json";
-/// Zusatzfelder der Hilfe-Seite (P-9.22, `hilfe-formular-1`).
+/// Zusatzfelder der Hilfe-Seite (P-9.22, `hilfe-formular-1`). Als einzige
+/// Datei **optional**: Ein Paket von vor `hilfe-formular-1` gilt auf diesem
+/// Programm weiter (P-2.30), nur ohne Zusatzfelder.
 const HILFE_FORMULAR: &str = "tabellen/hilfe-formular.json";
+
+/// Fehlt diese Datei im Paket und darf sie fehlen?
+fn darf_fehlen(p: &Paket, pfad: &str) -> bool {
+    pfad == HILFE_FORMULAR && p.manifest.datei(pfad).is_none()
+}
 const MSFS_PROFILE: &str = "profile/msfs.json";
 const BEWERTUNG: &str = "module/bewertung.wasm";
 const KABINE_MODUL: &str = "module/kabine.wasm";
@@ -193,12 +200,20 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         kabine: cabin_announcements::lesen(text(KABINE)?)?,
         kabine_json: text(KABINE)?,
         endpunkte: paket_endpunkte::lesen(text(ENDPUNKTE)?)?,
-        hilfe_formular: crate::hilfe::hilfe_formular_lesen(text(HILFE_FORMULAR)?)?,
+        hilfe_formular: if darf_fehlen(p, HILFE_FORMULAR) {
+            crate::hilfe::HilfeFormular::default()
+        } else {
+            crate::hilfe::hilfe_formular_lesen(text(HILFE_FORMULAR)?)?
+        },
         msfs_profile: sim_core::msfs_paketprofil::lesen(text(MSFS_PROFILE)?)?,
         bewertung: Box::leak(p.datei(BEWERTUNG).map_err(|e| e.to_string())?.into_boxed_slice()),
         kabine_modul: Box::leak(p.datei(KABINE_MODUL).map_err(|e| e.to_string())?.into_boxed_slice()),
         vref: landing_scoring::vref::lesen(text(VREF)?)?,
-        ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
+        ui: UI_DATEIEN
+            .iter()
+            .filter(|&&d| !darf_fehlen(p, d))
+            .map(|&d| Ok((d, text(d)?)))
+            .collect::<Result<_, String>>()?,
         ourairports_commit: p.manifest.quelle.ourairports_commit.clone(),
     })
 }
@@ -343,8 +358,14 @@ fn eingebaut() -> Eingebaut {
 /// Wie [`eingebaut`], einzelne Dateien ersetzt (Tests: ein Paket, das sich
 /// nur in diesen Dateien unterscheidet).
 fn eingebaut_mit(ersetzt: &[(&str, &[u8])]) -> Eingebaut {
+    eingebaut_mit_ohne(ersetzt, &[])
+}
+
+/// Wie [`eingebaut_mit`], dazu ohne die Dateien `ohne` (Tests: aelteres Paket).
+fn eingebaut_mit_ohne(ersetzt: &[(&str, &[u8])], ohne: &[&str]) -> Eingebaut {
     let inhalt: Vec<(&str, &[u8])> = eingebettet::DATEIEN
         .iter()
+        .filter(|(p, _)| !ohne.contains(p))
         .map(|&(p, b)| (p, ersetzt.iter().find(|(e, _)| *e == p).map_or(b, |(_, n)| *n)))
         .collect();
     let dateien: HashMap<String, Vec<u8>> = inhalt.iter().map(|(p, b)| (p.to_string(), b.to_vec())).collect();
@@ -695,6 +716,9 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
         (HILFE_FORMULAR, |t| crate::hilfe::hilfe_formular_lesen(t).map(|_| ())),
         (MSFS_PROFILE, |t| sim_core::msfs_paketprofil::lesen(t).map(|_| ())),
     ] {
+        if darf_fehlen(p, pfad) {
+            continue;
+        }
         let roh = p.datei(pfad).map_err(|e| e.to_string())?;
         pruefen(std::str::from_utf8(&roh).map_err(|e| format!("{pfad}: {e}"))?)?;
     }
@@ -709,7 +733,7 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
     let tabelle = p.datei(KABINE).map_err(|e| e.to_string())?;
     crate::kabinenplaner::pruefen(&modul, std::str::from_utf8(&tabelle).map_err(|e| format!("{KABINE}: {e}"))?)
         .map_err(|e| format!("{KABINE_MODUL}: {e}"))?;
-    for d in UI_DATEIEN {
+    for d in UI_DATEIEN.iter().filter(|&&d| !darf_fehlen(p, d)) {
         p.datei(d).map_err(|e| e.to_string())?;
     }
     let cpdlc = p.datei(CPDLC).map_err(|e| e.to_string())?;
@@ -976,6 +1000,26 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert_eq!(stand_aus_paket(&p).unwrap().endpunkte.helpdesk_pfad(), "/api/helpdesk/v2/tickets");
         e["helpdesk_pfad"] = "https://evil.example/api/t".into();
         assert!(selbsttest(&eingebaut_mit(&[(ENDPUNKTE, e.to_string().as_bytes())]).paket().unwrap()).is_err());
+    }
+
+    /// P-2.30: Ein Paket von vor `hilfe-formular-1` (ohne die Datei, ohne
+    /// `helpdesk_pfad`) gilt weiter — ohne Zusatzfelder, mit dem heutigen Pfad.
+    /// Gegenprobe: Jede andere Pflichtdatei darf weiterhin nicht fehlen.
+    #[test]
+    fn aelteres_paket_ohne_hilfe_formular_gilt_weiter() {
+        let mut e: serde_json::Value = serde_json::from_slice(eingebaute_datei(ENDPUNKTE).unwrap()).unwrap();
+        e.as_object_mut().unwrap().remove("helpdesk_pfad");
+        let alt = eingebaut_mit_ohne(&[(ENDPUNKTE, e.to_string().as_bytes())], &[HILFE_FORMULAR]).paket().unwrap();
+        assert!(alt.manifest.datei(HILFE_FORMULAR).is_none());
+        assert_eq!(selbsttest(&alt), Ok(()));
+        let stand = stand_aus_paket(&alt).unwrap();
+        assert!(stand.hilfe_formular.namen.is_empty());
+        assert_eq!(stand.endpunkte.helpdesk_pfad(), "/api/helpdesk/tickets");
+        assert!(stand.ui.iter().all(|(d, _)| *d != HILFE_FORMULAR));
+        assert!(stand.ui.iter().any(|(d, _)| *d == FLOTTE));
+        let ohne_klappen = eingebaut_mit_ohne(&[], &[KLAPPEN]).paket().unwrap();
+        assert!(selbsttest(&ohne_klappen).is_err());
+        assert!(stand_aus_paket(&ohne_klappen).is_err());
     }
 
     /// P-3.21/P-13.02: Das Paket traegt den ganzen Korpus (je Simulator

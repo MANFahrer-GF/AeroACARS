@@ -233,7 +233,7 @@ struct FormularOption {
 /// Pakets): Format 1, hoechstens [`ZUSATZ_MAX_ANZAHL`] Felder, jeder Name
 /// besteht dieselbe Pruefung wie beim Senden ([`zusatz_name_ok`]) und kommt
 /// nur einmal vor, Typ `[a-z]{1,20}`, `auswahl` mit mindestens einer Option,
-/// jeder Optionswert ein gueltiger Zusatzwert. Sonst zeigte die Seite ein
+/// jeder Optionswert ein gueltiger Zusatzwert und nur einmal. Sonst zeigte die Seite ein
 /// Feld, dessen Wert der Kern beim Senden ablehnt.
 pub(crate) fn hilfe_formular_lesen(json: &str) -> Result<HilfeFormular, String> {
     let d: FormularDatei = serde_json::from_str(json).map_err(|e| format!("hilfe-formular.json: {e}"))?;
@@ -254,8 +254,11 @@ pub(crate) fn hilfe_formular_lesen(json: &str) -> Result<HilfeFormular, String> 
         if f.typ == "auswahl" && f.optionen.is_empty() {
             return Err(format!("hilfe-formular.json: {}: Auswahl ohne Optionen", f.name));
         }
-        for o in &f.optionen {
+        for (i, o) in f.optionen.iter().enumerate() {
             let w = o.wert.trim();
+            if f.optionen[..i].iter().any(|x| x.wert == o.wert) {
+                return Err(format!("hilfe-formular.json: {}: Optionswert doppelt", f.name));
+            }
             if w.is_empty() || w != o.wert || w.chars().count() > ZUSATZ_WERT_MAX || w.chars().any(char::is_control) {
                 return Err(format!("hilfe-formular.json: {}: Optionswert ungueltig", f.name));
             }
@@ -269,6 +272,23 @@ pub(crate) fn hilfe_formular_lesen(json: &str) -> Result<HilfeFormular, String> 
 /// im HelpDesk-Formular (`CustomFieldService::inputNameFor`).
 pub(crate) fn zusatz_feldname(name: &str) -> String {
     format!("custom_fields[{name}]")
+}
+
+/// Adresse der Ticket-Schnittstelle: Host fest, Pfad aus dem Paket (in
+/// `paket-endpunkte` geprueft).
+pub(crate) fn ticket_url(pfad: &str) -> String {
+    format!("https://{}{}", crate::ALLOWED_PHPVMS_HOST, pfad)
+}
+
+/// Textfelder des multipart-Koerpers: feste Felder, dann die Zusatzfelder
+/// als `custom_fields[<name>]`.
+pub(crate) fn multipart_felder(betreff: &str, text: &str, kennung: Option<&str>, zusatz: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    let mut felder = vec![("subject".to_string(), betreff.to_string()), ("body".to_string(), text.to_string())];
+    if let Some(k) = kennung {
+        felder.push(("diagnose".into(), k.to_string()));
+    }
+    felder.extend(zusatz.iter().map(|(n, w)| (zusatz_feldname(n), w.clone())));
+    felder
 }
 
 /// JSON-Koerper des Tickets ohne Bilder. Ohne Zusatzfelder genau wie vor
@@ -594,17 +614,13 @@ pub(crate) async fn hilfe_anfordern(
         return Ok(erg);
     };
     // Host fest, Pfad aus dem Paket (geprueft in `paket-endpunkte`).
-    let url = format!("https://{}{}", crate::ALLOWED_PHPVMS_HOST, paket_endpunkte::endpunkte().helpdesk_pfad());
+    let url = ticket_url(paket_endpunkte::endpunkte().helpdesk_pfad());
     let koerper = json_koerper(&betreff, &text, erg.kennung.as_deref(), &zusatz);
     // Mit Bildern multipart (Feldnamen wie im HelpDesk-Formular), sonst JSON wie bisher.
     let mehrteilig = (!bilder.is_empty()).then(|| {
         let grenze = format!("aeroacars-{}", uuid::Uuid::new_v4().simple());
-        let namen: Vec<String> = zusatz.keys().map(|n| zusatz_feldname(n)).collect();
-        let mut felder = vec![("subject", betreff.as_str()), ("body", text.as_str())];
-        if let Some(k) = erg.kennung.as_deref() {
-            felder.push(("diagnose", k));
-        }
-        felder.extend(namen.iter().map(String::as_str).zip(zusatz.values().map(String::as_str)));
+        let felder = multipart_felder(&betreff, &text, erg.kennung.as_deref(), &zusatz);
+        let felder: Vec<(&str, &str)> = felder.iter().map(|(n, w)| (n.as_str(), w.as_str())).collect();
         (format!("multipart/form-data; boundary={grenze}"), multipart_koerper(&grenze, &felder, &bilder))
     });
     let antwort = async {
@@ -815,6 +831,7 @@ mod tests {
             feld(r#"{"name":"a","typ":"auswahl","optionen":[{"wert":""}]}"#),
             feld(r#"{"name":"a","typ":"auswahl","optionen":[{"wert":" x"}]}"#),
             feld(r#"{"name":"a","typ":"auswahl","optionen":[{"bezeichnung":{}}]}"#),
+            feld(r#"{"name":"a","typ":"auswahl","optionen":[{"wert":"x"},{"wert":"x"}]}"#),
             feld(&(0..13).map(|i| format!(r#"{{"name":"f{i}","typ":"text"}}"#)).collect::<Vec<_>>().join(",")),
         ] {
             assert!(hilfe_formular_lesen(&boese).is_err(), "{boese}");
@@ -834,11 +851,25 @@ mod tests {
     }
 
     #[test]
+    fn ticket_url_host_fest_pfad_aus_dem_paket() {
+        assert_eq!(ticket_url(paket_endpunkte::HELPDESK_PFAD_STANDARD), "https://german-sky-group.eu/api/helpdesk/tickets");
+        assert_eq!(ticket_url("/api/helpdesk/v2/tickets"), "https://german-sky-group.eu/api/helpdesk/v2/tickets");
+        // Der eingebaute Stand nennt den heutigen Pfad.
+        assert_eq!(crate::laufzeit_paket::stand().endpunkte.helpdesk_pfad(), "/api/helpdesk/tickets");
+    }
+
+    #[test]
     fn multipart_enthaelt_zusatzfelder() {
         let zusatz = karte(&[("flugnummer", "GSG1234"), ("simulator", "Zeile 1\nZeile 2")]);
-        let namen: Vec<String> = zusatz.keys().map(|n| zusatz_feldname(n)).collect();
-        let mut felder = vec![("subject", "B"), ("body", "T")];
-        felder.extend(namen.iter().map(String::as_str).zip(zusatz.values().map(String::as_str)));
+        let felder = multipart_felder("B", "T", Some("D-0123456789ab"), &zusatz);
+        assert_eq!(
+            felder.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            ["subject", "body", "diagnose", "custom_fields[flugnummer]", "custom_fields[simulator]"]
+        );
+        // ohne Kennung und Zusatz: genau die bisherigen Felder
+        let alt = multipart_felder("B", "T", None, &BTreeMap::new());
+        assert_eq!(alt, [("subject".to_string(), "B".to_string()), ("body".to_string(), "T".to_string())]);
+        let felder: Vec<(&str, &str)> = felder.iter().map(|(n, w)| (n.as_str(), w.as_str())).collect();
         let k = multipart_koerper("G", &felder, &[Bild { bytes: PNG.to_vec(), mime: "image/png", endung: "png" }]);
         let text = String::from_utf8_lossy(&k);
         assert!(text.contains("--G\r\nContent-Disposition: form-data; name=\"custom_fields[flugnummer]\"\r\n\r\nGSG1234\r\n"), "{text}");

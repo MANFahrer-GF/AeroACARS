@@ -453,7 +453,7 @@ describe("HilfeSeite: Zusatzfelder aus dem Paket", () => {
     fireEvent.change(flug, { target: { value: "  " } });
     expect(screen.getByRole("button", { name: "Senden" })).toBeDisabled();
 
-    fireEvent.change(flug, { target: { value: " GSG1234 " } });
+    fireEvent.change(flug, { target: { value: " GSG\u001b12\u000034 " } });
     fireEvent.change(sim, { target: { value: "xp12" } });
     fireEvent.click(screen.getByRole("button", { name: "Senden" }));
     await flush();
@@ -490,11 +490,16 @@ describe("HilfeSeite: Zusatzfelder aus dem Paket", () => {
         { name: "ok", typ: "zahl", max: 99999 },
         { name: "ok", typ: "text" },
         { name: "leer", typ: "auswahl", optionen: [] },
+        { name: "doppelt", typ: "auswahl", optionen: [{ wert: "a" }, { wert: "a" }, { wert: "b" }] },
         { name: "x".repeat(33), typ: "text" },
       ],
     });
     // Nur das erste gültige „ok“; unbekannter Typ bleibt (Seite zeigt ein Textfeld), max gedeckelt.
-    expect(felder.map((f) => [f.name, f.typ, f.max])).toEqual([["ok", "zahl", 2000]]);
+    expect(felder.map((f) => [f.name, f.typ, f.max])).toEqual([
+      ["ok", "zahl", 2000],
+      ["doppelt", "auswahl", 2000],
+    ]);
+    expect(felder[1].optionen.map((o) => o.wert)).toEqual(["a", "b"]);
     const viele = formularLesen({ format: 1, felder: Array.from({ length: 13 }, (_, i) => ({ name: `f${i}`, typ: "text" })) });
     expect(viele.length).toBe(12);
   });
