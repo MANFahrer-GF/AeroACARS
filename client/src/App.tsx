@@ -104,6 +104,7 @@ const ReleaseNotesModal = lazy(loadReleaseNotesModal);
 const CpdlcPanel = lazy(loadCpdlcPanel);
 import { UpdateButton } from "./components/UpdateButton";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { WartungsBand } from "./components/WartungsBand";
 import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
@@ -945,6 +946,9 @@ function App() {
         checker={updateChecker}
         activePhase={activeFlight?.phase ?? null}
       />
+      {/* v3 (P-9.12) — Wartung geplant/läuft und Störungen aus status.json
+          von live (beim Start und alle 10 Minuten). Ohne Netz: nichts. */}
+      <WartungsBand />
       {/* v1.7.6 — Pflicht-Riegel. Sperrt die Oberfläche, wenn beim Start
           eine neuere Version vorlag: erst aktualisieren, dann fliegen.
           Hält sich selbst zurück bei fehlendem Netz, bei einem Update,

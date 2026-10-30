@@ -5015,5 +5015,12 @@
     "ablehnen": "Ablehnen",
     "weitere": "Danach warten noch {{anzahl}} weitere Anfragen.",
     "leer": "Keine offene Anfrage."
+  },
+  "wartung": {
+    "geplant": "Wartung geplant",
+    "laeuft": "Wartung läuft",
+    "notfall": "Notfallwartung",
+    "zeitraum": "{{von}} – {{bis}} UTC",
+    "stoerung": "Störung"
   }
 }

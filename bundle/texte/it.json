@@ -5015,5 +5015,12 @@
     "ablehnen": "Rifiuta",
     "weitere": "Dopo questa attendono altre {{anzahl}} richieste.",
     "leer": "Nessuna richiesta aperta."
+  },
+  "wartung": {
+    "geplant": "Manutenzione programmata",
+    "laeuft": "Manutenzione in corso",
+    "notfall": "Manutenzione urgente",
+    "zeitraum": "{{von}} – {{bis}} UTC",
+    "stoerung": "Disservizio"
   }
 }

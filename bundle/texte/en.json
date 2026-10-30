@@ -5015,5 +5015,12 @@
     "ablehnen": "Decline",
     "weitere": "{{anzahl}} more requests are waiting after this one.",
     "leer": "No open request."
+  },
+  "wartung": {
+    "geplant": "Scheduled maintenance",
+    "laeuft": "Maintenance in progress",
+    "notfall": "Emergency maintenance",
+    "zeitraum": "{{von}} – {{bis}} UTC",
+    "stoerung": "Outage"
   }
 }
