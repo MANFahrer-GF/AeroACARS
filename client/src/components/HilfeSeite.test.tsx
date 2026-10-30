@@ -283,6 +283,24 @@ describe("HilfeSeite", () => {
     expect(screen.getByAltText("Bild 1").getAttribute("src")).toContain(btoa("hier.png"));
   });
 
+  it("wieder sichtbar: Diagnose-Vorschau wird neu geholt (Stand ändert sich im Flug)", async () => {
+    invokeMock.mockImplementation((cmd: string) => (cmd === "hilfe_vorschau" ? Promise.resolve(VORSCHAU) : Promise.reject(new Error(cmd))));
+    const vorschauAufrufe = () => invokeMock.mock.calls.filter((c) => c[0] === "hilfe_vorschau").length;
+    const { rerender } = render(<HilfeSeite sichtbar />);
+    await flush();
+    expect(vorschauAufrufe()).toBe(1);
+    rerender(<HilfeSeite sichtbar={false} />);
+    await flush();
+    expect(vorschauAufrufe()).toBe(1);
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "hilfe_vorschau" ? Promise.resolve({ ...VORSCHAU, meta: { ...VORSCHAU.meta, letzte_flugdatei: "GSG9999.jsonl" } }) : Promise.reject(new Error(cmd)),
+    );
+    rerender(<HilfeSeite sichtbar />);
+    await flush();
+    expect(vorschauAufrufe()).toBe(2);
+    expect(screen.getByTestId("hilfe-mitgeht").textContent).toContain("GSG9999.jsonl");
+  });
+
   it("nach dem Senden liegt der Fokus auf der Ergebnis-Überschrift", async () => {
     oeffnen({ kennung: null, link: null, diagnose_fehler: null, ticket: { id: 1, ticket_number: "HD-1", url: null }, ticket_fehler: null });
     await flush();
