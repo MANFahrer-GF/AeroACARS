@@ -3,6 +3,13 @@ on:
   push:
     tags:
       - 'v*'
+      # AeroACARS-3-Vorabversionen laufen ueber dev-build.yml (beta=true) und
+      # scripts/beta-veroeffentlichen.sh; das Skript legt den Tag v3.x-beta.N
+      # an. Ohne diesen Ausschluss baute release.yml dann mit dem 2.x-Endpunkt
+      # nach und ueberschriebe Installer der Pre-Release mit Builds ohne
+      # Beta-Kanal.
+      - '!v3.*-beta*'
+      - '!v3.*-rc*'
   workflow_dispatch:
 
 jobs:

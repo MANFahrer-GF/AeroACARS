@@ -64,12 +64,62 @@ describe("Dev-Kennung (P-11.21)", () => {
     const bauen = dev.split("\n").filter((z) => z.includes("tauri build"));
     expect(bauen.length).toBe(2);
     // Ohne den Eingang `beta` die Dev-Kennung; nur mit `beta` die
-    // Produktionskennung (Beta-Installer, ohne Updater-Dateien).
+    // Produktionskennung (Beta-Installer mit eigenem Update-Kanal).
     const wahl = "--config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}";
     for (const z of bauen) expect(z).toContain(wahl);
     const beta = lies("src-tauri/tauri.beta.conf.json");
     expect(beta.identifier).toBeUndefined();
-    expect(beta.bundle?.createUpdaterArtifacts).toBe(false);
     expect(readFileSync("../.github/workflows/release.yml", "utf8")).not.toContain("tauri.lokal");
+  });
+});
+
+/** Beta-Update-Kanal: Beta-Installer aktualisieren sich selbst, aber nur aus
+ *  dem eigenen Kanal. Fragten sie den 2.x-Kanal (releases/latest), faenden sie
+ *  2.1.x < 3.0.0-beta und blieben stehen; landete umgekehrt eine Beta im
+ *  2.x-Kanal, bekaeme jeder 2.x-Pilot sie angeboten. */
+describe("Beta-Update-Kanal", () => {
+  const KANAL = "https://github.com/MANFahrer-GF/AeroACARS/releases/download/aeroacars3-beta-kanal/latest.json";
+
+  it("schaltet in der Beta-Konfiguration die Updater-Dateien ein, mit eigenem Endpunkt", () => {
+    const beta = lies("src-tauri/tauri.beta.conf.json");
+    expect(beta.bundle.createUpdaterArtifacts).toBe(true);
+    // Merge-Patch ersetzt Arrays: genau dieser eine Endpunkt, kein 2.x-Kanal davor.
+    expect(beta.plugins.updater.endpoints).toEqual([KANAL]);
+    // Schluessel kommt aus der Hauptkonfiguration — derselbe wie 2.x.
+    expect(beta.plugins.updater.pubkey).toBeUndefined();
+    expect(Object.keys(beta.plugins.updater)).toEqual(["endpoints"]);
+    expect(Object.keys(beta).filter((k) => k !== "$schema").sort()).toEqual(["bundle", "plugins"]);
+    expect(Object.keys(beta.bundle)).toEqual(["createUpdaterArtifacts"]);
+  });
+
+  it("laesst die Release-Konfiguration auf dem 2.x-Kanal", () => {
+    const c = lies("src-tauri/tauri.conf.json");
+    expect(c.plugins.updater.endpoints).toEqual([
+      "https://github.com/MANFahrer-GF/AeroACARS/releases/latest/download/latest.json",
+    ]);
+    expect(readFileSync("../.github/workflows/release.yml", "utf8")).not.toContain("tauri.beta");
+  });
+
+  it("signiert im Dev-Build nur bei beta und baut das Kanal-Paket, ohne zu veroeffentlichen", () => {
+    const dev = readFileSync("../.github/workflows/dev-build.yml", "utf8");
+    const schluessel = dev.split("\n").filter((z) => z.includes("TAURI_SIGNING_PRIVATE_KEY:"));
+    expect(schluessel.length).toBe(2);
+    for (const z of schluessel) expect(z).toContain("inputs.beta && secrets.TAURI_SIGNING_PRIVATE_KEY || ''");
+    expect(dev).toContain(".github/scripts/beta-kanal-bauen.sh");
+    expect(dev).not.toMatch(/gh release|softprops|tauri-action/);
+    // Mac-Beta immer Apple-signiert: das Update ersetzt die App der Piloten.
+    expect(dev).toContain("if: inputs.apple_signieren || inputs.beta");
+  });
+
+  it("schliesst v3-Beta-Tags vom Release-Build aus", () => {
+    const rel = readFileSync("../.github/workflows/release.yml", "utf8");
+    expect(rel).toContain("- '!v3.*-beta*'");
+    // Das Skript legt diese Tags an und prueft den Ausschluss am Commit.
+    const skript = readFileSync("../scripts/beta-veroeffentlichen.sh", "utf8");
+    expect(skript).toContain("'!v3.*-beta*'");
+    expect(skript).toContain("KANAL=aeroacars3-beta-kanal");
+    expect(KANAL).toContain("/aeroacars3-beta-kanal/");
+    // Kein v-Praefix am Kanal-Tag: release.yml laeuft auf v*.
+    expect(skript).not.toMatch(/--latest(?!=false)/);
   });
 });
