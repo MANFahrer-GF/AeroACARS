@@ -5040,7 +5040,8 @@
       "addon": "Flugzeug (Titel im Simulator)",
       "paket_generation": "Laufzeit-Paket",
       "letzte_flugdatei": "Letzte Flugdatei (nur der Name)",
-      "logs": "Client-Log"
+      "logs": "Client-Log",
+      "bilder": "Bilder"
     },
     "log_gesperrt": "geht nicht mit: Die Fehlersuche (RUST_LOG) ist eingeschaltet, das Log könnte Zugangsdaten enthalten",
     "keine_logs": "kein Client-Log von heute oder gestern",
@@ -5076,7 +5077,38 @@
       "ticket_antwort": "Das HelpDesk hat unerwartet geantwortet.",
       "ticket_nicht_erreichbar": "german-sky-group.eu ist gerade nicht erreichbar.",
       "unbekannt": "Unbekannter Fehler.",
-      "hilfe_intern": "Interner Fehler beim Packen der Diagnose."
+      "hilfe_intern": "Interner Fehler beim Packen der Diagnose.",
+      "hilfe_bild_anzahl": "Höchstens 5 Bilder je Anfrage.",
+      "hilfe_bild_gross": "Ein Bild ist zu groß (höchstens 5 MB).",
+      "hilfe_bild_typ": "Ein Bild ist kein PNG, JPEG oder WebP.",
+      "ticket_bild_ungueltig": "Das HelpDesk hat ein Bild abgelehnt; das Ticket wurde nicht angelegt. Ohne das Bild erneut senden.",
+      "ticket_zu_gross": "Die Anfrage ist zu groß für german-sky-group.eu. Weniger oder kleinere Bilder anhängen."
+    },
+    "kuerzel": "Hilfe anfordern (F1)",
+    "zurueck": "Zurück zur Anfrage",
+    "bilder": {
+      "titel": "Bilder (freiwillig)",
+      "zahl": "{{anzahl}} von {{max}}",
+      "anleitung": "Screenshot mit Strg+V bzw. ⌘V einfügen, hierher ziehen oder eine Datei wählen. PNG, JPEG oder WebP; große Bilder werden verkleinert.",
+      "vorschau_alt": "Bild {{nr}}",
+      "entfernen": "Bild {{nr}} entfernen",
+      "bereitet": "Bild wird vorbereitet …",
+      "waehlen": "Bild auswählen …",
+      "datenschutz": "Ein Bild kann persönliche Daten zeigen (Name, Chat, Desktop, andere Fenster). Hänge nur an, was das Team sehen soll. Die Bilder gehen nur mit diesem Ticket mit, nicht in die Diagnose.",
+      "nur_am_pc": "Bilder lassen sich nur am Sim-PC anhängen, nicht über das Tablet.",
+      "mitgeht_one": "1 Bild, als Anhang am Ticket",
+      "mitgeht_other": "{{count}} Bilder, als Anhang am Ticket",
+      "keine": "keine",
+      "nicht_angekommen": "Die Bilder sind nicht angekommen: Sie hängen nur am Ticket, und das wurde nicht angelegt.",
+      "angekommen_one": "1 Bild ist am Ticket angehängt.",
+      "angekommen_other": "{{count}} Bilder sind am Ticket angehängt.",
+      "teilweise": "Nur {{angekommen}} von {{gesendet}} Bildern sind am Ticket angekommen. Hänge die übrigen im HelpDesk auf german-sky-group.eu an.",
+      "fehler": {
+        "anzahl": "Höchstens {{max}} Bilder je Anfrage.",
+        "typ": "Nur PNG, JPEG oder WebP lassen sich anhängen.",
+        "gross": "Das Bild ist zu groß (höchstens 25 MB, verkleinert höchstens 5 MB).",
+        "lesen": "Das Bild ließ sich nicht lesen."
+      }
     }
   }
 }

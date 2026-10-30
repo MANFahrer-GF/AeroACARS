@@ -5040,7 +5040,8 @@
       "addon": "Aircraft (title in the simulator)",
       "paket_generation": "Runtime package",
       "letzte_flugdatei": "Last flight file (name only)",
-      "logs": "Client log"
+      "logs": "Client log",
+      "bilder": "Images"
     },
     "log_gesperrt": "not included: debugging (RUST_LOG) is on, the log could contain credentials",
     "keine_logs": "no client log from today or yesterday",
@@ -5076,7 +5077,38 @@
       "ticket_antwort": "The HelpDesk sent an unexpected reply.",
       "ticket_nicht_erreichbar": "german-sky-group.eu cannot be reached right now.",
       "unbekannt": "Unknown error.",
-      "hilfe_intern": "Internal error while packing the diagnosis."
+      "hilfe_intern": "Internal error while packing the diagnosis.",
+      "hilfe_bild_anzahl": "At most 5 images per request.",
+      "hilfe_bild_gross": "An image is too large (at most 5 MB).",
+      "hilfe_bild_typ": "An image is not a PNG, JPEG or WebP.",
+      "ticket_bild_ungueltig": "The HelpDesk rejected an image; the ticket was not created. Send again without the image.",
+      "ticket_zu_gross": "The request is too large for german-sky-group.eu. Attach fewer or smaller images."
+    },
+    "kuerzel": "Request help (F1)",
+    "zurueck": "Back to the request",
+    "bilder": {
+      "titel": "Images (optional)",
+      "zahl": "{{anzahl}} of {{max}}",
+      "anleitung": "Paste a screenshot with Ctrl+V or ⌘V, drag it here or choose a file. PNG, JPEG or WebP; large images are scaled down.",
+      "vorschau_alt": "Image {{nr}}",
+      "entfernen": "Remove image {{nr}}",
+      "bereitet": "Preparing image …",
+      "waehlen": "Choose image …",
+      "datenschutz": "An image can show personal data (name, chat, desktop, other windows). Only attach what the team should see. Images go with this ticket only, not into the diagnostics.",
+      "nur_am_pc": "Images can only be attached on the sim PC, not from the tablet.",
+      "mitgeht_one": "1 image, attached to the ticket",
+      "mitgeht_other": "{{count}} images, attached to the ticket",
+      "keine": "none",
+      "nicht_angekommen": "The images did not arrive: they are attached to the ticket only, and it was not created.",
+      "angekommen_one": "1 image is attached to the ticket.",
+      "angekommen_other": "{{count}} images are attached to the ticket.",
+      "teilweise": "Only {{angekommen}} of {{gesendet}} images arrived at the ticket. Attach the rest in the HelpDesk on german-sky-group.eu.",
+      "fehler": {
+        "anzahl": "At most {{max}} images per request.",
+        "typ": "Only PNG, JPEG or WebP can be attached.",
+        "gross": "The image is too large (at most 25 MB, at most 5 MB after scaling).",
+        "lesen": "The image could not be read."
+      }
     }
   }
 }

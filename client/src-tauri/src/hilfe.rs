@@ -12,6 +12,16 @@
 //!    Felder `subject`, `body`, `diagnose`. Grosse Dateien landen so nie in
 //!    phpVMS; das Ticket traegt nur die Kennung.
 //!
+//! **Bilder** (Screenshots, Beta-1-Rueckmeldung „man kann kein Bild
+//! hochladen“) gehen NICHT in die Diagnose, sondern als Anhang direkt ans
+//! Ticket (multipart `attachments[]`) — dort liest der Betreiber, das Modul
+//! hat Tabelle, Rechte und Anzeige dafuer. Die Oberflaeche verkleinert sie
+//! vorher (laengste Kante, JPEG/WebP), hier wird nur noch geprueft: hoechstens
+//! [`BILD_MAX_ANZAHL`], je hoechstens [`BILD_MAX_BYTES`], Typ an den ersten
+//! Bytes (PNG/JPEG/WebP), nicht an einer Angabe der Oberflaeche. Dateiname
+//! und MIME-Typ setzt Rust selbst (`bild-1.png` …). Scheitert das Ticket,
+//! sind die Bilder nicht angekommen — der Dialog sagt das.
+//!
 //! Scheitert Schritt 2 (HelpDesk noch nicht veroeffentlicht → 404, Kategorie
 //! fehlt → 503 …), bleibt die Diagnose trotzdem auf live — der Pilot bekommt
 //! die Kennung zum Weitergeben. Scheitert Schritt 1, geht das Ticket ohne
@@ -28,7 +38,7 @@
 use crate::UiError;
 use base64::Engine as _;
 use flate2::write::GzEncoder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -43,6 +53,24 @@ const DIAGNOSE_MAX_ROH: usize = 8 * 1024 * 1024;
 const BETREFF_MAX: usize = 200;
 const TEXT_MAX: usize = 20_000;
 const META_FELD_MAX: usize = 120;
+/// Bilder je Anfrage und Bytes je Bild — dieselben Grenzen wie im
+/// HelpDesk-Controller (`IMAGE_MAX_COUNT`, `IMAGE_MAX_KB` = 5120).
+pub(crate) const BILD_MAX_ANZAHL: usize = 5;
+pub(crate) const BILD_MAX_BYTES: usize = 5 * 1024 * 1024;
+
+/// Ein Bild aus dem Dialog: nur die Bytes (Base64). Name und Typ bestimmt Rust.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct HilfeBild {
+    pub daten: String,
+}
+
+/// Geprueftes Bild, bereit fuer den Versand.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Bild {
+    pub bytes: Vec<u8>,
+    pub mime: &'static str,
+    pub endung: &'static str,
+}
 
 /// Was mit der Diagnose mitgeht — der Pilot sieht es vor dem Senden (P-9.22).
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -76,6 +104,9 @@ pub(crate) struct Ticket {
     pub id: Option<serde_json::Value>,
     pub ticket_number: Option<String>,
     pub url: Option<String>,
+    /// Zahl der am Ticket gespeicherten Bilder (`anhaenge` des HelpDesk);
+    /// `None`, wenn das Modul das Feld noch nicht kennt.
+    pub anhaenge: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -88,6 +119,9 @@ pub(crate) struct HilfeErgebnis {
     pub ticket: Option<Ticket>,
     /// Warum das Ticket nicht angelegt wurde (Schluessel unter `hilfe.fehler.*`).
     pub ticket_fehler: Option<String>,
+    /// Wie viele Bilder mitgeschickt wurden (der Dialog vergleicht mit
+    /// `ticket.anhaenge`).
+    pub bilder_gesendet: usize,
 }
 
 /// Betreff und Text pruefen (der Kern prueft jeden Aufruf, Stufe „fachlich“).
@@ -101,6 +135,72 @@ pub(crate) fn eingaben_pruefen(betreff: &str, text: &str) -> Result<(String, Str
         return Err(UiError::new("hilfe_text", "Text fehlt oder ist zu lang"));
     }
     Ok((b.to_string(), t.to_string()))
+}
+
+/// Typ an den ersten Bytes: PNG, JPEG oder WebP — sonst `None`.
+pub(crate) fn bild_typ(b: &[u8]) -> Option<(&'static str, &'static str)> {
+    if b.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        Some(("image/png", "png"))
+    } else if b.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some(("image/jpeg", "jpg"))
+    } else if b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        Some(("image/webp", "webp"))
+    } else {
+        None
+    }
+}
+
+/// Bilder aus dem Dialog pruefen (Anzahl, Groesse, Typ an den Bytes).
+pub(crate) fn bilder_pruefen(bilder: &[HilfeBild]) -> Result<Vec<Bild>, UiError> {
+    if bilder.len() > BILD_MAX_ANZAHL {
+        return Err(UiError::new("hilfe_bild_anzahl", "too many images"));
+    }
+    // Base64 ist 4/3 so lang: alles darueber kann nur zu gross sein, ohne zu dekodieren.
+    let b64_max = BILD_MAX_BYTES.div_ceil(3) * 4;
+    bilder
+        .iter()
+        .map(|b| {
+            if b.daten.len() > b64_max {
+                return Err(UiError::new("hilfe_bild_gross", "image too large"));
+            }
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b.daten.as_bytes())
+                .map_err(|_| UiError::new("hilfe_bild_typ", "image not readable"))?;
+            if bytes.len() > BILD_MAX_BYTES {
+                return Err(UiError::new("hilfe_bild_gross", "image too large"));
+            }
+            let (mime, endung) = bild_typ(&bytes).ok_or_else(|| UiError::new("hilfe_bild_typ", "not a PNG/JPEG/WebP image"))?;
+            Ok(Bild { bytes, mime, endung })
+        })
+        .collect()
+}
+
+/// multipart/form-data fuer das Ticket mit Bildern: Textfelder, dann
+/// `attachments[]` als `bild-<n>.<endung>` mit dem an den Bytes erkannten Typ.
+/// Von Hand gebaut, damit reqwest kein weiteres Feature (und Cargo.lock keine
+/// neue Abhaengigkeit) braucht.
+pub(crate) fn multipart_koerper(grenze: &str, felder: &[(&str, &str)], bilder: &[Bild]) -> Vec<u8> {
+    let mut k = Vec::new();
+    for (name, wert) in felder {
+        k.extend_from_slice(format!("--{grenze}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes());
+        k.extend_from_slice(wert.as_bytes());
+        k.extend_from_slice(b"\r\n");
+    }
+    for (i, b) in bilder.iter().enumerate() {
+        k.extend_from_slice(
+            format!(
+                "--{grenze}\r\nContent-Disposition: form-data; name=\"attachments[]\"; filename=\"bild-{}.{}\"\r\nContent-Type: {}\r\n\r\n",
+                i + 1,
+                b.endung,
+                b.mime
+            )
+            .as_bytes(),
+        );
+        k.extend_from_slice(&b.bytes);
+        k.extend_from_slice(b"\r\n");
+    }
+    k.extend_from_slice(format!("--{grenze}--\r\n").as_bytes());
+    k
 }
 
 fn kuerzen(s: &str, max: usize) -> String {
@@ -186,12 +286,22 @@ pub(crate) fn ticket_antwort(status: u16, body: &str) -> Result<Ticket, &'static
                     .and_then(|x| x.as_str())
                     .filter(|u| u.starts_with(&format!("https://{}/", crate::ALLOWED_PHPVMS_HOST)))
                     .map(str::to_string),
+                anhaenge: v.get("anhaenge").and_then(|x| x.as_u64()),
             })
         }
         401 => Err("ticket_anmeldung"),
         403 => Err("ticket_kein_recht"),
         404 => Err("ticket_helpdesk_fehlt"),
+        // Ein abgelehntes Bild nennt der Controller unter `felder.attachments.<n>`.
+        422 if json()
+            .and_then(|v| v.get("felder").and_then(|f| f.as_object()).map(|f| f.keys().any(|k| k.starts_with("attachments"))))
+            == Some(true) =>
+        {
+            Err("ticket_bild_ungueltig")
+        }
         422 => Err("ticket_ungueltig"),
+        // Webserver/PHP-Grenze fuer den Koerper (nur mit Bildern denkbar).
+        413 => Err("ticket_zu_gross"),
         503 if json().and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|e| e == "kategorie_fehlt")) == Some(true) => {
             Err("ticket_kategorie_fehlt")
         }
@@ -249,12 +359,19 @@ fn angemeldet(app: &AppHandle) -> Option<i64> {
 /// `ALLOWED_PHPVMS_HOST`), mit dem Schluessel des angemeldeten Piloten;
 /// Betreff und Text prueft der Kern.
 #[tauri::command]
-pub(crate) async fn hilfe_anfordern(app: AppHandle, betreff: String, text: String) -> Result<HilfeErgebnis, UiError> {
+pub(crate) async fn hilfe_anfordern(
+    app: AppHandle,
+    betreff: String,
+    text: String,
+    bilder: Option<Vec<HilfeBild>>,
+) -> Result<HilfeErgebnis, UiError> {
     let (betreff, text) = eingaben_pruefen(&betreff, &text)?;
+    // Bilder vor jedem Netzweg pruefen: ein ungueltiges Bild sendet gar nichts.
+    let bilder = bilder_pruefen(bilder.as_deref().unwrap_or_default())?;
     let Some(pilot) = angemeldet(&app) else {
         return Err(UiError::new("not_logged_in", "no active session"));
     };
-    let mut erg = HilfeErgebnis::default();
+    let mut erg = HilfeErgebnis { bilder_gesendet: bilder.len(), ..Default::default() };
 
     // 1. Diagnose an live.
     if log_gesperrt() {
@@ -324,22 +441,30 @@ pub(crate) async fn hilfe_anfordern(app: AppHandle, betreff: String, text: Strin
     };
     let url = format!("https://{}/api/helpdesk/tickets", crate::ALLOWED_PHPVMS_HOST);
     let koerper = serde_json::json!({ "subject": betreff, "body": text, "diagnose": erg.kennung });
+    // Mit Bildern multipart (Feldnamen wie im HelpDesk-Formular), sonst JSON wie bisher.
+    let mehrteilig = (!bilder.is_empty()).then(|| {
+        let grenze = format!("aeroacars-{}", uuid::Uuid::new_v4().simple());
+        let mut felder = vec![("subject", betreff.as_str()), ("body", text.as_str())];
+        if let Some(k) = erg.kennung.as_deref() {
+            felder.push(("diagnose", k));
+        }
+        (format!("multipart/form-data; boundary={grenze}"), multipart_koerper(&grenze, &felder, &bilder))
+    });
     let antwort = async {
         let c = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            // Bis 25 MB Bilder brauchen auf langsamer Leitung mehr als 30 s.
+            .timeout(Duration::from_secs(if mehrteilig.is_some() { 180 } else { 30 }))
             // Der Schluessel darf nie einer Weiterleitung folgen.
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
             .build()
             .ok()?;
-        let r = c
-            .post(&url)
-            .header("X-API-Key", schluessel)
-            .header("Accept", "application/json")
-            .json(&koerper)
-            .send()
-            .await
-            .ok()?;
+        let anfrage = c.post(&url).header("X-API-Key", schluessel).header("Accept", "application/json");
+        let anfrage = match mehrteilig {
+            Some((art, k)) => anfrage.header("content-type", art).body(k),
+            None => anfrage.json(&koerper),
+        };
+        let r = anfrage.send().await.ok()?;
         let s = r.status().as_u16();
         Some((s, r.text().await.unwrap_or_default()))
     }
@@ -450,5 +575,71 @@ mod tests {
         assert_eq!(ticket_antwort(422, r#"{"error":"ungueltig"}"#), Err("ticket_ungueltig"));
         assert_eq!(ticket_antwort(401, ""), Err("ticket_anmeldung"));
         assert_eq!(ticket_antwort(201, "kein json"), Err("ticket_antwort"));
+        // Bilder: Zahl der gespeicherten Anhaenge; ohne Feld (altes Modul) None.
+        assert_eq!(ticket_antwort(201, r#"{"id":3,"ticket_number":"HD-3","anhaenge":2}"#).unwrap().anhaenge, Some(2));
+        assert_eq!(ticket_antwort(201, ok).unwrap().anhaenge, None);
+        // abgelehntes Bild: eigener Schluessel, damit der Dialog es benennt
+        let bild_weg = r#"{"error":"ungueltig","felder":{"attachments.0":["bild_ungueltig"]}}"#;
+        assert_eq!(ticket_antwort(422, bild_weg), Err("ticket_bild_ungueltig"));
+        assert_eq!(ticket_antwort(422, r#"{"error":"ungueltig","felder":{"subject":["x"]}}"#), Err("ticket_ungueltig"));
+        assert_eq!(ticket_antwort(413, "<html>Request Entity Too Large</html>"), Err("ticket_zu_gross"));
+    }
+
+    const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13];
+    fn b64(b: &[u8]) -> HilfeBild {
+        HilfeBild { daten: base64::engine::general_purpose::STANDARD.encode(b) }
+    }
+
+    #[test]
+    fn bildtyp_an_den_bytes() {
+        assert_eq!(bild_typ(PNG), Some(("image/png", "png")));
+        assert_eq!(bild_typ(&[0xff, 0xd8, 0xff, 0xe0, 1]), Some(("image/jpeg", "jpg")));
+        assert_eq!(bild_typ(b"RIFF\0\0\0\0WEBPVP8 "), Some(("image/webp", "webp")));
+        // Gegenproben: anderer RIFF-Inhalt, Text, SVG, zu kurz
+        assert_eq!(bild_typ(b"RIFF\0\0\0\0WAVEfmt "), None);
+        assert_eq!(bild_typ(b"<?php echo 1; ?>"), None);
+        assert_eq!(bild_typ(b"<svg xmlns='http://www.w3.org/2000/svg'/>"), None);
+        assert_eq!(bild_typ(&[0x89, b'P']), None);
+    }
+
+    #[test]
+    fn bilder_werden_geprueft() {
+        // ohne Bilder: nichts
+        assert_eq!(bilder_pruefen(&[]).unwrap(), vec![]);
+        // fuenf gehen, sechs nicht
+        assert_eq!(bilder_pruefen(&vec![b64(PNG); 5]).unwrap().len(), 5);
+        assert_eq!(bilder_pruefen(&vec![b64(PNG); 6]).unwrap_err().code, "hilfe_bild_anzahl");
+        // genau 5 MB gehen, ein Byte mehr nicht
+        let mut gross = PNG.to_vec();
+        gross.resize(BILD_MAX_BYTES, 0);
+        assert_eq!(bilder_pruefen(&[b64(&gross)]).unwrap()[0].bytes.len(), BILD_MAX_BYTES);
+        gross.push(0);
+        assert_eq!(bilder_pruefen(&[b64(&gross)]).unwrap_err().code, "hilfe_bild_gross");
+        // Typ an den Bytes, kein Base64 → abgelehnt
+        assert_eq!(bilder_pruefen(&[b64(b"kein bild")]).unwrap_err().code, "hilfe_bild_typ");
+        assert_eq!(bilder_pruefen(&[HilfeBild { daten: "%%%".into() }]).unwrap_err().code, "hilfe_bild_typ");
+        // ein schlechtes unter guten verwirft alle (kein halbes Senden)
+        assert!(bilder_pruefen(&[b64(PNG), b64(b"x")]).is_err());
+        let ok = &bilder_pruefen(&[b64(PNG)]).unwrap()[0];
+        assert_eq!((ok.mime, ok.endung, ok.bytes.as_slice()), ("image/png", "png", PNG));
+    }
+
+    #[test]
+    fn multipart_wie_das_helpdesk_formular() {
+        let bilder = vec![
+            Bild { bytes: PNG.to_vec(), mime: "image/png", endung: "png" },
+            Bild { bytes: vec![0xff, 0xd8, 0xff, 0x00, b'\r', b'\n'], mime: "image/jpeg", endung: "jpg" },
+        ];
+        let k = multipart_koerper("GRENZE", &[("subject", "Betreff ä"), ("diagnose", "D-0123456789ab")], &bilder);
+        let text = String::from_utf8_lossy(&k);
+        assert!(text.starts_with("--GRENZE\r\nContent-Disposition: form-data; name=\"subject\"\r\n\r\nBetreff ä\r\n"), "{text}");
+        assert!(text.contains("name=\"diagnose\"\r\n\r\nD-0123456789ab\r\n"));
+        assert!(text.contains("name=\"attachments[]\"; filename=\"bild-1.png\"\r\nContent-Type: image/png\r\n\r\n"));
+        assert!(text.contains("name=\"attachments[]\"; filename=\"bild-2.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"));
+        assert!(text.ends_with("\r\n--GRENZE--\r\n"));
+        assert_eq!(text.matches("--GRENZE\r\n").count(), 4);
+        // Bytes unveraendert zwischen Kopf und naechster Grenze
+        let pos = k.windows(PNG.len()).position(|w| w == PNG).unwrap();
+        assert_eq!(&k[pos + PNG.len()..pos + PNG.len() + 10], b"\r\n--GRENZE");
     }
 }

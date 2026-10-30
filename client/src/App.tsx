@@ -24,6 +24,7 @@ import { BriefingView } from "./components/BriefingView";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ActivityLogPanel } from "./components/ActivityLogPanel";
 import { AboutPanel } from "./components/AboutPanel";
+import { HilfeDialog, istHilfeTaste } from "./components/HilfeDialog";
 import { NewsPanel, useUnreadNewsCount } from "./components/NewsPanel";
 import { ChatEinblendung, type EingehenderZuruf } from "./components/ChatEinblendung";
 import RunwayDiagramPreview from "./dev/RunwayDiagramPreview";
@@ -287,6 +288,40 @@ function App() {
   // Refs statt Abhaengigkeiten: der Empfaenger soll EINMAL registriert
   // werden und trotzdem den aktuellen Reiter und die aktuelle Phase sehen.
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
+  // Hilfe anfordern (Beta-1-Rückmeldung „zu versteckt“): fester Eintrag in
+  // der Seitenleiste und F1, solange angemeldet; „Über“ behält seinen Knopf.
+  const [hilfeOffen, setHilfeOffen] = useState(false);
+  useEffect(() => {
+    if (status.kind !== "loggedIn") return;
+    const taste = (e: KeyboardEvent) => {
+      if (!istHilfeTaste(e)) return;
+      e.preventDefault();
+      setHilfeOffen(true);
+    };
+    window.addEventListener("keydown", taste);
+    return () => window.removeEventListener("keydown", taste);
+  }, [status.kind]);
+  // Bilder in den Hilfe-Dialog ziehen braucht `dragDropEnabled: false`
+  // (tauri.conf.json), sonst liefert Tauri keine Dateien an die Seite. Dann
+  // würde eine daneben abgelegte Datei oder ein Link das Fenster aber auf sie
+  // umleiten — das fängt diese Sperre ab (vorher tat es Tauri). Nur Text in
+  // ein Eingabefeld ziehen bleibt erlaubt. Die Ablagefläche im Dialog
+  // behandelt ihr Ereignis vorher selbst.
+  useEffect(() => {
+    if (!isTauri) return;
+    const sperre = (e: DragEvent) => {
+      const ziel = e.target as HTMLElement | null;
+      const textfeld = !!ziel?.closest?.("input, textarea, [contenteditable='true']");
+      const dateien = !!e.dataTransfer?.types?.includes("Files");
+      if (dateien || !textfeld) e.preventDefault();
+    };
+    window.addEventListener("dragover", sperre);
+    window.addEventListener("drop", sperre);
+    return () => {
+      window.removeEventListener("dragover", sperre);
+      window.removeEventListener("drop", sperre);
+    };
+  }, []);
   // Codex-Folgefund (adversarial, 05.09.2026, achte Runde): `phpvms_logout`
   // lehnt jetzt ab, solange ein Flug aktiv ist — vorher hat `handleLogout`
   // JEDEN Fehler geschluckt und trotzdem `loggedOut` gesetzt (gedacht fuer
@@ -911,6 +946,7 @@ function App() {
             setTab("chat");
           }}
           unreadNews={unreadNews}
+          onHilfe={() => setHilfeOffen(true)}
           hasActiveFlight={activeFlight !== null}
           phpvmsConnected={phpvmsConnected}
           simConnected={simConnected}
@@ -1257,6 +1293,8 @@ function App() {
       {import.meta.env.DEV &&
         status.kind === "loggedIn" &&
         tab === "devpreview" && <RunwayDiagramPreview />}
+
+      {status.kind === "loggedIn" && hilfeOffen && <HilfeDialog onClose={() => setHilfeOffen(false)} />}
 
       {releaseNotesVersion && (
         <Suspense fallback={null}>

@@ -5040,7 +5040,8 @@
       "addon": "Aereo (titolo nel simulatore)",
       "paket_generation": "Pacchetto di runtime",
       "letzte_flugdatei": "Ultimo file di volo (solo il nome)",
-      "logs": "Log del client"
+      "logs": "Log del client",
+      "bilder": "Immagini"
     },
     "log_gesperrt": "non incluso: il debug (RUST_LOG) è attivo, il log potrebbe contenere credenziali",
     "keine_logs": "nessun log del client di oggi o di ieri",
@@ -5076,7 +5077,38 @@
       "ticket_antwort": "L'HelpDesk ha risposto in modo inatteso.",
       "ticket_nicht_erreichbar": "german-sky-group.eu non è raggiungibile in questo momento.",
       "unbekannt": "Errore sconosciuto.",
-      "hilfe_intern": "Errore interno durante la preparazione della diagnosi."
+      "hilfe_intern": "Errore interno durante la preparazione della diagnosi.",
+      "hilfe_bild_anzahl": "Al massimo 5 immagini per richiesta.",
+      "hilfe_bild_gross": "Un'immagine è troppo grande (al massimo 5 MB).",
+      "hilfe_bild_typ": "Un'immagine non è PNG, JPEG o WebP.",
+      "ticket_bild_ungueltig": "L'HelpDesk ha rifiutato un'immagine; il ticket non è stato creato. Invia di nuovo senza l'immagine.",
+      "ticket_zu_gross": "La richiesta è troppo grande per german-sky-group.eu. Allega meno immagini o immagini più piccole."
+    },
+    "kuerzel": "Richiedi assistenza (F1)",
+    "zurueck": "Torna alla richiesta",
+    "bilder": {
+      "titel": "Immagini (facoltative)",
+      "zahl": "{{anzahl}} di {{max}}",
+      "anleitung": "Incolla uno screenshot con Ctrl+V o ⌘V, trascinalo qui o scegli un file. PNG, JPEG o WebP; le immagini grandi vengono ridotte.",
+      "vorschau_alt": "Immagine {{nr}}",
+      "entfernen": "Rimuovi immagine {{nr}}",
+      "bereitet": "Preparazione immagine …",
+      "waehlen": "Scegli immagine …",
+      "datenschutz": "Un'immagine può mostrare dati personali (nome, chat, desktop, altre finestre). Allega solo ciò che il team deve vedere. Le immagini vanno solo con questo ticket, non nella diagnosi.",
+      "nur_am_pc": "Le immagini si possono allegare solo sul PC del simulatore, non dal tablet.",
+      "mitgeht_one": "1 immagine, allegata al ticket",
+      "mitgeht_other": "{{count}} immagini, allegate al ticket",
+      "keine": "nessuna",
+      "nicht_angekommen": "Le immagini non sono arrivate: sono allegate solo al ticket, che non è stato creato.",
+      "angekommen_one": "1 immagine è allegata al ticket.",
+      "angekommen_other": "{{count}} immagini sono allegate al ticket.",
+      "teilweise": "Solo {{angekommen}} di {{gesendet}} immagini sono arrivate al ticket. Allega le altre nell'HelpDesk su german-sky-group.eu.",
+      "fehler": {
+        "anzahl": "Al massimo {{max}} immagini per richiesta.",
+        "typ": "Si possono allegare solo PNG, JPEG o WebP.",
+        "gross": "L'immagine è troppo grande (al massimo 25 MB, ridotta al massimo 5 MB).",
+        "lesen": "Impossibile leggere l'immagine."
+      }
     }
   }
 }
