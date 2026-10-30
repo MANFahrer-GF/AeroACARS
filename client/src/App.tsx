@@ -14,13 +14,12 @@ import {
   chatAnGeladen, chatAnSpeichern, chatTonGeladen, chatTonSpeichern,
 } from "./lib/chatEinstellungen";
 import { LoginPage } from "./components/LoginPage";
-import { CockpitView } from "./components/CockpitView";
+import { FlugView } from "./components/FlugView";
 import { TelemetrieView } from "./components/telemetrie/TelemetrieView";
 import { Notizblock } from "./components/notizblock/Notizblock";
 import { KabinenSeite } from "./components/kabine/KabinenSeite";
 import { einstellungenLesen as kabinenEinstellungenLesen, wiedergabeStarten as kabinenWiedergabeStarten } from "./lib/kabinenansagen";
 import { ResumeFlightBanner } from "./components/ResumeFlightBanner";
-import { BriefingView } from "./components/BriefingView";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ActivityLogPanel } from "./components/ActivityLogPanel";
 import { AboutPanel } from "./components/AboutPanel";
@@ -116,7 +115,7 @@ import { Notice, Button } from "./components/ui";
 import { useHoppieAttention } from "./hooks/useHoppieAttention";
 import { useDiscordRpcPush } from "./hooks/useDiscordRpcPush";
 import { LiveRecordingIndicator } from "./components/LiveRecordingIndicator";
-import { Sidebar, getInitialCollapsed } from "./components/Sidebar";
+import { Sidebar, getInitialCollapsed, reiterAusSeite, type Tab } from "./components/Sidebar";
 import { useSimSession } from "./hooks/useSimSession";
 import { simKindLabel } from "./lib/simKind";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
@@ -139,8 +138,6 @@ type SessionStatus =
    *  was blocked by the pilot-status gate — the login form surfaces it. */
   | { kind: "loggedOut"; restoreError?: UiError }
   | { kind: "loggedIn"; session: LoginResult };
-
-type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "bordbuch" | "telemetrie" | "notizblock" | "kabine" | "news" | "log" | "map" | "cpdlc" | "settings" | "hilfe" | "about" | "devpreview";
 
 const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
@@ -337,7 +334,7 @@ function App() {
   const [logoutBlockedMessage, setLogoutBlockedMessage] = useState<
     string | null
   >(null);
-  const [tab, setTab] = useState<Tab>("briefing");
+  const [tab, setTab] = useState<Tab>("flug");
   useEffect(() => {
     if (tab === "hilfe") setHilfeBesucht(true);
   }, [tab]);
@@ -479,7 +476,12 @@ function App() {
   useEffect(() => { phaseRef.current = activeFlight?.phase ?? null; }, [activeFlight]);
   // v1.7.29: Cockpit passt nicht in die Startgröße — Fenster beim Betreten
   // (und wenn ein Flug beginnt/endet) nur vergrößern, siehe fenster.rs.
-  useFensterAnInhalt(status.kind === "loggedIn" && tab === "cockpit", activeFlight?.pirep_id ?? null);
+  // Seit 3.0 zeigt der Reiter „Flug“ das Cockpit nur MIT Flug; ohne Flug ist
+  // er das Briefing, das (wie früher) die Startgröße behält.
+  useFensterAnInhalt(
+    status.kind === "loggedIn" && tab === "flug" && activeFlight !== null,
+    activeFlight?.pirep_id ?? null,
+  );
 
   // Ob noch ein gespeicherter Flug auf Wiederaufnahme wartet — die Antwort
   // braucht der Pflicht-Update-Riegel, BEVOR er sperrt.
@@ -639,14 +641,14 @@ function App() {
     };
   }, [status.kind]);
 
-  // Auto-switch to the cockpit tab the first time an active flight
-  // appears (resume on startup, or just-started flight). The user can
-  // still manually switch back to briefing afterwards — we only force
-  // the switch on the rising edge.
+  // Auto-switch to the „Flug“ tab the first time an active flight
+  // appears (resume on startup, or just-started flight) — from wherever
+  // the pilot is. Only on the rising edge. Within „Flug“ the view follows
+  // the flight by itself (FlugView): cockpit while active, briefing after.
   const [hadActiveFlight, setHadActiveFlight] = useState(false);
   useEffect(() => {
     if (activeFlight && !hadActiveFlight) {
-      setTab("cockpit");
+      setTab("flug");
       setHadActiveFlight(true);
     }
     if (!activeFlight && hadActiveFlight) {
@@ -745,7 +747,7 @@ function App() {
       // geblockt sein — dann ist ohnehin nichts zu leeren.
     }
     setStatus({ kind: "loggedOut" });
-    setTab("briefing");
+    setTab("flug");
   }
 
   function handleDebugModeChange(next: boolean) {
@@ -889,15 +891,18 @@ function App() {
   // that only points back at settings. If it gets switched off while the
   // pilot is standing on it, move them somewhere real.
   useEffect(() => {
-    if (!cpdlcEnabled && tab === "cpdlc") setTab("cockpit");
+    if (!cpdlcEnabled && tab === "cpdlc") setTab("flug");
   }, [cpdlcEnabled, tab]);
 
   // StreamDeck: langer Druck auf eine Anzeigetaste holt das Fenster nach vorn
   // und wechselt hierher. Welche Seiten erlaubt sind, prüft der Panel-Server
   // (`DECK_SEITEN` in panel_server.rs); ein abgeschaltetes CPDLC fängt der
-  // Effekt oben ab.
+  // Effekt oben ab. Die alten Seiten „cockpit“/„briefing“ landen auf „Flug“.
   useEffect(() => {
-    const p = listen<Tab>("deck-seite", (e) => setTab(e.payload));
+    const p = listen<string>("deck-seite", (e) => {
+      const ziel = reiterAusSeite(e.payload);
+      if (ziel) setTab(ziel);
+    });
     return () => { void p.then((ab) => ab()); };
   }, []);
 
@@ -1118,7 +1123,7 @@ function App() {
           onFiledSuccess={(outcome) => {
             setActiveFlight(null);
             setAbschluss(outcome);
-            setTab("cockpit");
+            setTab("flug");
           }}
           onDiscarded={() => setActiveFlight(null)}
         />
@@ -1130,31 +1135,23 @@ function App() {
           onOpenSettings={() => einstellungenImCockpit(setTab)}
           onAus={() => {
             setKabineAn(false);
-            setTab("cockpit");
+            setTab("flug");
           }}
         />}
 
-      {status.kind === "loggedIn" && tab === "cockpit" && (
-        <CockpitView
-          session={status.session}
-          activeFlight={activeFlight}
-          setActiveFlight={setActiveFlight}
-          simSnapshot={simSnapshot}
-          onSwitchToBriefing={() => setTab("briefing")}
-          approachAdvisoriesEnabled={approachAdvisoriesEnabled}
-          abschlussVonAussen={abschluss}
-          onAbschlussGezeigt={() => setAbschluss(null)}
-        />
-      )}
-
-      {status.kind === "loggedIn" && tab === "briefing" && (
-        <BriefingView
+      {/* Reiter „Flug“ (3.0): Briefing vor dem Flug, Cockpit ab Flugstart,
+          danach wieder Briefing — die Ansicht folgt `activeFlight`. */}
+      {status.kind === "loggedIn" && tab === "flug" && (
+        <FlugView
           session={status.session}
           activeFlight={activeFlight}
           setActiveFlight={setActiveFlight}
           onLogout={handleLogout}
           simState={simState}
           simSnapshot={simSnapshot}
+          approachAdvisoriesEnabled={approachAdvisoriesEnabled}
+          abschlussVonAussen={abschluss}
+          onAbschlussGezeigt={() => setAbschluss(null)}
           onActiveFlightUpdated={() => {
             // v0.7.7: Bid-Tab-Refresh hat den OFP des aktiven Flugs
             // erfolgreich erneuert (changed=true). Status sofort
@@ -1219,7 +1216,7 @@ function App() {
               activeFlight={activeFlight}
               simSnapshot={simSnapshot}
               simKind={simStatus?.kind}
-              onSwitchToBriefing={() => setTab("briefing")}
+              onSwitchToBriefing={() => setTab("flug")}
               sichtbar={tab === "map"}
             />
           </Suspense>
@@ -1256,14 +1253,14 @@ function App() {
           onAutoDeleteFlightLogsChange={handleAutoDeleteFlightLogsChange}
           onKabineAnChange={(next) => {
             setKabineAn(next);
-            if (!next) setTab((a) => (a === "kabine" ? "cockpit" : a));
+            if (!next) setTab((a) => (a === "kabine" ? "flug" : a));
           }}
           chatAn={chatAn}
           onChatAnChange={(next) => {
             setChatAn(next);
             chatAnSpeichern(next);
             // Aus heisst aus: der offene Reiter darf nicht stehen bleiben.
-            if (!next) { setChatUngelesen(0); setTab((a) => (a === "chat" ? "cockpit" : a)); }
+            if (!next) { setChatUngelesen(0); setTab((a) => (a === "chat" ? "flug" : a)); }
           }}
           chatTon={chatTonAn}
           onChatTonChange={(next) => {

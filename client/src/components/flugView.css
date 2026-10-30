@@ -1,0 +1,95 @@
+/* Reiter „Flug“: Briefing als aufklappbarer Bereich unter dem Cockpit.
+   Aufbau wie `.hilfe-seite__mitgeht` (eigener Pfeil, kein Standard-Marker),
+   Rahmen wie `.ui-card`. */
+
+.flug-briefing {
+  margin-top: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 10px);
+}
+
+.flug-briefing__kopf {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 10px 14px;
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--r-md, 10px);
+}
+
+.flug-briefing__kopf::-webkit-details-marker {
+  display: none;
+}
+
+.flug-briefing__kopf::before {
+  content: "";
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  margin-right: 2px;
+  color: var(--text-muted);
+}
+
+.flug-briefing[open] > .flug-briefing__kopf::before {
+  transform: rotate(45deg);
+}
+
+.flug-briefing__kopf:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.flug-briefing__kopf:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.flug-briefing__titel {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.flug-briefing__inhalt {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.flug-briefing[open] > .flug-briefing__kopf {
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.flug-briefing__koerper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px 14px;
+}
+
+/* Buchung des laufenden Flugs über „Gebuchte Flüge“ (BidsList,
+   laufendenFlugZeigen). Überschrift wie `.bids__header h2`, eine Stufe
+   kleiner, damit die Liste darunter die Hauptüberschrift bleibt. */
+.bids__laufend {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bids__laufend-titel {
+  margin: 0;
+  padding: 6px 20px 0;
+  font-family: var(--font-sans);
+  font-size: 18px;
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+}

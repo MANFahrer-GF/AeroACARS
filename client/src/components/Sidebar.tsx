@@ -21,11 +21,10 @@ import { useTranslation } from "react-i18next";
 import { isTauri } from "../lib/ipc";
 
 export type Tab =
-  | "cockpit"
+  | "flug"
   | "map"
   | "cpdlc"
   | "chat"
-  | "briefing"
   | "logbook"
   | "landing"
   | "bordbuch"
@@ -38,6 +37,24 @@ export type Tab =
   | "hilfe"
   | "about"
   | "devpreview";
+
+const REITER: readonly Tab[] = [
+  "flug", "map", "cpdlc", "chat", "logbook", "landing", "bordbuch", "telemetrie",
+  "notizblock", "kabine", "news", "log", "settings", "hilfe", "about", "devpreview",
+];
+
+/**
+ * Seitenname von außen (StreamDeck-Ereignis `deck-seite`) → Reiter.
+ *
+ * Die Gegenstellen kennen noch die alten Reiter „cockpit“ und „briefing“
+ * (`DECK_SEITEN` in panel_server.rs, Tasten im StreamDeck-Plugin) — beide
+ * landen jetzt auf „Flug“. Unbekanntes wird verworfen statt als Reiter
+ * gesetzt, sonst stünde der Pilot vor einer leeren Seite.
+ */
+export function reiterAusSeite(seite: unknown): Tab | null {
+  if (seite === "cockpit" || seite === "briefing") return "flug";
+  return REITER.includes(seite as Tab) ? (seite as Tab) : null;
+}
 
 const STORAGE_KEY = "aeroacars.nav.collapsed";
 
@@ -75,9 +92,10 @@ const I = {
       <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.6 9.6 0 0 1-3.5-.7L3 21l1.9-4.6A8.2 8.2 0 0 1 3.6 11.5a8.4 8.4 0 0 1 9-8.4 8.4 8.4 0 0 1 8.4 8.4z" />
     </svg>
   ),
-  cockpit: (
+  /* Flugzeug im Umriss: ein Reiter für Briefing und Cockpit. */
+  flug: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
+      <path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z" />
     </svg>
   ),
   map: (
@@ -88,11 +106,6 @@ const I = {
   cpdlc: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 5h16v11H8l-4 4V5z" /><path d="M8 9h8M8 12.5h5" />
-    </svg>
-  ),
-  briefing: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 12h7M9 16h5" />
     </svg>
   ),
   logbook: (
@@ -256,16 +269,17 @@ export function Sidebar({
       </div>
 
       <div className="nav__list">
-        {/* Briefing (Gebuchte Flüge) first — that's where a session starts:
-            pick/confirm the flight before anything else. Matches the
-            default tab (App.tsx's useState<Tab>("briefing")) already. */}
-        <Item icon={I.briefing} label={t("tabs.briefing")} active={tab === "briefing"} onClick={() => setTab("briefing")} />
+        {/* „Flug“ vereint seit 3.0 Briefing und Cockpit (Thomas: „Der
+            Briefing-Tab ist nur fürs Briefing da und danach total
+            wertlos“). Ohne Flug zeigt er das Briefing, mit Flug das
+            Cockpit — siehe FlugView. Steht zuerst, weil eine Sitzung dort
+            beginnt; ist auch der Startreiter (App.tsx). */}
         <Item
-          icon={I.cockpit}
-          label={t("tabs.cockpit")}
-          active={tab === "cockpit"}
+          icon={I.flug}
+          label={t("tabs.flug")}
+          active={tab === "flug"}
           dot={hasActiveFlight}
-          onClick={() => setTab("cockpit")}
+          onClick={() => setTab("flug")}
         />
         <Item icon={I.map} label={t("tabs.map")} active={tab === "map"} onClick={() => setTab("map")} />
         {cpdlcEnabled && (

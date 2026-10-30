@@ -413,9 +413,8 @@
   },
   "tabs": {
     "kabine": "Kabine",
-    "cockpit": "Cockpit",
+    "flug": "Flug",
     "map": "Karte",
-    "briefing": "Briefing",
     "logbook": "Logbuch",
     "landing": "Landung",
     "news": "Nachrichten",
@@ -1833,9 +1832,6 @@
     "thresholds_intro": "Die Smooth/Acceptable/Firm/Hard/Severe-Grenzen kommen aus echter Pilot-Literatur:"
   },
   "cockpit": {
-    "empty_title": "Kein aktiver Flug",
-    "empty_hint": "Wechseln Sie ins Briefing, um einen gebuchten Flug zu starten oder einen offenen PIREP zu adoptieren.",
-    "go_briefing": "Zu meinen Flügen",
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
     "pirep_filed_detail": "{{callsign}} · {{dpt}} → {{arr}} — Flug wurde an phpVMS übermittelt. Du findest ihn jetzt im Landung-Tab und auf der phpVMS-Webseite.",
     "pirep_filed_dismiss": "Schließen",
@@ -1930,7 +1926,9 @@
     "heading": "Kurs"
   },
   "briefing": {
-    "active_flight_hint": "{{callsign}} ist gerade aktiv — wechseln Sie in den Cockpit-Tab, um ihn zu beenden."
+    "active_flight_hint": "{{callsign}} läuft gerade (Cockpit oben). Weitere gebuchte Flüge lassen sich erst nach dessen Abschluss starten.",
+    "aufklapper_titel": "Briefing",
+    "aufklapper_inhalt": "Gebuchte Flüge, SimBrief-OFP, Pilotendaten"
   },
   "weather": {
     "title": "Wetter-Briefing",
@@ -2847,7 +2845,8 @@
     },
     "empty_title": "Keine Flüge gebucht",
     "empty_hint": "Buche einen Flug auf german-sky-group.eu und klicke hier auf „Aktualisieren“ — dann erscheint er hier.",
-    "empty_action": "Flug buchen"
+    "empty_action": "Flug buchen",
+    "laufender_flug": "Laufender Flug"
   },
   "flight": {
     "error": {
@@ -3412,7 +3411,7 @@
     "idle_detail_next": "Dein nächster gebuchter Flug ist {{ident}} · {{dep}} → {{arr}}, planmäßig ab {{std}}. Die Karte zeigt ihn, sobald der Recorder läuft.",
     "idle_detail_none": "Aktuell ist kein Flug gebucht.",
     "idle_start_flight": "Flug starten",
-    "idle_go_briefing": "Zum Briefing",
+    "idle_go_briefing": "Zu meinen Flügen",
     "sys_inactive": "Recorder inaktiv",
     "sys_active": "Recorder aktiv · {{sim}} · {{uplink}}",
     "sys_uplink_ok": "Uplink OK",

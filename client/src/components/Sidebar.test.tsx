@@ -13,7 +13,7 @@ import { render, screen, within } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../../../bundle/texte/de.json";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, reiterAusSeite } from "./Sidebar";
 
 beforeAll(async () => {
   await i18next.use(initReactI18next).init({
@@ -27,7 +27,7 @@ beforeAll(async () => {
 
 function renderNav(over: Partial<React.ComponentProps<typeof Sidebar>> = {}) {
   const props: React.ComponentProps<typeof Sidebar> = {
-    tab: "cockpit",
+    tab: "flug",
     setTab: vi.fn(),
     collapsed: false,
     onToggleCollapsed: vi.fn(),
@@ -49,13 +49,12 @@ function renderNav(over: Partial<React.ComponentProps<typeof Sidebar>> = {}) {
 }
 
 describe("Sidebar — nichts darf beim Umbau verloren gehen", () => {
-  it("zeigt alle zehn Bereiche", () => {
+  it("zeigt alle Bereiche", () => {
     renderNav();
     for (const label of [
-      deCommon.tabs.cockpit,
+      deCommon.tabs.flug,
       deCommon.tabs.map,
       deCommon.tabs.cpdlc,
-      deCommon.tabs.briefing,
       deCommon.tabs.logbook,
       deCommon.tabs.landing,
       deCommon.nav.news,
@@ -121,10 +120,50 @@ describe("Sidebar — nichts darf beim Umbau verloren gehen", () => {
     expect(setTab).toHaveBeenCalledWith("hilfe");
   });
 
+  // 3.0: Briefing und Cockpit sind EIN Reiter „Flug“ (FlugView).
+  it("führt „Flug“ statt „Briefing“ und „Cockpit“ — als ersten Eintrag", () => {
+    const setTab = vi.fn();
+    const { container } = renderNav({ setTab, tab: "flug" });
+    const liste = [...container.querySelectorAll(".nav__list .navitem")].map((b) => b.textContent);
+    expect(liste[0]).toBe(deCommon.tabs.flug);
+    expect(liste.some((l) => /^(Briefing|Cockpit)$/.test(l ?? ""))).toBe(false);
+    const knopf = screen.getByRole("button", { name: new RegExp(`^${deCommon.tabs.flug}$`) });
+    expect(knopf.getAttribute("aria-current")).toBe("page");
+    knopf.click();
+    expect(setTab).toHaveBeenCalledWith("flug");
+  });
+
+  it("zeigt den Aktiv-Flug-Punkt am Reiter „Flug“", () => {
+    const ohne = renderNav({ hasActiveFlight: false });
+    expect(ohne.container.querySelector(".navitem__dot")).toBeNull();
+    const mit = renderNav({ hasActiveFlight: true });
+    const punkt = mit.container.querySelector(".navitem__dot");
+    expect(punkt?.closest(".navitem")?.textContent).toBe(deCommon.tabs.flug);
+  });
+
   it("hat einen beschrifteten Einklapp-Knopf", () => {
     renderNav({ collapsed: false });
     expect(screen.getByRole("button", { name: deCommon.nav.collapse })).toBeTruthy();
     renderNav({ collapsed: true });
     expect(screen.getByRole("button", { name: deCommon.nav.expand })).toBeTruthy();
+  });
+});
+
+// StreamDeck (`deck-seite`, DECK_SEITEN in panel_server.rs) und das Plugin
+// senden noch die alten Seiten — sie müssen auf „Flug“ landen.
+describe("reiterAusSeite — alte Seiten werden umgeleitet", () => {
+  it("leitet cockpit und briefing auf flug", () => {
+    expect(reiterAusSeite("cockpit")).toBe("flug");
+    expect(reiterAusSeite("briefing")).toBe("flug");
+  });
+  it("lässt die übrigen Deck-Seiten durch", () => {
+    for (const s of ["landing", "kabine", "map", "cpdlc", "flug"]) {
+      expect(reiterAusSeite(s)).toBe(s);
+    }
+  });
+  it("verwirft Unbekanntes statt eine leere Seite zu öffnen", () => {
+    expect(reiterAusSeite("gibtsnicht")).toBeNull();
+    expect(reiterAusSeite(undefined)).toBeNull();
+    expect(reiterAusSeite(42)).toBeNull();
   });
 });
