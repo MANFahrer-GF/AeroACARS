@@ -88,6 +88,15 @@ pub struct Tick {
     pub planned_zfw_kg: Option<f64>,
     /// Geschwindigkeit über Grund (kt); `None` = unbekannt (2.1.1, „rollt“).
     pub bodengeschwindigkeit_kt: Option<f64>,
+    /// Weiter Eingang (3.0, Analyse V2, Fähigkeit `kabine-lage-1`): das
+    /// Flugbild als JSON — `snapshot` (der ganze SimSnapshot), `phase`,
+    /// `flug` (Plan, Ist-Zeiten, Ziel, Durchstarts), `ofp`, `bahn`. Eine
+    /// neue Planer-Regel liest von hier, statt dass der Kern ein Feld mehr
+    /// übergibt (Fall v2.1.4: `planned_zfw_kg`). Kein fester Vertrag: Ein
+    /// Modul prüft jedes Feld und kommt ohne aus (`Null` auf einem älteren
+    /// Client). Alte Module übergehen das Feld (kein `deny_unknown_fields`).
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub lage: serde_json::Value,
 }
 
 /// Was der Planer vom Flug einmal zu Beginn wissen muss.

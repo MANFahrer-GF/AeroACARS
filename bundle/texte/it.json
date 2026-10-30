@@ -1822,8 +1822,6 @@
     }
   },
   "about": {
-    "paket_eingebaut": "Pacchetto di runtime: versione integrata",
-    "paket_generation": "Pacchetto di runtime: generazione {{n}}",
     "lizenz": "© {{jahr}} Thomas Kant · Software proprietario, solo per i piloti di German Sky Group. Ridistribuzione ed elusione delle restrizioni di accesso sono vietate.",
     "tagline": "ACARS moderno per phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",
     "purpose_title": "Cos'è AeroACARS?",
@@ -1832,6 +1830,22 @@
     "acknowledgements_intro": "Questi progetti sono stati studiati a fondo, misurati o usati come riferimento:",
     "thresholds_title": "Soglie di punteggio — fonti verificate",
     "thresholds_intro": "I limiti Smooth/Acceptable/Firm/Hard/Severe vengono dalla letteratura piloti reale:"
+  },
+  "paket": {
+    "zeile_generation": "Pacchetto: generazione {{n}} · Valutazione atterraggio: versione {{f}}",
+    "zeile_eingebaut": "Pacchetto: versione integrata · Valutazione atterraggio: versione {{f}}",
+    "pin": "Per il volo aperto resta valida la generazione {{n}}.",
+    "neu_wartet": "Nuovo pacchetto {{n}} scaricato, sarà attivo al prossimo avvio.",
+    "neu_starten": "Riavvia ora",
+    "neu_starten_nach_flug": "Riavvio possibile dopo il volo.",
+    "pruefen": "Cerca un nuovo pacchetto",
+    "pruefe": "Controllo …",
+    "ergebnis_kein_neueres": "Nessun pacchetto più recente.",
+    "ergebnis_neu": "Generazione {{n}} scaricata.",
+    "ergebnis_fehler": "Controllo non riuscito: {{fehler}}",
+    "ergebnis_flug_offen": "Durante un volo non viene scaricato alcun pacchetto.",
+    "letzte_fehler": "Ultimo controllo non riuscito: {{fehler}}",
+    "neustart_fehler": "Riavvio non possibile."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

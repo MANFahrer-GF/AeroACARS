@@ -3,6 +3,7 @@ import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { AppInfo } from "../types";
 import { extern } from "./HilfeSeite";
+import { PaketUebersicht } from "./PaketUebersicht";
 
 /**
  * About / Credits tab. Quiet, dezent, but acknowledges every project /
@@ -26,9 +27,6 @@ interface Props {
 export function AboutPanel({ onShowReleaseNotes, onHilfe }: Props) {
   const { t } = useTranslation();
   const [info, setInfo] = useState<AppInfo | null>(null);
-  // Aktive Paket-Generation: aus der Kennung „N-hash“ der Hilfe-Vorschau
-  // (vorhandener Befehl, kein neuer). Generation 0 = eingebauter Stand.
-  const [paketGeneration, setPaketGeneration] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,21 +39,6 @@ export function AboutPanel({ onShowReleaseNotes, onHilfe }: Props) {
         // hero strip blank rather than showing a confusing error.
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    invoke<{ meta?: { paket_generation?: string } }>("hilfe_vorschau")
-      .then((v) => {
-        const n = Number.parseInt(String(v?.meta?.paket_generation ?? "").split("-")[0], 10);
-        if (!cancelled && Number.isFinite(n)) setPaketGeneration(n);
-      })
-      .catch(() => {
-        /* ohne Angabe bleibt die Zeile weg */
-      });
     return () => {
       cancelled = true;
     };
@@ -102,13 +85,8 @@ export function AboutPanel({ onShowReleaseNotes, onHilfe }: Props) {
             {info.commit ? <> · <code>{info.commit.slice(0, 7)}</code></> : null}
           </p>
         )}
-        {paketGeneration !== null && (
-          <p className="about__version" style={{ opacity: 0.75 }} data-testid="about-paket">
-            {paketGeneration === 0
-              ? t("about.paket_eingebaut")
-              : t("about.paket_generation", { n: paketGeneration })}
-          </p>
-        )}
+        {/* Paket und Landebewertung auf den ersten Blick (paket_info). */}
+        <PaketUebersicht />
         {renderer && (
           <p className="about__version" style={{ opacity: 0.75 }}>
             Grafik: <code>{renderer}</code>

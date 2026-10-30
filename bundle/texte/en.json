@@ -1822,8 +1822,6 @@
     }
   },
   "about": {
-    "paket_eingebaut": "Runtime package: built-in version",
-    "paket_generation": "Runtime package: generation {{n}}",
     "lizenz": "© {{jahr}} Thomas Kant · Proprietary, for German Sky Group pilots only. Redistribution and circumventing the access restriction are prohibited.",
     "tagline": "Modern ACARS for phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",
     "purpose_title": "What is AeroACARS?",
@@ -1832,6 +1830,22 @@
     "acknowledgements_intro": "These projects were studied, measured, or referenced extensively:",
     "thresholds_title": "Score thresholds — verified sources",
     "thresholds_intro": "Smooth/Acceptable/Firm/Hard/Severe boundaries come from real pilot literature:"
+  },
+  "paket": {
+    "zeile_generation": "Package: generation {{n}} · Landing rating: version {{f}}",
+    "zeile_eingebaut": "Package: built-in · Landing rating: version {{f}}",
+    "pin": "The open flight keeps generation {{n}}.",
+    "neu_wartet": "New package {{n}} downloaded, becomes active on the next start.",
+    "neu_starten": "Restart now",
+    "neu_starten_nach_flug": "Restart possible after the flight.",
+    "pruefen": "Check for a new package",
+    "pruefe": "Checking …",
+    "ergebnis_kein_neueres": "No newer package.",
+    "ergebnis_neu": "Generation {{n}} downloaded.",
+    "ergebnis_fehler": "Check failed: {{fehler}}",
+    "ergebnis_flug_offen": "No package is downloaded during a flight.",
+    "letzte_fehler": "Last check failed: {{fehler}}",
+    "neustart_fehler": "Restart not possible."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

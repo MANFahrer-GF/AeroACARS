@@ -33,6 +33,7 @@ import {
   type HilfeBildVorbereitet,
 } from "../lib/hilfeBilder";
 import { Notice } from "./ui";
+import { PaketUebersicht } from "./PaketUebersicht";
 import "./hilfeSeite.css";
 
 export interface HilfeVorschau {
@@ -325,6 +326,8 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
           {ergebnis ? (ergebnis.ticket ? t("hilfe.ok_titel") : t("hilfe.fehler_titel")) : t("hilfe.titel")}
         </h2>
         {!ergebnis && <p className="settings__hint">{t("hilfe.einleitung")}</p>}
+        {/* Welches Paket, welche Bewertungsfassung — auf den ersten Blick. */}
+        <PaketUebersicht sichtbar={sichtbar} />
       </header>
 
       {!ergebnis && (

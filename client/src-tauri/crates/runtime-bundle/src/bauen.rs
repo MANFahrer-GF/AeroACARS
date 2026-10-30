@@ -57,6 +57,7 @@ pub fn bauen(quelle: &Path, ziel: &Path, o: &Optionen) -> Result<Vec<u8>, Fehler
         input_schema: o.input_schema,
         quelle: o.quelle.clone(),
         files,
+        weitere: Default::default(),
     };
     let bytes = serde_json::to_vec_pretty(&m).map_err(|e| Fehler::Manifest(e.to_string()))?;
     // Was wir bauen, muss der Client auch lesen koennen (Pfade, Hashes, Schema).
