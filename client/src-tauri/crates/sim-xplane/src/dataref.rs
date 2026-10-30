@@ -2767,6 +2767,18 @@ mod toliss_autoflight_tests {
         );
     }
 
+    /// Anhang C, C-022: Zibo-Vref aus dem FMC nur bei Werten ueber null.
+    #[test]
+    fn c_022_zibo_vref_nur_ueber_null() {
+        let mut s = XPlaneState::default();
+        s.apply_field(FieldId::B738FmsVref, 0.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).vref_kt, None, "0 = noch nicht im FMC");
+        s.apply_field(FieldId::B738FmsVref, -5.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).vref_kt, None);
+        s.apply_field(FieldId::B738FmsVref, 142.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).vref_kt, Some(142.0));
+    }
+
     #[test]
     fn toliss_both_aps_off_reports_master_off() {
         // ToLiss loaded (datarefs streaming) but hand-flown: int 0s

@@ -1077,6 +1077,32 @@ mod tests {
         unsafe { std::mem::zeroed() }
     }
 
+    /// Anhang C, X2-038: Erkennung ueber den air-Pfad (NG3-Familie inkl.
+    /// Livery-Ordner mit Elternnamen, 77x = 777) und `looks_alive` = MCP
+    /// bestromt ODER APU laeuft.
+    #[test]
+    fn x2_038_pmdg_erkennung_und_looks_alive() {
+        use super::super::PmdgVariant;
+        for ordner in ["pmdg-aircraft-736", "pmdg-aircraft-737", "pmdg-aircraft-738", "pmdg-aircraft-739", "pmdg-aircraft-738-sxs-tc-snn"] {
+            let pfad = format!(r"E:\Community\{ordner}\SimObjects\Airplanes\X\aircraft.cfg");
+            assert_eq!(PmdgVariant::detect_from_air_path(&pfad), Some(PmdgVariant::Ng3), "{ordner}");
+        }
+        assert_eq!(
+            PmdgVariant::detect_from_air_path(r"E:\Community\pmdg-aircraft-77w\aircraft.cfg"),
+            Some(PmdgVariant::X777)
+        );
+        assert_eq!(PmdgVariant::detect_from_air_path(r"E:\Community\fnx-aircraft-320\aircraft.cfg"), None);
+
+        let mut raw = zeroed_raw();
+        assert!(!Pmdg738Snapshot::from_raw(&raw).looks_alive(), "kalt und stromlos");
+        raw.MCP_indication_powered = 1;
+        assert!(Pmdg738Snapshot::from_raw(&raw).looks_alive());
+        raw.MCP_indication_powered = 0;
+        raw.APU_Selector = 1;
+        raw.APU_EGTNeedle = 400.0;
+        assert!(Pmdg738Snapshot::from_raw(&raw).looks_alive(), "APU laeuft");
+    }
+
     /// Two-channel annunciators must OR: either engine's REVERSER
     /// light counts as "reverser deployed".
     #[test]

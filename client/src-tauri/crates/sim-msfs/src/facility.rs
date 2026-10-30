@@ -2522,6 +2522,27 @@ mod tests {
         );
     }
 
+    /// Anhang C, X2-008: die volle Abbildung MSFS-Belag -> intern, jede
+    /// Zahl der SimConnect-Doku einzeln; Unbekanntes nie Asphalt.
+    #[test]
+    fn x2_008_belag_volle_tabelle() {
+        let tabelle: &[(&[i32], u8)] = &[
+            (&[0], 2),
+            (&[4, 17, 18, 19, 23], 1),
+            (&[1, 3, 5, 6, 7], 3),
+            (&[12, 15, 21], 4),
+            (&[13, 14, 22], 5),
+            (&[2, 26, 27, 28, 29, 30, 31], 13),
+            (&[8, 9], 14),
+            (&[10, 11, 16, 20, 24, 25, 32, 254, 255, -1, 33], 0),
+        ];
+        for (codes, want) in tabelle {
+            for c in *codes {
+                assert_eq!(belag_code(*c), *want, "MSFS-Belag {c}");
+            }
+        }
+    }
+
     #[test]
     fn belag_wird_auf_eine_sprache_gebracht() {
         // ⚠ Diese Werte stehen so in der SimConnect-Doku. Bis v1.7.12

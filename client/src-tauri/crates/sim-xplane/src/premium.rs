@@ -658,6 +658,18 @@ fn trim_trailing_ws(bytes: &[u8]) -> &[u8] {
 mod tests {
     use super::*;
 
+    /// Anhang C, X2-034: Plugin-Ports nie im X-Plane-Bereich 49000-49003
+    /// (49001 loeste „Lokales Netzwerk wird deaktiviert" aus); Zusatz-RREF-
+    /// Indizes weit ueber Katalog (0..~63) und Profil-Proben (10 000+).
+    #[test]
+    fn x2_034_ports_ausserhalb_des_xplane_bereichs() {
+        for port in [PREMIUM_UDP_PORT, PLUGIN2_PORT] {
+            assert!(!(49_000..=49_003).contains(&port), "Port {port}");
+        }
+        assert_eq!(PREMIUM_UDP_PORT, 52_000);
+        assert!(crate::zusatz::ZUSATZ_INDEX_BASE >= 20_000);
+    }
+
     /// QS-Befund F2 (04.10.2026): Nach dem Stopp des Listeners (Sim-Wechsel)
     /// muss „bereit" zurueckgesetzt sein, sonst baut die App weiter Baender ins
     /// Leere. Auch dann, wenn die Sitzung selbst nie „bereit" gemeldet hat

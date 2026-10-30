@@ -12148,6 +12148,19 @@ mod tests {
             assert_eq!(s(FENIX, &lampe).cabin_altitude_warning, None);
         }
 
+
+        #[test]
+        #[should_panic(expected = "ist nicht in TELEMETRY_FIELDS registriert")]
+        fn s5_102_tests_laufen_durch_die_echte_kette_unbekannter_name_scheitert() {
+            // Ein Tippfehler im Feldnamen darf keinen gruenen Test erzeugen.
+            let _ = s(ASOBO, &[("L:A22X Spoiler Lever", 1.0)]);
+        }
+
+        #[test]
+        fn s5_102_optionale_felder_sind_im_puffer_erlaubt() {
+            let snap = s(ASOBO, &[("TRANSPONDER STATE:1", 4.0)]);
+            assert_eq!(snap.xpdr_mode_label.as_deref(), Some("ALT"));
+        }
         // ---------------- Profile je Add-on ----------------
 
         #[test]
