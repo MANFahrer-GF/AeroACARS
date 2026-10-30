@@ -63,7 +63,13 @@ describe("Dev-Kennung (P-11.21)", () => {
     const dev = readFileSync("../.github/workflows/dev-build.yml", "utf8");
     const bauen = dev.split("\n").filter((z) => z.includes("tauri build"));
     expect(bauen.length).toBe(2);
-    for (const z of bauen) expect(z).toContain("--config src-tauri/tauri.lokal.conf.json");
+    // Ohne den Eingang `beta` die Dev-Kennung; nur mit `beta` die
+    // Produktionskennung (Beta-Installer, ohne Updater-Dateien).
+    const wahl = "--config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}";
+    for (const z of bauen) expect(z).toContain(wahl);
+    const beta = lies("src-tauri/tauri.beta.conf.json");
+    expect(beta.identifier).toBeUndefined();
+    expect(beta.bundle?.createUpdaterArtifacts).toBe(false);
     expect(readFileSync("../.github/workflows/release.yml", "utf8")).not.toContain("tauri.lokal");
   });
 });
