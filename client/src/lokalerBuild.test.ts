@@ -116,10 +116,25 @@ describe("Beta-Update-Kanal", () => {
     expect(rel).toContain("- '!v3.*-beta*'");
     // Das Skript legt diese Tags an und prueft den Ausschluss am Commit.
     const skript = readFileSync("../scripts/beta-veroeffentlichen.sh", "utf8");
-    expect(skript).toContain("'!v3.*-beta*'");
+    expect(skript).toContain(String.raw`'!v3\.\*-beta\*'`);
     expect(skript).toContain("KANAL=aeroacars3-beta-kanal");
     expect(KANAL).toContain("/aeroacars3-beta-kanal/");
     // Kein v-Praefix am Kanal-Tag: release.yml laeuft auf v*.
     expect(skript).not.toMatch(/--latest(?!=false)/);
+  });
+
+  it("nutzt beim Bauen und Veroeffentlichen dieselben Dateinamen", () => {
+    // beta-kanal-bauen.sh benennt nach productName (Leerzeichen -> Punkt),
+    // beta-veroeffentlichen.sh erwartet die Namen fest. Ein Umbenennen der
+    // App fiele sonst erst beim Veroeffentlichen auf.
+    const c = lies("src-tauri/tauri.conf.json");
+    const bauen = readFileSync("../.github/scripts/beta-kanal-bauen.sh", "utf8");
+    const skript = readFileSync("../scripts/beta-veroeffentlichen.sh", "utf8");
+    expect(bauen).toContain('P="${NAME// /.}_${VER}"');
+    expect(skript).toContain(`P="${c.productName.replace(/ /g, ".")}_\${VER}"`);
+    for (const endung of ["_x64-setup.exe", "_x64-setup.exe.sig", "_aarch64.dmg", "_aarch64.app.tar.gz", "_aarch64.app.tar.gz.sig"]) {
+      expect(bauen).toContain(`"$ZIEL/\${P}${endung}"`);
+      expect(skript).toContain(`"\${P}${endung}"`);
+    }
   });
 });
