@@ -14223,6 +14223,233 @@ mod tests {
             assert_eq!(std.apu_switch, Some(true));
             assert_eq!(std.apu_pct_rpm, Some(100.0));
         }
+
+        // ------- Block 2: Landebewertung, Bahn, Sprit, Kabine (P-16.01) -------
+
+        #[test]
+        fn s4_072_vs0_mitgeschrieben_autobrake_cb_nur_roh_gurte_als_rueckfall() {
+            let snap = s(
+                ASOBO,
+                &[
+                    ("DESIGN SPEED VS0", 110.0),
+                    ("AUTO BRAKE SWITCH CB", 3.0),
+                    ("CABIN SEATBELTS ALERT SWITCH", 1.0),
+                ],
+            );
+            assert_eq!(snap.design_vs0_kt, Some(110.0));
+            let roh = snap.cockpit_rohwerte.clone().unwrap();
+            assert_eq!(roh.werte.get("AUTO BRAKE SWITCH CB"), Some(&3.0));
+            assert_eq!(roh.werte.get("CABIN SEATBELTS ALERT SWITCH"), Some(&1.0));
+            // Der CB-Wert ist nur roh: er erzeugt keine Autobrake-Stellung.
+            assert_eq!(snap.autobrake, s(ASOBO, &[]).autobrake);
+        }
+
+        #[test]
+        fn s4_083_touchdown_felder_in_eigener_definition() {
+            for td in TOUCHDOWN_FIELDS {
+                assert!(!hat_feld(td.name), "{} gehoert nicht in die Hauptdefinition", td.name);
+                assert!(!OPTIONALE_FELDER.iter().any(|f| f.name == td.name));
+            }
+            assert_eq!(TOUCHDOWN_FIELDS[0].name, "PLANE TOUCHDOWN NORMAL VELOCITY");
+            assert_eq!(TOUCHDOWN_FIELDS[4].unit, "radians");
+            assert_eq!(TOUCHDOWN_FIELDS[5].unit, "radians");
+            // Ein vollstaendiger Block wird in Feldreihenfolge gelesen …
+            let mut b = Vec::new();
+            for v in [-4.0f64, 3.5, -1.0, 270.0, 0.87, 0.15] {
+                b.extend_from_slice(&v.to_le_bytes());
+            }
+            let td = Touchdown::from_block(&b);
+            assert_eq!((td.vs_fps, td.pitch_deg, td.bank_deg), (-4.0, 3.5, -1.0));
+            assert_eq!((td.heading_mag_deg, td.lat_rad, td.lon_rad), (270.0, 0.87, 0.15));
+            // … ein abgelehnter (leerer) Block erfindet nichts.
+            assert!(Touchdown::from_block(&[]).is_uninitialised());
+        }
+
+        #[test]
+        fn s4_084_touchdown_ohne_sinkrate_gilt_als_nicht_initialisiert() {
+            let spawn = Touchdown {
+                vs_fps: 0.0,
+                pitch_deg: 2.0,
+                heading_mag_deg: 250.0,
+                lat_rad: 0.87,
+                ..Default::default()
+            };
+            assert!(spawn.is_uninitialised());
+            let echt = Touchdown { vs_fps: -2.5, ..spawn };
+            assert!(!echt.is_uninitialised());
+        }
+
+        #[test]
+        fn s4_085_messliste_aus_der_tabelle_dubletten_erst_in_der_vermessung() {
+            let namen = profil_lvar_namen();
+            for f in TELEMETRY_FIELDS.iter().chain(TOUCHDOWN_FIELDS) {
+                if f.name.starts_with("L:") {
+                    assert!(namen.contains(&f.name), "{} fehlt in der Messliste", f.name);
+                }
+            }
+            assert!(namen.iter().all(|n| n.starts_with("L:")));
+            let mit_dublette: Vec<&str> = namen.iter().copied().chain([namen[0]]).collect();
+            let (felder, _) = crate::vermessung::l_felder_mit_profil(&mit_dublette, &[]);
+            let (ohne, _) = crate::vermessung::l_felder_mit_profil(&namen, &[]);
+            assert_eq!(felder.len(), ohne.len(), "Dublette faellt in der Vermessung weg");
+        }
+
+        #[test]
+        fn s4_093_ohne_ex1_kommt_der_sprit_aus_der_legacy_simvar() {
+            let alt = s(ASOBO, &[("FUEL TOTAL QUANTITY WEIGHT", 10_000.0)]);
+            assert!((alt.fuel_total_kg - 4_535.92).abs() < 0.1, "{}", alt.fuel_total_kg);
+            let neu = s(
+                ASOBO,
+                &[
+                    ("FUEL TOTAL QUANTITY WEIGHT", 10_000.0),
+                    ("FUEL TOTAL QUANTITY WEIGHT EX1", 12_000.0),
+                ],
+            );
+            assert!((neu.fuel_total_kg - 5_443.11).abs() < 0.1, "{}", neu.fuel_total_kg);
+        }
+
+        #[test]
+        fn s4_124_spritreihenfolge_fbw_dann_ex1_dann_legacy() {
+            let w = [
+                ("L:A32NX_TOTAL_FUEL_QUANTITY", 5_000.0),
+                ("FUEL TOTAL QUANTITY WEIGHT EX1", 12_000.0),
+                ("FUEL TOTAL QUANTITY WEIGHT", 10_000.0),
+            ];
+            assert_eq!(s(A32NX, &w).fuel_total_kg, 5_000.0, "FBW-LVar ist schon kg");
+            // FBW-LVar 0 → EX1; Nicht-FBW ignoriert die LVar.
+            let fbw0 = s(A32NX, &[("L:A32NX_TOTAL_FUEL_QUANTITY", 0.0), w[1], w[2]]);
+            assert!((fbw0.fuel_total_kg - 12_000.0 * 0.453_592_37).abs() < 0.1);
+            assert!((s(ASOBO, &w).fuel_total_kg - 12_000.0 * 0.453_592_37).abs() < 0.1);
+        }
+
+        #[test]
+        fn s4_125_bruttogewicht_und_zfw_nur_wenn_schluessig() {
+            let snap = s(
+                ASOBO,
+                &[("TOTAL WEIGHT", 100_000.0), ("FUEL TOTAL QUANTITY WEIGHT", 20_000.0)],
+            );
+            let gw = snap.total_weight_kg.unwrap();
+            assert!((gw - 45_359.24).abs() < 0.5);
+            assert!((snap.zfw_kg.unwrap() - 80_000.0 * 0.453_592_37).abs() < 0.5);
+            // Kein Gesamtgewicht → weder GW noch ZFW.
+            let ohne = s(ASOBO, &[("FUEL TOTAL QUANTITY WEIGHT", 20_000.0)]);
+            assert_eq!(ohne.total_weight_kg, None);
+            assert_eq!(ohne.zfw_kg, None);
+            // GW nicht groesser als Sprit → kein negatives/null ZFW.
+            let quatsch = s(
+                ASOBO,
+                &[("TOTAL WEIGHT", 20_000.0), ("FUEL TOTAL QUANTITY WEIGHT", 20_000.0)],
+            );
+            assert!(quatsch.total_weight_kg.is_some());
+            assert_eq!(quatsch.zfw_kg, None);
+        }
+
+        #[test]
+        fn s4_144_fenix_landelicht_nur_stellung_2_bugrad_beide_modi_fluegel_nur_fenix() {
+            let l = |links: f64, rechts: f64| -> Option<bool> {
+                s(
+                    FENIX,
+                    &[("L:S_OH_EXT_LT_LANDING_L", links), ("L:S_OH_EXT_LT_LANDING_R", rechts)],
+                )
+                .light_landing
+            };
+            assert_eq!(l(2.0, 0.0), Some(true));
+            assert_eq!(l(0.0, 2.0), Some(true));
+            assert_eq!(l(1.0, 1.0), Some(false), "1 = aus, nicht an");
+            assert_eq!(l(0.0, 0.0), Some(false), "eingefahren = aus");
+            for (nose, want) in [(0.0, false), (1.0, true), (2.0, true)] {
+                assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_NOSE", nose)]).light_taxi, Some(want));
+            }
+            assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_WING", 1.0)]).light_wing, Some(true));
+            assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_WING", 0.0)]).light_wing, Some(false));
+            assert_eq!(s(ASOBO, &[("L:S_OH_EXT_LT_WING", 1.0)]).light_wing, None);
+        }
+
+        #[test]
+        fn s4_145_fss_und_bluebird_landelicht_als_oder() {
+            for name in [
+                "L:FSS_EXX_OVHD_EXLT_LANDING_L_SWITCH",
+                "L:FSS_EXX_OVHD_EXLT_LANDING_R_SWITCH",
+                "L:FSS_EXX_OVHD_EXLT_LANDING_NOSE_SWITCH",
+            ] {
+                assert_eq!(s(FSS_E190, &[(name, 1.0)]).light_landing, Some(true), "{name}");
+            }
+            assert_eq!(s(FSS_E190, &[("LIGHT LANDING", 1.0)]).light_landing, Some(false));
+            for name in [
+                "L:B757_OVHD_LEFT_LANDING_LIGHT",
+                "L:B757_OVHD_RIGHT_LANDING_LIGHT",
+                "L:B757_OVHD_NOSE_LANDING_LIGHT",
+                "LIGHT LANDING",
+            ] {
+                assert_eq!(s(BBS_LTU, &[(name, 1.0)]).light_landing, Some(true), "{name}");
+            }
+            assert_eq!(s(BBS_LTU, &[]).light_landing, Some(false));
+        }
+
+        #[test]
+        fn s4_147_rolllicht_fenix_bug_fss_bug_oder_seite_sonst_standard() {
+            assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_NOSE", 1.0), ("LIGHT TAXI", 0.0)]).light_taxi, Some(true));
+            assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_NOSE", 0.0), ("LIGHT TAXI", 1.0)]).light_taxi, Some(false));
+            assert_eq!(s(FSS_E190, &[("L:FSS_EXX_OVHD_EXLT_TAXI_SIDE_SWITCH", 1.0)]).light_taxi, Some(true));
+            assert_eq!(s(FSS_E190, &[("L:FSS_EXX_OVHD_EXLT_TAXI_NOSE_SWITCH", 1.0)]).light_taxi, Some(true));
+            assert_eq!(s(FSS_E190, &[("LIGHT TAXI", 1.0)]).light_taxi, Some(false));
+            // Ohne Add-on-Quelle bleibt die Standard-SimVar.
+            assert_eq!(s(ASOBO, &[("LIGHT TAXI", 1.0)]).light_taxi, Some(true));
+            assert_eq!(s(ASOBO, &[("LIGHT TAXI", 0.0)]).light_taxi, Some(false));
+        }
+
+        #[test]
+        fn s4_148_parkbremse_quelle_je_muster() {
+            fn pb(m: (&str, &str), w: &[(&str, f64)]) -> bool {
+                s(m, w).parking_brake
+            }
+            assert!(pb(FENIX, &[("L:S_MIP_PARKING_BRAKE", 1.0)]));
+            assert!(!pb(FENIX, &[("L:S_MIP_PARKING_BRAKE", 0.0), ("BRAKE PARKING POSITION", 1.0)]));
+            // iFly: Schwelle 0,5 — 0/1 und 0/100 lesen beide richtig.
+            assert!(pb(IFLY, &[("L:VC_Parking_Brake_SW_VAL", 1.0)]));
+            assert!(pb(IFLY, &[("L:VC_Parking_Brake_SW_VAL", 100.0)]));
+            assert!(!pb(IFLY, &[("L:VC_Parking_Brake_SW_VAL", 0.4), ("BRAKE PARKING POSITION", 1.0)]));
+            assert!(pb(FSL, &[("L:VC_PED_PARK_BRAKE_Switch", 1.0)]));
+            assert!(!pb(FSL, &[("L:VC_PED_PARK_BRAKE_Switch", 0.0), ("BRAKE PARKING POSITION", 1.0)]));
+            assert!(pb(FSS_E190, &[("L:FSS_EXX_PARKBRAKE_BV_LEVER", 1.0)]));
+            assert!(!pb(FSS_E190, &[("BRAKE PARKING POSITION", 1.0)]));
+            assert!(pb(A32NX, &[("L:A32NX_PARK_BRAKE_LEVER_POS", 0.5)]));
+            assert!(!pb(A32NX, &[("L:A32NX_PARK_BRAKE_LEVER_POS", 0.4), ("BRAKE PARKING POSITION", 1.0)]));
+            // A220 bewusst ohne Override: der Standard entscheidet.
+            assert!(pb(A220, &[("BRAKE PARKING POSITION", 1.0)]));
+            assert!(!pb(A220, &[("BRAKE PARKING POSITION", 0.0)]));
+        }
+
+        #[test]
+        fn s4_172_vref_ini_familie_inklusive_a380_und_fss_marke() {
+            let v = |m: (&str, &str), w: &[(&str, f64)]| -> Option<f64> { s(m, w).vref_kt };
+            assert_eq!(v(A350, &[("L:INI_VREF_SPEED", 134.0)]), Some(134.0));
+            // Der A380 gehoert zur INI-Familie (16 Fluege ohne Wert, 06.10.2026).
+            assert_eq!(v(A380, &[("L:INI_VREF_SPEED", 132.0)]), Some(132.0));
+            assert_eq!(v(FSS_E190, &[("L:FSS_EXX_PFD_GV_AIRSPD_VREF_1", 128.0)]), Some(128.0));
+            // Fremde Muster lesen die LVar nicht; 0 heisst nicht gesetzt.
+            assert_eq!(v(ASOBO, &[("L:INI_VREF_SPEED", 134.0)]), None);
+            assert_eq!(v(A350, &[("L:INI_VREF_SPEED", 0.0)]), None);
+        }
+
+        #[test]
+        fn s4_195_touchdown_felder_bleiben_im_tick_leer_kein_radkraft_wert() {
+            let snap = s(ASOBO, &[("SIM ON GROUND", 1.0), ("VERTICAL SPEED", -3.0)]);
+            assert_eq!(snap.touchdown_vs_fpm, None);
+            assert_eq!(snap.touchdown_pitch_deg, None);
+            assert_eq!(snap.touchdown_bank_deg, None);
+            assert_eq!(snap.touchdown_heading_mag_deg, None);
+            assert_eq!(snap.touchdown_lat, None);
+            assert_eq!(snap.touchdown_lon, None);
+            assert_eq!(snap.gear_normal_force_n, None);
+        }
+
+        #[test]
+        fn s4_205_vs0_nur_wenn_positiv() {
+            assert_eq!(s(ASOBO, &[("DESIGN SPEED VS0", 0.0)]).design_vs0_kt, None);
+            assert_eq!(s(ASOBO, &[("DESIGN SPEED VS0", -5.0)]).design_vs0_kt, None);
+            assert_eq!(s(ASOBO, &[("DESIGN SPEED VS0", 0.5)]).design_vs0_kt, Some(0.5));
+        }
     }
 }
 
