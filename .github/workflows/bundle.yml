@@ -37,6 +37,10 @@ on:
         description: 'Vom OurAirports-Wochenlauf: ohne Einzelfreigabe, falls nur ourairports/ abweicht (P-9.43)'
         type: boolean
         default: false
+      kernaufgabe:
+        description: 'Kernaufgabe dieser Generation in einem Satz (fuer die Verwaltung; leer = Ueberschrift des neuesten Commits)'
+        type: string
+        default: ''
 
 concurrency:
   group: laufzeit-paket
@@ -54,6 +58,10 @@ jobs:
   bauen:
     name: Bauen, testen, signieren
     runs-on: ubuntu-latest
+    # actions: read fuer die Begleitnotiz (zuletzt freigegebener Lauf).
+    permissions:
+      contents: read
+      actions: read
     outputs:
       generation: ${{ steps.gen.outputs.generation }}
       erstellt: ${{ steps.gen.outputs.erstellt }}
@@ -61,6 +69,9 @@ jobs:
       umgebung: ${{ steps.umgebung.outputs.umgebung }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Volle Historie fuer die Commit-Liste der Begleitnotiz.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -108,6 +119,20 @@ jobs:
             --erstellt "${{ steps.gen.outputs.erstellt }}" \
             --repo-commit "${{ github.sha }}" ${OA[@]+"${OA[@]}"} \
             --requires "$REQUIRES"
+      # Unsignierte Begleitnotiz NEBEN dem Paket (nicht im Manifest; Clients
+      # lesen sie nie): Kernaufgabe + Commits seit der zuletzt freigegebenen
+      # Generation. live legt sie als gen/<G>/notiz.json ab, die Verwaltung
+      # (Reiter „AeroACARS 3“ → „Pakete & Module“) zeigt sie an. Schlaegt sie
+      # fehl, geht das Paket ohne Notiz weiter.
+      - name: Begleitnotiz (Kernaufgabe, Commits seit der Freigabe)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          KERNAUFGABE: ${{ inputs.kernaufgabe }}
+        run: |
+          python3 -I -m unittest discover -s scripts/bundle
+          python3 -I scripts/bundle/notiz.py --generation "${{ steps.gen.outputs.generation }}" \
+            --repo-commit "${{ github.sha }}" --kernaufgabe "$KERNAUFGABE" --ausgabe paket/notiz.json \
+            || echo "::warning::Begleitnotiz nicht erzeugt — Paket geht ohne Notiz weiter"
       - name: Signieren
         id: signieren
         env:
@@ -309,7 +334,9 @@ jobs:
           # flock ablegen (scripts/bundle/veroeffentlichen.sh). --checksum
           # ersetzt auch eine frueher halb hochgeladene Datei gleichen Namens.
           rsync -a --checksum -e "$SSH" paket/blobs/ "$ZIEL:blobs/"
-          rsync -a -e "$SSH" paket/manifest.json paket/manifest.json.minisig "$ZIEL:tmp-gen-$G/"
+          # notiz.json (unsigniert, falls erzeugt) wandert mit tmp-gen-$G nach gen/$G.
+          NOTIZ=(); [ -f paket/notiz.json ] && NOTIZ=(paket/notiz.json)
+          rsync -a -e "$SSH" paket/manifest.json paket/manifest.json.minisig ${NOTIZ[@]+"${NOTIZ[@]}"} "$ZIEL:tmp-gen-$G/"
           # Der Vorab-Schluessel ist auf live per erzwungenem Befehl auf
           # Hochladen + "vorab" beschraenkt (scripts/bundle/ssh-befehl.sh).
           $SSH "$ZIEL" veroeffentlichen vorab "$G"
