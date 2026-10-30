@@ -246,6 +246,12 @@ fn nachbauen(f: &Flug, tick: Option<&Value>, nicht_konv: bool, p: &Paket) -> Opt
     // die Mittellinie blieb Navigraph (CFG2001, FQNP 23).
     l.bahn_geometrie_aus_szenerie =
         Some(bahn("bahn_szenerie_status") == "uebernommen" && td["simulator"].as_str() == Some("xplane"));
+    // Die gespeicherte 2.x-Note rechnete hier mit „Achse bestaetigt" — die
+    // Achse ist also ersetzt, nicht 1:1 aus dem Protokoll (`runway_discipline`
+    // zaehlt dort nicht als gruen, `betroffene_achsen`).
+    if bahn("bahn_szenerie_status") == "uebernommen" && td["simulator"].as_str() == Some("msfs") {
+        nachgespielt.push("bahn_achse_msfs_navigraph");
+    }
     l.abfangen = match &pf["abfangen"] {
         Value::Null => None,
         v => match serde_json::from_value(v.clone()) {
