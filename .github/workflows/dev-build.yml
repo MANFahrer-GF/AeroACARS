@@ -6,7 +6,7 @@ name: Dev Build (unsigned, manual)
 # gesetzt, tauri.conf.json bleibt unberuehrt). v3 (P-11.21): dieselbe
 # Beikonfiguration tauri.lokal.conf.json gibt dem Dev-Build die eigene Kennung
 # (Eingang beta=true: tauri.beta.conf.json, Produktionskennung com.aeroacars.app3
-# fuer Beta-Installer an Vorab-Piloten, weiter ohne Updater-Dateien)
+# fuer Beta-Installer an Vorab-Piloten, siehe Beta-Update-Kanal unten)
 # com.aeroacars.app3.dev und den Namen "AeroACARS 3 Dev" — eigener Datenordner,
 # ein Probestart beruehrt nie Sitzung oder Flug der Beta. Fuer schnelle Iterationen
 # (z. B. Aircraft-Scan-Fixes), die Thomas auf seiner echten Maschine mit
@@ -20,6 +20,15 @@ name: Dev Build (unsigned, manual)
 # ersten Start ("nicht identifizierter Entwickler" / "beschaedigt"). Vor dem
 # ersten Oeffnen im Terminal: `xattr -cr /Pfad/zu/AeroACARS.app` (entfernt
 # das Quarantaene-Flag), dann normal per Doppelklick oeffnen.
+#
+# Beta-Update-Kanal (beta=true): tauri.beta.conf.json schaltet die
+# Updater-Dateien ein und setzt den eigenen Endpunkt
+# releases/download/aeroacars3-beta-kanal/latest.json (getrennt vom
+# 2.x-Kanal releases/latest). Die Builds signieren sie mit dem Updater-Schluessel
+# wie release.yml, der Mac-Build ist Pflicht-signiert (Apple). Der Job
+# beta-kanal legt Installer, Update-Dateien und latest.json als Artefakt
+# AeroACARS-beta-kanal ab — VEROEFFENTLICHT NICHTS. Das macht nach Freigabe
+# scripts/beta-veroeffentlichen.sh <run-id>.
 on:
   workflow_dispatch:
     inputs:
@@ -28,7 +37,7 @@ on:
         type: boolean
         default: false
       beta:
-        description: 'Beta-Installer: Produktionskennung com.aeroacars.app3 (tauri.beta.conf.json) statt Dev-Kennung; weiter ohne Tag, Release und Updater-Dateien'
+        description: 'Beta-Installer: Produktionskennung com.aeroacars.app3 (tauri.beta.conf.json), signierte Updater-Dateien + latest.json fuer den Beta-Kanal als Artefakt; ohne Tag und Release'
         type: boolean
         default: false
 
@@ -57,9 +66,14 @@ jobs:
         working-directory: client
         run: npm ci
 
-      - name: Build (unsigned, no updater artifacts)
+      - name: Build (Updater-Dateien nur bei beta)
         shell: bash
         working-directory: client
+        env:
+          # Nur Beta: Updater-Dateien mit demselben Schluessel wie release.yml
+          # signieren. Ohne beta schaltet tauri.lokal.conf.json sie ab.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.beta && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.beta && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: npx tauri build --bundles nsis --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Upload installer
@@ -67,6 +81,15 @@ jobs:
         with:
           name: AeroACARS-dev-build-windows-${{ github.sha }}
           path: client/src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 7
+
+      - name: Upload Update-Signatur (beta)
+        if: inputs.beta
+        uses: actions/upload-artifact@v7
+        with:
+          name: AeroACARS-beta-updater-windows-${{ github.sha }}
+          path: client/src-tauri/target/release/bundle/nsis/*-setup.exe.sig
+          if-no-files-found: error
           retention-days: 7
 
   dev-build-macos:
@@ -94,9 +117,10 @@ jobs:
         run: npm ci
 
       # Nur auf Wunsch (Schalter beim Starten des Laufs): gleiche Signatur wie
-      # im Release, um sie ohne Tag zu pruefen.
+      # im Release, um sie ohne Tag zu pruefen. Bei beta Pflicht: das
+      # Auto-Update ersetzt die App der Piloten, unsigniert blockiert Gatekeeper.
       - name: Apple-Signatur vorbereiten
-        if: inputs.apple_signieren
+        if: inputs.apple_signieren || inputs.beta
         shell: bash
         env:
           APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
@@ -105,15 +129,21 @@ jobs:
           APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_SECRET: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_P8_SECRET: ${{ secrets.APPLE_API_KEY_P8 }}
+          AEROACARS_SIGNATUR_PFLICHT: ${{ inputs.beta && '1' || '0' }}
         run: .github/scripts/apple-signatur-vorbereiten.sh
 
-      - name: Build (no updater artifacts)
+      - name: Build (Updater-Dateien nur bei beta)
         shell: bash
         working-directory: client
+        env:
+          # Nur Beta: Updater-Dateien mit demselben Schluessel wie release.yml
+          # signieren. Ohne beta schaltet tauri.lokal.conf.json sie ab.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.beta && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.beta && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Apple-Signatur pruefen
-        if: inputs.apple_signieren
+        if: inputs.apple_signieren || inputs.beta
         shell: bash
         run: .github/scripts/apple-app-pruefen.sh client/src-tauri/target/aarch64-apple-darwin/release/bundle/macos
 
@@ -122,4 +152,42 @@ jobs:
         with:
           name: AeroACARS-dev-build-macos-${{ github.sha }}
           path: client/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          retention-days: 7
+
+      - name: Upload Update-Paket (beta)
+        if: inputs.beta
+        uses: actions/upload-artifact@v7
+        with:
+          name: AeroACARS-beta-updater-macos-${{ github.sha }}
+          path: |
+            client/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            client/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 7
+
+  # Nur beta: Paket fuer den Beta-Update-Kanal zusammenstellen (feste Namen,
+  # latest.json mit Notes aus docs/release-notes/v<version>.md). Kein Upload
+  # an ein Release — das macht scripts/beta-veroeffentlichen.sh nach Freigabe.
+  beta-kanal:
+    if: inputs.beta
+    needs: [dev-build-windows, dev-build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build-Dateien laden
+        uses: actions/download-artifact@v8
+        with:
+          pattern: AeroACARS-*-${{ github.sha }}
+          path: roh
+
+      - name: latest.json bauen
+        run: .github/scripts/beta-kanal-bauen.sh roh kanal
+
+      - name: Upload Beta-Kanal-Paket
+        uses: actions/upload-artifact@v7
+        with:
+          name: AeroACARS-beta-kanal
+          path: kanal/*
+          if-no-files-found: error
           retention-days: 7
