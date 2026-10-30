@@ -12382,6 +12382,7 @@ fn ohne_schwere_felder(mut r: LandingRecord) -> LandingRecord {
     r.sampler_diagnose = None;
     r.gate_window = None;
     r.anflug_gleitpfad = None;
+    r.modul_sollband = None;
     r
 }
 
@@ -26463,6 +26464,19 @@ where
 
     // v1.7.0 Bahndisziplin — an einer Stelle abgeleitet, siehe `bahn_felder`.
     let bahn = bahn_felder(stats, aircraft_icao, bahn_skip_grund(&computed_sub_scores));
+    // v3 (P-4.21): Soll-Band aus dem Modul, ueber dieselben Proben und
+    // denselben Gleitwinkel, die die Anfluggrafik zeigt.
+    let modul_sollband = crate::bewertung::sollband(
+        &approach_samples
+            .iter()
+            .map(|p| landing_scoring::sollband::Probe {
+                gs_kt: p.gs_kt.map(f64::from),
+                is_flare: p.is_flare,
+                t_ms: p.t_ms.map(f64::from),
+            })
+            .collect::<Vec<_>>(),
+        runway_match.as_ref().and_then(|m| m.glideslope_angle_deg),
+    );
 
     Some(LandingRecord {
         // ⚠ Muss mit — ohne ihn zeichnet der Client die Spur falsch,
@@ -26783,6 +26797,9 @@ where
         // Bahn-Auslastung auf die echte genutzte Strecke umgestellt.
         score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
         bewertung_status: Some(crate::bewertung::status_text(&bewertet).to_string()),
+        // v3 (P-4.21): Anzeige-Grenzen und Soll-Band aus dem Modul.
+        modul_grenzen: bewertet.as_ref().map(|(a, _)| a.grenzen.clone()),
+        modul_sollband,
         // Lernpaket AP4/AP5 (29.09.2026): reine Forensik, nur lokal.
         anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
         anflug_ruhe: stats.anflug_forensik.ruhe.clone(),

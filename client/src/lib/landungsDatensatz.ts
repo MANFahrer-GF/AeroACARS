@@ -12,6 +12,8 @@ import type { SpritAuswertung } from "./sprit";
 import type { AnflugGleitpfad, AnflugRuhe } from "../components/AnflugForensikInfo";
 import type { GatePunkt } from "./stableGate";
 import type { AnflugWind } from "./anflugWind";
+import type { Grenzen } from "./bewertungsGrenzen";
+import type { SollbandPunkt } from "./anflugSollband";
 
 /** Kategorie der Gesamtnote (Rust `aggregate_score_label`). */
 export type LandingCategory = "smooth" | "acceptable" | "firm" | "hard" | "severe";
@@ -327,6 +329,12 @@ export interface LandingRecord {
    *  (LDA-basierter Score). UI rendert die neuen extra-Lines + erweiterten
    *  Rationale-/Warning-Keys nur wenn `>= 2`. */
   score_algorithm_version?: number | null;
+  /** v3 (P-4.21): Farbgrenzen aus der Modulausgabe (`grenzen`). Fehlt bei
+   *  2.x-Datensaetzen — dann gelten `GRENZEN_ALTBESTAND_2X`. */
+  modul_grenzen?: Grenzen | null;
+  /** v3 (P-4.21): Soll-Band des Anflugs aus dem Modul (Export `sollband`),
+   *  mit Gleitwinkel-Faktor und Bandbreite. Fehlt bei 2.x-Datensaetzen. */
+  modul_sollband?: ModulSollband | null;
 
   /** Lernpaket AP4 (29.09.2026): geometrische Gleitpfad-Abweichung mit
    *  Quelle — reine Forensik, keine Note. Fehlt bei älteren Landungen. */
@@ -510,4 +518,14 @@ export interface ApproachSample {
   /** Geschwindigkeit über Grund in kt — Grundlage des Soll-Bandes
    *  (`lib/anflugSollband.ts`). Fehlt bei Aufzeichnungen vor v1.7.35. */
   gs_kt?: number | null;
+}
+
+/** v3 (P-4.21): Soll-Band aus dem Bewertungsmodul, beim Speichern der
+ *  Landung gerechnet (Rust `bewertung::sollband`). */
+export interface ModulSollband {
+  punkte: SollbandPunkt[];
+  /** Gleitwinkel-Faktor gegenueber 3° (Soll bei Winkel / Soll bei 3°). */
+  faktor: number;
+  /** Halbe Breite des Bands in fpm. */
+  toleranz: number;
 }

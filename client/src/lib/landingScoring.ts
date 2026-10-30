@@ -1,3 +1,9 @@
+// v3 (P-4.21): Fuer 3.0-Fluege zeigt der Client nur die Modulausgabe
+// (gespeicherte `sub_scores`, Wort/Buchstabe, `modul_grenzen`). Was hier
+// bleibt: Beschriftungen (Labels, Begruendungen, Tipps) und
+// `computeSubScores` nur fuer Datensaetze vor v0.7.1 (`ux_version < 1`,
+// LandingPanel `getSubScores`) — 2.x-Altbestand.
+//
 // Touchdown-Sub-Score-Berechnung — gemeinsame Quelle der Wahrheit für
 // Pilot-App (Tauri-Client) UND Live-Monitor-Webapp.
 //

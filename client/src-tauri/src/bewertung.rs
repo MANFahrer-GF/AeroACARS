@@ -219,9 +219,56 @@ pub(crate) fn bewerten(landung: &LandingScoringInput) -> Option<(Ausgabe, Status
     }
 }
 
+/// v3 (P-4.21): Soll-Band des Anflugs aus dem Modul (Export `sollband`) —
+/// Paketmodul, sonst eingebautes. Faktor und Bandbreite fragt es ebenfalls
+/// beim Modul ab (eine Probe 100 kt beim Winkel und bei 3°), wie die Webapp
+/// (`sollbandModul.ts`). `None`, wenn kein Modul antwortet.
+pub(crate) fn sollband(proben: &[landing_scoring::sollband::Probe], winkel_grad: Option<f64>) -> Option<storage::ModulSollband> {
+    use landing_scoring::sollband::{Anfrage, Probe, Punkt};
+    let rufen = |anfrage: Anfrage| -> Option<Vec<Punkt>> {
+        let json = serde_json::to_string(&anfrage).ok()?;
+        for host in [paket_host(), eingebauter_host()].into_iter().flatten() {
+            match host.sollband(&json, FUEL_GRENZE).map(|t| serde_json::from_str::<Vec<Punkt>>(&t)) {
+                Ok(Ok(p)) => return Some(p),
+                _ => tracing::warn!("Soll-Band im Modul gescheitert"),
+            }
+        }
+        None
+    };
+    let bezug = |w: Option<f64>| {
+        rufen(Anfrage { proben: vec![Probe { gs_kt: Some(100.0), ..Default::default() }], winkel_grad: w })?
+            .into_iter()
+            .next()
+    };
+    let (beim_winkel, bei_3) = (bezug(winkel_grad)?, bezug(Some(3.0))?);
+    Some(storage::ModulSollband {
+        punkte: rufen(Anfrage { proben: proben.to_vec(), winkel_grad })?,
+        faktor: beim_winkel.soll / bei_3.soll,
+        toleranz: bei_3.oben - bei_3.soll,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// P-4.21: Soll-Band, Faktor und Bandbreite kommen aus dem Modul und
+    /// gleichen der Regel im Crate (dieselbe Quelle wie das Modul).
+    #[test]
+    fn sollband_kommt_aus_dem_modul() {
+        use landing_scoring::sollband as sb;
+        let proben: Vec<sb::Probe> = [(Some(140.0), None, Some(-9000.0)), (Some(20.0), None, None), (Some(130.0), Some(true), None), (Some(128.0), None, Some(500.0))]
+            .into_iter()
+            .map(|(gs_kt, is_flare, t_ms)| sb::Probe { gs_kt, is_flare, t_ms })
+            .collect();
+        let m = sollband(&proben, Some(4.0)).expect("Modul antwortet");
+        assert_eq!(m.punkte, sb::sollband(&proben, Some(4.0)));
+        assert_eq!(m.punkte.len(), 1, "nur die erste Probe zaehlt");
+        assert!((m.faktor - sb::gleitwinkel_faktor(Some(4.0))).abs() < 1e-12, "{}", m.faktor);
+        assert!((m.toleranz - sb::SOLLBAND_TOLERANZ_FPM).abs() < 1e-12);
+        let drei = sollband(&proben, None).unwrap();
+        assert!((drei.faktor - 1.0).abs() < 1e-12);
+    }
 
     /// Das Modul rechnet wie das Crate (eingebauter Stand) — Note, Deckel,
     /// Teilnoten.

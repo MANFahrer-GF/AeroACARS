@@ -306,6 +306,16 @@ pub struct LateralSample {
     pub quer_m: f32,
 }
 
+/// v3 (P-4.21): Soll-Band aus dem Bewertungsmodul, mit Gleitwinkel-Faktor
+/// (Soll bei Winkel / Soll bei 3°) und halber Bandbreite (fpm) — beides
+/// ebenfalls aus dem Modul, damit die Oberflaeche nichts nachrechnet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModulSollband {
+    pub punkte: Vec<landing_scoring::sollband::Punkt>,
+    pub faktor: f64,
+    pub toleranz: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LandingRecord {
     /// PIREP id (phpVMS UUID). Doubles as the record's primary key.
@@ -892,6 +902,15 @@ pub struct LandingRecord {
     /// `vorlaeufig` (eingebautes Modul), `modulfehler` (beide gescheitert).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bewertung_status: Option<String>,
+    /// v3 (P-4.21): Farbgrenzen der Forensik-Kacheln aus der Modulausgabe
+    /// (`grenzen`) — die Oberflaeche rechnet sie fuer 3.0-Fluege nicht mehr
+    /// selbst. Fehlt bei 2.x-Datensaetzen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modul_grenzen: Option<landing_scoring::wasm::Grenzen>,
+    /// v3 (P-4.21): Soll-Band des Anflugs aus dem Modul (Export `sollband`)
+    /// ueber `approach_samples`. Fehlt bei 2.x-Datensaetzen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modul_sollband: Option<ModulSollband>,
 
     // ─── Lernpaket AP4/AP5 (29.09.2026) — Anflug-Forensik ohne Note ──
     //

@@ -20,14 +20,8 @@
 import { useTranslation } from "react-i18next";
 import "./landungForensik.css";
 import type { LandingRecord } from "../lib/landungsDatensatz";
-import {
-  T_G_SMOOTH,
-  T_G_FIRM,
-  T_G_HARD,
-  T_G_SEVERE,
-  T_VS_SMOOTH_FPM,
-  T_VS_FIRM_FPM,
-} from "../lib/bewertungsGrenzen";
+// v3 (P-4.21): Grenzen aus dem Datensatz (Modulausgabe), 2.x-Rueckfall.
+import { GRENZEN_ALTBESTAND_2X, grenzenAus, type Grenzen } from "../lib/bewertungsGrenzen";
 import { InfoBadge } from "./InfoBadge";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -57,12 +51,12 @@ export function hasGForensics(record: Pick<LandingRecord,
 /// Spec docs/qs/v0.7.16-fenix-beta-bugs.md B-009.
 export type Tone = "good" | "neutral" | "warn" | "err" | "err-severe";
 
-export function gTone(g: number | null | undefined): Tone | null {
+export function gTone(g: number | null | undefined, gr: Grenzen = GRENZEN_ALTBESTAND_2X): Tone | null {
   if (g == null) return null;
-  if (g < T_G_SMOOTH) return "good";
-  if (g < T_G_FIRM) return "neutral";
-  if (g < T_G_HARD) return "warn";
-  if (g < T_G_SEVERE) return "err";
+  if (g < gr.g[0]) return "good";
+  if (g < gr.g[1]) return "neutral";
+  if (g < gr.g[2]) return "warn";
+  if (g < gr.g[3]) return "err";
   return "err-severe";
 }
 
@@ -77,9 +71,10 @@ export function gTone(g: number | null | undefined): Tone | null {
 export function showsVsLeadsNote(
   scoredG: number | null | undefined,
   vsAtEdgeFpm: number | null | undefined,
+  gr: Grenzen = GRENZEN_ALTBESTAND_2X,
 ): boolean {
-  const vsSmooth = vsAtEdgeFpm != null && Math.abs(vsAtEdgeFpm) < T_VS_SMOOTH_FPM;
-  const gHigh = scoredG != null && scoredG >= T_G_HARD;
+  const vsSmooth = vsAtEdgeFpm != null && Math.abs(vsAtEdgeFpm) < gr.vs_fpm[0];
+  const gHigh = scoredG != null && scoredG >= gr.g[2];
   return vsSmooth && gHigh;
 }
 
@@ -97,7 +92,9 @@ export function pickGCoachingTip(args: {
   gMedian: number | null | undefined;
   gP95: number | null | undefined;
   maxGearForceN: number | null | undefined;
+  grenzen?: Grenzen;
 }): GCoachingTipKey {
+  const gr = args.grenzen ?? GRENZEN_ALTBESTAND_2X;
   const vs = args.vsAtEdgeFpm;
   const peak = args.gPeak;
   const median = args.gMedian;
@@ -105,12 +102,12 @@ export function pickGCoachingTip(args: {
   const force = args.maxGearForceN;
 
   // 1. real_impact: V/S Hard (< -400 fpm) + G high
-  if (vs != null && Math.abs(vs) > T_VS_FIRM_FPM && peak != null && peak >= T_G_FIRM) {
+  if (vs != null && Math.abs(vs) > gr.vs_fpm[1] && peak != null && peak >= gr.g[1]) {
     return "real_impact";
   }
   // 2. sim_strut: V/S smooth (>= -200 fpm) but G high + Strut-Force-Anstieg
   //    → klassische Sim-Strut-Compression-Spike
-  if (vs != null && Math.abs(vs) < T_VS_SMOOTH_FPM && peak != null && peak >= T_G_HARD
+  if (vs != null && Math.abs(vs) < gr.vs_fpm[0] && peak != null && peak >= gr.g[2]
       && force != null && force > 5000) {
     return "sim_strut";
   }
@@ -121,9 +118,9 @@ export function pickGCoachingTip(args: {
   }
   // 4. airborne_spike: G hoch aber Strut-Force unauffaellig
   //    → Frame-Stutter oder Sample-Noise, kein echter Impact
-  if (peak != null && peak >= T_G_HARD
+  if (peak != null && peak >= gr.g[2]
       && (force == null || force < 2000)
-      && median != null && median < T_G_SMOOTH) {
+      && median != null && median < gr.g[0]) {
     return "airborne_spike";
   }
   // 5. clean: alles smooth
@@ -144,7 +141,9 @@ export function GForceForensik({ record }: { record: LandingRecord }) {
   // window peak (FOQA method). `peakG` above stays the raw 50 Hz peak,
   // shown only as forensic detail.
   const scoredG = record.landing_scored_g_force ?? peakG;
+  const grenzen = grenzenAus(record);
   const tipKey = pickGCoachingTip({
+    grenzen,
     vsAtEdgeFpm: record.vs_at_edge_fpm,
     gPeak: peakG,
     gMedian: record.g_median_post_500ms,
@@ -181,20 +180,24 @@ export function GForceForensik({ record }: { record: LandingRecord }) {
         </div>
         <div className="sinkrate-forensik-tiles">
           <GTile
+            grenzen={grenzen}
             label={t("landing.gforce_forensik.tile_edge")}
             value={record.g_at_edge ?? null}
           />
           <GTile
+            grenzen={grenzen}
             label={t("landing.gforce_forensik.tile_250ms")}
             value={record.g_smoothed_250ms_post ?? null}
             volantaStyle
           />
           <GTile
+            grenzen={grenzen}
             label={t("landing.gforce_forensik.tile_500ms")}
             value={record.peak_g_post_500ms ?? null}
             peakTile
           />
           <GTile
+            grenzen={grenzen}
             label={t("landing.gforce_forensik.tile_1000ms")}
             value={record.peak_g_post_1000ms ?? null}
             peakTile
@@ -213,10 +216,12 @@ export function GForceForensik({ record }: { record: LandingRecord }) {
           </div>
           <div className="sinkrate-forensik-tiles">
             <GTile
+              grenzen={grenzen}
               label={t("landing.gforce_forensik.tile_median")}
               value={record.g_median_post_500ms ?? null}
             />
             <GTile
+              grenzen={grenzen}
               label={t("landing.gforce_forensik.tile_p95")}
               value={record.g_p95_post_500ms ?? null}
             />
@@ -242,6 +247,7 @@ export function GForceForensik({ record }: { record: LandingRecord }) {
           {t("landing.gforce_forensik.score_section_subtitle")}
         </div>
         <GScoreBasisTile
+          grenzen={grenzen}
           scoredG={scoredG}
           rawPeakG={peakG}
           gearForceN={record.max_gear_force_n ?? null}
@@ -262,6 +268,7 @@ export function GForceForensik({ record }: { record: LandingRecord }) {
 // ───────────────────────────────────────────────────────────────────────────
 
 function GTile({
+  grenzen,
   label,
   value,
   volantaStyle,
@@ -271,9 +278,10 @@ function GTile({
   value: number | null;
   volantaStyle?: boolean;
   peakTile?: boolean;
+  grenzen: Grenzen;
 }) {
   const { t } = useTranslation();
-  const tone = gTone(value);
+  const tone = gTone(value, grenzen);
   const valueText = value != null ? value.toFixed(2) : "—";
   const naTooltip = value == null ? t("landing.gforce_forensik.tile_na_tooltip") : undefined;
   return (
@@ -304,6 +312,7 @@ function GTile({
 }
 
 function GScoreBasisTile({
+  grenzen,
   scoredG,
   rawPeakG,
   gearForceN,
@@ -313,16 +322,17 @@ function GScoreBasisTile({
   rawPeakG: number | null;
   gearForceN: number | null;
   vsAtEdge: number | null;
+  grenzen: Grenzen;
 }) {
   const { t } = useTranslation();
   // v0.12.3 (LE4): Tone + Wert kommen vom gescorten (EMA) G — nicht vom
   // rohen Peak. Der Roh-Peak steht unten als Forensik-Detail.
-  const tone = gTone(scoredG);
+  const tone = gTone(scoredG, grenzen);
   // V/S-fuehrt-Hinweis: wenn V/S smooth (< 200 fpm) und G hoch → Master-
   // Score wird trotzdem als Smooth/Acceptable klassifiziert (B-009 Score-
   // Logik). Erklaer das hier dem Piloten. Threshold-Logik siehe
   // `showsVsLeadsNote` oben (v0.19.x FIX: T_G_HARD statt T_G_FIRM).
-  const showVsLeadsNote = showsVsLeadsNote(scoredG, vsAtEdge);
+  const showVsLeadsNote = showsVsLeadsNote(scoredG, vsAtEdge, grenzen);
   return (
     <div className={`sinkrate-score-tile ${tone ? `sinkrate-score-tile--${tone}` : ""}`}>
       <div className="sinkrate-score-tile__heading">

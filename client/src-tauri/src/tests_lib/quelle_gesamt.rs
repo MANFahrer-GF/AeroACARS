@@ -211,6 +211,12 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Dev-Build (`com.aeroacars.app3.dev`) auch Log-Ordner und Datenuebernahme
 /// getrennt hat. Test `logging_tests::log_dir_identifier_matches_tauri_conf`
 /// (Gegenprobe mit `TAURI_CONFIG` der Dev-Kennung -> rot).
+/// — plus P-4.21: `build_landing_record` setzt `modul_grenzen` (aus der
+/// Modulausgabe `grenzen`) und `modul_sollband` (`bewertung::sollband` ueber
+/// dieselben `approach_samples` und denselben Gleitwinkel wie die Grafik);
+/// `ohne_schwere_felder` leert `modul_sollband`. Tests
+/// `sofortnote_abnehmer_tests::datensatz_traegt_grenzen_und_sollband_aus_dem_modul`,
+/// `bewertung::tests::sollband_kommt_aus_dem_modul`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -221,4 +227,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "b7a6bab0d889361d5f676d1b22e7d7839a82af9afb6c191a0045418c5808d33c";
+const HASH_VOR_DER_ZERLEGUNG: &str = "1d82f20097198c78314acfe9d4a765768752922dddfcb2560b2b034fdb641bff";

@@ -23,11 +23,8 @@ import "./landungForensik.css";
 import { istBewertbar } from "../lib/landungsFormat";
 export { istBewertbar };
 import type { LandingRecord, LandingProfilePoint } from "../lib/landungsDatensatz";
-import {
-  T_VS_FIRM_FPM,
-  T_VS_HARD_FPM,
-  T_VS_SEVERE_FPM,
-} from "../lib/bewertungsGrenzen";
+// v3 (P-4.21): Grenzen aus dem Datensatz (Modulausgabe), 2.x-Rueckfall.
+import { GRENZEN_ALTBESTAND_2X, grenzenAus, type Grenzen } from "../lib/bewertungsGrenzen";
 // v0.19.x FIX: this file used to define its OWN hardcoded 3-band G-color
 // function (1.4/1.7, no "neutral"/"err-severe") that disagreed with
 // GForceForensik's real 5-band T_G_* ladder — the SAME peak-G value shown
@@ -204,13 +201,13 @@ export type Tone = "good" | "neutral" | "warn" | "err" | "err-severe";
 /// `VS_TARGET_CORRIDOR_TOP_FPM`); 200–250 fpm erschien vorher „neutral".
 const VS_KORRIDOR_OBEN_FPM = 250;
 
-export function vsTone(vs: number | null | undefined): Tone | null {
+export function vsTone(vs: number | null | undefined, gr: Grenzen = GRENZEN_ALTBESTAND_2X): Tone | null {
   if (vs == null) return null;
   const abs = Math.abs(vs);
   if (abs < VS_KORRIDOR_OBEN_FPM) return "good";
-  if (abs < T_VS_FIRM_FPM) return "neutral";
-  if (abs < T_VS_HARD_FPM) return "warn";
-  if (abs < T_VS_SEVERE_FPM) return "err";
+  if (abs < gr.vs_fpm[1]) return "neutral";
+  if (abs < gr.vs_fpm[2]) return "warn";
+  if (abs < gr.vs_fpm[3]) return "err";
   return "err-severe";
 }
 
@@ -309,6 +306,7 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
     );
   }
 
+  const grenzen = grenzenAus(record);
   const buckets = computeBuckets(
     record.vs_smoothed_1500ms_fpm,
     record.vs_smoothed_1000ms_fpm,
@@ -396,19 +394,23 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
         </div>
         <div className="sinkrate-forensik-tiles">
           <SmoothedVsTile
+            grenzen={grenzen}
             label={t("landing.sinkrate_forensik.tile_1500ms")}
             value={record.vs_smoothed_1500ms_fpm ?? null}
           />
           <SmoothedVsTile
+            grenzen={grenzen}
             label={t("landing.sinkrate_forensik.tile_1000ms")}
             value={record.vs_smoothed_1000ms_fpm ?? null}
           />
           <SmoothedVsTile
+            grenzen={grenzen}
             label={t("landing.sinkrate_forensik.tile_500ms")}
             value={record.vs_smoothed_500ms_fpm ?? null}
             volantaStyle
           />
           <SmoothedVsTile
+            grenzen={grenzen}
             label={t("landing.sinkrate_forensik.tile_250ms")}
             value={record.vs_smoothed_250ms_fpm ?? null}
           />
@@ -424,7 +426,7 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
           <div className="sinkrate-forensik-section__subtitle">
             {t("landing.sinkrate_forensik.bucket_subtitle")}
           </div>
-          <VsBucketBreakdown buckets={buckets} />
+          <VsBucketBreakdown buckets={buckets} grenzen={grenzen} />
           {isMonotonAccelerating(buckets) && (
             <div className="sinkrate-forensik-trend-note">
               📉 {t("landing.sinkrate_forensik.bucket_trend_drop")}
@@ -442,6 +444,7 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
           {t("landing.sinkrate_forensik.score_section_subtitle")}
         </div>
         <ScoreBasisTile
+          grenzen={grenzen}
           vs={scoreVs ?? null}
           quelle={record.vs_at_edge_quelle ?? null}
           landingSource={record.landing_source ?? null}
@@ -495,6 +498,7 @@ export function SinkrateForensik({ record }: { record: LandingRecord }) {
 // ───────────────────────────────────────────────────────────────────────────
 
 function SmoothedVsTile({
+  grenzen,
   label,
   value,
   volantaStyle,
@@ -502,9 +506,10 @@ function SmoothedVsTile({
   label: string;
   value: number | null;
   volantaStyle?: boolean;
+  grenzen: Grenzen;
 }) {
   const { t } = useTranslation();
-  const tone = vsTone(value);
+  const tone = vsTone(value, grenzen);
   const valueText = value != null ? `${Math.round(value)}` : "—";
   const naTooltip = value == null ? t("landing.sinkrate_forensik.tile_na_tooltip") : undefined;
   return (
@@ -530,6 +535,7 @@ function SmoothedVsTile({
 }
 
 function ScoreBasisTile({
+  grenzen,
   vs,
   quelle,
   landingSource,
@@ -540,6 +546,7 @@ function ScoreBasisTile({
   quelle: string | null;
   /** Ältere Aufzeichnungen: nur die Buffer-Stelle, kein Verfahren. */
   landingSource: string | null;
+  grenzen: Grenzen;
 }) {
   const { t } = useTranslation();
   // Ohne Messung bleibt die Kachel leer statt eine Zahl zu erfinden. Der
@@ -556,7 +563,7 @@ function ScoreBasisTile({
       </div>
     );
   }
-  const tone = vsTone(vs);
+  const tone = vsTone(vs, grenzen);
   return (
     <div className={`sinkrate-score-tile ${tone ? `sinkrate-score-tile--${tone}` : ""}`}>
       <div className="sinkrate-score-tile__heading">
@@ -602,14 +609,14 @@ function ScoreBasisTile({
   );
 }
 
-function VsBucketBreakdown({ buckets }: { buckets: Bucket[] }) {
+function VsBucketBreakdown({ buckets, grenzen }: { buckets: Bucket[]; grenzen: Grenzen }) {
   const { t } = useTranslation();
   const maxAbs = Math.max(...buckets.map((b) => Math.abs(b.vs)), 1);
   return (
     <div className="sinkrate-buckets">
       {buckets.map((b, i) => {
         const pct = (Math.abs(b.vs) / maxAbs) * 100;
-        const tone = vsTone(b.vs);
+        const tone = vsTone(b.vs, grenzen);
         return (
           <div className="sinkrate-bucket-row" key={i}>
             <div className="sinkrate-bucket-row__label">

@@ -16,6 +16,17 @@
 // Diese Datei liegt kanonisch im Client (`client/src/lib`) und wird per
 // `scripts/anzeige-sync.mjs` in die Webapp kopiert. Client-Grafik
 // (LandingPanel) und Webapp-Grafik (_ApproachChart) benutzen beide nur sie.
+//
+// # v3 (P-4.21): nur noch Altbestand und Cockpit-Hinweis
+//
+// Fuer 3.0-Fluege kommen Soll-Band, Gleitwinkel-Faktor und Bandbreite aus
+// dem Bewertungsmodul (`modul_sollband` im Datensatz, gerechnet beim
+// Speichern der Landung, Rust `bewertung::sollband`); die Grafik rechnet sie
+// nicht nach. Diese Datei bedient nur noch (1) 2.x-Datensaetze ohne
+// `modul_sollband` und (2) den Live-Hinweis im Cockpit
+// (StableApproachBanner) — ein Hinweis waehrend des Anflugs, keine
+// Bewertung; das Modul liesse sich dort nur ueber einen neuen Befehl je Takt
+// fragen. Die Webapp nutzt die Datei seit 1c7a272 nicht mehr.
 
 /** fpm Sinkrate je kt Geschwindigkeit über Grund auf einem 3°-Pfad —
  *  identisch zum Backend (`target_vs = -gs_kt * 5.31 * gs_factor`). */

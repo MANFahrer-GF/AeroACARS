@@ -222,6 +222,25 @@
     /// entstehen erst nach dem Senden; faellt das Paketmodul nur beim Aufbau
     /// aus, muessen sie trotzdem dasselbe „vorlaeufig“ tragen wie phpVMS. Das
     /// Dokument traegt genau die Eingabe, zu der sein Ergebnis gehoert.
+    /// P-4.21: Der Landungsdatensatz traegt Grenzen und Soll-Band aus der
+    /// Modulrechnung — die Oberflaeche rechnet sie fuer 3.0 nicht nach. Die
+    /// schlanke Liste laesst das Soll-Band (je Probe) weg, die Grenzen nicht.
+    #[test]
+    fn datensatz_traegt_grenzen_und_sollband_aus_dem_modul() {
+        let f = fixture();
+        mit_landung(&f);
+        let st = f.stats.lock().unwrap();
+        let rechnung = einreichungs_rechnung(&f, &st, "YYYY");
+        let record = build_landing_record(&f, &st, None, Some("A321"), None, "YYYY", Some(&rechnung), |_| None)
+            .expect("Landungsdatensatz");
+        let (ausgabe, _) = rechnung.ergebnis.clone().expect("Modul");
+        assert_eq!(record.modul_grenzen.as_ref(), Some(&ausgabe.grenzen));
+        let band = record.modul_sollband.clone().expect("Soll-Band aus dem Modul");
+        assert!((band.faktor - 1.0).abs() < 1e-12 && (band.toleranz - 100.0).abs() < 1e-12, "{band:?}");
+        let schlank = ohne_schwere_felder(record);
+        assert!(schlank.modul_sollband.is_none() && schlank.modul_grenzen.is_some());
+    }
+
     #[test]
     fn einreichung_eine_rechnung_fuer_alle_abnehmer() {
         let f = fixture();

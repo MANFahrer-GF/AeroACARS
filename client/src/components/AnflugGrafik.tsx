@@ -16,7 +16,7 @@ import {
   sollbandStuecke,
   SOLLBAND_TOLERANZ_FPM,
 } from "../lib/anflugSollband";
-import type { ApproachSample, LandingProfilePoint } from "../lib/landungsDatensatz";
+import type { ApproachSample, LandingProfilePoint, ModulSollband } from "../lib/landungsDatensatz";
 import type { GleitpfadPunkt } from "./AnflugForensikInfo";
 import type { AnflugWind } from "../lib/anflugWind";
 import "./anflugGrafik.css";
@@ -258,6 +258,7 @@ export function ApproachChart({
   glideslopeAngleDeg,
   gleitpfadVerlauf,
   wind,
+  modulSollband,
 }: {
   samples: ApproachSample[];
   /** v0.15.18: echter Gleitpfad-Winkel (Navdaten). Skaliert Soll-Band +
@@ -270,6 +271,10 @@ export function ApproachChart({
    *  mit). Vorhanden → die Linie zeigt sie; fehlt (ältere Landung) → die
    *  bisherige feste Grenze. */
   wind?: AnflugWind | null;
+  /** v3 (P-4.21): Soll-Band, Faktor und Bandbreite aus dem Bewertungsmodul
+   *  (3.0-Fluege). Fehlt es (2.x-Altbestand), rechnet die Grafik wie bisher
+   *  mit lib/anflugSollband.ts. */
+  modulSollband?: ModulSollband | null;
 }) {
   const { t, i18n } = useTranslation();
   // Dots in der Sprache der App („+2,22"), wie alle anderen Werte.
@@ -286,12 +291,14 @@ export function ApproachChart({
   // vorher). Steilanflüge (ENTC 4°, EGLC 5,5°) bekommen die korrekte, tiefere
   // Linie — sonst „stürzt" die V/S-Spur scheinbar unter eine falsche −1000-
   // Marke, obwohl das Backend (korrekt skaliert) den Anflug gar nicht flaggt.
-  const gsFactor = gleitwinkelFaktor(glideslopeAngleDeg);
+  // v3 (P-4.21): 3.0-Fluege nehmen Faktor und Band aus dem Modul.
+  const gsFactor = modulSollband ? modulSollband.faktor : gleitwinkelFaktor(glideslopeAngleDeg);
   // Soll-Band aus der echten Geschwindigkeit über Grund — dieselbe Rechnung
   // wie die Bewertung (siehe lib/anflugSollband.ts). Aufzeichnungen ohne
   // gs_kt (vor v1.7.35) behalten den alten Richtwert, klar als solcher
   // beschriftet, statt ein Soll zu erfinden.
-  const sollPunkte = sollband(samples, glideslopeAngleDeg);
+  const sollPunkte = modulSollband ? modulSollband.punkte : sollband(samples, glideslopeAngleDeg);
+  const toleranz = modulSollband ? modulSollband.toleranz : SOLLBAND_TOLERANZ_FPM;
   const hatSollband = sollPunkte.length > 0;
   const bandHi = -600 * gsFactor;
   const bandLo = -900 * gsFactor;
@@ -518,7 +525,7 @@ export function ApproachChart({
             {hatSollband
               ? t("landing.vs_chart.band_gs", {
                   angle: String(isScaledGp ? glideslopeAngleDeg : 3),
-                  tol: SOLLBAND_TOLERANZ_FPM,
+                  tol: toleranz,
                 })
               : t("landing.vs_chart.band_legacy", {
                   hi: fmtFpm(bandHi),
@@ -693,6 +700,7 @@ export function AnflugGrafikAbschnitt({
   glideslopeAngleDeg,
   gleitpfadVerlauf,
   wind,
+  modulSollband,
 }: {
   samples: ApproachSample[] | null | undefined;
   profile: LandingProfilePoint[] | null | undefined;
@@ -701,6 +709,8 @@ export function AnflugGrafikAbschnitt({
   gleitpfadVerlauf?: GleitpfadPunkt[] | null;
   /** Score-Version 24: `approach_wind` — für die angewandte Sinkgrenze. */
   wind?: AnflugWind | null;
+  /** v3 (P-4.21): Soll-Band aus dem Modul (`modul_sollband`). */
+  modulSollband?: ModulSollband | null;
 }) {
   const { t } = useTranslation();
   const anflug = samples != null && samples.length >= 3;
@@ -721,6 +731,7 @@ export function AnflugGrafikAbschnitt({
               glideslopeAngleDeg={glideslopeAngleDeg}
               gleitpfadVerlauf={gleitpfadVerlauf}
               wind={wind}
+              modulSollband={modulSollband}
             />
           </div>
           {streifenDa && (

@@ -793,6 +793,7 @@ function LandungsAbschnitte({
         glideslopeAngleDeg={record.runway_match?.glideslope_angle_deg}
         gleitpfadVerlauf={record.anflug_gleitpfad?.verlauf}
         wind={record.approach_wind}
+        modulSollband={record.modul_sollband}
       />
 
       {/* v0.7.8: Sinkrate-Forensik — erklaert dem Piloten warum die
