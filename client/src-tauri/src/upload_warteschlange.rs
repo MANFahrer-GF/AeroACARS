@@ -110,6 +110,11 @@ pub(crate) fn verwaiste_merker_raeumen(ordner: &Path) {
 /// Inhalt → der alte faellt weg (keine Doppelten); anderer Inhalt → der alte
 /// bleibt mit Merker in `alt` liegen (nichts verloren). Ein leer gewordener
 /// alter Ordner wird entfernt.
+///
+/// Gefunden wird nur der Ordner zum aktuellen Token. Ordner mit Token-Hash gab
+/// es nur in v3-Zwischenstaenden zwischen `85dd15c9` und `8082a527`, die nie
+/// ausgeliefert wurden; ein Ordner zu einem frueheren Token kommt im Feld daher
+/// nicht vor (Codex-Nachpruefung 30.10., bewusst so belassen).
 pub(crate) fn konto_uebernehmen(alt: &Path, neu: &Path) {
     if alt == neu || !alt.is_dir() {
         return;
@@ -131,10 +136,10 @@ pub(crate) fn konto_uebernehmen(alt: &Path, neu: &Path) {
                 }
                 continue;
             }
-            let verschoben = std::fs::create_dir_all(&nach).and_then(|()| std::fs::rename(&p, &ziel));
+            let verschoben = std::fs::create_dir_all(&nach).and_then(|()| ohne_ueberschreiben(&p, &ziel));
             match verschoben {
                 Ok(()) if merker(&p).exists() => {
-                    if let Err(e) = std::fs::rename(merker(&p), merker(&ziel)) {
+                    if let Err(e) = ohne_ueberschreiben(&merker(&p), &merker(&ziel)) {
                         tracing::warn!(datei = %p.display(), error = %e, "Alter Kontoordner: Merker nicht uebernommen");
                     }
                 }
@@ -147,6 +152,15 @@ pub(crate) fn konto_uebernehmen(alt: &Path, neu: &Path) {
     for leer in [alt.join("abgelehnt"), alt.join("konflikt"), alt.to_path_buf()] {
         let _ = std::fs::remove_dir(leer);
     }
+}
+
+/// Verschiebt `von` nach `nach`, ohne je eine vorhandene Datei zu
+/// ueberschreiben: Ein Hardlink scheitert, wenn das Ziel existiert — auch wenn
+/// `einreihen` es zwischen Pruefung und Verschieben anlegt (Codex 30.10.,
+/// `rename` haette die neue Datei ersetzt). Erst danach faellt die Quelle weg.
+fn ohne_ueberschreiben(von: &Path, nach: &Path) -> std::io::Result<()> {
+    std::fs::hard_link(von, nach)?;
+    std::fs::remove_file(von)
 }
 
 /// Eintrag fuer ein Flugprotokoll.
@@ -310,6 +324,27 @@ pub(crate) fn ausstehend(app_daten: &Path, konto: Option<&str>, besitzer: Option
 
 #[cfg(test)]
 mod tests {
+
+    /// Codex 30.10.: Die Uebernahme darf eine inzwischen angelegte Datei nie
+    /// ersetzen. Gegenprobe: mit `std::fs::rename` ist das Ziel ueberschrieben.
+    #[test]
+    fn verschieben_ueberschreibt_nie() {
+        let d = std::env::temp_dir().join(format!("aa-ohne-ueberschreiben-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let (von, nach) = (d.join("a.json.gz"), d.join("b.json.gz"));
+        std::fs::write(&von, b"alt").unwrap();
+        std::fs::write(&nach, b"neu").unwrap();
+        assert!(super::ohne_ueberschreiben(&von, &nach).is_err());
+        assert_eq!(std::fs::read(&nach).unwrap(), b"neu");
+        assert_eq!(std::fs::read(&von).unwrap(), b"alt", "Quelle bleibt liegen");
+        std::fs::remove_file(&nach).unwrap();
+        super::ohne_ueberschreiben(&von, &nach).unwrap();
+        assert_eq!(std::fs::read(&nach).unwrap(), b"alt");
+        assert!(!von.exists());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
     use super::*;
 
     fn ordner(name: &str) -> PathBuf {
