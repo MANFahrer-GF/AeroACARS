@@ -267,6 +267,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Protokoll `aerostart` und der Fokus-Rueckfall im Single-Instance-Haken.
 /// Tests `startfenster::tests::*`, `laufzeit_paket::tests::startabruf_*`,
 /// `das_szenerie_verzeichnis_wird_beim_start_gebaut`.
+/// — plus Zusatzfelder 30.10. (V9, zusatz-1): je EINE Zeile `zusatz:` im
+/// Landungsdatensatz (`lib_landungsdatensatz.rs`) und im MQTT-Touchdown
+/// (`lib_positions_streamer.rs`), beide aus `bewertung::zusatz_aus`
+/// (Modulausgabe, auf 16 KB begrenzt). Tests `bewertung::tests::zusatz_*`,
+/// `landing_scoring::zusatz::tests`, `aeroacars_mqtt::tests::zusatz_*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -277,4 +282,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "f733bf250ef64bed8689bff2eadc0bdd48efeb999857144b8b4a6eabbc681b7f";
+const HASH_VOR_DER_ZERLEGUNG: &str = "9da28dd2dd0f68c25669c6a77e2b0a1261ce01fffaec60234166518dcbdccfe8";
