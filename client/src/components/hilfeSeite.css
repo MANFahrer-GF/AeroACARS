@@ -1,0 +1,275 @@
+/* Hilfe anfordern — eigene Seite (P-9.22). Rahmen, Abschnitte, Feld-
+   beschriftungen und Hinweise aus der Hausform der Einstellungen
+   (.settings, .settings__section, .settings__field in App.css); hier nur,
+   was die Seite zusätzlich braucht. */
+
+.hilfe-seite__kategorie {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hilfe-seite__marke {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Eine Lesespalte: Hinweise brechen an derselben Kante um wie die Felder. */
+.hilfe-seite .settings__hint,
+.hilfe-seite .settings__row-hint {
+  max-width: 720px;
+  line-height: 1.5;
+}
+
+/* Betreff und Beschreibung dürfen breiter sein als die 320 px der
+   Einstellungsfelder — Fließtext braucht Zeilenlänge. */
+.hilfe-seite .hilfe-seite__feld {
+  max-width: 720px;
+}
+
+.hilfe-seite__text {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 120px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hilfe-seite__text:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.hilfe-seite__kopf {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 720px;
+}
+
+.hilfe-seite__zahl {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Ablagefläche: gestrichelt, beim Darüberziehen in Akzentfarbe. */
+.hilfe-seite__ablage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.hilfe-seite__ablage--ziehen {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+
+.hilfe-seite__ablage-text {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.hilfe-seite__ablage-text p {
+  margin: 0;
+  flex: 1 1 260px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.hilfe-seite__kacheln {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hilfe-seite__kachel {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.hilfe-seite__kachel img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.hilfe-seite__weg {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, #000 62%, transparent);
+  color: #fff;
+}
+
+.hilfe-seite__weg:hover:not(:disabled),
+.hilfe-seite__weg:focus-visible {
+  background: #000;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hilfe-seite__weg svg {
+  width: 14px;
+  height: 14px;
+}
+
+.hilfe-seite__fehler {
+  margin: 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+/* Was mit der Diagnose mitgeht: aufklappbar, Zusammenfassung im Kopf. */
+.hilfe-seite__mitgeht {
+  max-width: 720px;
+}
+
+.hilfe-seite__mitgeht summary {
+  display: flex;
+  align-items: baseline;
+  list-style: none;
+  gap: 10px;
+  flex-wrap: wrap;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.hilfe-seite__mitgeht summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Eigener Pfeil: `display:flex` am summary nimmt den Standard-Marker weg. */
+.hilfe-seite__mitgeht summary::before {
+  content: "";
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  margin-right: 2px;
+}
+
+.hilfe-seite__mitgeht[open] summary::before {
+  transform: rotate(45deg);
+}
+
+.hilfe-seite__mitgeht summary:hover {
+  color: var(--text);
+}
+
+.hilfe-seite__mitgeht summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.hilfe-seite__mitgeht-kurz {
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.hilfe-seite__mitgeht dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 12px 0 8px;
+  font-size: 13px;
+}
+
+.hilfe-seite__mitgeht dt {
+  color: var(--text-muted);
+}
+
+.hilfe-seite__mitgeht dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.hilfe-seite__aktionen {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  max-width: 720px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.hilfe-seite__aktionen .hilfe-seite__fehler {
+  margin-right: auto;
+}
+
+.hilfe-seite__aktionen .button {
+  padding: 8px 16px;
+  font-size: 14px;
+}
+
+.hilfe-seite__ergebnis {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+}
+
+.hilfe-seite__kennung {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  user-select: text;
+}

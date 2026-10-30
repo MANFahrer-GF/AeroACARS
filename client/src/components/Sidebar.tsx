@@ -35,6 +35,7 @@ export type Tab =
   | "news"
   | "log"
   | "settings"
+  | "hilfe"
   | "about"
   | "devpreview";
 
@@ -125,7 +126,7 @@ const I = {
       <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
     </svg>
   ),
-  /* Rettungsring: Hilfe anfordern (fester Eintrag unten, nicht im Reiterband). */
+  /* Rettungsring: Hilfe anfordern. */
   hilfe: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4" /><path d="m5.6 5.6 3.6 3.6M14.8 14.8l3.6 3.6M18.4 5.6l-3.6 3.6M9.2 14.8l-3.6 3.6" />
@@ -211,7 +212,6 @@ export function Sidebar({
   onChatOpen,
   kabineAn,
   unreadNews,
-  onHilfe,
   hasActiveFlight,
   phpvmsConnected,
   simConnected,
@@ -233,8 +233,6 @@ export function Sidebar({
   /** Kabinenansagen (Beta) eingeschaltet: Reiter „Kabine“ zeigen. */
   kabineAn?: boolean;
   unreadNews: number;
-  /** Öffnet „Hilfe anfordern“ (Dialog, kein Reiter). */
-  onHilfe?: () => void;
   hasActiveFlight: boolean;
   phpvmsConnected: boolean;
   simConnected: boolean;
@@ -328,6 +326,15 @@ export function Sidebar({
         />
         <Item icon={I.log} label={t("tabs.log")} active={tab === "log"} onClick={() => setTab("log")} />
         <Item icon={I.settings} label={t("tabs.settings")} active={tab === "settings"} onClick={() => setTab("settings")} />
+        {/* Beta 1 (Thomas): „Hilfe anfordern ist mir zu versteckt“ — eigene
+            Seite statt Knopf unter „Über“. F1 führt ebenfalls hin (App.tsx). */}
+        <Item
+          icon={I.hilfe}
+          label={t("tabs.hilfe")}
+          active={tab === "hilfe"}
+          title={t("hilfe.kuerzel")}
+          onClick={() => setTab("hilfe")}
+        />
         <Item icon={I.about} label={t("tabs.about")} active={tab === "about"} onClick={() => setTab("about")} />
         {import.meta.env.DEV && (
           <Item
@@ -341,21 +348,6 @@ export function Sidebar({
       </div>
 
       <div className="nav__foot">
-        {onHilfe && (
-          <button
-            type="button"
-            className="navitem navitem--hilfe"
-            aria-label={t("hilfe.knopf")}
-            aria-keyshortcuts="F1"
-            title={t("hilfe.kuerzel")}
-            onClick={onHilfe}
-          >
-            <span className="navitem__icon" aria-hidden="true">
-              {I.hilfe}
-            </span>
-            <span className="navitem__label">{t("hilfe.knopf")}</span>
-          </button>
-        )}
         {updateButton}
         <span
           className={`navstatus navstatus--${phpvmsConnected ? "online" : "offline"}`}

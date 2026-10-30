@@ -1,4 +1,4 @@
-// Hilfe anfordern (P-9.22, N-06): Der Pilot sieht vor dem Senden, was
+// Hilfe anfordern (P-9.22, N-06), eigene Seite: Der Pilot sieht vor dem Senden, was
 // mitgeht; scheitert das Ticket (HelpDesk noch nicht veröffentlicht), bleibt
 // die Diagnose-Kennung zum Weitergeben sichtbar.
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
@@ -23,7 +23,7 @@ vi.mock("../lib/hilfeBilder", async (orig) => ({
   bildVorbereiten: (...a: unknown[]) => vorbereitenMock(...a),
 }));
 
-import { HilfeDialog, istHilfeTaste, type HilfeErgebnis, type HilfeVorschau } from "./HilfeDialog";
+import { HilfeSeite, istHilfeTaste, type HilfeErgebnis, type HilfeVorschau } from "./HilfeSeite";
 
 const VORSCHAU: HilfeVorschau = {
   meta: {
@@ -92,7 +92,7 @@ function oeffnen(ergebnis: HilfeErgebnis | { reject: unknown }) {
     }
     return Promise.reject(new Error(cmd));
   });
-  render(<HilfeDialog onClose={() => {}} />);
+  render(<HilfeSeite />);
 }
 
 async function ausfuellenUndSenden() {
@@ -102,7 +102,7 @@ async function ausfuellenUndSenden() {
   await flush();
 }
 
-describe("HilfeDialog", () => {
+describe("HilfeSeite", () => {
   it("zeigt vor dem Senden, was mit der Diagnose mitgeht", async () => {
     oeffnen({ kennung: null, link: null, diagnose_fehler: null, ticket: null, ticket_fehler: null });
     await flush();
@@ -117,7 +117,7 @@ describe("HilfeDialog", () => {
 
   it("sagt, wenn das Log wegen RUST_LOG nicht mitgeht", async () => {
     invokeMock.mockResolvedValueOnce({ ...VORSCHAU, log_gesperrt: true });
-    render(<HilfeDialog onClose={() => {}} />);
+    render(<HilfeSeite />);
     await flush();
     expect(screen.getByTestId("hilfe-mitgeht").textContent).toContain("RUST_LOG");
   });
@@ -137,6 +137,10 @@ describe("HilfeDialog", () => {
     expect(screen.getByTestId("hilfe-ergebnis").textContent).toContain("HD-0007");
     expect(screen.getByTestId("hilfe-kennung").textContent).toBe("Diagnose-Kennung: D-0123456789ab");
     expect(screen.getByRole("button", { name: "Ticket öffnen" })).toBeInTheDocument();
+    // Neue Anfrage: leeres Formular
+    fireEvent.click(screen.getByRole("button", { name: "Neue Anfrage" }));
+    expect((screen.getByLabelText("Betreff") as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Hilfe anfordern");
   });
 
   it("HelpDesk noch nicht veröffentlicht: verständliche Meldung, Kennung zum Weitergeben", async () => {
@@ -233,16 +237,21 @@ describe("HilfeDialog", () => {
     await flush();
     await flush();
     expect(screen.getByAltText("Bild 1")).toBeInTheDocument();
+    // auch ohne Fokus in einem Feld (Einfügen irgendwo auf der Seite)
+    fireEvent.paste(document.body, { clipboardData: { files: [bildDatei("body.png")], items: [] } });
+    await flush();
+    await flush();
+    expect(screen.getByAltText("Bild 2").getAttribute("src")).toContain(btoa("body.png"));
     fireEvent.drop(screen.getByTestId("hilfe-bilder"), { dataTransfer: { files: [bildDatei("gezogen.webp", "image/webp")], items: [] } });
     await flush();
     await flush();
-    expect(screen.getByAltText("Bild 2").getAttribute("src")).toContain(btoa("gezogen.webp"));
+    expect(screen.getByAltText("Bild 3").getAttribute("src")).toContain(btoa("gezogen.webp"));
     // Text einfügen bleibt Text (kein Bild, kein preventDefault)
     const ereignis = fireEvent.paste(screen.getByLabelText("Was ist passiert?"), {
       clipboardData: { files: [], items: [{ kind: "string", getAsFile: () => null }] },
     });
     expect(ereignis).toBe(true);
-    expect(screen.queryByAltText("Bild 3")).toBeNull();
+    expect(screen.queryByAltText("Bild 4")).toBeNull();
   });
 
   it("Grenzen: falscher Typ und mehr als fünf Bilder werden benannt", async () => {
