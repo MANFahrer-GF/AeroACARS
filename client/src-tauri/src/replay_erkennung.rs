@@ -429,11 +429,9 @@ pub(crate) mod tests {
 /// vorbeigegangen: ein makelloses, nie aufgerufenes Modul.
 #[cfg(test)]
 mod verdrahtung {
-    use std::fs;
-
+    // v3 (Etappe 0): `lib.rs` samt ausgelagerter Teile (`build.rs`).
     fn lib_rs() -> String {
-        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
-            .expect("lib.rs lesbar")
+        crate::quelle_gesamt::PRODUKTION.to_string()
     }
 
     #[test]

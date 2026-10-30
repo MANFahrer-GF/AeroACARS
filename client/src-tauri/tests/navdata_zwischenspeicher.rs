@@ -16,10 +16,11 @@
 //! Ob der Inhalt stimmt. Das machen die Einheitstests. Hier geht es
 //! ausschliesslich darum, DASS der Weg verdrahtet ist.
 
-use std::fs;
+mod gemeinsam;
 
+/// v3 (Etappe 0): `lib.rs` samt ausgelagerter Teile (`build.rs`).
 fn lib_rs() -> String {
-    fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).expect("lib.rs lesbar")
+    gemeinsam::lib_quelle()
 }
 
 /// Der Ausschnitt einer Funktion, von ihrer Signatur bis zur naechsten

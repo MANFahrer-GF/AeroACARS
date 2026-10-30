@@ -1584,7 +1584,8 @@ mod bodenkarte_tests {
 mod ausfahrt_verdrahtung_tests {
     //! Wachen über den Anschluss der Szenerie-Rollwege an die Ausfahrten.
 
-    const LIB: &str = include_str!("lib.rs");
+    // v3 (Etappe 0): `lib.rs` samt ausgelagerter Teile (`build.rs`).
+    const LIB: &str = crate::quelle_gesamt::PRODUKTION;
 
     fn ohne_leerraum(s: &str) -> String {
         s.chars().filter(|c| !c.is_whitespace()).collect()
