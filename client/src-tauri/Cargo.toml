@@ -153,6 +153,8 @@ serde_json.workspace = true
 [dependencies]
 paket-endpunkte.workspace = true
 flate2 = "1"
+# Hilfe (P-9.22): Kopf x-diagnose-meta (base64 von JSON); dieselbe Fassung wie aeroacars-mqtt.
+base64 = "0.22"
 bewertung-host.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"

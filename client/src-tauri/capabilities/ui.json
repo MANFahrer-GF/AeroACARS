@@ -62,6 +62,8 @@
     "allow-flight-wiederaufnahme-steht-aus",
     "allow-flugakte-laden",
     "allow-fremde-flugroute",
+    "allow-hilfe-anfordern",
+    "allow-hilfe-vorschau",
     "allow-hoppie-connect",
     "allow-hoppie-disconnect",
     "allow-hoppie-get-flight-context",

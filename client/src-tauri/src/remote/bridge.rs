@@ -159,6 +159,20 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // ============================ READS ==============================
         "app_info" => ok_json(crate::app_info()),
         "uploads_ausstehend" => ok_json(crate::uploads_ausstehend(app.clone())),
+        // Hilfe anfordern (P-9.22): vom Tablet wie am PC — Diagnose und
+        // Schluessel bleiben auf dem Sim-PC, das Tablet sieht nur das Ergebnis.
+        "hilfe_vorschau" => ok_json(crate::hilfe::hilfe_vorschau(app.clone())),
+        "hilfe_anfordern" => {
+            #[derive(Deserialize)]
+            struct A {
+                betreff: String,
+                text: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::hilfe::hilfe_anfordern(app.clone(), a.betreff, a.text).await),
+                Err(e) => Err(e),
+            }
+        }
         // Reine Auskunft ueber die Platte des Hosts. Ueber die Bruecke
         // erlaubt, weil das Tablet dieselbe Frage stellen darf wie der
         // PC — es liest nichts, was der Pilot nicht ohnehin sieht.

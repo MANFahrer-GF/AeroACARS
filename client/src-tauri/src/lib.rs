@@ -71,6 +71,8 @@ mod sentry_init;
 mod discord_rpc;
 // Inhalte von live.kant.ovh nur mit Pilot-Token (29.09.2026).
 mod live_zugang;
+// Hilfe anfordern: Diagnose auf live, Ticket im HelpDesk (P-9.20 bis P-9.22).
+mod hilfe;
 mod sim_auto;
 // 03.10.2026: Zustand der Anzeigekomponente (WebView2) beim Start ins Log.
 mod webview_diagnose;
@@ -55947,6 +55949,8 @@ pub fn run() {
             // v0.9.0 (#Discord-RPC): Settings + Status + Push-State + Test.
             // Inhalte (Skin, Kartenstil, VATGlasses) mit Pilot-Token (29.09.2026).
             live_zugang::live_inhalt,
+            hilfe::hilfe_vorschau,
+            hilfe::hilfe_anfordern,
             discord_rpc::discord_rpc_get_settings,
             discord_rpc::discord_rpc_set_settings,
             discord_rpc::discord_rpc_get_status,

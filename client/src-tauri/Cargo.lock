@@ -25,6 +25,7 @@ dependencies = [
  "anyhow",
  "api-client",
  "axum",
+ "base64 0.22.1",
  "bewertung-host",
  "cabin-announcements",
  "chrono",

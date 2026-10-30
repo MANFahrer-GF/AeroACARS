@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { AppInfo } from "../types";
+import { HilfeDialog } from "./HilfeDialog";
 
 /**
  * About / Credits tab. Quiet, dezent, but acknowledges every project /
@@ -23,6 +24,8 @@ interface Props {
 export function AboutPanel({ onShowReleaseNotes }: Props) {
   const { t } = useTranslation();
   const [info, setInfo] = useState<AppInfo | null>(null);
+  // P-9.22: Hilfe anfordern (Ticket im GSG-HelpDesk mit Diagnose).
+  const [hilfeOffen, setHilfeOffen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,6 +75,7 @@ export function AboutPanel({ onShowReleaseNotes }: Props) {
 
   return (
     <section className="about">
+      {hilfeOffen && <HilfeDialog onClose={() => setHilfeOffen(false)} />}
       <header className="about__hero">
         <h2 className="about__title">AeroACARS</h2>
         <p className="about__tagline">{t("about.tagline")}</p>
@@ -104,6 +108,13 @@ export function AboutPanel({ onShowReleaseNotes }: Props) {
             >
               {t("release_notes.about_all_releases")}
             </a>
+            <button
+              type="button"
+              className="button button--ghost"
+              onClick={() => setHilfeOffen(true)}
+            >
+              {t("hilfe.knopf")}
+            </button>
           </div>
         )}
       </header>

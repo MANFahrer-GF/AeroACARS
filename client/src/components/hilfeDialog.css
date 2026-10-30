@@ -1,0 +1,93 @@
+/* Hilfe anfordern (P-9.22). Rahmen aus .modal/.field (App.css). */
+.hilfe {
+  overflow-y: auto;
+}
+
+.hilfe__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hilfe__kategorie {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.hilfe__kategorie-wert {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hilfe__text {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+  min-height: 84px;
+}
+
+.hilfe__text:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.hilfe__mitgeht {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+
+.hilfe__mitgeht h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hilfe__mitgeht dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.hilfe__mitgeht dt {
+  color: var(--text-muted);
+}
+
+.hilfe__mitgeht dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.hilfe__kennung {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  user-select: text;
+}
+
+/* Kleine Fenster (1280x800, 1490x720): Der Inhalt scrollt, die Knoepfe
+   bleiben unten sichtbar. */
+.hilfe .modal__footer {
+  position: sticky;
+  bottom: -22px;
+  margin: 0 -24px -22px;
+  padding: 12px 24px 22px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}

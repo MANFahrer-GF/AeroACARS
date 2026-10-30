@@ -66,6 +66,8 @@
     "flight_wiederaufnahme_steht_aus": "lesen",
     "flugakte_laden": "fachlich",
     "fremde_flugroute": "fachlich",
+    "hilfe_anfordern": "fachlich",
+    "hilfe_vorschau": "lesen",
     "hoppie_clear_logon_code": "system",
     "hoppie_connect": "fachlich",
     "hoppie_disconnect": "fachlich",

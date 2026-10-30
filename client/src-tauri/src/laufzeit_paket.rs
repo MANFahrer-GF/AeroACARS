@@ -26,7 +26,9 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 /// `ui-befehle-1` (P-8.11): die Befehlsliste befehle.json dieses Programms —
 /// ein Paket mit Oberflaeche (`ui/`) ruft genau diese Befehle. Neuer Befehl =
 /// Release + `ui-befehle-2` im Paket-Workflow.
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-1"];
+/// `ui-befehle-2` (P-9.22): `hilfe_vorschau`, `hilfe_anfordern` dazu; die
+/// Liste ist eine Obermenge von 1, ein Paket fuer 1 laeuft weiter.
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-1", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-1", "ui-befehle-2"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -748,7 +750,9 @@ fn bewertung_selbsttest(modul: &[u8], selftest: &[u8]) -> Result<(), String> {
 mod tests {
     /// Ein Paket aus dem Paket-Workflow verlangt nur, was dieses Programm
     /// kann — sonst lehnte der Client sein eigenes Paket ab (P-2.15). Mit
-    /// Oberflaeche (ui/) gehoert ui-befehle-1 dazu (P-8.11).
+    /// Oberflaeche (ui/) gehoert die Befehlsliste dieses Stands dazu (P-8.11):
+    /// seit der Hilfe-Funktion `ui-befehle-2` — eine Oberflaeche, die
+    /// `hilfe_anfordern` ruft, darf nicht in einen Client ohne den Befehl.
     #[test]
     fn paket_workflow_verlangt_nur_bekannte_faehigkeiten() {
         let wf = include_str!("../../../.github/workflows/bundle.yml");
@@ -759,7 +763,7 @@ mod tests {
         for f in liste.split(',') {
             assert!(FAEHIGKEITEN.contains(&f), "bundle.yml verlangt {f}, das Programm kennt es nicht");
         }
-        assert!(liste.split(',').any(|f| f == "ui-befehle-1"), "Paket mit ui/ ohne ui-befehle-1");
+        assert!(liste.split(',').any(|f| f == "ui-befehle-2"), "Paket mit ui/ ohne ui-befehle-2");
     }
 
     use super::*;

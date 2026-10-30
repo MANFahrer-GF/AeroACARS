@@ -219,6 +219,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `bewertung::tests::sollband_kommt_aus_dem_modul`. Codex 30.10.:
 /// `bewertung::sollband` bekommt `&flight.pirep_id` (dasselbe Modul wie die
 /// Note, auch beim nachgeholten Stand).
+/// — plus P-9.22/N-06 (Hilfe anfordern): `mod hilfe` und zwei Zeilen im
+/// `generate_handler!` (`hilfe::hilfe_vorschau` Stufe `lesen`,
+/// `hilfe::hilfe_anfordern` Stufe `fachlich`); sonst nichts an `lib.rs`.
+/// Tests `hilfe::tests`, `tests/befehlsliste.rs`, vitest `HilfeDialog.test.tsx`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -229,4 +233,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "641c77e36c0b1700a2a9af11d2887d577dc3c528697ec54b559b2f95fa067fda";
+const HASH_VOR_DER_ZERLEGUNG: &str = "4a122c21988d4e8401d2ce4e49d87f4e978cd9662fc58945d83a30f497a861e7";
