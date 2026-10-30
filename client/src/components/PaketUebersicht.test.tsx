@@ -60,6 +60,23 @@ describe("Paket-Übersicht", () => {
     expect(invokeMock).toHaveBeenCalledWith("paket_neu_starten");
   });
 
+  it("Neustart: Doppelklick ruft einmal, „zu früh“ wird erklärt", async () => {
+    let fertig: (v: unknown) => void = () => {};
+    await rendern({ ...basis, naechster_start: { generation: 54, bewertung_fassung: 27 } }, {
+      paket_neu_starten: () => new Promise((_, nein) => (fertig = () => nein({ code: "zu_frueh", message: "x" }))),
+    });
+    const knopf = screen.getByRole("button", { name: deCommon.paket.neu_starten });
+    fireEvent.click(knopf);
+    fireEvent.click(knopf);
+    expect(invokeMock.mock.calls.filter((c) => c[0] === "paket_neu_starten").length).toBe(1);
+    await act(async () => {
+      fertig(null);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("alert").textContent).toBe(deCommon.paket.neustart_zu_frueh);
+  });
+
   it("Gegenprobe: im Flug kein Neustart-Knopf, ohne wartendes Paket kein Hinweis", async () => {
     await rendern({ ...basis, flug_offen: true, naechster_start: { generation: 54, bewertung_fassung: 27 } });
     expect(screen.queryByRole("button", { name: deCommon.paket.neu_starten })).toBeNull();

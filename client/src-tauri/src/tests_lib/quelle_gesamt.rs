@@ -250,7 +250,7 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `paket_jetzt_pruefen` und `paket_neu_starten` Stufe `fachlich`, Kern
 /// prueft Flug und wartenden Stand); `kabinen_schritt` setzt `Tick::lage`
 /// aus der neuen `kabinen_lage` (Snapshot, Plan, Ist-Zeiten, Bahn, hoechstens
-/// 64 KB). Sonst nichts an `lib.rs`. Tests `laufzeit_paket::tests::paket_info_*`,
+/// 64 KB, darueber `Null` mit einmaliger Warnung). Sonst nichts an `lib.rs`. Tests `laufzeit_paket::tests::paket_info_*`,
 /// `neustart_nur_ohne_flug_und_mit_wartendem_paket`,
 /// `arrived_fallback_geometry_tests::kabinen_lage_traegt_das_flugbild_zum_modul`,
 /// `tests/befehlsliste.rs::paket_befehle_der_ui_befehle_4`.
@@ -264,4 +264,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "7ec1492ef3e19017850beff0c27c94ff075dc12762a8262987fff8c587586ae1";
+const HASH_VOR_DER_ZERLEGUNG: &str = "48523b1fe9e2d8f9c4f7de4594787fadae7ea18fa7b23ae36739ccbeb3b22fef";

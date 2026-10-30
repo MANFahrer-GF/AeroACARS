@@ -5,12 +5,12 @@
 // und „Auf neues Paket prüfen“ (`paket_jetzt_pruefen`).
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "../lib/ipc";
+import { invoke, isTauri } from "../lib/ipc";
 import "./paketUebersicht.css";
 
 interface Pruefung {
   zeit: string;
-  ergebnis: "neu" | "kein_neueres" | "fehler" | "flug_offen";
+  ergebnis: "neu" | "kein_neueres" | "fehler" | "flug_offen" | "laeuft";
   generation: number | null;
   fehler: string | null;
 }
@@ -38,7 +38,8 @@ export function PaketUebersicht({ sichtbar = true }: { sichtbar?: boolean }) {
   const [info, setInfo] = useState<PaketInfo | null>(null);
   const [pruefe, setPruefe] = useState(false);
   const [antwort, setAntwort] = useState<Pruefung | null>(null);
-  const [startFehler, setStartFehler] = useState(false);
+  const [startFehler, setStartFehler] = useState<string | null>(null);
+  const [startet, setStartet] = useState(false);
 
   const laden = useCallback(async () => {
     try {
@@ -65,11 +66,16 @@ export function PaketUebersicht({ sichtbar = true }: { sichtbar?: boolean }) {
   };
 
   const neuStarten = async () => {
-    setStartFehler(false);
+    if (startet) return;
+    setStartFehler(null);
+    setStartet(true);
     try {
       await invoke("paket_neu_starten");
-    } catch {
-      setStartFehler(true);
+    } catch (e) {
+      const code = (e as { code?: string })?.code;
+      setStartFehler(code === "flug_offen" || code === "zu_frueh" || code === "kein_neues_paket" ? code : "allgemein");
+      setStartet(false);
+      void laden();
     }
   };
 
@@ -86,16 +92,25 @@ export function PaketUebersicht({ sichtbar = true }: { sichtbar?: boolean }) {
       {wartet && (
         <div className="paket-uebersicht__neu" data-testid="paket-neu" role="status">
           <span>{t("paket.neu_wartet", { n: wartet.generation })}</span>
-          {info.flug_offen ? (
+          {/* Neustart nur am Sim-PC (die LAN-Brücke sperrt ihn). */}
+          {!isTauri ? null : info.flug_offen ? (
             <span className="paket-uebersicht__hinweis">{t("paket.neu_starten_nach_flug")}</span>
           ) : (
-            <button type="button" className="button button--primary" onClick={() => void neuStarten()}>
+            <button type="button" className="button button--primary" disabled={startet} onClick={() => void neuStarten()}>
               {t("paket.neu_starten")}
             </button>
           )}
         </div>
       )}
-      {startFehler && <p className="paket-uebersicht__fehler" role="alert">{t("paket.neustart_fehler")}</p>}
+      {startFehler && (
+        <p className="paket-uebersicht__fehler" role="alert">
+          {startFehler === "flug_offen"
+            ? t("paket.neu_starten_nach_flug")
+            : startFehler === "zu_frueh"
+              ? t("paket.neustart_zu_frueh")
+              : t("paket.neustart_fehler")}
+        </p>
+      )}
       <div className="paket-uebersicht__pruefen">
         <button type="button" className="button button--ghost" disabled={pruefe} onClick={() => void pruefen()}>
           {pruefe ? t("paket.pruefe") : t("paket.pruefen")}
@@ -112,7 +127,9 @@ export function PaketUebersicht({ sichtbar = true }: { sichtbar?: boolean }) {
                 ? t("paket.ergebnis_fehler", { fehler: antwort.fehler ?? "" })
                 : antwort.ergebnis === "flug_offen"
                   ? t("paket.ergebnis_flug_offen")
-                  : t("paket.ergebnis_kein_neueres")}
+                  : antwort.ergebnis === "laeuft"
+                    ? t("paket.ergebnis_laeuft")
+                    : t("paket.ergebnis_kein_neueres")}
           </span>
         )}
         {letzteFehler && (

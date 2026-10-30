@@ -154,6 +154,13 @@ pub(crate) struct AktiverStand {
 
 static STAND: OnceLock<AktiverStand> = OnceLock::new();
 
+#[cfg(test)]
+thread_local! {
+    /// Aufrufe von [`stand`] in diesem Faden (Test: der Startabruf darf den
+    /// Stand nicht vorzeitig festlegen, P-3.02).
+    static STAND_AUFRUFE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Herkunft des geltenden Stands (gesetzt von `starten`; ohne `starten`
 /// gilt der eingebaute Stand).
 static HERKUNFT: OnceLock<Herkunft> = OnceLock::new();
@@ -208,6 +215,8 @@ pub(crate) fn pin_stand(pirep_id: &str) -> PinStand {
 /// Der geltende Stand. Wer liest, bevor `starten` lief (z. B. Tests), legt
 /// damit den eingebauten Stand fest.
 pub(crate) fn stand() -> &'static AktiverStand {
+    #[cfg(test)]
+    STAND_AUFRUFE.with(|z| z.set(z.get() + 1));
     STAND.get_or_init(|| eingebauter_stand().expect("eingebauter Stand lesbar (Test eingebauter_stand_besteht_den_selbsttest)"))
 }
 
@@ -622,6 +631,8 @@ fn starten_einmal(app_daten: &Path) {
     // dann die neue Version haben — das funktioniert nicht“): Ein neuerer
     // freigegebener Stand wird VOR dem Festlegen geholt und gilt schon in
     // diesem Lauf. Nicht bei offenem Flug (sein Pin gilt weiter).
+    let _ = APP_DATEN.set(app_daten.to_path_buf());
+    let _ = GESTARTET.set(std::time::Instant::now());
     beim_start_holen(app_daten);
     // Vor allem anderen: X-Plane-Profile kommen ab jetzt aus DIESEM Stand.
     sim_xplane::profile_quelle_setzen(|| stand().xplane_profile);
@@ -655,7 +666,6 @@ fn starten_einmal(app_daten: &Path) {
     };
     // Erst den ganzen Stand lesen, dann EINMAL festlegen (P-3.02). Laesst
     // sich ein Teil nicht lesen, gilt der eingebaute Stand.
-    let _ = APP_DATEN.set(app_daten.to_path_buf());
     let paket_id = paket.id.clone();
     let (neu, aus_paket) = match stand_aus_paket(paket) {
         Ok(neu) => (Some(neu), true),
@@ -705,7 +715,12 @@ fn beim_start_holen(app_daten: &Path) {
     let lauf = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
         let weg = Holweg { basis: &basis, token: None, frist: START_FRIST_ANFRAGE, kontext: kontext(), selbsttest, pins: Vec::new() };
-        rt.block_on(vorab_holen(&daten, weg, START_FRIST_GESAMT))
+        let ergebnis = rt.block_on(vorab_holen(&daten, weg, START_FRIST_GESAMT));
+        // Nicht auf liegengebliebene Blocking-Aufgaben warten (haengende
+        // DNS-Aufloesung): sonst haelt der Drop der Laufzeit den Start ueber
+        // die Frist hinaus fest (Pruefer 30.10.).
+        rt.shutdown_background();
+        ergebnis
     });
     let Some(ergebnis) = lauf.join().ok().flatten() else { return };
     match &ergebnis {
@@ -830,15 +845,30 @@ where
     Fut: std::future::Future<Output = Result<Option<RuntimeBundleId>, String>>,
 {
     match versuch().await {
-        Err(e) => {
+        Err(e) if voruebergehend(&e) => {
             tracing::warn!(error = %e, "Laufzeit-Paket: Aktualisierung nicht moeglich, ein weiterer Versuch folgt");
             tokio::time::sleep(warten).await;
             if !noch_erlaubt() {
-                return Ok(None);
+                return Err(e);
             }
             versuch().await
         }
-        ok => ok,
+        sonst => sonst,
+    }
+}
+
+/// Lohnt eine Wiederholung? Netz- und Serverfehler ja (401 vom Grundtor vor
+/// dem Token, 5xx, Zeitablauf, Verbindung); Selbsttest, Signatur, „veraltet“
+/// usw. nein — die aendern sich in 20 s nicht (sonst doppelte Meldungen).
+fn voruebergehend(fehler: &str) -> bool {
+    match fehler.strip_prefix("HTTP ").and_then(|c| c.parse::<u16>().ok()) {
+        Some(code) => code == 401 || code == 408 || code == 429 || code >= 500,
+        None => {
+            let f = fehler.to_ascii_lowercase();
+            ["error sending request", "timed out", "timeout", "connect", "dns", "keine antwort", "connection"]
+                .iter()
+                .any(|w| f.contains(w))
+        }
     }
 }
 
@@ -854,7 +884,8 @@ pub(crate) struct Pruefung {
     /// RFC 3339, UTC.
     pub zeit: String,
     /// `neu` (Stand geholt, aktiv ab naechstem Start), `kein_neueres`,
-    /// `fehler`, `flug_offen` (im Flug wird nicht geholt).
+    /// `fehler`, `flug_offen` (im Flug wird nicht geholt), `laeuft` (ein
+    /// anderer Abruf haelt die Leitung).
     pub ergebnis: &'static str,
     pub generation: Option<u64>,
     pub fehler: Option<String>,
@@ -924,19 +955,32 @@ pub(crate) async fn paket_jetzt_pruefen() -> Pruefung {
     }) {
         return l;
     }
-    match abrufen(&daten, false, false).await {
-        Some(p) => p,
-        None => letzte().unwrap_or_else(|| Pruefung { zeit: jetzt(), ergebnis: "kein_neueres", generation: None, fehler: None }),
+    // Laeuft schon ein Abruf (Start, Token, Wiederholung), nicht bis zu
+    // 80 s warten: hoechstens 15 s, sonst „laeuft gerade“.
+    match tokio::time::timeout(std::time::Duration::from_secs(15), abrufen(&daten, false, false)).await {
+        Ok(Some(p)) => p,
+        Ok(None) => letzte().unwrap_or_else(|| Pruefung { zeit: jetzt(), ergebnis: "kein_neueres", generation: None, fehler: None }),
+        Err(_) => Pruefung { zeit: jetzt(), ergebnis: "laeuft", generation: None, fehler: None },
     }
 }
+
+/// Fruehester Neustart nach Programmstart (siehe [`neustart_erlaubt`]).
+const NEUSTART_FRUEHESTENS: std::time::Duration = std::time::Duration::from_secs(60);
+/// Programmstart (gesetzt in `starten`).
+static GESTARTET: OnceLock<std::time::Instant> = OnceLock::new();
 
 /// Darf „Jetzt neu starten“? Nur ohne offenen Flug und nur, wenn wirklich
 /// ein anderer, ladbarer Stand wartet — so kann auch eine fremde Oberflaeche
 /// (P-8.12) keine Neustart-Schleife ausloesen: Nach dem Neustart gilt der
 /// neue Stand, und es wartet keiner mehr.
-fn neustart_erlaubt(flug_offen: bool, wartet: bool) -> Result<(), &'static str> {
+fn neustart_erlaubt(flug_offen: bool, wartet: bool, laufzeit: std::time::Duration) -> Result<(), &'static str> {
     if flug_offen {
         return Err("flug_offen");
+    }
+    // Bremse gegen eine Neustart-Schleife ueber immer neue Generationen
+    // (kompromittierter Server UND Schluessel, P-8.12): nicht in der ersten Minute.
+    if laufzeit < NEUSTART_FRUEHESTENS {
+        return Err("zu_frueh");
     }
     if !wartet {
         return Err("kein_neues_paket");
@@ -954,7 +998,8 @@ pub(crate) async fn paket_neu_starten(app: tauri::AppHandle) -> Result<(), crate
     let geltend = stand().id.clone();
     let offen = flug_offen(&daten);
     let wartet = tokio::task::spawn_blocking(move || naechster_start(&daten, &geltend).is_some()).await.unwrap_or(false);
-    neustart_erlaubt(offen, wartet).map_err(|c| crate::UiError::new(c, "Neustart nicht moeglich"))?;
+    let laufzeit = GESTARTET.get().map_or(std::time::Duration::ZERO, |t| t.elapsed());
+    neustart_erlaubt(offen, wartet, laufzeit).map_err(|c| crate::UiError::new(c, "Neustart nicht moeglich"))?;
     tracing::info!("Laufzeit-Paket: Neustart fuer den neuen Stand");
     app.restart()
 }
@@ -969,10 +1014,14 @@ fn nach_token_abrufen(mit_token_geprueft: bool, flug_offen: bool) -> bool {
 /// abruf lief womoeglich noch ohne (Thomas' Protokoll 30.10.: Abfrage
 /// ~0,7 s vor den Zugangsdaten → 401) — dann genau einmal mit Token.
 pub(crate) fn token_bereit() {
+    token_bereit_in(APP_DATEN.get().cloned());
+}
+
+fn token_bereit_in(daten: Option<PathBuf>) {
     if PRUEFSCHLUESSEL.is_empty() {
         return;
     }
-    let Some(daten) = APP_DATEN.get().cloned() else { return };
+    let Some(daten) = daten else { return };
     if !nach_token_abrufen(MIT_TOKEN_GEPRUEFT.load(std::sync::atomic::Ordering::SeqCst), flug_offen(&daten)) {
         return;
     }
@@ -1674,13 +1723,52 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         }
     }
 
+    /// P-3.02 beim Startabruf (Pruefer 30.10.): Der echte Selbsttest eines
+    /// Pakets laeuft vor dem Festlegen des Stands und darf `stand()` nicht
+    /// beruehren — sonst gaelte der eingebaute Stand, bevor der geholte
+    /// geladen ist. Gegenprobe: ein Zugriff zaehlt.
+    #[test]
+    fn selbsttest_beruehrt_den_stand_nicht() {
+        let p = eingebaut().paket().unwrap();
+        STAND_AUFRUFE.with(|z| z.set(0));
+        assert_eq!(selbsttest(&p), Ok(()));
+        assert_eq!(STAND_AUFRUFE.with(|z| z.get()), 0, "Selbsttest las stand()");
+        let _ = stand();
+        assert_eq!(STAND_AUFRUFE.with(|z| z.get()), 1, "Gegenprobe: der Zaehler zaehlt");
+    }
+
+    /// Haengt live (Verbindung offen, keine Antwort), endet der Startabruf
+    /// nach der Gesamtfrist mit Fehler — der Start wartet nicht laenger.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn startabruf_haelt_die_gesamtfrist_bei_haengendem_server() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let basis = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut offen = Vec::new();
+            while let Ok((s, _)) = listener.accept().await {
+                offen.push(s); // annehmen, nie antworten
+            }
+        });
+        let dir = std::env::temp_dir().join(format!("aeroacars-haengt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let weg = Holweg { basis: &basis, token: None, frist: START_FRIST_ANFRAGE, kontext: kontext(), selbsttest, pins: Vec::new() };
+        let t0 = std::time::Instant::now();
+        let r = vorab_holen(&dir, weg, std::time::Duration::from_millis(800)).await.expect("kein Flug");
+        assert!(r.unwrap_err().contains("keine Antwort"));
+        assert!(t0.elapsed() < std::time::Duration::from_secs(3), "{:?}", t0.elapsed());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// „Jetzt neu starten“ nur ohne Flug und nur mit wartendem Stand
     /// (keine Neustart-Schleife durch eine fremde Oberflaeche).
     #[test]
     fn neustart_nur_ohne_flug_und_mit_wartendem_paket() {
-        assert_eq!(neustart_erlaubt(false, true), Ok(()));
-        assert_eq!(neustart_erlaubt(true, true), Err("flug_offen"));
-        assert_eq!(neustart_erlaubt(false, false), Err("kein_neues_paket"));
+        let minute = std::time::Duration::from_secs(61);
+        assert_eq!(neustart_erlaubt(false, true, minute), Ok(()));
+        assert_eq!(neustart_erlaubt(true, true, minute), Err("flug_offen"));
+        assert_eq!(neustart_erlaubt(false, false, minute), Err("kein_neues_paket"));
+        assert_eq!(neustart_erlaubt(false, true, std::time::Duration::from_secs(5)), Err("zu_frueh"), "Schleifen-Bremse");
     }
 
     /// Ergebnis fuer den Knopf „Auf neues Paket pruefen“.
@@ -1792,10 +1880,14 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
             (n.load(SeqCst), erg)
         };
         let id = RuntimeBundleId { generation: 54, manifest_sha256: "cd".repeat(32) };
-        assert_eq!(lauf(vec![Err("401".into()), Ok(Some(id.clone()))], true).await, (2, Ok(Some(id))));
+        assert_eq!(lauf(vec![Err("HTTP 401".into()), Ok(Some(id.clone()))], true).await, (2, Ok(Some(id))));
         assert_eq!(lauf(vec![Ok(None)], true).await, (1, Ok(None)), "Gegenprobe: Erfolg, kein zweiter Versuch");
-        assert_eq!(lauf(vec![Err("a".into()), Err("b".into())], true).await, (2, Err("b".into())), "hoechstens einmal");
-        assert_eq!(lauf(vec![Err("a".into())], false).await, (1, Ok(None)), "Flug begonnen: keine Wiederholung");
+        assert_eq!(lauf(vec![Err("HTTP 503".into()), Err("HTTP 502".into())], true).await, (2, Err("HTTP 502".into())), "hoechstens einmal");
+        assert_eq!(lauf(vec![Err("HTTP 401".into())], false).await, (1, Err("HTTP 401".into())), "Flug begonnen: keine Wiederholung, Fehler bleibt");
+        assert_eq!(lauf(vec![Err("Selbsttest: x weicht ab".into())], true).await.0, 1, "dauerhafter Fehler: keine Wiederholung");
+        assert_eq!(lauf(vec![Err("HTTP 404".into())], true).await.0, 1);
+        assert!(voruebergehend("error sending request for url (https://live.kant.ovh/api/bundle/current)"));
+        assert!(!voruebergehend("Manifest: Signatur ungueltig"));
     }
 
     /// Kommt das Pilot-Token, wird genau einmal nachgefragt — solange noch
@@ -1809,17 +1901,23 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert!(!nach_token_abrufen(false, true), "offener Flug: kein Abruf");
         let dir = std::env::temp_dir().join(format!("aeroacars-token-abruf-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let _ = APP_DATEN.set(dir.clone());
+        let _ = std::fs::remove_file(dir.join(crate::ACTIVE_FLIGHT_FILE));
         let vorher = NACH_TOKEN_ANGESTOSSEN.load(SeqCst);
         crate::live_zugang::token_setzen(None);
         assert_eq!(NACH_TOKEN_ANGESTOSSEN.load(SeqCst), vorher, "Abmelden stoesst nichts an");
         // `token_setzen(Some)` ruft `token_bereit` (live_zugang.rs); das
         // globale Token setzt der Test nicht — andere Tests lesen es.
-        token_bereit();
+        token_bereit_in(Some(dir.clone()));
         assert_eq!(NACH_TOKEN_ANGESTOSSEN.load(SeqCst), vorher + 1);
+        token_bereit_in(None);
+        assert_eq!(NACH_TOKEN_ANGESTOSSEN.load(SeqCst), vorher + 1, "vor dem Start: nichts");
         MIT_TOKEN_GEPRUEFT.store(true, SeqCst);
-        token_bereit();
+        token_bereit_in(Some(dir.clone()));
         assert_eq!(NACH_TOKEN_ANGESTOSSEN.load(SeqCst), vorher + 1, "schon mit Token geprueft");
+        MIT_TOKEN_GEPRUEFT.store(false, SeqCst);
+        std::fs::write(dir.join(crate::ACTIVE_FLIGHT_FILE), "{}").unwrap();
+        token_bereit_in(Some(dir.clone()));
+        assert_eq!(NACH_TOKEN_ANGESTOSSEN.load(SeqCst), vorher + 1, "offener Flug");
         MIT_TOKEN_GEPRUEFT.store(false, SeqCst);
         let _ = std::fs::remove_dir_all(&dir);
     }

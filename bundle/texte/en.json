@@ -1845,7 +1845,9 @@
     "ergebnis_fehler": "Check failed: {{fehler}}",
     "ergebnis_flug_offen": "No package is downloaded during a flight.",
     "letzte_fehler": "Last check failed: {{fehler}}",
-    "neustart_fehler": "Restart not possible."
+    "neustart_fehler": "Restart not possible.",
+    "neustart_zu_frueh": "Please try again a minute after start-up.",
+    "ergebnis_laeuft": "A check is already running, please try again shortly."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

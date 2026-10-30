@@ -558,7 +558,12 @@ fn kabinen_lage(stats: &FlightStats, snap: &SimSnapshot, ziel: &str, planzeit_mi
     });
     match serde_json::to_vec(&lage) {
         Ok(b) if b.len() <= KABINEN_LAGE_MAX_BYTES => lage,
-        _ => serde_json::Value::Null,
+        b => {
+            // Einmal je Lauf melden: eine Planer-Regel auf `lage` waere sonst still tot.
+            static GEMELDET: std::sync::Once = std::sync::Once::new();
+            GEMELDET.call_once(|| tracing::warn!(bytes = b.map(|b| b.len()).unwrap_or(0), "Kabinenplaner: Lage zu gross, geht als Null mit"));
+            serde_json::Value::Null
+        }
     }
 }
 
