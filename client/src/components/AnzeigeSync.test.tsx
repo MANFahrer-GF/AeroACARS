@@ -25,18 +25,9 @@ import {
   fehlendeSchluessel,
   DATEIEN,
   AUSNAHMEN,
+  GETRENNT_3_0,
+  WEBAPP,
 } from "../../../scripts/anzeige-sync.mjs";
-
-const WEBAPP = resolve(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "..",
-  "aeroacars-live",
-  "webapp",
-  "src",
-);
 
 describe("Anzeige Client ↔ Webapp", () => {
   it("zeigt beidseitig dieselbe Grafik", () => {
@@ -96,6 +87,10 @@ describe("Anzeige Client ↔ Webapp", () => {
     // Deshalb wird der Baum hier nachgerechnet statt geglaubt: Jeder
     // relative Import einer gelisteten Datei muss selbst gelistet sein.
     const liste = DATEIEN as string[];
+    // 3.0: je Seite eigene Dateien (GETRENNT_3_0) gibt es auf beiden Seiten —
+    // ausser denen mit `beidseitig: false`, die nur der Client hat.
+    const getrennt = GETRENNT_3_0 as Record<string, { beidseitig: boolean; grund: string }>;
+    const ohneEndung = (p: string) => p.replace(/\.tsx?$/, "");
     const readFileSync = (p: string) =>
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       (require("node:fs") as typeof import("node:fs")).readFileSync(p, "utf-8");
@@ -113,7 +108,12 @@ describe("Anzeige Client ↔ Webapp", () => {
         const erlaubt = Object.keys(AUSNAHMEN as Record<string, string>).includes(
           m[1],
         );
-        if (!passt && !erlaubt) fehlend.push(`${rel} → ${m[1]}`);
+        const eigen = Object.entries(getrennt).find(
+          ([k]) => ohneEndung(resolve(__dirname, "..", k)) === ohneEndung(ziel),
+        );
+        if (eigen && !eigen[1].beidseitig) {
+          fehlend.push(`${rel} → ${m[1]} (gibt es nur im Client)`);
+        } else if (!passt && !erlaubt && !eigen) fehlend.push(`${rel} → ${m[1]}`);
       }
     }
     expect(

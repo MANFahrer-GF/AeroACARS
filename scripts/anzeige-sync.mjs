@@ -51,7 +51,17 @@ const CLIENT = resolve(HIER, "..", "client", "src");
 // Die Webapp liegt in einem anderen Repo. Auf dem Mac nebenan, in einer
 // CI ohne dieses Repo gar nicht — dann meldet das Skript das und endet
 // ohne Fehler, statt einen Abgleich vorzutäuschen, den es nicht geführt hat.
-const WEBAPP = resolve(HIER, "..", "..", "aeroacars-live", "webapp", "src");
+//
+// 3.0 (30.10.2026): Der 3.0-Client gehört zur 3.0-Webapp (Zweig v3). Auf dem
+// Mac liegt sie als `aeroacars-live-v3` neben `aeroacars-live` (main = 2.x);
+// gegen die 2.x-Webapp zu prüfen hiesse, zwei Fassungen zu vergleichen, die
+// gar nicht gleich sein sollen. `ANZEIGE_SYNC_WEBAPP` legt den Ort fest.
+const NEBENAN = resolve(HIER, "..", "..");
+export const WEBAPP = process.env.ANZEIGE_SYNC_WEBAPP
+  ? resolve(process.env.ANZEIGE_SYNC_WEBAPP)
+  : existsSync(resolve(NEBENAN, "aeroacars-live-v3", "webapp", "src"))
+    ? resolve(NEBENAN, "aeroacars-live-v3", "webapp", "src")
+    : resolve(NEBENAN, "aeroacars-live", "webapp", "src");
 
 /** Die Dateien der Anzeige. Der Abhängigkeitsbaum ist geschlossen. */
 export const DATEIEN = [
@@ -76,10 +86,6 @@ export const DATEIEN = [
   "components/runwayV2Skin.ts",
   "lib/runwayProjection.ts",
   "lib/useBahnZoom.ts",
-  // Soll-Sinkrate im Anflug (16.09.2026): Rechnung der Anflug-Grafik,
-  // identisch zur Bewertung. Beide Grafiken (LandingPanel, _ApproachChart)
-  // zeichnen das Band nur hieraus.
-  "lib/anflugSollband.ts",
   // v1.7.36: Die Sprit-Auswertung. Sie lief bis dahin zweimal — Client und
   // Live-Uebersicht mit je eigener Fassung, beide mit Kommentaren, die
   // Gleichheit zusagten, und trotzdem auseinander: In der Webapp waren
@@ -108,13 +114,9 @@ export const DATEIEN = [
   "lib/seitenText.ts",
   "lib/landungsFaelle.thy39.txt",
   // Abschnitte der Landungsanzeige — ein Code für Client und Webapp
-  // (QS 05.10.2026, „alles genau bei beiden angezeigt").
-  "lib/landungsDatensatz.ts",
-  "lib/bewertungsGrenzen.ts",
-  "components/AnflugGrafik.tsx",
+  // (QS 05.10.2026, „alles genau bei beiden angezeigt"). Was seit 3.0 je
+  // Seite eigen ist, steht in GETRENNT_3_0.
   "components/anflugGrafik.css",
-  "components/SinkrateForensik.tsx",
-  "components/GForceForensik.tsx",
   "components/landungForensik.css",
   "lib/landungsFormat.ts",
   // 05.10.2026: Druck-Schalter — der PDF-Bericht druckt die Abschnitte
@@ -137,10 +139,8 @@ export const DATEIEN = [
   "components/metarAbschnitt.css",
   "components/RohdatenAbschnitt.tsx",
   "components/rohdatenAbschnitt.css",
-  "components/ApproachStabilityCard.tsx",
   "components/ApproachStabilityHilfeInhalt.tsx",
   "components/approachStabilityHilfe.css",
-  "components/LandungsBewertung.tsx",
   "components/landungsBewertung.css",
   "components/ForensicsBadge.tsx",
   "components/RunwayUtilizationHilfeInhalt.tsx",
@@ -173,6 +173,73 @@ export const AUSNAHMEN = {
     "sitzt im repo-eigenen Dialog-Baustein (./ui) mit anderer " +
     "Schnittstelle; zeigt nur i18n-Texte, die ohnehin in beiden " +
     "Sprachdateien liegen",
+};
+
+/**
+ * 3.0 (30.10.2026): Dateien, die bis 2.x byte-gleich waren und seit 3.0
+ * BEWUSST je Seite eigen sind. Sie werden nicht verglichen und nicht kopiert;
+ * ihre Beschriftungen zählen weiter (`benoetigteSchluessel`), und was sie
+ * zeigen, prüft der Gleichstand der ganzen Seite (THY39, landungsFaelle).
+ *
+ * # Warum sie auseinandergehen dürfen
+ *
+ * Der Grund ist überall derselbe: die Datenquelle (P-4.21, P-4.42). Der
+ * Client hat die Ausgabe des Bewertungsmoduls selbst im `LandingRecord`
+ * (`modul_grenzen`, `modul_sollband`, Rust `bewertung::sollband`); die
+ * Webapp bekommt sie vom Server als `modul` am Touchdown und liest sie über
+ * `lib/bewertungsModul.ts` und `lib/sollbandModul.ts`. Dieselben Zahlen,
+ * zwei Zugänge — eine erzwungene Byte-Gleichheit hiesse, eine Seite müsste
+ * den Zugang der anderen nachbauen. Gerechnet wird auf keiner Seite (A-20).
+ *
+ * `beidseitig: false` = gibt es nur im Client; eine gespiegelte Datei darf
+ * sie nicht importieren (die Webapp-Kopie fände sie nicht).
+ */
+export const GETRENNT_3_0 = {
+  "lib/anflugSollband.ts": {
+    beidseitig: false,
+    grund:
+      "Soll-Band des Anflugs: Client nur noch für 2.x-Altbestand und Cockpit-" +
+      "Hinweis; 3.0 bringt es aus dem Modul. Die Webapp liest das Band aus " +
+      "lib/sollbandModul.ts (Server-Ausgabe), eine eigene Rechnung hat sie nicht mehr",
+  },
+  "lib/bewertungsGrenzen.ts": {
+    beidseitig: false,
+    grund:
+      "Farbgrenzen Sinkrate/G: Client liest `modul_grenzen` aus dem Datensatz, " +
+      "die Webapp `grenzenFuer` aus lib/bewertungsModul.ts; die 2.x-Zahlen " +
+      "stehen auf beiden Seiten als GRENZEN_ALTBESTAND_2X",
+  },
+  "lib/landungsDatensatz.ts": {
+    beidseitig: true,
+    grund:
+      "Typ des Datensatzes: der Client führt `modul_grenzen`/`modul_sollband` " +
+      "(aus Rust), die Webapp `bewertung_modul`/`bewertung_hinweis` (vom Server)",
+  },
+  "components/AnflugGrafik.tsx": {
+    beidseitig: true,
+    grund: "Soll-Band: Client aus dem Datensatz, Webapp aus lib/sollbandModul.ts",
+  },
+  "components/SinkrateForensik.tsx": {
+    beidseitig: true,
+    grund: "Farbgrenzen: Client `grenzenAus(record)`, Webapp `grenzenFuer(record.bewertung_modul)`",
+  },
+  "components/GForceForensik.tsx": {
+    beidseitig: true,
+    grund: "Farbgrenzen wie SinkrateForensik.tsx",
+  },
+  "components/ApproachStabilityCard.tsx": {
+    beidseitig: true,
+    grund:
+      "Anflug-Urteil: Webapp aus der Modul-Ausgabe (`anflugUrteilFuer`), " +
+      "Client aus der Marke der Stabilitätsachse, die das Modul selbst setzt",
+  },
+  "components/LandungsBewertung.tsx": {
+    beidseitig: true,
+    grund:
+      "Kopf und Abschnitte: Urteil und Vermerke aus der je eigenen Quelle " +
+      "(Webapp: `bewertung_modul`, `bewertung_hinweis`); der sichtbare Text " +
+      "wird im Gleichstand THY39 Zeile für Zeile verglichen",
+  },
 };
 
 /** Die drei Sprachen, die beide Seiten führen. */
@@ -291,7 +358,7 @@ function alleSchluessel(baum, pfad = "") {
 export function benoetigteSchluessel() {
   const alle = new Set();
   const vorspaenne = new Set();
-  for (const rel of [...DATEIEN, ...NUR_SCHLUESSEL]) {
+  for (const rel of [...DATEIEN, ...NUR_SCHLUESSEL, ...Object.keys(GETRENNT_3_0)]) {
     const p = resolve(CLIENT, rel);
     if (!existsSync(p)) continue;
     const text = readFileSync(p, "utf-8");
@@ -340,7 +407,7 @@ export function benoetigteSchluessel() {
     // der Webapp so drei Texte (u. a. „Bei 200 ft stabil"); sie zeigte den
     // rohen Schlüssel. Gezählt wird jede Zeichenkette, die in der deutschen
     // Datei ein Text ist.
-    for (const rel of [...DATEIEN, ...NUR_SCHLUESSEL]) {
+    for (const rel of [...DATEIEN, ...NUR_SCHLUESSEL, ...Object.keys(GETRENNT_3_0)]) {
       const p = resolve(CLIENT, rel);
       if (!existsSync(p)) continue;
       const text = readFileSync(p, "utf-8");

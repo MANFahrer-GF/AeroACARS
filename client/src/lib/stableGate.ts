@@ -23,7 +23,7 @@ export interface GatePunkt {
 
 export type GateUrteil = "stable" | "partial" | "unstable";
 
-/** Das Urteil, wie der Client es eingefroren hat: die Marke der
+/** Das Urteil, wie der Client es eingefroren hat (Webapp bei 3.0-Flügen: `anflugUrteilFuer`, lib/bewertungsModul.ts): die Marke der
  *  Stabilitätsachse (`warning` bzw. bei übersprungener Achse `reason`).
  *  Keine eigene Zählregel — die steht nur in `anflug_urteil::urteil_aus`
  *  (QS 05.10.2026: zwei TS-Kopien hätten bei einer Schwellenänderung in
