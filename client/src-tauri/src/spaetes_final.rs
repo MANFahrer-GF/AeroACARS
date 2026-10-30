@@ -262,7 +262,7 @@ pub fn erkennen(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use chrono::{Duration, TimeZone};
 
@@ -356,6 +356,19 @@ mod tests {
         let refs: Vec<&ApproachBufferSample> = v.iter().collect();
         let td = v.last().unwrap().at;
         erkennen(&refs, |s| s.agl_ft, td, &bahn(), 3000)
+    }
+
+    /// P-3.63/P-13.04: Schwelle `spaetes_final.fluegel_waagerecht_deg` (10°)
+    /// von beiden Seiten — 9,5° unter 300 ft ist rechtzeitig, 10,5° nicht.
+    /// Der Mutationstest in `grenzwerte.rs` verstellt den Wert und verlangt rot.
+    pub(crate) fn schwelle_pruefen() {
+        assert!(lauf(&platzrunde(&bahn(), 600.0, 9.5)).expect("erkannt").rechtzeitig);
+        assert!(!lauf(&platzrunde(&bahn(), 600.0, 10.5)).expect("erkannt").rechtzeitig);
+    }
+
+    #[test]
+    fn schwelle_fluegel_waagerecht() {
+        schwelle_pruefen();
     }
 
     #[test]

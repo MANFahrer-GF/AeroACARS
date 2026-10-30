@@ -230,7 +230,7 @@ pub fn pruefe_replay(proben: &[ReplayProbe]) -> ReplayBefund {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Baut einen Anflug: sinkt mit `vs_fps`, fliegt mit `gs_kt`.
@@ -335,6 +335,19 @@ mod tests {
         let b = pruefe_replay(&anflug(200, 140.0, -12.0, true));
         assert!(!b.ist_replay, "echter Anflug faelschlich als Replay: {b:?}");
         assert!(b.belege >= crate::grenzwerte::grenzwerte().replay.min_paare.wert, "zu wenige Belege gesammelt: {b:?}");
+    }
+
+    /// P-3.63/P-13.04: Schwelle `replay.min_errechnete_gs_kt` (30 kt) —
+    /// 31 kt errechnet bei gemeldeter Null ist Replay, 29 kt nicht.
+    /// Mutationstest in `grenzwerte.rs`.
+    pub(crate) fn schwelle_pruefen() {
+        assert!(pruefe_replay(&anflug(200, 31.0, -12.0, false)).ist_replay);
+        assert!(!pruefe_replay(&anflug(200, 29.0, -12.0, false)).ist_replay);
+    }
+
+    #[test]
+    fn schwelle_min_errechnete_gs() {
+        schwelle_pruefen();
     }
 
     #[test]

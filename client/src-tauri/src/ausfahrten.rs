@@ -551,7 +551,7 @@ fn lonlat(v: &serde_json::Value) -> Option<(f64, f64)> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// EDDH 23, aus den Navdaten.
@@ -751,6 +751,21 @@ mod tests {
         // Der Zwei-Punkte-Helfer legt den zweiten Punkt weit weg —
         // entweder er faellt aus dem Ausschnitt, oder es sind zwei.
         assert!(a[0].verlauf.is_empty() || a[0].verlauf.len() >= 2);
+    }
+
+    /// P-3.63/P-13.04: Schwelle `ausfahrten.draussen_min_m` (2 m) — ein
+    /// Rollweg, der 3 m aus der 46-m-Bahn hinausfuehrt, ist eine Ausfahrt,
+    /// einer mit 1 m nicht. Mutationstest in `grenzwerte.rs`.
+    pub(crate) fn schwelle_pruefen() {
+        let drei = karte(&rollweg_aus("X", &[(900.0, -10.0), (900.0, -26.0)]));
+        assert_eq!(ausfahrten_fuer_bahn(&drei, T.0, T.1, T.2, T.3, 46.0).len(), 1);
+        let einer = karte(&rollweg_aus("X", &[(900.0, -10.0), (900.0, -24.0)]));
+        assert_eq!(ausfahrten_fuer_bahn(&einer, T.0, T.1, T.2, T.3, 46.0).len(), 0);
+    }
+
+    #[test]
+    fn schwelle_draussen_min() {
+        schwelle_pruefen();
     }
 
     #[test]

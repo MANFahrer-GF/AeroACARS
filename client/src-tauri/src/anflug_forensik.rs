@@ -888,7 +888,7 @@ fn winkel_diff_deg(a: f64, b: f64) -> f64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use chrono::TimeZone;
     use std::collections::VecDeque;
@@ -1808,6 +1808,27 @@ mod tests {
             q.ias_kt = 120.0;
         }
         assert!(scherungen_aus(p).is_empty());
+    }
+
+    /// P-3.63/P-13.04: Schwelle `anflug.scherung_min_kt` (15 kt) — ein
+    /// gleichsinniger Sprung von 14 kt zaehlt nicht, einer von 16 kt schon.
+    /// Mutationstest in `grenzwerte.rs`.
+    pub(crate) fn schwelle_pruefen() {
+        let sprung = |kt: f32| {
+            let mut p = ruhig();
+            for q in p.iter_mut().skip(50) {
+                q.headwind_kt = Some(20.0 - kt);
+                q.ias_kt = 140.0 - kt;
+            }
+            scherungen_aus(p).len()
+        };
+        assert_eq!(sprung(14.0), 0);
+        assert_eq!(sprung(16.0), 1);
+    }
+
+    #[test]
+    fn schwelle_scherung_min() {
+        schwelle_pruefen();
     }
 
     #[test]

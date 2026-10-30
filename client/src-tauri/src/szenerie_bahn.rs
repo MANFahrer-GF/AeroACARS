@@ -478,7 +478,7 @@ pub fn uebernimm_szenerie(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use aeroacars_mqtt::navdata::NavPoint;
 
@@ -695,6 +695,25 @@ mod tests {
     /// ⚠ Der Gegenpol zu den beiden Tests darueber: Die neue Regel darf
     /// nicht alles durchlassen. Quer trennt Parallelbahnen, laengs
     /// trennt das andere Ende.
+    /// P-3.63/P-13.04: Schwelle `szenerie.querabstand_hoechst_m` (100 m) —
+    /// eine Szeneriebahn 85 m quer zur Navdaten-Bahn wird uebernommen, eine
+    /// mit 115 m verworfen. Mutationstest in `grenzwerte.rs`.
+    pub(crate) fn schwelle_pruefen() {
+        let nav = edhe_nav();
+        let kurs = nav.runways[0].true_course;
+        let verworfen = |quer_m: f64| {
+            let sz = szenerie_aus_mitte("09", (53.6459 + quer_m / 111_320.0, 9.7042), kurs, 1100.0);
+            uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei).1.verworfen
+        };
+        assert!(verworfen(85.0).is_empty());
+        assert_eq!(verworfen(115.0), vec!["09"]);
+    }
+
+    #[test]
+    fn schwelle_querabstand() {
+        schwelle_pruefen();
+    }
+
     #[test]
     fn eine_wirklich_andere_lage_wird_weiter_verworfen() {
         let nav = edhe_nav();

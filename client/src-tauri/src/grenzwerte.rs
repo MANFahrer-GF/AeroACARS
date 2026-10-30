@@ -495,7 +495,19 @@ pub(crate) const DATEIEN: &[&str] = &["grenzwerte/staende.json", "grenzwerte/pha
 /// Die geltenden Grenzwerte: aus dem Stand des Laufzeit-Pakets (eine Sperre
 /// fuer alle Paketdaten, `laufzeit_paket::stand`).
 pub(crate) fn grenzwerte() -> &'static Grenzwerte {
+    #[cfg(test)]
+    if let Some(g) = ERSATZ.with(std::cell::Cell::get) {
+        return g;
+    }
     &crate::laufzeit_paket::stand().grenzwerte
+}
+
+// Nur Tests (P-3.63/P-13.04): eine veraenderte Tabelle fuer genau diesen
+// Faden, damit der Mutationstest zeigen kann, dass ein Verhaltenstest rot
+// wird. Andere Tests im selben Lauf sehen weiter den geltenden Stand.
+#[cfg(test)]
+thread_local! {
+    static ERSATZ: std::cell::Cell<Option<&'static Grenzwerte>> = const { std::cell::Cell::new(None) };
 }
 
 /// Liest alle Bereiche ueber `datei(pfad)`.
@@ -964,6 +976,179 @@ mod tests {
         let g = &grenzwerte().szenerie;
         assert_eq!(g.querabstand_hoechst_m.wert, 100.0); // szenerie_bahn.rs:55
         assert_eq!(g.laengsversatz_hoechst_m.wert, 400.0); // szenerie_bahn.rs:66
+    }
+
+    // ─── P-3.63/P-13.04: je Bereich ein Verhaltenstest an der Schwelle ───
+    //
+    // Jede `schwelle_*`-Pruefung liest den Wert ueber `grenzwerte()` und prueft
+    // das Verhalten knapp unter- und oberhalb. Der Mutationstest unten
+    // verstellt je Bereich genau diesen Wert und verlangt, dass die Pruefung
+    // rot wird — so faellt ein Tabellenfehler auf, nicht nur ein geaenderter
+    // Abdruck. Fuenf Pruefungen liegen bei ihren Testhelfern im Modul.
+
+    fn schwelle_staende() {
+        use crate::stands::{stand_at, ParkingStand};
+        let stand = |lat: f64| vec![ParkingStand { name: None, lat, lon: 8.0, linie: None, flaeche: false }];
+        // 60 m Fangradius: ~55,6 m gefunden, ~64,5 m nicht.
+        assert!(stand_at(&stand(50.0005), 50.0, 8.0).is_some());
+        assert!(stand_at(&stand(50.00058), 50.0, 8.0).is_none());
+    }
+
+    fn schwelle_phasen() {
+        use crate::phase_v2::{KinematicSegmenter, Segment};
+        let nach = |fpm: f64| {
+            let mut s = KinematicSegmenter::default();
+            let t0 = chrono::Utc::now();
+            let mut seg = Segment::Insufficient;
+            for i in 0..30 {
+                let alt = 5000.0 + fpm / 12.0 * i as f64;
+                seg = s.push(t0 + chrono::Duration::seconds(5 * i), alt, alt, fpm as f32, false);
+            }
+            seg
+        };
+        // Steigen erst ueber 300 fpm; 290 fpm liegt im Hysterese-Band.
+        assert_eq!(nach(310.0), Segment::Climbing);
+        assert_ne!(nach(290.0), Segment::Climbing);
+    }
+
+    fn schwelle_aufsetzen() {
+        use crate::touchdown_v2::ist_rollprobe;
+        // Rollprobe am Boden bis 40 kt Grundgeschwindigkeit.
+        assert!(ist_rollprobe(true, 39.9, false, false));
+        assert!(!ist_rollprobe(true, 40.1, false, false));
+    }
+
+    fn schwelle_ankunft() {
+        // EDLD hat keine Schwellen-Geometrie: Rueckfall Bezugspunkt, 3 nm.
+        let bezug = (51.616018, 6.861262);
+        assert!(crate::arrival::locate("EDLD", bezug.0 + 0.049, bezug.1, Some(bezug)).is_at_planned());
+        assert!(!crate::arrival::locate("EDLD", bezug.0 + 0.051, bezug.1, Some(bezug)).is_at_planned());
+    }
+
+    fn schwelle_bahnbewertung() {
+        // TDZ erst ab 1200 m Bahnlaenge.
+        assert!(crate::runway_assessment::classify_tdz(500.0, 1199.0).is_none());
+        assert!(crate::runway_assessment::classify_tdz(500.0, 1201.0).is_some());
+    }
+
+    fn schwelle_cockpit() {
+        // 10 s Anlaufzeit nach Strombeginn.
+        let t0 = chrono::Utc::now();
+        let (mut last, mut until) = (None, None);
+        assert!(crate::premium_log_warmup_active(&mut last, &mut until, t0));
+        assert!(crate::premium_log_warmup_active(&mut last, &mut until, t0 + chrono::Duration::seconds(9)));
+        assert!(!crate::premium_log_warmup_active(&mut last, &mut until, t0 + chrono::Duration::seconds(11)));
+    }
+
+    fn schwelle_phasen_kern() {
+        // Neulade-Luecke: mehr als das 2,5-fache des Takts.
+        assert!(crate::is_reload_gap(11.0, 4.0));
+        assert!(!crate::is_reload_gap(10.0, 4.0));
+    }
+
+    fn schwelle_landung() {
+        // Leichter Hopser: mindestens 1000 ms in der Luft.
+        assert!(crate::leichter_hopser_im_streamer(1000, 3.0));
+        assert!(!crate::leichter_hopser_im_streamer(999, 3.0));
+    }
+
+    fn schwelle_anflug_kern() {
+        // Sinkgrenze waechst erst ueber 145 kt Grundgeschwindigkeit.
+        assert_eq!(crate::sinkgrenze_fpm(145.0, 1.0), -1000.0);
+        assert_eq!(crate::sinkgrenze_fpm(290.0, 1.0), -2000.0);
+    }
+
+    fn schwelle_ausrollen() {
+        // Bahngeometrie vertraut bis 200 m neben der Mittellinie.
+        assert!(crate::runway_geometry_trust_check(Some("EDDM"), "EDDM", None, Some(199.9), Some(400.0)).0);
+        assert!(!crate::runway_geometry_trust_check(Some("EDDM"), "EDDM", None, Some(200.1), Some(400.0)).0);
+    }
+
+    fn schwelle_sprit() {
+        // Abgeleiteter Fluss ueber 30 000 kg/h gilt als unplausibel (0).
+        let unter = crate::derive_fuel_flow_kg_per_h(30_000.0, 29_010.0, 120.0).unwrap();
+        assert!((unter - 29_700.0).abs() < 1.0, "{unter}");
+        assert_eq!(crate::derive_fuel_flow_kg_per_h(30_000.0, 28_990.0, 120.0), Some(0.0));
+    }
+
+    fn schwelle_abgabe() {
+        // Automatische Wiederaufnahme bis 24 h Stillstand (einschliesslich).
+        assert!(crate::stillstand_erlaubt_wiederaufnahme(chrono::Duration::hours(24)));
+        assert!(!crate::stillstand_erlaubt_wiederaufnahme(chrono::Duration::hours(24) + chrono::Duration::seconds(1)));
+    }
+
+    fn schwelle_bahnzuordnung() {
+        // Versatz aus der Geometrie erst ab mehr als 20 m.
+        let (a, b) = ((40.0_f64, -3.0_f64), (40.02_f64, -3.0_f64));
+        let geo = 6_371_000.0 * (b.0 - a.0).to_radians();
+        let ft = |m: f64| ((geo + m) / 0.3048) as f32;
+        assert_ne!(crate::runway::geometry_implied_displacement_ft(a.0, a.1, b.0, b.1, ft(25.0), 0), 0);
+        assert_eq!(crate::runway::geometry_implied_displacement_ft(a.0, a.1, b.0, b.1, ft(15.0), 0), 0);
+    }
+
+    type Aendern = fn(&mut Grenzwerte);
+
+    /// Je Bereich: (Name, eine Verstellung, Verhaltenstest an der Schwelle).
+    fn waechter() -> Vec<(&'static str, Aendern, fn())> {
+        vec![
+            ("staende", |g| g.staende.stand_capture_radius_m.wert = 50.0, schwelle_staende),
+            ("phasen", |g| g.phasen.rate_climb_fpm.wert = 320.0, schwelle_phasen),
+            ("aufsetzen", |g| g.aufsetzen.bodenhoehe_max_gs_kt.wert = 35.0, schwelle_aufsetzen),
+            ("ankunft", |g| g.ankunft.on_field_fallback_radius_nm.wert = 2.5, schwelle_ankunft),
+            ("spaetes_final", |g| g.spaetes_final.fluegel_waagerecht_deg.wert = 12.0, crate::spaetes_final::tests::schwelle_pruefen),
+            ("ausfahrten", |g| g.ausfahrten.draussen_min_m.wert = 4.0, crate::ausfahrten::tests::schwelle_pruefen),
+            ("replay", |g| g.replay.min_errechnete_gs_kt.wert = 35.0, crate::replay_erkennung::tests::schwelle_pruefen),
+            ("bahnbewertung", |g| g.bahnbewertung.tdz_min_runway_m.wert = 1300.0, schwelle_bahnbewertung),
+            ("anflug", |g| g.anflug.scherung_min_kt.wert = 18.0, crate::anflug_forensik::tests::schwelle_pruefen),
+            ("cockpit", |g| g.cockpit.premium_log_warmup_secs.wert = 15, schwelle_cockpit),
+            ("phasen_kern", |g| g.phasen_kern.reload_gap_factor.wert = 3.0, schwelle_phasen_kern),
+            ("landung", |g| g.landung.bounce_light_min_dauer_ms.wert = 1200, schwelle_landung),
+            ("anflug_kern", |g| g.anflug_kern.sink_gs_bezug_kt.wert = 200.0, schwelle_anflug_kern),
+            ("ausrollen", |g| g.ausrollen.runway_trust_max_centerline_offset_m.wert = 150.0, schwelle_ausrollen),
+            ("sprit", |g| g.sprit.ff_max_kg_per_h.wert = 29_000.0, schwelle_sprit),
+            ("abgabe", |g| g.abgabe.resume_stillstand_max_hours.wert = 20, schwelle_abgabe),
+            ("bahnzuordnung", |g| g.bahnzuordnung.min_plausibel_m.wert = 30.0, schwelle_bahnzuordnung),
+            ("szenerie", |g| g.szenerie.querabstand_hoechst_m.wert = 70.0, crate::szenerie_bahn::tests::schwelle_pruefen),
+        ]
+    }
+
+    /// Mit dem geltenden Stand ist jede Schwellenpruefung gruen.
+    #[test]
+    fn jede_schwelle_haelt_mit_dem_eingebauten_stand() {
+        for (_, _, pruefen) in waechter() {
+            pruefen();
+        }
+    }
+
+    /// P-3.63/P-13.04: Je Bereich wird ein Wert verstellt — der zugehoerige
+    /// Verhaltenstest muss rot werden. Und jeder Bereich aus `DATEIEN` hat
+    /// einen solchen Waechter.
+    #[test]
+    fn verstellter_grenzwert_macht_seinen_waechter_rot() {
+        let liste = waechter();
+        let mut bereiche: Vec<&str> = liste.iter().map(|(b, _, _)| *b).collect();
+        bereiche.sort_unstable();
+        let mut soll: Vec<&str> = DATEIEN
+            .iter()
+            .map(|d| d.trim_start_matches("grenzwerte/").trim_end_matches(".json"))
+            .collect();
+        soll.sort_unstable();
+        assert_eq!(bereiche, soll, "jeder Bereich braucht einen Waechter");
+        let vorher = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let mut gruen_geblieben = Vec::new();
+        for (bereich, aendern, pruefen) in liste {
+            let mut g = crate::laufzeit_paket::stand().grenzwerte.clone();
+            aendern(&mut g);
+            ERSATZ.with(|c| c.set(Some(Box::leak(Box::new(g)))));
+            let rot = std::panic::catch_unwind(pruefen).is_err();
+            ERSATZ.with(|c| c.set(None));
+            if !rot {
+                gruen_geblieben.push(bereich);
+            }
+        }
+        std::panic::set_hook(vorher);
+        assert!(gruen_geblieben.is_empty(), "verstellt und trotzdem gruen: {gruen_geblieben:?}");
     }
 
     #[test]
