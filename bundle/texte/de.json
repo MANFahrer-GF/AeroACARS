@@ -1856,7 +1856,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Pilotenchat auf dem iPad über die LAN-Brücke: Nach dem Tippen bleibt der Chat jetzt vollständig sichtbar. Vorher konnte die Fläche schwarz werden und das Eingabefeld nach oben verschwinden."
+    "neu_text": "Hilfe → Meine Anfragen: Es stehen nur noch deine drei jüngsten Anfragen da – eine neue Antwort steht immer oben. Ältere öffnest du mit „Alle Anfragen anzeigen“. So musst du nicht mehr scrollen, um eine neue Anfrage zu schreiben."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",

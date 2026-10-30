@@ -1856,7 +1856,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Chat piloti sull'iPad tramite il bridge LAN: mentre scrivi, la chat ora resta completamente visibile. Prima l'area poteva diventare nera e il campo di inserimento scomparire verso l'alto."
+    "neu_text": "Aiuto → Le mie richieste: ora vedi solo le tre richieste più recenti – una nuova risposta è sempre in cima. Quelle più vecchie si aprono con “Mostra tutte le richieste”. Non serve più scorrere per scrivere una nuova richiesta."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

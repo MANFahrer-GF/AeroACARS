@@ -20,10 +20,12 @@ on:
     branches: [v3, main]
     # v3 (Etappe 5): Die Oberflaeche (ui/) ist Paketinhalt — Frontend-Aenderungen
     # bauen ein neues Paket.
+    # Nicht mehr bundle.yml selbst (Thomas 30.10.: Generation 58 war nur eine
+    # CI-Aenderung, fuer Piloten leer). Aenderungen am Ablauf greifen beim
+    # naechsten echten Paket oder per workflow_dispatch.
     paths:
       - 'bundle/**'
       - 'client/src-tauri/crates/runtime-bundle/**'
-      - '.github/workflows/bundle.yml'
       - 'client/src/**'
       - 'client/index.html'
       - 'client/package.json'
@@ -133,6 +135,17 @@ jobs:
           python3 -I scripts/bundle/notiz.py --generation "${{ steps.gen.outputs.generation }}" \
             --repo-commit "${{ github.sha }}" --kernaufgabe="$KERNAUFGABE" --ausgabe paket/notiz.json \
             || echo "::warning::Begleitnotiz nicht erzeugt — Paket geht ohne Notiz weiter"
+      # Thomas 30.10.: Generation 58 und das erste „Meine Anfragen“-Paket kamen
+      # ohne Hinweis „Neu in Generation N“. Piloten-sichtbare Aenderung ohne
+      # neuen paket.neu_text bricht hier ab; Hinweistext und Commits stehen in
+      # der Zusammenfassung — der Seite, auf der freigegeben wird.
+      - name: Hinweis „Neu in Generation N“ gesetzt?
+        run: |
+          if [ ! -f paket/notiz.json ]; then
+            echo "::error::Ohne Begleitnotiz laesst sich der Hinweistext nicht pruefen"
+            exit 1
+          fi
+          python3 -I scripts/bundle/hinweis.py paket/notiz.json --zusammenfassung "$GITHUB_STEP_SUMMARY"
       - name: Signieren
         id: signieren
         env:

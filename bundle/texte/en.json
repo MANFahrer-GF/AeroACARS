@@ -1856,7 +1856,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Pilot chat on the iPad via the LAN bridge: the chat now stays fully visible while you type. Before, the area could turn black and the input field slide out of view."
+    "neu_text": "Help → My requests: only your three most recent requests are shown – a new reply is always on top. Open older ones with “Show all requests”. No more scrolling before you can write a new request."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

@@ -29,7 +29,7 @@ import urllib.request
 
 # Dieselben Pfade, die den Paket-Lauf ausloesen (bundle.yml, on.push.paths).
 PFADE = [
-    "bundle", "client/src-tauri/crates/runtime-bundle", ".github/workflows/bundle.yml", "client/src",
+    "bundle", "client/src-tauri/crates/runtime-bundle", "client/src",
     "client/index.html", "client/package.json", "client/package-lock.json", "client/vite.config.ts",
     "client/src-tauri/befehle.json", "msfs-panel/Build/PackageSources/html_ui/InGamePanels/AeroACARSPanel",
 ]
