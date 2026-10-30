@@ -222,7 +222,7 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// — plus P-9.22/N-06 (Hilfe anfordern): `mod hilfe` und zwei Zeilen im
 /// `generate_handler!` (`hilfe::hilfe_vorschau` Stufe `lesen`,
 /// `hilfe::hilfe_anfordern` Stufe `fachlich`); sonst nichts an `lib.rs`.
-/// Tests `hilfe::tests`, `tests/befehlsliste.rs`, vitest `HilfeDialog.test.tsx`.
+/// Tests `hilfe::tests`, `tests/befehlsliste.rs`, vitest `HilfeSeite.test.tsx`.
 /// — plus P-4.44/P-9.01: EINE Zeile im `generate_handler!`,
 /// `landungs_eingabe::landung_nachbewertung` (Stufe `fachlich`, nur lesen von
 /// live mit dem Pilot-Token). Tests `landungs_eingabe::tests::nachbewertung_*`,

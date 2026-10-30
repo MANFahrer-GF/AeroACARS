@@ -106,24 +106,19 @@ describe("Sidebar — nichts darf beim Umbau verloren gehen", () => {
     expect(screen.getByText("MSFS")).toBeTruthy();
   });
 
-  // Beta 1 (Thomas): „Hilfe anfordern ist mir zu versteckt“ — fester Eintrag
-  // im Fuß bei den Statuspunkten, nicht nur unter „Über“.
-  it("führt „Hilfe anfordern“ fest im Fuß, mit F1 und auch eingeklappt beschriftet", () => {
-    const onHilfe = vi.fn();
-    const { container } = renderNav({ onHilfe, collapsed: true });
-    const knopf = screen.getByRole("button", { name: deCommon.hilfe.knopf });
-    expect(container.querySelector(".nav__foot")?.contains(knopf)).toBe(true);
-    expect(knopf.getAttribute("aria-keyshortcuts")).toBe("F1");
+  // Beta 1 (Thomas): „Hilfe anfordern ist mir zu versteckt“ — eigener
+  // Reiter direkt über „Über“, mit F1 im Titel.
+  it("führt „Hilfe“ als eigenen Reiter direkt vor „Über“", () => {
+    const setTab = vi.fn();
+    const { container } = renderNav({ setTab, tab: "hilfe" });
+    const knopf = screen.getByRole("button", { name: new RegExp(`^${deCommon.tabs.hilfe}$`) });
     expect(knopf.getAttribute("title")).toBe(deCommon.hilfe.kuerzel);
+    expect(knopf.getAttribute("aria-current")).toBe("page");
+    const liste = [...container.querySelectorAll(".nav__list .navitem")].map((b) => b.textContent);
+    expect(liste.indexOf(deCommon.tabs.hilfe)).toBe(liste.indexOf(deCommon.tabs.about) - 1);
+    expect(liste.indexOf(deCommon.tabs.hilfe)).toBe(liste.indexOf(deCommon.tabs.settings) + 1);
     knopf.click();
-    expect(onHilfe).toHaveBeenCalledTimes(1);
-    // ein Dialog, kein Reiter: der aktive Bereich bleibt
-    expect(knopf.getAttribute("aria-current")).toBeNull();
-  });
-
-  it("ohne Hilfe-Handler kein Hilfe-Eintrag (Gegenprobe)", () => {
-    renderNav();
-    expect(screen.queryByRole("button", { name: deCommon.hilfe.knopf })).toBeNull();
+    expect(setTab).toHaveBeenCalledWith("hilfe");
   });
 
   it("hat einen beschrifteten Einklapp-Knopf", () => {

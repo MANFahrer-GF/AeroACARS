@@ -24,7 +24,7 @@ import { BriefingView } from "./components/BriefingView";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ActivityLogPanel } from "./components/ActivityLogPanel";
 import { AboutPanel } from "./components/AboutPanel";
-import { HilfeDialog, istHilfeTaste } from "./components/HilfeDialog";
+import { HilfeSeite, istHilfeTaste } from "./components/HilfeSeite";
 import { NewsPanel, useUnreadNewsCount } from "./components/NewsPanel";
 import { ChatEinblendung, type EingehenderZuruf } from "./components/ChatEinblendung";
 import RunwayDiagramPreview from "./dev/RunwayDiagramPreview";
@@ -140,7 +140,7 @@ type SessionStatus =
   | { kind: "loggedOut"; restoreError?: UiError }
   | { kind: "loggedIn"; session: LoginResult };
 
-type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "bordbuch" | "telemetrie" | "notizblock" | "kabine" | "news" | "log" | "map" | "cpdlc" | "settings" | "about" | "devpreview";
+type Tab = "cockpit" | "chat" | "briefing" | "logbook" | "landing" | "bordbuch" | "telemetrie" | "notizblock" | "kabine" | "news" | "log" | "map" | "cpdlc" | "settings" | "hilfe" | "about" | "devpreview";
 
 const DEBUG_STORAGE_KEY = "aeroacars.debug";
 const AUTO_FILE_STORAGE_KEY = "aeroacars.autoFile";
@@ -288,15 +288,14 @@ function App() {
   // Refs statt Abhaengigkeiten: der Empfaenger soll EINMAL registriert
   // werden und trotzdem den aktuellen Reiter und die aktuelle Phase sehen.
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
-  // Hilfe anfordern (Beta-1-Rückmeldung „zu versteckt“): fester Eintrag in
-  // der Seitenleiste und F1, solange angemeldet; „Über“ behält seinen Knopf.
-  const [hilfeOffen, setHilfeOffen] = useState(false);
+  // Hilfe anfordern (Beta-1-Rückmeldung „zu versteckt“): eigene Seite in
+  // der Seitenleiste und F1, solange angemeldet; „Über“ führt ebenfalls hin.
   useEffect(() => {
     if (status.kind !== "loggedIn") return;
     const taste = (e: KeyboardEvent) => {
       if (!istHilfeTaste(e)) return;
       e.preventDefault();
-      setHilfeOffen(true);
+      setTab("hilfe");
     };
     window.addEventListener("keydown", taste);
     return () => window.removeEventListener("keydown", taste);
@@ -946,7 +945,6 @@ function App() {
             setTab("chat");
           }}
           unreadNews={unreadNews}
-          onHilfe={() => setHilfeOffen(true)}
           hasActiveFlight={activeFlight !== null}
           phpvmsConnected={phpvmsConnected}
           simConnected={simConnected}
@@ -1287,14 +1285,14 @@ function App() {
       )}
 
       {status.kind === "loggedIn" && tab === "about" && (
-        <AboutPanel onShowReleaseNotes={(v) => setReleaseNotesVersion(v)} />
+        <AboutPanel onShowReleaseNotes={(v) => setReleaseNotesVersion(v)} onHilfe={() => setTab("hilfe")} />
       )}
 
       {import.meta.env.DEV &&
         status.kind === "loggedIn" &&
         tab === "devpreview" && <RunwayDiagramPreview />}
 
-      {status.kind === "loggedIn" && hilfeOffen && <HilfeDialog onClose={() => setHilfeOffen(false)} />}
+      {status.kind === "loggedIn" && tab === "hilfe" && <HilfeSeite />}
 
       {releaseNotesVersion && (
         <Suspense fallback={null}>
