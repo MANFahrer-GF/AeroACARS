@@ -313,6 +313,30 @@ pub enum FlightLogEvent {
         timestamp: DateTime<Utc>,
         payload: serde_json::Value,
     },
+    /// v3 (P-5.01, P-3.30): der Paketstand, mit dem dieser Flug rechnet —
+    /// geschrieben bei Flugbeginn (`runtime_bundle_id` = Generation +
+    /// Manifest-Hash, wie in der Flugdatei).
+    PaketStand {
+        timestamp: DateTime<Utc>,
+        pirep_id: String,
+        runtime_bundle_id: Option<String>,
+    },
+    /// v3 (P-5.01): ein Eingabe-Dokument ging in die Upload-Warteschlange
+    /// (P-7.02/P-7.21). `sha256` = `meta.input_sha256` des Dokuments (derselbe
+    /// Wert wie in den MQTT-Nutzlasten, P-5.10), `groesse` = Bytes der
+    /// gepackten Datei. Das Dokument selbst geht ueber `POST /api/landing-input`.
+    BewertungEingabe {
+        timestamp: DateTime<Utc>,
+        seq: u32,
+        sha256: String,
+        groesse: u64,
+    },
+    /// v3 (P-5.01): Inhalt des Anflugpuffers beim Aufsetzen (`note` 120 und
+    /// `forensik` 400 Proben), damit er nicht nur in `active_flight.json` lebt.
+    AnflugPuffer {
+        timestamp: DateTime<Utc>,
+        proben: serde_json::Value,
+    },
 }
 
 /// Eine einzelne 50-Hz-Probe aus dem Touchdown-Window-Buffer. Felder
@@ -673,6 +697,35 @@ pub fn flight_logs_purge_older_than_ausser(
         }
     }
     Ok(removed)
+}
+
+#[cfg(test)]
+mod v3_ereignis_tests {
+    use super::FlightLogEvent;
+
+    /// P-5.01: die drei neuen Ereignisse im JSONL-Format (`type` snake_case),
+    /// hin und zurueck; ein 2.x-Ereignis liest sich unveraendert (Gegenprobe:
+    /// ein unbekannter Typ ist fuer diesen Leser ein Fehler, der Server
+    /// ueberspringt ihn — `importer.ts`).
+    #[test]
+    fn neue_ereignisse_im_jsonl_format() {
+        let ts = chrono::Utc::now();
+        let faelle = [
+            (FlightLogEvent::PaketStand { timestamp: ts, pirep_id: "P1".into(), runtime_bundle_id: Some("3-abc".into()) }, "paket_stand"),
+            (FlightLogEvent::BewertungEingabe { timestamp: ts, seq: 2, sha256: "ab".repeat(32), groesse: 1234 }, "bewertung_eingabe"),
+            (FlightLogEvent::AnflugPuffer { timestamp: ts, proben: serde_json::json!({ "note": [], "forensik": [] }) }, "anflug_puffer"),
+        ];
+        for (ev, typ) in faelle {
+            let v = serde_json::to_value(&ev).unwrap();
+            assert_eq!(v["type"], typ);
+            let zurueck: FlightLogEvent = serde_json::from_value(v.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&zurueck).unwrap(), v);
+        }
+        let v = serde_json::json!({ "type": "bewertung_eingabe", "timestamp": ts, "seq": 1, "sha256": "x", "groesse": 9 });
+        assert!(matches!(serde_json::from_value::<FlightLogEvent>(v).unwrap(), FlightLogEvent::BewertungEingabe { seq: 1, groesse: 9, .. }));
+        let unbekannt = serde_json::json!({ "type": "gibt_es_nicht", "timestamp": ts });
+        assert!(serde_json::from_value::<FlightLogEvent>(unbekannt).is_err());
+    }
 }
 
 #[cfg(test)]

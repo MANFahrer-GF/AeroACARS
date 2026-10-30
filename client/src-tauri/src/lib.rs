@@ -18003,6 +18003,7 @@ async fn flight_adopt(
             arr_airport: flight.arr_airport.clone(),
         },
     );
+    paket_stand_vermerken(&app, &flight.pirep_id);
     Ok(info)
 }
 
@@ -19066,6 +19067,7 @@ async fn flight_start_mit(
             arr_airport: flight.arr_airport.clone(),
         },
     );
+    paket_stand_vermerken(&app, &flight.pirep_id);
     Ok(info)
 }
 
@@ -19688,6 +19690,7 @@ async fn flight_start_manual(
             arr_airport: flight.arr_airport.clone(),
         },
     );
+    paket_stand_vermerken(&app, &flight.pirep_id);
     Ok(info)
 }
 
@@ -26107,12 +26110,8 @@ fn landungs_begleitung(
         // Das Fenster (17 Kanaele) steht als `fenster` daneben — eigene
         // Spalte `window_gz` beim Server (P-6.01), hier nicht doppelt.
         roh: serde_json::json!({
-            "anflugpuffer": {
-                // 120: traegt die Note (`compute_approach_stddev`);
-                // 400: Anflug-Forensik. Dieselben Proben, verschieden lang.
-                "note": stats.approach_buffer,
-                "forensik": stats.anflug_forensik_puffer,
-            },
+            // 120: traegt die Note; 400: Anflug-Forensik (`anflugpuffer_json`).
+            "anflugpuffer": anflugpuffer_json(stats),
             "rollspur": {
                 "bahn": stats.runway_match.as_ref().map(|rm| format!("{} {}", rm.airport_ident, rm.runway_ident)),
                 "punkte_laengs_quer_m": stats.bahn_spur,
@@ -26850,7 +26849,20 @@ fn record_landing_for_filed_flight(
                 &ergebnis,
             );
             match landungs_eingabe::einreihen(&daten, &konto, &flight.pirep_id, seq, &doc) {
-                Ok(_) => abgelegt = true,
+                Ok(pfad) => {
+                    abgelegt = true;
+                    // v3 (P-5.01): Hash und Groesse je `seq` ins Flugprotokoll.
+                    record_event(
+                        app,
+                        &flight.pirep_id,
+                        &FlightLogEvent::BewertungEingabe {
+                            timestamp: Utc::now(),
+                            seq,
+                            sha256: doc["eingabe"]["meta"]["input_sha256"].as_str().unwrap_or_default().to_string(),
+                            groesse: std::fs::metadata(&pfad).map(|m| m.len()).unwrap_or(0),
+                        },
+                    );
+                }
                 Err(e) => tracing::warn!(error = %e, seq, "Eingabe-Dokument nicht ablegbar"),
             }
         }
@@ -27518,6 +27530,31 @@ async fn landing_backup_restore(app: AppHandle) -> Result<usize, UiError> {
 /// hundert KB (AZU 8710, 11.10.2026). Wer die Datei LIEST, wartet vorher mit
 /// `flugprotokoll_abwarten`, bis alles geschrieben ist (Upload, Nachreichen,
 /// App-Ende).
+/// v3 (P-5.01, P-3.30): der gepinnte Paketstand ins Flugprotokoll — bei
+/// Flugbeginn, gleich nach `FlightStarted`.
+fn paket_stand_vermerken(app: &AppHandle, pirep_id: &str) {
+    record_event(
+        app,
+        pirep_id,
+        &FlightLogEvent::PaketStand {
+            timestamp: Utc::now(),
+            pirep_id: pirep_id.to_string(),
+            runtime_bundle_id: laufzeit_paket::flug_pin(pirep_id).map(|id| id.to_string()),
+        },
+    );
+}
+
+/// Der Anflugpuffer, wie er beim Aufsetzen steht: 120 Proben fuer die Note
+/// (`compute_approach_stddev`), 400 fuer die Anflug-Forensik. Eine Stelle
+/// fuer `roh.anflugpuffer` des Eingabe-Dokuments und das Ereignis
+/// `AnflugPuffer` (P-5.01).
+fn anflugpuffer_json(stats: &FlightStats) -> serde_json::Value {
+    serde_json::json!({
+        "note": stats.approach_buffer,
+        "forensik": stats.anflug_forensik_puffer,
+    })
+}
+
 fn record_event(app: &AppHandle, pirep_id: &str, event: &FlightLogEvent) {
     // Stau melden (Platte hängt?) — einmal je 20.000 wartende Einträge.
     // Verworfen wird nichts (Codex-Gesamtabnahme 12.10.2026).
@@ -39550,6 +39587,13 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         })
                 };
                 if let Some(payload) = payload_opt {
+                    // v3 (P-5.01): der Anflugpuffer dieses Aufsetzers ins JSONL.
+                    let puffer = anflugpuffer_json(&flight.stats.lock().expect("flight stats lock"));
+                    record_event(
+                        &app,
+                        &flight.pirep_id,
+                        &FlightLogEvent::AnflugPuffer { timestamp: Utc::now(), proben: puffer },
+                    );
                     // v0.5.34: gleicher Forensik-Payload landet ins JSONL.
                     // Damit kann ein Recovery-Tool die Touchdown-DB-Row
                     // 1:1 rekonstruieren falls die Server-DB Daten verliert.

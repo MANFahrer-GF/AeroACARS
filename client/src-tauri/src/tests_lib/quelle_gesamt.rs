@@ -165,6 +165,12 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `upload_warteschlange::ausstehend` fuer das angemeldete Konto. Tests
 /// `upload_warteschlange::tests::einreihen_und_anzeige_je_konto`,
 /// `tests/befehlsliste.rs`, vitest `UploadAusstehend.test.tsx`.
+/// — plus P-5.01: Ereignisse `PaketStand` (`paket_stand_vermerken` nach
+/// jedem `FlightStarted`), `AnflugPuffer` (vor `TouchdownComplete`, Inhalt
+/// aus `anflugpuffer_json`, das auch `roh.anflugpuffer` baut) und
+/// `BewertungEingabe` (je eingereihtem Dokument: `input_sha256`, Groesse).
+/// Tests `recorder::v3_ereignis_tests`,
+/// `landungs_eingabe::tests::neue_ereignisse_stehen_an_ihren_stellen`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -175,4 +181,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "d86bb59ec10b2d35847f2d289c14e562f10019d100945e55e622b067a8fd7dbc";
+const HASH_VOR_DER_ZERLEGUNG: &str = "2e832385af31917e13223ffdc45acded358acc5025dc5df88d5f8f8824abc540";

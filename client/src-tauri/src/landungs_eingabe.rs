@@ -337,6 +337,29 @@ mod tests {
         assert_ne!(a["eingabe"]["meta"]["input_sha256"], c["eingabe"]["meta"]["input_sha256"]);
     }
 
+    /// P-5.01: Die drei neuen Ereignisse werden an ihren Stellen geschrieben —
+    /// `PaketStand` nach JEDEM `FlightStarted`, `AnflugPuffer` vor jedem
+    /// `TouchdownComplete`, `BewertungEingabe` je eingereihtem Dokument.
+    /// (Textwaechter ueber den Produktionsquelltext; die Formate prueft
+    /// `recorder::v3_ereignis_tests`.)
+    #[test]
+    fn neue_ereignisse_stehen_an_ihren_stellen() {
+        let src = crate::quelle_gesamt::PRODUKTION;
+        let starts = src.matches("&FlightLogEvent::FlightStarted {").count();
+        assert!(starts >= 3, "Flugstart-Stellen nicht gefunden");
+        let mut rest = src;
+        while let Some(i) = rest.find("&FlightLogEvent::FlightStarted {") {
+            rest = &rest[i + 1..];
+            let ende = rest.find("\n}\n").expect("Funktionsende");
+            assert!(rest[..ende].contains("paket_stand_vermerken(&app, &flight.pirep_id);"), "Flugstart ohne PaketStand");
+        }
+        let td = src.find("&FlightLogEvent::TouchdownComplete {").expect("TouchdownComplete");
+        let davor = &src[td.saturating_sub(600)..td];
+        assert!(davor.contains("&FlightLogEvent::AnflugPuffer {"), "AnflugPuffer fehlt vor TouchdownComplete");
+        let ein = src.find("landungs_eingabe::einreihen(&daten, &konto, &flight.pirep_id, seq, &doc)").expect("einreihen");
+        assert!(src[ein..ein + 900].contains("&FlightLogEvent::BewertungEingabe {"), "BewertungEingabe fehlt beim Einreihen");
+    }
+
     #[test]
     fn folge_der_antworten() {
         assert_eq!(folge(Some(200)), Folge::Loeschen);
