@@ -293,7 +293,7 @@
       "zu_wenig_zeit": "troppo poco tempo prima della discesa",
       "uebersprungen": "crociera rilevata tardi, è arrivato prima un annuncio successivo",
       "ton_nicht_fertig": "audio non pronto in tempo",
-      "text_fehlt": "testo mancante (il server non l\u2019ha inviato)",
+      "text_fehlt": "testo mancante (il server non l’ha inviato)",
       "zu_spaet": "troppo tardi (fase sterile o altro annuncio)",
       "keine_stimme": "nessuna voce per queste lingue",
       "kein_kurztext": "il server GSG non fornisce ancora la versione breve del comandante",
@@ -5015,14 +5015,6 @@
       "Arrived": "Arrivato",
       "PirepSubmitted": "PIREP inviato"
     }
-  },
-  "huelle": {
-    "titel": "Conferma richiesta",
-    "frage": "L'interfaccia vuole eseguire un'azione consentita solo dalla shell (file, accesso, consenso, eliminazione, finestre o servizi di rete). Eseguire?",
-    "ausfuehren": "Esegui",
-    "ablehnen": "Rifiuta",
-    "weitere": "Dopo questa attendono altre {{anzahl}} richieste.",
-    "leer": "Nessuna richiesta aperta."
   },
   "wartung": {
     "geplant": "Manutenzione programmata",

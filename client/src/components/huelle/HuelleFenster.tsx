@@ -4,15 +4,16 @@
 // nur aus dem Programm — nie aus dem Laufzeit-Paket, sonst könnte ein
 // fremdes Paket den Dialog umformulieren). Zeigt die Aufträge, die die
 // Oberfläche mit `shell_request` abgelegt hat: ein Satz, was passiert
-// (`befehlstexte.ts`, im Programm), darunter Befehl und Werte (Geheimnisse
-// maskiert). „Ausführen“ ruft den Befehl HIER auf und meldet sein Ergebnis
-// zurück; „Ablehnen“ oder Fenster schließen lehnt ab.
+// (`befehlstexte.ts`, im Programm) als konkrete Frage mit Verb-Knopf;
+// Befehl und Werte (Geheimnisse maskiert) nur unter „Technische Details“.
+// Der Knopf ruft den Befehl HIER auf und meldet sein Ergebnis zurück;
+// „Abbrechen“ oder Fenster schließen lehnt ab.
 
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, listen } from "../../lib/ipc";
 import { Button } from "../ui";
-import { befehlstext, werteAnzeige } from "./befehlstexte";
+import { RAHMEN, dialogText, sprache, werteAnzeige } from "./befehlstexte";
 import "./huelle.css";
 
 export interface Auftrag {
@@ -22,7 +23,8 @@ export interface Auftrag {
 }
 
 export function HuelleFenster() {
-  const { t, i18n } = useTranslation();
+  const { i18n } = useTranslation();
+  const r = RAHMEN[sprache(i18n?.resolvedLanguage ?? i18n?.language)];
   const [auftraege, setAuftraege] = useState<Auftrag[]>([]);
   const [laeuft, setLaeuft] = useState(false);
 
@@ -64,29 +66,27 @@ export function HuelleFenster() {
   }
 
   const a = auftraege[0];
-  if (!a) return <main className="huelle">{t("huelle.leer")}</main>;
-  const satz = befehlstext(a.befehl, i18n?.resolvedLanguage ?? i18n?.language);
+  if (!a) return <main className="huelle">{r.leer}</main>;
+  const text = dialogText(a.befehl, a.werte, i18n?.resolvedLanguage ?? i18n?.language);
   const werte = werteAnzeige(a.werte);
   return (
-    <main className="huelle" role="dialog" aria-labelledby="huelle-titel">
-      <h1 id="huelle-titel">{t("huelle.titel")}</h1>
-      <p>{t("huelle.frage")}</p>
-      {satz && (
-        <p data-testid="huelle-satz">
-          <strong>{satz}</strong>
-        </p>
-      )}
-      <p>
-        <code data-testid="huelle-befehl">{a.befehl}</code>
+    <main className="huelle" role="dialog" aria-labelledby="huelle-titel" aria-describedby="huelle-satz">
+      <h1 id="huelle-titel">{r.titel}</h1>
+      <p id="huelle-satz" data-testid="huelle-satz" className="huelle__frage">
+        {text ? text.frage : r.unbekannt}
       </p>
-      {werte.length > 0 && <pre data-testid="huelle-werte">{werte.map(([k, v]) => `${k}: ${v}`).join("\n")}</pre>}
-      {auftraege.length > 1 && <p>{t("huelle.weitere", { anzahl: auftraege.length - 1 })}</p>}
+      {auftraege.length > 1 && <p className="huelle__weitere">{r.weitere.replace("{{anzahl}}", String(auftraege.length - 1))}</p>}
+      <details className="huelle__details" open={!text}>
+        <summary>{r.details}</summary>
+        <code data-testid="huelle-befehl">{a.befehl}</code>
+        {werte.length > 0 && <pre data-testid="huelle-werte">{werte.map(([k, v]) => `${k}: ${v}`).join("\n")}</pre>}
+      </details>
       <div className="huelle__knoepfe">
         <Button variant="quiet" disabled={laeuft} onClick={() => void antworten(a, false)}>
-          {t("huelle.ablehnen")}
+          {r.abbrechen}
         </Button>
         <Button variant="primary" disabled={laeuft} onClick={() => void antworten(a, true)}>
-          {t("huelle.ausfuehren")}
+          {text ? text.knopf : r.ausfuehren}
         </Button>
       </div>
     </main>

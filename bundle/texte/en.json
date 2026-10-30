@@ -5016,14 +5016,6 @@
       "PirepSubmitted": "PIREP submitted"
     }
   },
-  "huelle": {
-    "titel": "Confirmation required",
-    "frage": "The interface wants to run an action that only the shell may allow (files, sign-in, consent, deletion, windows or network services). Run it?",
-    "ausfuehren": "Run",
-    "ablehnen": "Decline",
-    "weitere": "{{anzahl}} more requests are waiting after this one.",
-    "leer": "No open request."
-  },
   "wartung": {
     "geplant": "Scheduled maintenance",
     "laeuft": "Maintenance in progress",

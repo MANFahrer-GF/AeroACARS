@@ -932,15 +932,12 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
             #[derive(Deserialize)]
             struct A {
                 index: usize,
-                #[serde(default)]
-                endpoint: Option<String>,
             }
             match parse_args::<A>(body) {
                 Ok(a) => from_string_err(
                     crate::aircraft_scan::ascan_submit(
                         app.state::<crate::aircraft_scan::AircraftScanState>(),
                         a.index,
-                        a.endpoint,
                     )
                     .await,
                 ),
@@ -1411,8 +1408,10 @@ mod tests {
             assert_eq!(gesperrt.is_some(), stufe == "system", "{b}");
             system += gesperrt.is_some() as usize;
         }
-        assert!(system > 30);
-        assert_eq!(super::nur_huelle("phpvms_login").unwrap().code, "nur_huelle");
+        assert!(system > 15);
+        assert_eq!(super::nur_huelle("flight_logs_delete_all").unwrap().code, "nur_huelle");
+        // Gegenprobe: umgestufte Befehle (Anmeldung, Fenster) laufen direkt.
+        assert!(super::nur_huelle("phpvms_login").is_none());
         // Verdrahtung: die Pruefung ist das Erste in `dispatch`.
         let quelle = include_str!("bridge.rs");
         let rumpf = &quelle[quelle.find(&format!("pub async fn {}(", "dispatch")).unwrap()..];

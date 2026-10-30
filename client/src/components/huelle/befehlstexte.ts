@@ -3,201 +3,193 @@
 // Bewusst HIER im Programm und nicht in `bundle/texte/*.json`: Die Texte der
 // Hülle dürfen nie aus dem Laufzeit-Paket kommen (Entscheidung Etappe 5) —
 // sonst könnte ein fremdes Paket „Alle Flugprotokolle löschen“ als harmlose
-// Aktion beschriften. Ein Test verlangt für jeden Befehl der Stufe „system“
-// in `src-tauri/befehle.json` einen Satz in allen drei Sprachen.
+// Aktion beschriften. Das gilt auch für Titel und Knöpfe des Dialogs
+// (`RAHMEN`). Ein Test verlangt für jeden Befehl der Stufe „system“ in
+// `src-tauri/befehle.json` Frage und Knopf in allen drei Sprachen.
+//
+// 30.10.2026 (Thomas' erster Start): Der Dialog stellt eine konkrete Frage
+// mit dem tatsächlichen Wert („… ausschalten?“ statt „ein- oder
+// ausschalten“), der Knopf nennt das Verb, Befehl und Rohwerte stehen nur
+// noch unter „Technische Details“.
 
 export type Sprache = "de" | "en" | "it";
 
-export const BEFEHLSTEXTE: Record<string, Record<Sprache, string>> = {
+export interface Text {
+  frage: string;
+  knopf: string;
+}
+
+/** Je Sprache Frage und Knopf; `aus` gilt, wenn der Befehl mit `enabled: false` kommt. */
+export interface Eintrag {
+  de: Text;
+  en: Text;
+  it: Text;
+  aus?: Record<Sprache, Text>;
+}
+
+export const BEFEHLSTEXTE: Record<string, Eintrag> = {
   activity_log_clear: {
-    de: "Das Aktivitätsprotokoll in der App leeren",
-    en: "Clear the activity log in the app",
-    it: "Svuotare il registro attività nell'app",
-  },
-  ascan_collect: {
-    de: "Die Dateiliste des gewählten Flugzeugpakets zusammenstellen (noch nichts senden)",
-    en: "Collect the file list of the selected aircraft package (nothing is sent yet)",
-    it: "Raccogliere l'elenco dei file del pacchetto aereo scelto (non viene ancora inviato nulla)",
-  },
-  ascan_list_aircraft: {
-    de: "Die Flugzeugordner des Simulators auf diesem Rechner durchsuchen",
-    en: "Search the simulator's aircraft folders on this computer",
-    it: "Cercare le cartelle degli aerei del simulatore su questo computer",
+    de: { frage: "Das Aktivitätsprotokoll in der App leeren?", knopf: "Leeren" },
+    en: { frage: "Clear the activity log in the app?", knopf: "Clear" },
+    it: { frage: "Svuotare il registro attività nell'app?", knopf: "Svuota" },
   },
   ascan_submit: {
-    de: "Das gewählte Flugzeugpaket packen und an den GSG-Live-Server senden",
-    en: "Pack the selected aircraft package and send it to the GSG live server",
-    it: "Comprimere il pacchetto aereo scelto e inviarlo al server live GSG",
-  },
-  auto_start_set_enabled: {
-    de: "Den automatischen Flugstart ein- oder ausschalten (startet den Flug selbst, wenn Buchung und Abflughafen passen)",
-    en: "Turn automatic flight start on or off (starts the flight by itself when booking and departure airport match)",
-    it: "Attivare o disattivare l'avvio automatico del volo (avvia il volo da solo quando prenotazione e aeroporto di partenza coincidono)",
-  },
-  error_reporting_set_consent: {
-    de: "Das Senden anonymer Fehlerberichte erlauben oder abschalten",
-    en: "Allow or stop sending anonymous error reports",
-    it: "Consentire o disattivare l'invio di segnalazioni di errore anonime",
+    de: { frage: "Das gewählte Flugzeugpaket packen und an den GSG-Live-Server senden?", knopf: "Senden" },
+    en: { frage: "Pack the selected aircraft package and send it to the GSG live server?", knopf: "Send" },
+    it: { frage: "Comprimere il pacchetto aereo scelto e inviarlo al server live GSG?", knopf: "Invia" },
   },
   flight_forget_remote: {
-    de: "Einen hängenden Flug nur auf diesem Rechner vergessen (ohne Meldung an phpVMS)",
-    en: "Forget a stuck flight on this computer only (without telling phpVMS)",
-    it: "Dimenticare un volo bloccato solo su questo computer (senza avvisare phpVMS)",
+    de: { frage: "Den hängenden Flug {{pirepId}} nur auf diesem Rechner vergessen? phpVMS erfährt davon nichts.", knopf: "Vergessen" },
+    en: { frage: "Forget the stuck flight {{pirepId}} on this computer only? phpVMS is not told.", knopf: "Forget" },
+    it: { frage: "Dimenticare il volo bloccato {{pirepId}} solo su questo computer? phpVMS non viene avvisato.", knopf: "Dimentica" },
   },
   flight_logs_auto_purge_set: {
-    de: "Das automatische Löschen alter Flugprotokolle ein- oder ausschalten (beim Einschalten werden Protokolle älter als 30 Tage sofort gelöscht)",
-    en: "Turn automatic deletion of old flight logs on or off (turning it on immediately deletes logs older than 30 days)",
-    it: "Attivare o disattivare l'eliminazione automatica dei vecchi registri di volo (attivandola, i registri più vecchi di 30 giorni vengono eliminati subito)",
+    de: { frage: "Alte Flugprotokolle automatisch löschen? Protokolle älter als 30 Tage werden sofort gelöscht.", knopf: "Einschalten" },
+    en: { frage: "Delete old flight logs automatically? Logs older than 30 days are deleted right away.", knopf: "Turn on" },
+    it: { frage: "Eliminare automaticamente i vecchi registri di volo? I registri più vecchi di 30 giorni vengono eliminati subito.", knopf: "Attiva" },
+    aus: {
+      de: { frage: "Das automatische Löschen alter Flugprotokolle ausschalten?", knopf: "Ausschalten" },
+      en: { frage: "Turn off automatic deletion of old flight logs?", knopf: "Turn off" },
+      it: { frage: "Disattivare l'eliminazione automatica dei vecchi registri di volo?", knopf: "Disattiva" },
+    },
   },
   flight_logs_delete_all: {
-    de: "Alle Flugprotokolle auf diesem Rechner löschen",
-    en: "Delete all flight logs on this computer",
-    it: "Eliminare tutti i registri di volo su questo computer",
+    de: { frage: "Alle Flugprotokolle auf diesem Rechner löschen? Das lässt sich nicht rückgängig machen.", knopf: "Alle löschen" },
+    en: { frage: "Delete all flight logs on this computer? This cannot be undone.", knopf: "Delete all" },
+    it: { frage: "Eliminare tutti i registri di volo su questo computer? Non si può annullare.", knopf: "Elimina tutto" },
   },
   flight_logs_purge_older_than: {
-    de: "Flugprotokolle auf diesem Rechner löschen, die älter als die angegebene Zahl Tage sind",
-    en: "Delete flight logs on this computer older than the given number of days",
-    it: "Eliminare i registri di volo su questo computer più vecchi del numero di giorni indicato",
+    de: { frage: "Flugprotokolle auf diesem Rechner löschen, die älter als {{olderThanDays}} Tage sind? Bei 0 sind das alle bereits hochgeladenen.", knopf: "Löschen" },
+    en: { frage: "Delete flight logs on this computer older than {{olderThanDays}} days? With 0 that is every log already uploaded.", knopf: "Delete" },
+    it: { frage: "Eliminare i registri di volo su questo computer più vecchi di {{olderThanDays}} giorni? Con 0 sono tutti quelli già caricati.", knopf: "Elimina" },
   },
   hoppie_clear_logon_code: {
-    de: "Den gespeicherten Hoppie-Logon-Code (CPDLC) entfernen",
-    en: "Remove the stored Hoppie logon code (CPDLC)",
-    it: "Rimuovere il codice di logon Hoppie salvato (CPDLC)",
+    de: { frage: "Den gespeicherten Hoppie-Logon-Code (CPDLC) entfernen?", knopf: "Entfernen" },
+    en: { frage: "Remove the stored Hoppie logon code (CPDLC)?", knopf: "Remove" },
+    it: { frage: "Rimuovere il codice di logon Hoppie salvato (CPDLC)?", knopf: "Rimuovi" },
   },
   hoppie_set_logon_code: {
-    de: "Einen Hoppie-Logon-Code (CPDLC) auf diesem Rechner speichern",
-    en: "Store a Hoppie logon code (CPDLC) on this computer",
-    it: "Salvare un codice di logon Hoppie (CPDLC) su questo computer",
+    de: { frage: "Den Hoppie-Logon-Code (CPDLC) auf diesem Rechner speichern?", knopf: "Speichern" },
+    en: { frage: "Store the Hoppie logon code (CPDLC) on this computer?", knopf: "Save" },
+    it: { frage: "Salvare il codice di logon Hoppie (CPDLC) su questo computer?", knopf: "Salva" },
   },
   kabinen_musik_entfernen: {
-    de: "Ein Musikstück aus der Bordmusik entfernen",
-    en: "Remove a track from the cabin music",
-    it: "Rimuovere un brano dalla musica di bordo",
+    de: { frage: "Das Musikstück „{{datei}}“ aus der Bordmusik entfernen?", knopf: "Entfernen" },
+    en: { frage: "Remove the track “{{datei}}” from the cabin music?", knopf: "Remove" },
+    it: { frage: "Rimuovere il brano «{{datei}}» dalla musica di bordo?", knopf: "Rimuovi" },
   },
   kabinen_musik_hinzufuegen: {
-    de: "Eine Musikdatei in den Ordner der Bordmusik kopieren",
-    en: "Copy a music file into the cabin music folder",
-    it: "Copiare un file musicale nella cartella della musica di bordo",
-  },
-  kabinen_musik_ordner_oeffnen: {
-    de: "Den Ordner der Bordmusik im Dateimanager öffnen",
-    en: "Open the cabin music folder in the file manager",
-    it: "Aprire la cartella della musica di bordo nel file manager",
-  },
-  kabinen_musik_pruefen: {
-    de: "Eine gewählte Musikdatei lesen und prüfen, ob sie abspielbar ist",
-    en: "Read a selected music file and check that it can be played",
-    it: "Leggere un file musicale scelto e verificare che sia riproducibile",
-  },
-  landing_backup_now: {
-    de: "Die Landungshistorie jetzt auf dem GSG-Live-Server sichern",
-    en: "Back up the landing history to the GSG live server now",
-    it: "Salvare ora lo storico degli atterraggi sul server live GSG",
+    de: { frage: "Die gewählte Musikdatei in die Bordmusik von {{airline}} kopieren?", knopf: "Hinzufügen" },
+    en: { frage: "Copy the selected music file into the cabin music of {{airline}}?", knopf: "Add" },
+    it: { frage: "Copiare il file musicale scelto nella musica di bordo di {{airline}}?", knopf: "Aggiungi" },
   },
   landing_delete: {
-    de: "Eine Landung aus der Landungshistorie auf diesem Rechner löschen",
-    en: "Delete a landing from the landing history on this computer",
-    it: "Eliminare un atterraggio dallo storico degli atterraggi su questo computer",
-  },
-  panel_server_set_enabled: {
-    de: "Den Panel-Server für das Simulator-Panel ein- oder ausschalten (wirkt beim nächsten Start)",
-    en: "Turn the panel server for the simulator panel on or off (takes effect on next start)",
-    it: "Attivare o disattivare il server del pannello del simulatore (effettivo al prossimo avvio)",
-  },
-  phpvms_login: {
-    de: "Mit dem angegebenen API-Schlüssel bei phpVMS anmelden",
-    en: "Sign in to phpVMS with the given API key",
-    it: "Accedere a phpVMS con la chiave API indicata",
-  },
-  phpvms_logout: {
-    de: "Von phpVMS abmelden",
-    en: "Sign out of phpVMS",
-    it: "Disconnettersi da phpVMS",
+    de: { frage: "Diese Landung ({{pirepId}}) auf diesem Rechner löschen?", knopf: "Löschen" },
+    en: { frage: "Delete this landing ({{pirepId}}) on this computer?", knopf: "Delete" },
+    it: { frage: "Eliminare questo atterraggio ({{pirepId}}) su questo computer?", knopf: "Elimina" },
   },
   remote_server_revoke_pairing: {
-    de: "Alle gekoppelten Geräte der Fernbedienung (Tablet/Handy) trennen",
-    en: "Unpair all remote devices (tablet/phone)",
-    it: "Scollegare tutti i dispositivi remoti associati (tablet/telefono)",
+    de: { frage: "Die Kopplung der LAN-Fernbedienung aufheben? Verbundene Geräte müssen sich neu koppeln.", knopf: "Aufheben" },
+    en: { frage: "Revoke the LAN remote pairing? Connected devices must pair again.", knopf: "Revoke" },
+    it: { frage: "Revocare l'abbinamento del telecomando LAN? I dispositivi collegati devono abbinarsi di nuovo.", knopf: "Revoca" },
   },
   remote_server_set_port: {
-    de: "Den Netzwerk-Port der Fernbedienung ändern",
-    en: "Change the network port of the remote control",
-    it: "Cambiare la porta di rete del controllo remoto",
+    de: { frage: "Die LAN-Fernbedienung auf Port {{port}} umstellen?", knopf: "Umstellen" },
+    en: { frage: "Switch the LAN remote to port {{port}}?", knopf: "Switch" },
+    it: { frage: "Spostare il telecomando LAN sulla porta {{port}}?", knopf: "Cambia" },
   },
   remote_server_start: {
-    de: "Die Fernbedienung im lokalen Netz starten (andere Geräte können sich verbinden)",
-    en: "Start the remote control on the local network (other devices can connect)",
-    it: "Avviare il controllo remoto nella rete locale (altri dispositivi possono connettersi)",
-  },
-  remote_server_stop: {
-    de: "Die Fernbedienung im lokalen Netz beenden",
-    en: "Stop the remote control on the local network",
-    it: "Arrestare il controllo remoto nella rete locale",
-  },
-  set_minimize_to_tray: {
-    de: "Einstellen, ob AeroACARS beim Schließen in den Infobereich minimiert",
-    en: "Set whether AeroACARS minimizes to the tray when closed",
-    it: "Impostare se AeroACARS si riduce nell'area di notifica alla chiusura",
+    de: { frage: "Die LAN-Fernbedienung starten? Geräte in deinem Netz können sich dann mit diesem Rechner koppeln.", knopf: "Starten" },
+    en: { frage: "Start the LAN remote? Devices on your network can then pair with this computer.", knopf: "Start" },
+    it: { frage: "Avviare il telecomando LAN? I dispositivi della tua rete potranno abbinarsi a questo computer.", knopf: "Avvia" },
   },
   shell_auftraege: {
-    de: "Die offenen Bestätigungsanfragen anzeigen",
-    en: "Show the pending confirmation requests",
-    it: "Mostrare le richieste di conferma in sospeso",
+    de: { frage: "Offene Anfragen an die Hülle lesen?", knopf: "Lesen" },
+    en: { frage: "Read open requests to the shell?", knopf: "Read" },
+    it: { frage: "Leggere le richieste aperte alla shell?", knopf: "Leggi" },
   },
   shell_auftrag_beantworten: {
-    de: "Eine Bestätigungsanfrage beantworten",
-    en: "Answer a confirmation request",
-    it: "Rispondere a una richiesta di conferma",
-  },
-  telemetrie_csv_speichern: {
-    de: "Die Telemetrie als CSV-Datei speichern (Speicherort wählst du im nächsten Dialog)",
-    en: "Save the telemetry as a CSV file (you choose the location in the next dialog)",
-    it: "Salvare la telemetria come file CSV (scegli la posizione nella finestra successiva)",
-  },
-  telemetrie_fenster_oeffnen: {
-    de: "Das Telemetrie-Fenster öffnen",
-    en: "Open the telemetry window",
-    it: "Aprire la finestra della telemetria",
+    de: { frage: "Eine Anfrage an die Hülle beantworten?", knopf: "Beantworten" },
+    en: { frage: "Answer a request to the shell?", knopf: "Answer" },
+    it: { frage: "Rispondere a una richiesta alla shell?", knopf: "Rispondi" },
   },
   update_installieren: {
-    de: "Das bereitstehende AeroACARS-Update installieren und die App neu starten",
-    en: "Install the available AeroACARS update and restart the app",
-    it: "Installare l'aggiornamento di AeroACARS disponibile e riavviare l'app",
-  },
-  vdgs_fenster_oeffnen: {
-    de: "Das Andockführungs-Fenster (VDGS) öffnen",
-    en: "Open the docking guidance window (VDGS)",
-    it: "Aprire la finestra della guida all'attracco (VDGS)",
+    de: { frage: "Das bereitstehende AeroACARS-Update installieren? Das Programm startet danach neu.", knopf: "Installieren" },
+    en: { frage: "Install the available AeroACARS update? The program restarts afterwards.", knopf: "Install" },
+    it: { frage: "Installare l'aggiornamento di AeroACARS disponibile? Il programma si riavvia dopo.", knopf: "Installa" },
   },
   vermessung_senden: {
-    de: "Das Ergebnis der Flugzeugvermessung an den GSG-Live-Server senden",
-    en: "Send the aircraft measurement result to the GSG live server",
-    it: "Inviare il risultato della misurazione dell'aereo al server live GSG",
-  },
-  xplane_band_set_enabled: {
-    de: "Das Senden des X-Plane-Bands ein- oder ausschalten",
-    en: "Turn sending the X-Plane band on or off",
-    it: "Attivare o disattivare l'invio della banda X-Plane",
-  },
-  xplane_check_install_path: {
-    de: "Einen gewählten Ordner prüfen, ob er eine X-Plane-Installation ist",
-    en: "Check whether a selected folder is an X-Plane installation",
-    it: "Verificare se una cartella scelta è un'installazione di X-Plane",
+    de: { frage: "Die Vermessung des Flugzeugs an den GSG-Live-Server senden?", knopf: "Senden" },
+    en: { frage: "Send the aircraft measurement to the GSG live server?", knopf: "Send" },
+    it: { frage: "Inviare la misurazione dell'aereo al server live GSG?", knopf: "Invia" },
   },
   xplane_install_plugin: {
-    de: "Das AeroACARS-Plugin in den X-Plane-Ordner installieren",
-    en: "Install the AeroACARS plugin into the X-Plane folder",
-    it: "Installare il plugin AeroACARS nella cartella di X-Plane",
+    de: { frage: "Das AeroACARS-Plugin in X-Plane installieren?", knopf: "Installieren" },
+    en: { frage: "Install the AeroACARS plugin in X-Plane?", knopf: "Install" },
+    it: { frage: "Installare il plugin AeroACARS in X-Plane?", knopf: "Installa" },
   },
 };
 
-/** Satz zum Befehl in der Sprache; `null` = unbekannter Befehl (dann zeigt
- *  der Dialog nur den Befehlsnamen). */
-export function befehlstext(befehl: string, sprache: string | undefined): string | null {
-  const texte = Object.prototype.hasOwnProperty.call(BEFEHLSTEXTE, befehl) ? BEFEHLSTEXTE[befehl] : undefined;
-  if (!texte) return null;
-  const kurz = (sprache ?? "").split("-")[0];
-  return kurz === "de" || kurz === "en" || kurz === "it" ? texte[kurz] : texte.en;
+/** Titel, Knöpfe und Hinweise des Dialogs — ebenfalls nie aus dem Paket. */
+export const RAHMEN: Record<Sprache, { titel: string; abbrechen: string; details: string; weitere: string; leer: string; unbekannt: string; ausfuehren: string }> = {
+  de: {
+    titel: "Bitte bestätigen",
+    abbrechen: "Abbrechen",
+    details: "Technische Details",
+    weitere: "Danach warten noch {{anzahl}} weitere Anfragen.",
+    leer: "Keine offene Anfrage.",
+    unbekannt: "Die Oberfläche möchte eine Aktion ausführen, die dieses Programm nicht kennt. Nur ausführen, wenn du sie gerade selbst angestoßen hast.",
+    ausfuehren: "Ausführen",
+  },
+  en: {
+    titel: "Please confirm",
+    abbrechen: "Cancel",
+    details: "Technical details",
+    weitere: "{{anzahl}} more requests are waiting.",
+    leer: "No open request.",
+    unbekannt: "The interface wants to run an action this program does not know. Only run it if you just started it yourself.",
+    ausfuehren: "Run",
+  },
+  it: {
+    titel: "Conferma",
+    abbrechen: "Annulla",
+    details: "Dettagli tecnici",
+    weitere: "Restano in attesa altre {{anzahl}} richieste.",
+    leer: "Nessuna richiesta aperta.",
+    unbekannt: "L'interfaccia vuole eseguire un'azione che questo programma non conosce. Eseguila solo se l'hai appena avviata tu.",
+    ausfuehren: "Esegui",
+  },
+};
+
+export function sprache(roh: string | undefined): Sprache {
+  const kurz = (roh ?? "").split("-")[0];
+  return kurz === "de" || kurz === "en" || kurz === "it" ? kurz : "en";
+}
+
+/** Platzhalter `{{name}}` aus den Werten; einzeilig und gekürzt, weil die
+ *  Werte von der Oberfläche kommen (sie wählen nur das Wort in der Frage,
+ *  nie den Befehl). Fehlt ein Wert, bleibt „…“. */
+function einsetzen(vorlage: string, werte: Record<string, unknown> | undefined): string {
+  return vorlage.replace(/\{\{(\w+)\}\}/g, (_, k: string) => {
+    const v = werte?.[k];
+    if (v === undefined || v === null || GEHEIM.test(k)) return "…";
+    // Steuer- und Richtungszeichen (U+202E u. a.) raus: Ein Wert darf den
+    // Satz nicht optisch umdrehen (Pruefer 30.10.).
+    const s = String(typeof v === "object" ? JSON.stringify(v) : v)
+      .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return s.length > 60 ? `${s.slice(0, 60)}…` : s || "…";
+  });
+}
+
+/** Frage und Knopf für einen Auftrag, oder `null` für einen unbekannten Befehl. */
+export function dialogText(befehl: string, werte: Record<string, unknown> | undefined, roh: string | undefined): Text | null {
+  const e = Object.prototype.hasOwnProperty.call(BEFEHLSTEXTE, befehl) ? BEFEHLSTEXTE[befehl] : undefined;
+  if (!e) return null;
+  const s = sprache(roh);
+  const t = werte?.enabled === false && e.aus ? e.aus[s] : e[s];
+  return { frage: einsetzen(t.frage, werte), knopf: t.knopf };
 }
 
 /** Schlüssel, deren Wert geheim ist (Tauri übergibt camelCase: `apiKey`, `code`). */

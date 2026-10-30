@@ -48,7 +48,7 @@ permissions:
 # Faehigkeiten, die jedes Paket verlangt (P-2.15) — eine Stelle fuer alle
 # Bau-Laeufer; laufzeit_paket.rs prueft sie gegen das Programm.
 env:
-  REQUIRES: ourairports-1,grenzwerte-2,xplane-profile-1,cpdlc-1,flotte-1,texte-1,spurweiten-1,vref-1,hoehengruppen-1,klappen-1,kabine-1,endpunkte-1,msfs-profile-1,bewertung-1,kabine-modul-1,ui-befehle-2
+  REQUIRES: ourairports-1,grenzwerte-2,xplane-profile-1,cpdlc-1,flotte-1,texte-1,spurweiten-1,vref-1,hoehengruppen-1,klappen-1,kabine-1,endpunkte-1,msfs-profile-1,bewertung-1,kabine-modul-1,ui-befehle-3
 
 jobs:
   bauen:

@@ -700,7 +700,6 @@ pub async fn ascan_collect(
 pub async fn ascan_submit(
     state: tauri::State<'_, AircraftScanState>,
     index: usize,
-    endpoint: Option<String>,
 ) -> Result<SubmitResult, String> {
     let pkg = {
         let guard = state
@@ -726,7 +725,9 @@ pub async fn ascan_submit(
     .await
     .map_err(|e| format!("Zip-Task abgebrochen: {e}"))??;
 
-    let url = endpoint.unwrap_or_else(default_endpoint);
+    // Ziel immer fest (Pruefer 30.10.): Ein frei waehlbares Ziel haette den
+    // phpVMS-Schluessel an jeden Server geschickt, den die Oberflaeche nennt.
+    let url = default_endpoint();
     let zip_len = zip_bytes.len() as u64;
     zip_groesse_pruefen(zip_len)?;
     let client = reqwest::Client::builder()
@@ -801,6 +802,16 @@ fn zip_groesse_pruefen(zip_len: u64) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// Das Senden kennt kein Ziel aus der Oberflaeche (Schluessel nur an live).
+    #[test]
+    fn ascan_submit_hat_kein_frei_waehlbares_ziel() {
+        let quelle = include_str!("aircraft_scan.rs");
+        let kopf = &quelle[quelle.find(concat!("pub async fn ", "ascan_submit(")).unwrap()..];
+        let kopf = &kopf[..kopf.find("{").unwrap()];
+        assert!(!kopf.contains("endpoint"), "{kopf}");
+        assert!(kopf.contains("index: usize"));
+    }
+
     use super::*;
 
     #[test]

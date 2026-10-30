@@ -735,8 +735,8 @@ function ErrorReportingPanel() {
   const [enabled, setEnabledState] = useState<boolean>(() => getConsent());
 
   const handleToggle = (next: boolean) => {
-    // v3 (Etappe 5): Erst die Hülle (Bestätigung des Piloten), dann der
-    // Schalter hier — lehnt er ab, bleibt alles, wie es war.
+    // v3: Erst der Kern, dann der Schalter hier — schlägt der Aufruf fehl,
+    // bleibt alles, wie es war (seit 30.10. ohne Rückfrage der Hülle).
     void invoke("error_reporting_set_consent", { enabled: next })
       .then(() => {
         setEnabledState(next);

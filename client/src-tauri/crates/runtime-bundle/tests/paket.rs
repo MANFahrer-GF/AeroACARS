@@ -676,3 +676,26 @@ fn vertraeglichkeit_fuer_alte_clients() {
     assert!(matches!(vertraeglich(&m, "2.1.24", &f(&["wasm-host-1"])), Err(Fehler::Unpassend(_))));
     assert!(!matches!(vertraeglich(b"kein json", "3.0.0", &f(&["wasm-host-1"])), Ok(()) | Err(Fehler::Unpassend(_))));
 }
+
+/// Neuer Installer ueber altem Paket (30.10.2026, `ui-befehle-3` ersetzt
+/// `ui-befehle-2`): Das zwischengespeicherte aktive Paket verlangt eine
+/// Faehigkeit, die das neue Programm nicht mehr hat. Beim Start gilt dann
+/// der eingebaute Stand — kein Fehler, kein Abbruch. Gegenprobe: mit der
+/// alten Faehigkeitenliste laedt dasselbe Paket.
+#[test]
+fn aktives_paket_mit_entfallener_faehigkeit_faellt_auf_eingebaut() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Schluessel::neu();
+    let mut alt = kontext(&[&s]);
+    alt.faehigkeiten.push("ui-befehle-2".into());
+    let a = Ablage::oeffnen(dir.path()).unwrap();
+    let (m, i) = paket(47, &[("a", b"g47")]);
+    let m = manifest_aendern(&m, |v| v["requires"] = serde_json::json!(["wasm-host-1", "ui-befehle-2"]));
+    installieren(&a, &s, &alt, &m, &i).unwrap();
+    assert_eq!(a.laden(None, &alt, &eingebaut()).unwrap().herkunft, Herkunft::Aktuell);
+
+    let neu = kontext(&[&s]);
+    let l = a.laden(None, &neu, &eingebaut()).unwrap();
+    assert_eq!(l.herkunft, Herkunft::Eingebaut);
+    assert!(l.hinweise.iter().any(|h| h.contains("ui-befehle-2")), "{:?}", l.hinweise);
+}

@@ -27,7 +27,9 @@ describe("Systembefehle über die Hülle", () => {
   it("kennt genau die Stufe system aus befehle.json", () => {
     const system = Object.entries(befehle.befehle).filter(([, s]) => s === "system").map(([b]) => b);
     expect([...SYSTEMBEFEHLE].sort()).toEqual(system.sort());
-    expect(SYSTEMBEFEHLE.has("phpvms_login")).toBe(true);
+    expect(SYSTEMBEFEHLE.has("flight_logs_delete_all")).toBe(true);
+    // 30.10.: Anmelden/Abmelden laufen fachlich, ohne zweite Rückfrage.
+    expect(SYSTEMBEFEHLE.has("phpvms_login")).toBe(false);
     expect(SYSTEMBEFEHLE.has("shell_request")).toBe(false);
   });
 
@@ -50,13 +52,13 @@ describe("Systembefehle über die Hülle", () => {
     expect(r).toEqual({ deleted: 3 });
   });
 
-  it("Abmelden über die Hülle leert weiterhin den Zwischenspeicher", async () => {
+  it("Abmelden leert weiterhin den Zwischenspeicher", async () => {
     tauriInvoke.mockResolvedValue({ icao: "EDDF" });
     await invoke("airport_get", { icao: "EDDF" });
     await invoke("airport_get", { icao: "EDDF" });
     expect(tauriInvoke).toHaveBeenCalledTimes(1); // zweiter Aufruf aus dem Speicher
     await invoke("phpvms_logout");
-    expect(tauriInvoke).toHaveBeenLastCalledWith("shell_request", { befehl: "phpvms_logout", werte: {} });
+    expect(tauriInvoke).toHaveBeenLastCalledWith("phpvms_logout", undefined);
     await invoke("airport_get", { icao: "EDDF" });
     expect(tauriInvoke).toHaveBeenCalledTimes(3); // nach dem Abmelden neu geholt
   });

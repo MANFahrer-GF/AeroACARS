@@ -32,8 +32,9 @@ export function ErrorReportingFirstRunBanner({ onDecided }: Props) {
   if (!visible) return null;
 
   const decide = (enabled: boolean) => {
-    // v3 (Etappe 5): gespeichert erst nach Bestätigung in der Hülle;
-    // abgelehnt = weiter ungefragt, das Banner kommt beim nächsten Start.
+    // v3: Der Klick hier IST die Einwilligung — seit 30.10. ohne zweite
+    // Rückfrage der Hülle (befehle.json „fachlich“). Gespeichert wird erst,
+    // wenn der Kern die Wahl übernommen hat.
     void invoke("error_reporting_set_consent", { enabled })
       .then(() => setConsent(enabled))
       .catch(() => undefined);

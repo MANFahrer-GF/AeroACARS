@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 
 describe("Hülle-Dialog", () => {
-  it("zeigt Befehl und Werte und führt erst nach Ausführen aus", async () => {
+  it("zeigt die konkrete Frage, Details nur aufgeklappt, führt erst nach dem Knopf aus", async () => {
     ipc.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "shell_auftraege") return [AUFTRAG];
       if (cmd === "flight_logs_delete_all") return { deleted: 2 };
@@ -25,10 +25,12 @@ describe("Hülle-Dialog", () => {
     });
     render(<HuelleFenster />);
     expect(await screen.findByTestId("huelle-befehl")).toHaveTextContent("flight_logs_delete_all");
-    expect(screen.getByTestId("huelle-satz")).toHaveTextContent("Alle Flugprotokolle auf diesem Rechner löschen");
+    expect(screen.getByTestId("huelle-satz")).toHaveTextContent("Alle Flugprotokolle auf diesem Rechner löschen?");
     expect(screen.getByTestId("huelle-werte")).toHaveTextContent("a: 1");
+    expect(screen.getByTestId("huelle-befehl").closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText("huelle.ausfuehren")).toBeNull();
     expect(ipc.invoke).not.toHaveBeenCalledWith("flight_logs_delete_all", expect.anything());
-    fireEvent.click(screen.getByText("huelle.ausfuehren"));
+    fireEvent.click(screen.getByText("Alle löschen"));
     await waitFor(() =>
       expect(ipc.invoke).toHaveBeenCalledWith("shell_auftrag_beantworten", { id: 7, ok: true, ergebnis: { deleted: 2 } }),
     );
@@ -42,7 +44,7 @@ describe("Hülle-Dialog", () => {
       return true;
     });
     render(<HuelleFenster />);
-    fireEvent.click(await screen.findByText("huelle.ausfuehren"));
+    fireEvent.click(await screen.findByText("Alle löschen"));
     await waitFor(() =>
       expect(ipc.invoke).toHaveBeenCalledWith("shell_auftrag_beantworten", {
         id: 7, ok: false, fehler: { code: "x", message: "kaputt" },
@@ -52,29 +54,32 @@ describe("Hülle-Dialog", () => {
 
   it("maskiert Geheimnisse, zeigt übrige Werte", async () => {
     ipc.invoke.mockImplementation(async () => [
-      { id: 8, befehl: "phpvms_login", werte: { url: "https://german-sky-group.eu", apiKey: "geheim123" } },
+      { id: 8, befehl: "hoppie_set_logon_code", werte: { code: "GEHEIM42", ziel: "hoppie" } },
     ]);
     render(<HuelleFenster />);
     const werte = await screen.findByTestId("huelle-werte");
-    expect(werte).toHaveTextContent("url: https://german-sky-group.eu");
-    expect(werte).toHaveTextContent("apiKey:");
-    expect(werte).not.toHaveTextContent("geheim123");
-    expect(screen.getByTestId("huelle-satz")).toHaveTextContent("phpVMS");
+    expect(werte).toHaveTextContent("ziel: hoppie");
+    expect(werte).toHaveTextContent("code:");
+    expect(werte).not.toHaveTextContent("GEHEIM42");
+    expect(screen.getByTestId("huelle-satz")).toHaveTextContent("Hoppie");
+    expect(screen.getByTestId("huelle-satz")).not.toHaveTextContent("GEHEIM42");
   });
 
-  it("unbekannter Befehl: kein Satz, nur der Name", async () => {
+  it("unbekannter Befehl: Warnung, Details offen, neutraler Knopf", async () => {
     ipc.invoke.mockImplementation(async () => [{ id: 9, befehl: "gibt_es_nicht", werte: {} }]);
     render(<HuelleFenster />);
     expect(await screen.findByTestId("huelle-befehl")).toHaveTextContent("gibt_es_nicht");
-    expect(screen.queryByTestId("huelle-satz")).toBeNull();
+    expect(screen.getByTestId("huelle-befehl").closest("details")).toHaveAttribute("open");
+    expect(screen.getByTestId("huelle-satz")).toHaveTextContent("nicht kennt");
+    expect(screen.getByText("Ausführen")).toBeTruthy();
     expect(screen.queryByTestId("huelle-werte")).toBeNull();
   });
 
-  it("Ablehnen führt nichts aus", async () => {
+  it("Abbrechen führt nichts aus", async () => {
     ipc.invoke.mockImplementation(async () => []);
     ipc.invoke.mockImplementationOnce(async () => [AUFTRAG]);
     render(<HuelleFenster />);
-    fireEvent.click(await screen.findByText("huelle.ablehnen"));
+    fireEvent.click(await screen.findByText("Abbrechen"));
     await waitFor(() => expect(ipc.invoke).toHaveBeenCalledWith("shell_auftrag_beantworten", { id: 7, ok: false }));
     expect(ipc.invoke).not.toHaveBeenCalledWith("flight_logs_delete_all", expect.anything());
   });

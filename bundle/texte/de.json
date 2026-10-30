@@ -5016,14 +5016,6 @@
       "PirepSubmitted": "PIREP abgegeben"
     }
   },
-  "huelle": {
-    "titel": "Bestätigung erforderlich",
-    "frage": "Die Oberfläche möchte eine Aktion ausführen, die nur die Hülle erlaubt (Dateien, Anmeldung, Einwilligung, Löschen, Fenster oder Netzdienste). Ausführen?",
-    "ausfuehren": "Ausführen",
-    "ablehnen": "Ablehnen",
-    "weitere": "Danach warten noch {{anzahl}} weitere Anfragen.",
-    "leer": "Keine offene Anfrage."
-  },
   "wartung": {
     "geplant": "Wartung geplant",
     "laeuft": "Wartung läuft",

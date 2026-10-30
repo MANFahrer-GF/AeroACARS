@@ -41,21 +41,57 @@ fn jeder_befehl_hat_genau_eine_stufe() {
     }
 }
 
-/// P-8.10: Pfade, Geheimnisse, Einwilligung, Autostart, Loeschen, neue
-/// Fenster und Netzdienste nach aussen bleiben der Huelle vorbehalten.
+/// P-8.10: Loeschen, nach aussen senden, installieren, Netzdienste oeffnen,
+/// Zugangscodes und Dateipfade aus der Oberflaeche bleiben der Huelle
+/// vorbehalten.
 #[test]
 fn systembefehle_bleiben_in_der_huelle() {
     let liste = liste();
     for b in [
-        "phpvms_login", "hoppie_set_logon_code", "xplane_install_plugin", "auto_start_set_enabled",
-        "flight_logs_delete_all", "remote_server_start", "telemetrie_csv_speichern",
-        "error_reporting_set_consent", "landing_delete", "kabinen_musik_pruefen", "ascan_list_aircraft",
-        "vdgs_fenster_oeffnen", "telemetrie_fenster_oeffnen",
+        "hoppie_set_logon_code", "xplane_install_plugin", "flight_logs_delete_all", "flight_logs_purge_older_than",
+        "remote_server_start", "remote_server_set_port", "landing_delete", "ascan_submit", "vermessung_senden",
+        "kabinen_musik_hinzufuegen", "kabinen_musik_entfernen", "activity_log_clear", "flight_forget_remote",
         // Etappe 5: Wer Auftraege beantworten duerfte, koennte sich selbst
         // bestaetigen — nur die Huelle.
         "shell_auftraege", "shell_auftrag_beantworten", "update_installieren", "flight_logs_auto_purge_set",
     ] {
         assert_eq!(liste.get(b).map(String::as_str), Some("system"), "{b}");
+    }
+}
+
+/// Abweichung von P-8.10 (30.10.2026, Thomas' erster Start von Beta 1):
+/// Eine zweite Rueckfrage der Huelle schuetzt nur, wo der Pilot den Schaden
+/// nicht sofort sieht oder nicht aus demselben Bildschirm zuruecknehmen kann.
+/// Fenster oeffnen, lesende Vorbereitung, lokale Schalter mit sichtbarem
+/// Rueckweg und Aktionen, deren eigene Oberflaeche schon die Bestaetigung ist
+/// (Anmeldeformular, Speichern-Dialog des Systems, Klick auf die
+/// Einwilligung), laufen fachlich. Das Passwort tippt der Pilot ohnehin in
+/// der Oberflaeche — die Huelle kann es nicht schuetzen.
+///
+/// Bewusst geprueft (unabhaengiger Pruefer 30.10.):
+/// - `auto_start_set_enabled` ist der automatische Flugstart, nicht der
+///   Autostart des Systems. `flight_start` ist schon fachlich — der Schalter
+///   erlaubt einer Oberflaeche nichts, was sie nicht direkt koennte.
+/// - `error_reporting_set_consent`: Der Klick im Banner/Schalter ist die
+///   Einwilligung. Eine gefaelschte Einwilligung setzt einen gestohlenen
+///   Paketschluessel voraus (P-8.12) und schickt nur anonyme Fehlerberichte
+///   an den eigenen GlitchTip.
+/// - LAN-Bruecke: Ein per PIN gekoppeltes Geraet ruft die 17 direkt auf, wie
+///   in 2.x („alles 1 zu 1“, Thomas). Die Kopplung ist die Vertrauensgrenze.
+/// - Pfade aus der Oberflaeche (`kabinen_musik_pruefen`,
+///   `xplane_check_install_path`, `ascan_list_aircraft`, `ascan_collect`)
+///   geben keinen Dateiinhalt zurueck, nur Existenz/Groesse/Titel.
+#[test]
+fn umgestufte_befehle_laufen_fachlich() {
+    let liste = liste();
+    for b in [
+        "phpvms_login", "phpvms_logout", "error_reporting_set_consent", "telemetrie_fenster_oeffnen",
+        "vdgs_fenster_oeffnen", "kabinen_musik_ordner_oeffnen", "ascan_list_aircraft", "ascan_collect",
+        "xplane_check_install_path", "kabinen_musik_pruefen", "auto_start_set_enabled", "set_minimize_to_tray",
+        "xplane_band_set_enabled", "panel_server_set_enabled", "telemetrie_csv_speichern", "landing_backup_now",
+        "remote_server_stop",
+    ] {
+        assert_eq!(liste.get(b).map(String::as_str), Some("fachlich"), "{b}");
     }
 }
 

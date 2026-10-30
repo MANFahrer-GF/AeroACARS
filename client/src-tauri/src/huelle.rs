@@ -386,7 +386,10 @@ mod tests {
 
     #[test]
     fn nur_systembefehle_gehen_ueber_die_huelle() {
-        assert_eq!(stufe("phpvms_login"), Some("system"));
+        assert_eq!(stufe("flight_logs_delete_all"), Some("system"));
+        // 30.10.: umgestuft — die Huelle nimmt sie nicht mehr an.
+        assert_eq!(stufe("phpvms_login"), Some("fachlich"));
+        assert_eq!(ablegen("phpvms_login", Value::Null).unwrap_err().code, "huelle_kein_systembefehl");
         assert_eq!(stufe("shell_request"), Some("fachlich"));
         let e = ablegen("app_info", Value::Null).unwrap_err();
         assert_eq!(e.code, "huelle_kein_systembefehl");
@@ -409,7 +412,7 @@ mod tests {
         // zweite Antwort auf denselben Auftrag: nichts mehr offen
         assert!(!beantworten(id, true, None, None));
 
-        let (id, rx) = ablegen("phpvms_logout", serde_json::json!({})).unwrap();
+        let (id, rx) = ablegen("hoppie_clear_logon_code", serde_json::json!({})).unwrap();
         let f = serde_json::json!({"code": "flight_active", "message": "Flug laeuft"});
         assert!(beantworten(id, false, None, Some(f)));
         let e = rt.block_on(rx).unwrap().unwrap_err();
@@ -424,7 +427,7 @@ mod tests {
     fn geschlossene_huelle_lehnt_alles_ab() {
         let _s = SPERRE.lock().unwrap_or_else(|e| e.into_inner());
         let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        let (_, rx) = ablegen("remote_server_stop", serde_json::json!({})).unwrap();
+        let (_, rx) = ablegen("remote_server_start", serde_json::json!({})).unwrap();
         alle_ablehnen();
         assert_eq!(rt.block_on(rx).unwrap().unwrap_err().code, "huelle_abgelehnt");
     }
