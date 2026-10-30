@@ -103,7 +103,11 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
   // zusammen nicht über die Höchstzahl kommen.
   const belegt = useRef(0);
 
+  // Bei jedem Sichtbarwerden neu: Die Seite bleibt eingehängt, aber was
+  // mitgeht (letzte Flugdatei, Log, Profil) ändert sich während des Flugs —
+  // angezeigt wird, was Rust beim Senden jetzt einsammeln würde (P-9.22).
   useEffect(() => {
+    if (!sichtbar) return;
     let weg = false;
     invoke<HilfeVorschau>("hilfe_vorschau")
       .then((v) => {
@@ -115,7 +119,7 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
     return () => {
       weg = true;
     };
-  }, []);
+  }, [sichtbar]);
 
   const fehlerText = (code: string) =>
     t(`hilfe.fehler.${code}`, { defaultValue: t("hilfe.fehler.unbekannt") });

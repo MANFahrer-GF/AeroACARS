@@ -624,6 +624,30 @@ mod tests {
         assert_eq!((ok.mime, ok.endung, ok.bytes.as_slice()), ("image/png", "png", PNG));
     }
 
+    /// Schreibt einen Koerper mit zwei Bildern (Bytes mit CRLF und `--` darin)
+    /// nach `HILFE_MULTIPART_DATEI`, damit ein echter PHP-Parser ihn lesen
+    /// kann (Gegenprobe zum handgebauten Format, 30.10.):
+    /// `php -S` + `curl --data-binary`, erwartet `$_FILES['attachments']`.
+    #[test]
+    #[ignore = "nur fuer die PHP-Gegenprobe, schreibt eine Datei"]
+    fn multipart_fuer_php_gegenprobe() {
+        let Ok(ziel) = std::env::var("HILFE_MULTIPART_DATEI") else { return };
+        let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe0];
+        jpeg.extend_from_slice(b"\r\n--aeroacars-x\r\nContent-Disposition: kein Teil\r\n\r\n");
+        jpeg.extend((0..=255u8).cycle().take(70_000));
+        let bilder = vec![
+            Bild { bytes: PNG.to_vec(), mime: "image/png", endung: "png" },
+            Bild { bytes: jpeg, mime: "image/jpeg", endung: "jpg" },
+        ];
+        let grenze = format!("aeroacars-{}", uuid::Uuid::new_v4().simple());
+        let k = multipart_koerper(&grenze, &[("subject", "Betreff ä"), ("body", "Zeile 1\r\nZeile 2"), ("diagnose", "D-0123456789ab")], &bilder);
+        std::fs::write(&ziel, &k).unwrap();
+        std::fs::write(format!("{ziel}.grenze"), &grenze).unwrap();
+        for (i, b) in bilder.iter().enumerate() {
+            std::fs::write(format!("{ziel}.bild{}", i + 1), &b.bytes).unwrap();
+        }
+    }
+
     #[test]
     fn multipart_wie_das_helpdesk_formular() {
         let bilder = vec![
