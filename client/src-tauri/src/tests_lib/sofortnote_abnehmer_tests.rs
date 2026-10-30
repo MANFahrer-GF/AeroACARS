@@ -263,6 +263,63 @@
         assert!(doc["eingabe"]["roh"]["anflugpuffer"]["forensik"].is_array());
     }
 
+    /// P-5.10: `seq` und `input_sha256` des MQTT-PIREP sind genau die des
+    /// Eingabe-Dokuments der Landung (live gleicht damit ab). Gegenprobe:
+    /// ohne Aufsetzfenster gibt es kein Dokument, also auch keine Kennung.
+    #[test]
+    fn pirep_nutzlast_nennt_das_eingabe_dokument() {
+        let f = fixture();
+        mit_landung(&f);
+        f.stats.lock().unwrap().landung_fenster =
+            vec![TouchdownWindowSample::from(TelemetrySample::default())];
+        {
+            let mut st = f.stats.lock().unwrap();
+            pirep_bewertete_teile(&f, &mut st, "YYYY");
+        }
+        let payload = build_pirep_payload(&f, &api_client::FileBody::default(), "YYYY", "YYYY");
+        let st = f.stats.lock().unwrap();
+        let rechnung = einreichungs_rechnung(&f, &st, "YYYY");
+        let teile = eingabe_teile(&f, &st, true, rechnung);
+        let seq = teile.len() as u32;
+        let (art, eingabe, fenster, begleitung, ergebnis) = teile.last().expect("Dokument der Landung");
+        let doc = crate::landungs_eingabe::dokument("test-pirep", seq, *art, None, eingabe, begleitung, fenster, &ergebnis.clone().unwrap());
+        assert_eq!(payload.seq, Some(seq));
+        assert_eq!(payload.input_sha256.as_deref(), doc["eingabe"]["meta"]["input_sha256"].as_str());
+        let leitung = serde_json::to_value(&payload).unwrap();
+        assert_eq!(leitung["seq"], seq);
+        assert_eq!(leitung["input_sha256"], doc["eingabe"]["meta"]["input_sha256"]);
+        assert!(payload.runtime_bundle_id.is_some());
+        drop(st);
+        f.stats.lock().unwrap().landung_fenster.clear();
+        let ohne = build_pirep_payload(&f, &api_client::FileBody::default(), "YYYY", "YYYY");
+        let leitung = serde_json::to_value(&ohne).unwrap();
+        assert!(leitung.get("seq").is_none() && leitung.get("input_sha256").is_none(), "ohne Wert nicht auf der Leitung");
+        assert_eq!((ohne.seq, ohne.input_sha256), (None, None));
+    }
+
+    /// P-5.10: Der Touchdown traegt die Nummer des Aufsetzers (nach einem
+    /// eingefrorenen Touch-and-Go die 2) und den Hash der Eingabe der
+    /// Sofortnote — derselbe Hash, den ein Dokument aus dieser Eingabe haette.
+    #[test]
+    fn touchdown_nennt_seq_und_hash_der_sofortnote() {
+        let f = fixture();
+        mit_landung(&f);
+        let mut st = f.stats.lock().unwrap();
+        assert_eq!(touchdown_seq(&st), 1);
+        let arr = aufsetz_flughafen(&f, &st);
+        let eingabe = landungs_bewertungseingabe(&f, &st, muster_fuer_landung(&st, &f.aircraft_icao), &arr);
+        let begleitung = landungs_begleitung(&f, &st, &eingabe, muster_fuer_landung(&st, &f.aircraft_icao), &arr);
+        let doc = crate::landungs_eingabe::dokument("test-pirep", 1, crate::landungs_eingabe::Art::Landung, None, &eingabe, &begleitung, &[], &None);
+        assert_eq!(Some(touchdown_input_sha256(&f, &st).as_str()), doc["eingabe"]["meta"]["input_sha256"].as_str());
+        st.aufsetzer_eingefroren.push((eingabe, Vec::new(), begleitung));
+        assert_eq!(touchdown_seq(&st), 2);
+        // Gegenprobe: eine andere Sinkrate ergibt einen anderen Hash.
+        let vorher = touchdown_input_sha256(&f, &st);
+        st.landing_rate_fpm = Some(-650.0);
+        st.landing_peak_vs_fpm = Some(-650.0);
+        assert_ne!(touchdown_input_sha256(&f, &st), vorher);
+    }
+
     // ── Abgabe-Sperre: haengt nicht vom Modul ab ────────────────────────
 
     /// Mit gemessener Landung keine Rueckfrage, ohne sie nach langer

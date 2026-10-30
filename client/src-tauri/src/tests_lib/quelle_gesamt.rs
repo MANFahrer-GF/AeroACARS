@@ -171,6 +171,14 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `BewertungEingabe` (je eingereihtem Dokument: `input_sha256`, Groesse).
 /// Tests `recorder::v3_ereignis_tests`,
 /// `landungs_eingabe::tests::neue_ereignisse_stehen_an_ihren_stellen`.
+/// — plus P-5.10: `seq`/`input_sha256` in Touchdown- und PIREP-Nutzlast,
+/// `runtime_bundle_id` im Touchdown (`touchdown_seq`,
+/// `touchdown_input_sha256` = Eingabe der Sofortnote am Aufsetz-Flughafen;
+/// `pirep_eingabe_kennung` = Dokument der Landung aus derselben
+/// `einreichungs_rechnung`, die `build_pirep_payload` jetzt einmal bildet);
+/// `landungs_eingabe::input_sha256` als eine Stelle fuer den Hash. Tests
+/// `sofortnote_abnehmer_tests::pirep_nutzlast_nennt_das_eingabe_dokument`,
+/// `touchdown_nennt_seq_und_hash_der_sofortnote`, `aeroacars-mqtt::p5_10_felder_rundlauf`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -181,4 +189,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "2e832385af31917e13223ffdc45acded358acc5025dc5df88d5f8f8824abc540";
+const HASH_VOR_DER_ZERLEGUNG: &str = "5ecd6173e64cf71df2fe81dfc69637be091dff9a3bb3d386d97dd4b292b95d8b";

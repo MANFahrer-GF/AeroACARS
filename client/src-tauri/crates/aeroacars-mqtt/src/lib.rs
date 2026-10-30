@@ -1116,6 +1116,17 @@ pub struct TouchdownPayload {
     /// `vorlaeufig` (eingebautes Modul), `modulfehler` (beide gescheitert).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bewertung_status: Option<String>,
+    /// v3 (P-5.10): Paketstand des Flugs (Flug-Pin, `<Generation>-<sha12>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_bundle_id: Option<String>,
+    /// v3 (P-5.10): Nummer dieses Aufsetzers im Flug (1 …), wie `seq` des
+    /// Eingabe-Dokuments (P-6.01).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u32>,
+    /// v3 (P-5.10): SHA-256 der Eingabe der Sofortnote (`eingang` +
+    /// `herkunft`, wie `meta.input_sha256` des Dokuments).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_sha256: Option<String>,
 
     // ── v1.7.0 Bahndisziplin ─────────────────────────────────────────
     //
@@ -1715,6 +1726,13 @@ pub struct PirepPayload {
     /// `vorlaeufig` (eingebautes Modul), `modulfehler` (beide gescheitert).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bewertung_status: Option<String>,
+    /// v3 (P-5.10): `seq` des Eingabe-Dokuments der Landung, die der PIREP
+    /// bewertet (P-6.01). `None` ohne Dokument (kein Aufsetzfenster).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u32>,
+    /// v3 (P-5.10): `meta.input_sha256` genau dieses Dokuments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_sha256: Option<String>,
 
     /// v0.20 (Process-Integrity). Deliberately its OWN namespace, separate
     /// from `accident_kind`/`accident_reasons` above: those describe an
@@ -3756,6 +3774,31 @@ mod herkunft_auf_der_leitung {
             Some(3666.0)
         );
         assert_eq!(obj.get("bahn_revision").and_then(|v| v.as_u64()), Some(7));
+    }
+
+    /// v3 (P-5.10): die neuen Touchdown-Felder gehen auf die Leitung und kommen
+    /// zurueck; ohne Wert fehlen sie ganz, und eine 2.x-Nachricht ohne sie
+    /// liest sich weiter (P-14.06).
+    #[test]
+    fn p5_10_felder_rundlauf() {
+        let td = TouchdownPayload {
+            runtime_bundle_id: Some("3-abcdef123456".into()),
+            seq: Some(2),
+            input_sha256: Some("ab".repeat(32)),
+            ..Default::default()
+        };
+        let v = serde_json::to_value(&td).unwrap();
+        assert_eq!((v["runtime_bundle_id"].as_str(), v["seq"].as_u64()), (Some("3-abcdef123456"), Some(2)));
+        let zurueck: TouchdownPayload = serde_json::from_value(v).unwrap();
+        assert_eq!((zurueck.seq, zurueck.input_sha256.as_deref().map(str::len)), (Some(2), Some(64)));
+        let leer = serde_json::to_value(TouchdownPayload::default()).unwrap();
+        for f in ["runtime_bundle_id", "seq", "input_sha256"] {
+            assert!(leer.get(f).is_none(), "{f} ohne Wert nicht auf der Leitung");
+        }
+        // PirepPayload: Leitung geprueft in `sofortnote_abnehmer_tests`
+        // (`pirep_nutzlast_nennt_das_eingabe_dokument`).
+        let alt: TouchdownPayload = serde_json::from_value(serde_json::json!({ "ts": 1, "pirep_id": "P", "vs_fpm": -120 })).unwrap();
+        assert_eq!((alt.seq, alt.input_sha256, alt.runtime_bundle_id), (None, None, None));
     }
 
     /// Score-Version 24: `approach_wind` liegt als Teilobjekt im Touchdown —

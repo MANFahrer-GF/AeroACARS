@@ -83,8 +83,7 @@ pub(crate) fn dokument(
 ) -> serde_json::Value {
     let herkunft = &begleitung.herkunft;
     let eingang_json = serde_json::json!({ "landung": eingang });
-    let gehasht = serde_json::json!({ "eingang": eingang_json, "herkunft": herkunft });
-    let input_sha256 = hex(&Sha256::digest(gehasht.to_string().as_bytes()));
+    let input_sha256 = input_sha256(eingang, herkunft);
     let ergebnis = match ergebnis {
         Some((a, _)) => {
             let mut v = serde_json::to_value(a).unwrap_or(serde_json::Value::Null);
@@ -120,6 +119,13 @@ pub(crate) fn dokument(
         "fenster": { "proben": fenster },
         "ergebnis": ergebnis,
     })
+}
+
+/// `meta.input_sha256`: SHA-256 ueber `{"eingang": {"landung": …},
+/// "herkunft": …}`. Eine Stelle fuer Dokument und MQTT-Nutzlasten (P-5.10).
+pub(crate) fn input_sha256(eingang: &LandingScoringInput, herkunft: &serde_json::Value) -> String {
+    let gehasht = serde_json::json!({ "eingang": { "landung": eingang }, "herkunft": herkunft });
+    hex(&Sha256::digest(gehasht.to_string().as_bytes()))
 }
 
 fn hex(b: &[u8]) -> String {

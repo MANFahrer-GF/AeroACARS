@@ -21796,12 +21796,14 @@ fn build_pirep_payload(
     let actual_burn = actual_burn_for_record(&stats);
     // Codex-Befund zu P-4.40: die Rechnung dieser Einreichung, nicht eine
     // eigene (siehe `einreichungs_rechnung`).
-    let bewertet = einreichungs_rechnung(flight, &stats, effective_arr_icao).ergebnis;
+    let rechnung = einreichungs_rechnung(flight, &stats, effective_arr_icao);
+    let bewertet = rechnung.ergebnis.clone();
     let payload_sub_scores = bewertet.as_ref().map(|(a, _)| a.teilnoten.clone()).unwrap_or_default();
     let aggregate_master = bewertet.as_ref().and_then(|(a, _)| a.gesamt);
     // Score-Version 19: kein Rueckfall auf die Touchdown-Klasse — sie kennt
     // keinen Deckel. Ohne Gesamtnote (keine Sinkrate) gibt es keine Note.
     let payload_landing_score = aggregate_master.map(|m| m as i32);
+    let (eingabe_seq, eingabe_sha256) = pirep_eingabe_kennung(flight, &stats, &rechnung);
     aeroacars_mqtt::PirepPayload {
         ts: Utc::now().timestamp_millis(),
         // v0.11.1: Pilot-Client-Version mitsenden
@@ -22036,6 +22038,9 @@ fn build_pirep_payload(
         // mehr — siehe `sub_rollout_v2`.
         score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
         bewertung_status: Some(crate::bewertung::status_text(&bewertet).to_string()),
+        // v3 (P-5.10): Nummer und Hash des Eingabe-Dokuments der Landung.
+        seq: eingabe_seq,
+        input_sha256: eingabe_sha256,
         client_health: build_client_health_report(&stats),
         // Lernpaket AP4/AP5 (Entscheid Thomas 29.09.2026): Forensik ohne
         // Note, im finalen Stand — `apply_finalized_runway_correlation` lief
@@ -24255,6 +24260,38 @@ fn einreichungs_rechnung(flight: &ActiveFlight, stats: &FlightStats, effective_a
         Some(r) if r.arr == effective_arr_icao => r.clone(),
         _ => pirep_rechnung_bilden(flight, stats, effective_arr_icao),
     }
+}
+
+/// v3 (P-5.10): Nummer des laufenden Aufsetzers — die Touch-and-Go davor sind
+/// schon eingefroren (P-4.13), er bekommt die naechste Nummer wie sein
+/// Eingabe-Dokument.
+fn touchdown_seq(stats: &FlightStats) -> u32 {
+    stats.aufsetzer_eingefroren.len() as u32 + 1
+}
+
+/// v3 (P-5.10): Hash der Eingabe, mit der die Sofortnote rechnet (am
+/// Aufsetz-Flughafen, wie `touchdown_bewertung_festhalten`) — ueber dieselbe
+/// Funktion wie `meta.input_sha256` des Dokuments.
+fn touchdown_input_sha256(flight: &ActiveFlight, stats: &FlightStats) -> String {
+    let arr = aufsetz_flughafen(flight, stats);
+    let eingabe = landungs_bewertungseingabe(flight, stats, muster_fuer_landung(stats, &flight.aircraft_icao), &arr);
+    landungs_eingabe::input_sha256(&eingabe, &landungs_herkunft(flight, stats, &eingabe, &arr))
+}
+
+/// v3 (P-5.10): `seq` und `input_sha256` des Eingabe-Dokuments der Landung
+/// dieser Einreichung — dieselbe Rechnung (`einreichungs_rechnung`) und
+/// dieselbe Herkunft wie in `eingabe_teile`. Ohne Aufsetzfenster gibt es kein
+/// Dokument, dann beides `None`.
+fn pirep_eingabe_kennung(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    rechnung: &PirepRechnung,
+) -> (Option<u32>, Option<String>) {
+    if stats.landung_fenster.is_empty() {
+        return (None, None);
+    }
+    let herkunft = landungs_herkunft(flight, stats, &rechnung.eingabe, &rechnung.arr);
+    (Some(touchdown_seq(stats)), Some(landungs_eingabe::input_sha256(&rechnung.eingabe, &herkunft)))
 }
 
 /// Note, Buchstabe und Herkunft fuer den Touchdown-Payload (live/Discord):
@@ -39552,6 +39589,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
                                 // P-4.40 (Kap. 4.5): Herkunft der Note, siehe `score_grade`.
                                 bewertung_status: payload_bewertung_status,
+                                // v3 (P-5.10): Paketstand, Nummer des Aufsetzers
+                                // und Hash der Eingabe der Sofortnote.
+                                runtime_bundle_id: laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
+                                seq: Some(touchdown_seq(&stats)),
+                                input_sha256: Some(touchdown_input_sha256(&flight, &stats)),
                                 // ── v1.7.0 Bahndisziplin ─────────────────
                                 //
                                 // Dieselbe Ableitung wie fuer die Anzeige im
