@@ -12,7 +12,7 @@ vi.mock("../lib/ipc", () => ({
   isTauri: true,
 }));
 
-import { MeineAnfragen, type TicketEintrag } from "./MeineAnfragen";
+import { KURZ, MeineAnfragen, type TicketEintrag } from "./MeineAnfragen";
 
 beforeAll(async () => {
   if (!i18next.isInitialized) {
@@ -76,6 +76,35 @@ describe("MeineAnfragen", () => {
     expect(invokeMock).toHaveBeenCalledTimes(2);
     expect(screen.getByText("TKT-2026-00014")).toBeTruthy();
     expect(screen.getByText("TKT-2026-00013")).toBeTruthy();
+  });
+
+  it("zeigt bei vielen Anfragen nur KURZ, Wartendes zuerst; Rest aufklappbar", async () => {
+    const viele: TicketEintrag[] = Array.from({ length: 10 }, (_, i) => ({
+      ...alt,
+      ticket_number: `TKT-2026-${String(i + 1).padStart(5, "0")}`,
+      betreff: `Anfrage ${i + 1}`,
+      letzte_aktivitaet: `2026-10-${String(10 + i).padStart(2, "0")}T10:00:00+00:00`,
+    }));
+    // Die älteste hat eine neue Antwort → muss trotzdem oben stehen.
+    viele[0] = { ...viele[0], neue_antwort: true };
+    invokeMock.mockResolvedValue(viele);
+    await act(async () => {
+      render(<MeineAnfragen sichtbar neuLaden={null} oeffnen={() => {}} />);
+    });
+    const betreffe = () => screen.getAllByText(/^Anfrage \d+$/).map((e) => e.textContent);
+    expect(betreffe()).toEqual(["Anfrage 1", "Anfrage 10", "Anfrage 9"]);
+    fireEvent.click(screen.getByText("Alle 10 Anfragen anzeigen"));
+    expect(betreffe()).toHaveLength(10);
+    fireEvent.click(screen.getByText("Weniger anzeigen"));
+    expect(betreffe()).toHaveLength(KURZ);
+  });
+
+  it("ohne Aufklapp-Knopf, solange alles passt", async () => {
+    invokeMock.mockResolvedValue([neu, alt]);
+    await act(async () => {
+      render(<MeineAnfragen sichtbar neuLaden={null} oeffnen={() => {}} />);
+    });
+    expect(screen.queryByText(/Anfragen anzeigen/)).toBeNull();
   });
 
   it("lädt nicht, solange der Reiter verborgen ist", async () => {

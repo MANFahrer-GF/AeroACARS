@@ -5148,7 +5148,9 @@
       "laedt": "Caricamento …",
       "leer": "Non hai ancora inviato richieste.",
       "neue_antwort": "Nuova risposta",
-      "ohne_status": "senza stato"
+      "ohne_status": "senza stato",
+      "alle": "Mostra tutte le {{anzahl}} richieste",
+      "weniger": "Mostra meno"
     }
   }
 }

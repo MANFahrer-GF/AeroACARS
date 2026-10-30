@@ -4,7 +4,10 @@
 // Aktivität, neue Antwort; ein Klick öffnet das Ticket auf der Website.
 // Geladen über `hilfe_tickets` (Kern, Schlüssel bleibt dort), neu beim
 // Sichtbarwerden und nach jedem Senden (`neuLaden` ändert sich).
-import { useCallback, useEffect, useState } from "react";
+// Kurz gehalten (Thomas 30.10.: bei zehn Tickets musste man zum Formular
+// scrollen): nur die ersten KURZ stehen da, was auf dich wartet zuerst,
+// sonst jüngste Aktivität; der Rest hinter „Alle N Anfragen anzeigen“.
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../lib/ipc";
 
@@ -32,6 +35,20 @@ function ton(s: TicketEintrag["status"]): string {
   return "offen";
 }
 
+/** So viele Anfragen stehen ohne Aufklappen da. */
+export const KURZ = 3;
+
+const wartet = (a: TicketEintrag) => a.neue_antwort || !!a.status?.wartet_auf_pilot;
+const zeit = (a: TicketEintrag) => {
+  const ms = a.letzte_aktivitaet ? Date.parse(a.letzte_aktivitaet) : NaN;
+  return Number.isNaN(ms) ? 0 : ms;
+};
+
+/** Was auf den Piloten wartet zuerst, dann jüngste Aktivität zuerst. */
+export function sortiert(liste: TicketEintrag[]): TicketEintrag[] {
+  return [...liste].sort((x, y) => Number(wartet(y)) - Number(wartet(x)) || zeit(y) - zeit(x));
+}
+
 export function MeineAnfragen({
   sichtbar,
   neuLaden,
@@ -47,6 +64,9 @@ export function MeineAnfragen({
   const [fehler, setFehler] = useState<string | null>(null);
   const [laedt, setLaedt] = useState(false);
   const [zaehler, setZaehler] = useState(0);
+  const [alle, setAlle] = useState(false);
+  const reihe = useMemo(() => (liste ? sortiert(liste) : []), [liste]);
+  const gezeigt = alle ? reihe : reihe.slice(0, KURZ);
 
   const laden = useCallback(() => setZaehler((z) => z + 1), []);
 
@@ -95,7 +115,7 @@ export function MeineAnfragen({
       {!fehler && liste !== null && liste.length === 0 && <p className="settings__row-hint">{t("hilfe.anfragen.leer")}</p>}
       {liste !== null && liste.length > 0 && (
         <ul className="meine-anfragen__liste">
-          {liste.map((a) => (
+          {gezeigt.map((a) => (
             <li key={a.ticket_number} className={`meine-anfragen__eintrag${a.status?.geschlossen || a.status?.geloest ? " meine-anfragen__eintrag--zu" : ""}`}>
               <button
                 type="button"
@@ -117,6 +137,16 @@ export function MeineAnfragen({
             </li>
           ))}
         </ul>
+      )}
+      {reihe.length > KURZ && (
+        <button
+          type="button"
+          className="button button--ghost meine-anfragen__mehr"
+          aria-expanded={alle}
+          onClick={() => setAlle((x) => !x)}
+        >
+          {alle ? t("hilfe.anfragen.weniger") : t("hilfe.anfragen.alle", { anzahl: reihe.length })}
+        </button>
       )}
     </div>
   );

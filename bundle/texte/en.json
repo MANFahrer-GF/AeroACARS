@@ -5148,7 +5148,9 @@
       "laedt": "Loading …",
       "leer": "You have not sent a request yet.",
       "neue_antwort": "New reply",
-      "ohne_status": "no status"
+      "ohne_status": "no status",
+      "alle": "Show all {{anzahl}} requests",
+      "weniger": "Show fewer"
     }
   }
 }

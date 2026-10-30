@@ -5148,7 +5148,9 @@
       "laedt": "Lädt …",
       "leer": "Du hast noch keine Anfrage gestellt.",
       "neue_antwort": "Neue Antwort",
-      "ohne_status": "ohne Status"
+      "ohne_status": "ohne Status",
+      "alle": "Alle {{anzahl}} Anfragen anzeigen",
+      "weniger": "Weniger anzeigen"
     }
   }
 }
