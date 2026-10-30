@@ -13,6 +13,14 @@ name: CI
 # auf einem Windows-Runner bauen/testen. Ohne diese CI muesste man dafuer
 # einen Release-Tag ausspielen (= ungetesteter Code an Piloten) oder lokal
 # einen Mac nutzen. Diese Datei macht „per Push verifizieren" moeglich.
+#
+# v3 (Thomas 30.10.2026): Oberflaeche und Texte sind Paketinhalt (bundle.yml),
+# dafuer entsteht kein neuer Client. Deshalb bauen Windows/macOS/UI-Selbsttest
+# nur noch, wenn sich der Kern aendert (client/src-tauri, Modul-Skripte, diese
+# Datei); Linux-Rust zusaetzlich bei bundle/ (der Kern liest Texte und Tabellen
+# per include_str! ein). Die Oberflaechen-Tests laufen immer. Welcher Stand
+# schon geprueft ist, steht als Cache-Marke am Fingerabdruck der Baeume — ein
+# abgebrochener Lauf verschluckt so keine Kernaenderung.
 
 on:
   push:
@@ -20,11 +28,13 @@ on:
     paths:
       - 'client/**'
       - 'scripts/**'
+      - 'bundle/**'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'client/**'
       - 'scripts/**'
+      - 'bundle/**'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -33,6 +43,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ─── Was hat sich seit dem letzten gruenen Lauf geaendert? ──────────
+  aenderungen:
+    name: Kern oder nur Paket?
+    runs-on: ubuntu-latest
+    outputs:
+      kern: ${{ github.event_name == 'workflow_dispatch' || steps.kern.outputs.cache-hit != 'true' }}
+      linux: ${{ github.event_name == 'workflow_dispatch' || steps.linux.outputs.cache-hit != 'true' }}
+      kern_marke: ${{ steps.marke.outputs.kern }}
+      linux_marke: ${{ steps.marke.outputs.linux }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fingerabdruck von Kern und Paket
+        id: marke
+        run: |
+          kern=$(git ls-tree HEAD client/src-tauri scripts/bundle .github/workflows/ci.yml $(git ls-files 'scripts/ui-selbsttest*') | sha256sum | cut -c1-20)
+          linux=$( (echo "$kern"; git ls-tree HEAD bundle) | sha256sum | cut -c1-20)
+          echo "kern=$kern" >> "$GITHUB_OUTPUT"
+          echo "linux=$linux" >> "$GITHUB_OUTPUT"
+      - name: Kern schon geprueft?
+        id: kern
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-marke
+          key: ci-kern-ok-${{ steps.marke.outputs.kern }}
+          lookup-only: true
+      - name: Kern + Paket auf Linux schon geprueft?
+        id: linux
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-marke
+          key: ci-linux-ok-${{ steps.marke.outputs.linux }}
+          lookup-only: true
+      - name: Ergebnis
+        run: |
+          echo "Windows/macOS/UI-Selbsttest: ${{ steps.kern.outputs.cache-hit == 'true' && 'Kern unveraendert und schon gruen — entfaellt' || 'laufen' }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Linux-Rust: ${{ steps.linux.outputs.cache-hit == 'true' && 'Kern und Paket unveraendert — entfaellt' || 'laeuft' }}" | tee -a "$GITHUB_STEP_SUMMARY"
+
   # ─── Windows: der einzige Runner, der den MSFS-Adapter kompiliert ────
   # sim-msfs (telemetry.rs, Lockstep, from_block-Byte-Tests) ist
   # windows-only. `cargo test --workspace` baut hier den kompletten
@@ -41,6 +88,8 @@ jobs:
   # Verifikation fuer Premium-Profil-Arbeit.
   rust-windows:
     name: Rust (Windows — MSFS-Adapter + Lockstep)
+    needs: aenderungen
+    if: needs.aenderungen.outputs.kern == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -84,6 +133,8 @@ jobs:
   # Vergleich mit Windows.
   rust-macos:
     name: Rust (macOS — Workspace + Replay)
+    needs: aenderungen
+    if: needs.aenderungen.outputs.kern == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -134,6 +185,8 @@ jobs:
   # Zusammenfassung des Laufs und als Artefakt.
   ui-selbsttest:
     name: UI-Selbsttest (${{ matrix.os }})
+    needs: aenderungen
+    if: needs.aenderungen.outputs.kern == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -183,11 +236,13 @@ jobs:
           name: ui-selbsttest-${{ runner.os }}
           path: ${{ runner.temp }}/lauf*.json
 
-  # ─── Ubuntu: schneller Cross-Check (sim-core / sim-xplane) + Frontend ─
+  # ─── Ubuntu: schneller Cross-Check (sim-core / sim-xplane) ───────────
   # Spiegelt das release.yml-Preflight (cargo check --all-targets nach
   # apt-Deps). Faengt „lokal gruen, remote rot" durch ungestagete Files.
   rust-linux:
-    name: Rust (Linux — Workspace-Check) + Frontend
+    name: Rust (Linux — Workspace-Check + Paketdateien)
+    needs: aenderungen
+    if: needs.aenderungen.outputs.linux == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -228,6 +283,11 @@ jobs:
       - name: cargo test (sim-core + sim-xplane — laufen auf Linux)
         working-directory: client/src-tauri
         run: cargo test -p sim-core -p sim-xplane
+      # Diese Crates lesen Texte und Tabellen aus bundle/ per include_str!
+      # ein — eine reine Paketaenderung kann sie brechen.
+      - name: cargo test (Crates, die bundle/ einlesen)
+        working-directory: client/src-tauri
+        run: cargo test -p landing-scoring -p cabin-announcements -p hoppie-protocol -p paket-endpunkte
       - name: cargo check (ganzer Workspace)
         working-directory: client/src-tauri
         run: cargo check --all-targets
@@ -242,6 +302,17 @@ jobs:
       # (sechs echte Fluege, Takt fuer Takt gegen Ablage und Planer nativ).
       - name: Kabinenmodul gleich dem Quellstand
         run: sh scripts/bundle/modul-bauen.sh kabine --pruefen
+
+  # ─── Oberflaeche: laeuft immer (bundle.yml baut sie, testet sie nicht) ─
+  oberflaeche:
+    name: Oberflaeche (Typpruefung, Tests, Waechter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
       - name: Frontend deps
         working-directory: client
         run: npm ci
@@ -267,3 +338,24 @@ jobs:
           node scripts/pruefe-literale.mjs
           node scripts/pruefe-schriftzeichen.mjs --selbsttest
           node scripts/pruefe-schriftzeichen.mjs
+
+  # ─── Gruenen Stand merken (siehe Kopf): naechster Lauf ueberspringt ihn ─
+  merken:
+    name: Gepruefte Staende merken
+    needs: [aenderungen, rust-windows, rust-macos, mac-gleich-windows, ui-selbsttest, rust-linux]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: mkdir .ci-marke && echo "${{ github.sha }}" > .ci-marke/commit
+      - name: Kern gruen
+        if: needs.rust-windows.result == 'success' && needs.rust-macos.result == 'success' && needs.mac-gleich-windows.result == 'success' && needs.ui-selbsttest.result == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-marke
+          key: ci-kern-ok-${{ needs.aenderungen.outputs.kern_marke }}
+      - name: Kern + Paket auf Linux gruen
+        if: needs.rust-linux.result == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-marke
+          key: ci-linux-ok-${{ needs.aenderungen.outputs.linux_marke }}
