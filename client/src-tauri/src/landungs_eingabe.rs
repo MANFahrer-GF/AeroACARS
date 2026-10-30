@@ -14,7 +14,11 @@
 //! `landing_inputs/abgelehnt/` (Diagnose, kein endloses Wiederholen).
 //!
 //! Vertrag (Server `recorder/src/landingInput.ts`): gzip-JSON
-//! `{eingabe: {meta, eingang}, fenster: {proben}, ergebnis}`.
+//! `{eingabe: {meta, eingang, herkunft}, fenster: {proben}, ergebnis}`.
+//! `herkunft` (P-9.44, Kap. 5.2) erklaert `eingang` und geht nie in die
+//! Rechnung ein: Modul und Server rechnen nur aus `eingang`.
+//! `meta.input_sha256` = SHA-256 ueber `{"eingang": …, "herkunft": …}` —
+//! die Herkunft ist Teil der Eingabe, `meta` (mit dem Hash selbst) nicht.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -53,11 +57,13 @@ pub(crate) fn dokument(
     art: Art,
     runtime_bundle_id: Option<String>,
     eingang: &LandingScoringInput,
+    herkunft: &serde_json::Value,
     fenster: &[TouchdownWindowSample],
     ergebnis: &Option<(landing_scoring::wasm::Ausgabe, Status)>,
 ) -> serde_json::Value {
     let eingang_json = serde_json::json!({ "landung": eingang });
-    let input_sha256 = hex(&Sha256::digest(eingang_json.to_string().as_bytes()));
+    let gehasht = serde_json::json!({ "eingang": eingang_json, "herkunft": herkunft });
+    let input_sha256 = hex(&Sha256::digest(gehasht.to_string().as_bytes()));
     let ergebnis = match ergebnis {
         Some((a, _)) => {
             let mut v = serde_json::to_value(a).unwrap_or(serde_json::Value::Null);
@@ -80,6 +86,7 @@ pub(crate) fn dokument(
                 "client_version": env!("CARGO_PKG_VERSION"),
             },
             "eingang": eingang_json,
+            "herkunft": herkunft,
         },
         "fenster": { "proben": fenster },
         "ergebnis": ergebnis,
@@ -208,7 +215,8 @@ mod tests {
     fn dokument_nach_vertrag() {
         let e = LandingScoringInput { vs_fpm: Some(-200.0), ..Default::default() };
         let ergebnis = crate::bewertung::bewerten(&e);
-        let d = dokument("PIREP1", 1, Art::Landung, Some("3-abcdef123456".into()), &e, &[], &ergebnis);
+        let h = serde_json::json!({ "bahn": { "quelle": { "art": "ourairports" } } });
+        let d = dokument("PIREP1", 1, Art::Landung, Some("3-abcdef123456".into()), &e, &h, &[], &ergebnis);
         assert_eq!(d["eingabe"]["meta"]["seq"], 1);
         assert_eq!(d["eingabe"]["meta"]["art"], "landung");
         assert_eq!(d["eingabe"]["meta"]["input_sha256"].as_str().unwrap().len(), 64);
@@ -216,8 +224,35 @@ mod tests {
         assert_eq!(d["ergebnis"]["fassung"], 27);
         assert_eq!(d["ergebnis"]["bewertung_status"], "endgueltig");
         assert!(d["fenster"]["proben"].as_array().unwrap().is_empty());
-        let ohne = dokument("PIREP1", 1, Art::Landung, None, &e, &[], &None);
+        assert_eq!(d["eingabe"]["herkunft"], h);
+        let ohne = dokument("PIREP1", 1, Art::Landung, None, &e, &h, &[], &None);
         assert_eq!(ohne["ergebnis"]["bewertung_status"], "modulfehler");
+    }
+
+    /// P-9.44: Eine andere OurAirports-Fassung (nur `herkunft` anders) aendert
+    /// weder die Modul-Eingabe noch das Ergebnis — aber den Hash, denn die
+    /// Herkunft ist Teil der Eingabe. Gegenprobe: eine andere Sinkrate in
+    /// `eingang` aendert das Ergebnis.
+    #[test]
+    fn herkunft_dokumentiert_nur() {
+        let herkunft = |commit: &str| serde_json::json!({ "bahn": { "quelle": { "art": "ourairports", "ourairports_commit": commit } } });
+        let doc = |e: &LandingScoringInput, h: &serde_json::Value| {
+            dokument("P1", 1, Art::Landung, None, e, h, &[], &crate::bewertung::bewerten(e))
+        };
+        let e = LandingScoringInput { vs_fpm: Some(-180.0), ..Default::default() };
+        let a = doc(&e, &herkunft("aaaa111"));
+        let b = doc(&e, &herkunft("bbbb222"));
+        assert_ne!(a["eingabe"]["herkunft"], b["eingabe"]["herkunft"]);
+        assert_eq!(a["eingabe"]["eingang"], b["eingabe"]["eingang"], "Modul-Eingabe unabhaengig von der Herkunft");
+        assert_eq!(a["ergebnis"], b["ergebnis"], "Note unabhaengig von der Herkunft");
+        assert_ne!(a["eingabe"]["meta"]["input_sha256"], b["eingabe"]["meta"]["input_sha256"], "Hash deckt die Herkunft");
+        // Hash = SHA-256 ueber genau {eingang, herkunft} des Dokuments.
+        let nach = serde_json::json!({ "eingang": a["eingabe"]["eingang"], "herkunft": a["eingabe"]["herkunft"] });
+        assert_eq!(a["eingabe"]["meta"]["input_sha256"], hex(&Sha256::digest(nach.to_string().as_bytes())));
+        // Gegenprobe: dieselbe Herkunft, andere Sinkrate → anderes Ergebnis.
+        let hart = LandingScoringInput { vs_fpm: Some(-900.0), ..Default::default() };
+        let c = doc(&hart, &herkunft("aaaa111"));
+        assert_ne!(a["ergebnis"], c["ergebnis"], "Gegenprobe: eingang wirkt");
     }
 
     #[test]

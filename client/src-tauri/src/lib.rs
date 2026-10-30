@@ -5789,10 +5789,11 @@ struct FlightStats {
     /// v3 (P-4.11, P-7.02): Aufsetzfenster der letzten Landung (17 Kanaele)
     /// fuer das Eingabe-Dokument an live. Nur im Speicher.
     landung_fenster: Vec<TouchdownWindowSample>,
-    /// v3 (P-4.13): Eingabe und Fenster jedes Touch-and-Go, eingefroren VOR
-    /// dem Zuruecksetzen der Landungsfelder; beim Abgeben je ein Dokument
-    /// (seq 1 …), die letzte Landung bekommt die naechste Nummer.
-    aufsetzer_eingefroren: Vec<(landing_scoring::LandingScoringInput, Vec<TouchdownWindowSample>)>,
+    /// v3 (P-4.13): Eingabe, Fenster und Herkunft (P-9.44) jedes
+    /// Touch-and-Go, eingefroren VOR dem Zuruecksetzen der Landungsfelder;
+    /// beim Abgeben je ein Dokument (seq 1 …), die letzte Landung bekommt die
+    /// naechste Nummer.
+    aufsetzer_eingefroren: Vec<(landing_scoring::LandingScoringInput, Vec<TouchdownWindowSample>, serde_json::Value)>,
     /// v1.6.12 — die letzten Telemetrieproben fuer die Replay-Erkennung.
     ///
     /// Der Aufsetzpuffer taugt dafuer nicht: er reicht nur 2,5 s vor den
@@ -26003,6 +26004,94 @@ fn landungs_bewertungseingabe(
     scoring_input
 }
 
+/// v3 (P-9.44, Kap. 5.2): Der `herkunft`-Teil des Eingabe-Dokuments — woher
+/// die Werte in `eingang` kamen. Reine Dokumentation: Die Bewertung liest nur
+/// `eingang` (`crate::bewertung::bewerten` nimmt allein den
+/// `LandingScoringInput`, der Server gibt dem Modul nur `eingang`). Eine neue
+/// OurAirports-Fassung aendert damit nie die Note eines gespeicherten Flugs.
+/// Gebaut im selben Augenblick wie die Eingabe (beim Touch-and-Go VOR dem
+/// Zuruecksetzen der Landungsfelder, P-4.13).
+fn landungs_herkunft(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    eingabe: &landing_scoring::LandingScoringInput,
+    effective_arr_icao: &str,
+) -> serde_json::Value {
+    let bahn_art = match (stats.szenerie_uebernahme.as_ref(), stats.runway_source) {
+        (Some(b), _) if !b.uebernommen.is_empty() => Some("szenerie"),
+        (_, Some(runway::RunwaySource::Navigraph)) => Some("navigraph"),
+        (_, Some(runway::RunwaySource::OurAirportsFallback)) => Some("ourairports"),
+        _ => None,
+    };
+    let stand = laufzeit_paket::stand();
+    serde_json::json!({
+        // Kennung des Aufsetzers; daran traegt `landung_beim_wegsteigen_
+        // abschliessen` die Touch-and-Go-Entscheidung nach (Codex 30.10.).
+        "aufsetzen": stats.landing_at.or(stats.sampler_touchdown_at),
+        "sinkrate": {
+            "landing_source": stats.landing_source,
+            "landing_confidence": stats.landing_confidence,
+            "vs_quelle": stats.landing_vs_source,
+            "sim_wert_fpm": stats.landing_sim_referenz_fpm,
+            "landing_analysis": stats.landing_analysis,
+            "hopser": stats.bounce_count,
+            "leichte_hopser": stats.light_bounce_count,
+        },
+        "bahn": {
+            // Dieselbe Gruppe wie im Touchdown-Payload (eine Quelle).
+            "zuordnung": bahn_herkunft(stats),
+            "runway_nav_geometry": stats.runway_nav_geometry,
+            "tch_ist_ft": stats.runway_tch_actual_ft,
+            "szenerie_stand": stats.korrelierter_szenerie_stand,
+            "korrekturen": stats.szenerie_uebernahme,
+            "rollspur": {
+                "bahn_raeum_laengs_m": stats.bahn_raeum_laengs_m,
+                "bahn_raeum_gs_kt": stats.bahn_raeum_gs_kt,
+                "bahn_raeum_seite": stats.bahn_raeum_seite,
+                "bahn_max_querversatz_m": stats.bahn_max_querversatz_m,
+                "bahn_overrun_m": stats.bahn_overrun_m,
+                "bahn_proben": stats.bahn_proben,
+                "bahn_fenster_zu": stats.bahn_fenster_zu,
+            },
+            "quelle": {
+                "art": bahn_art,
+                // Immer: Die OurAirports-Tabelle dieses Laufs wird auch bei
+                // einem Navigraph-Treffer gelesen (Belag, Phantom-Bahnen).
+                // Der eingebaute Stand hat keinen Commit (Direktabruf,
+                // `runway.rs`): `null`, die Daten belegt dann `paket`
+                // (Manifest-Hash ueber die Hashes aller Dateien).
+                "ourairports_commit": stand.ourairports_commit,
+                "paket": stand.id,
+                "navigraph_zyklus": stats.runway_nav_cycle,
+                "szenerie": stats.sim_kennung,
+            },
+        },
+        "spurweite": {
+            "m": eingabe.fahrwerk_spurweite_m,
+            "quelle": match (stats.fahrwerk_spurweite_m, eingabe.fahrwerk_spurweite_m) {
+                (Some(_), _) => Some("flugzeugdatei"),
+                (None, Some(_)) => Some("typtabelle"),
+                _ => None,
+            },
+        },
+        "vref": {
+            "quelle": stats.landing_vref_source,
+            "abweichung_kt": stats.landing_vref_deviation_kt,
+            "ias_kt": stats.landing_speed_kt,
+            "formel_kt": stats.landing_vref_formel_kt,
+            "toleranz_kt": stats.landing_vref_toleranz_kt,
+            "landeklappen": stats.landing_vref_landeklappen,
+            "pmdg_vref_kt": stats.pmdg_vref_at_landing,
+        },
+        "abdeckung_fehlt": stats.landung_abdeckung_fehlt,
+        "divert_hint": stats.divert_hint,
+        "ausweichziel": { "eingereicht": effective_arr_icao, "geplant": flight.arr_airport },
+        "phasenwechsel": stats.transitions,
+        "aufsetzer": stats.touchdown_events,
+        "durchstarts": stats.go_around_count,
+    })
+}
+
 fn build_landing_record<F>(
     flight: &ActiveFlight,
     stats: &FlightStats,
@@ -26568,12 +26657,14 @@ where
 ///
 /// ⚠ Aufrufer dürfen `flight.stats` dabei NICHT halten — die Sperre ist nicht
 /// wiedereintrittsfähig, der Aufruf bliebe für immer stehen.
-/// Ein Eingabe-Dokument: Art, Eingabe, Fenster und — fuer die Landung — das
-/// Ergebnis der Einreichung. `None` = noch zu rechnen (Touch-and-Go).
+/// Ein Eingabe-Dokument: Art, Eingabe, Fenster, Herkunft (P-9.44) und — fuer
+/// die Landung — das Ergebnis der Einreichung. `None` = noch zu rechnen
+/// (Touch-and-Go).
 type EingabeTeil = (
     landungs_eingabe::Art,
     landing_scoring::LandingScoringInput,
     Vec<TouchdownWindowSample>,
+    serde_json::Value,
     Option<Option<(landing_scoring::wasm::Ausgabe, crate::bewertung::Status)>>,
 );
 
@@ -26591,16 +26682,18 @@ fn eingabe_teile(
     let mut teile: Vec<EingabeTeil> = stats
         .aufsetzer_eingefroren
         .iter()
-        .map(|(e, f)| (landungs_eingabe::Art::TouchAndGo, e.clone(), f.clone(), None))
+        .map(|(e, f, h)| (landungs_eingabe::Art::TouchAndGo, e.clone(), f.clone(), h.clone(), None))
         .collect();
     if mit_landung {
         if stats.landung_fenster.is_empty() {
             tracing::info!(pirep_id = %flight.pirep_id, "kein Aufsetzfenster im Speicher — kein Eingabe-Dokument der Landung");
         } else {
+            let herkunft = landungs_herkunft(flight, stats, &rechnung.eingabe, &rechnung.arr);
             teile.push((
                 landungs_eingabe::Art::Landung,
                 rechnung.eingabe,
                 stats.landung_fenster.clone(),
+                herkunft,
                 Some(rechnung.ergebnis),
             ));
         }
@@ -26705,7 +26798,7 @@ fn record_landing_for_filed_flight(
     let konto = crate::live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
     if let (Some(konto), Ok(daten)) = (konto, app.path().app_data_dir()) {
         let mut abgelegt = false;
-        for (i, (art, eingabe, fenster, ergebnis)) in teile.iter().enumerate() {
+        for (i, (art, eingabe, fenster, herkunft, ergebnis)) in teile.iter().enumerate() {
             let seq = i as u32 + 1;
             // Touch-and-Go: eigene Landung, eigene Rechnung — ausserhalb der
             // Sperre. Die Landung bringt ihr Ergebnis aus der Einreichung mit.
@@ -26719,6 +26812,7 @@ fn record_landing_for_filed_flight(
                 *art,
                 laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
                 eingabe,
+                herkunft,
                 fenster,
                 &ergebnis,
             );
@@ -44137,8 +44231,9 @@ fn aufsetzer_einfrieren(flight: &ActiveFlight, stats: &mut FlightStats, snap: &S
         sim_core::muster_aufloesen(snap.aircraft_icao.as_deref(), &flight.aircraft_icao, snap.aircraft_title.as_deref())
     });
     let eingabe = landungs_bewertungseingabe(flight, stats, muster.as_deref(), &flight.arr_airport);
+    let herkunft = landungs_herkunft(flight, stats, &eingabe, &flight.arr_airport);
     let fenster = std::mem::take(&mut stats.landung_fenster);
-    stats.aufsetzer_eingefroren.push((eingabe, fenster));
+    stats.aufsetzer_eingefroren.push((eingabe, fenster, herkunft));
 }
 
 fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
@@ -44176,6 +44271,16 @@ fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnaps
     // Anflug wurde abgebrochen und neu angesetzt. Reporting-only, KEIN
     // Score-Einfluss (`go_around_count` fliesst nicht in `landing_scoring`).
     stats.go_around_count = stats.go_around_count.saturating_add(1);
+    // P-9.44: Die eingefrorene Herkunft DIESES Aufsetzers (vorher in
+    // `aufsetzer_einfrieren`) bekommt seine eigene Entscheidung nach.
+    let aufsetzer = serde_json::json!(stats.touchdown_events);
+    let durchstarts = stats.go_around_count;
+    if let Some((_, _, h)) = stats.aufsetzer_eingefroren.last_mut() {
+        if h["aufsetzen"] == serde_json::json!(aufsetzen) {
+            h["aufsetzer"] = aufsetzer;
+            h["durchstarts"] = durchstarts.into();
+        }
+    }
     stats.vref_gemessen = None;
     // Lernpaket AP4/AP5: Schnitt fuer die Forensik.
     anflug_forensik_schneiden(stats, Some(now));

@@ -115,6 +115,14 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// der Huelle; im `setup` `huelle::beim_start_anwenden`; Telemetriefenster
 /// ueber `aeroui://` (`ui_lader::adresse`). Tests `huelle::tests`,
 /// `tests/befehlsliste.rs` (fenster_haben_genau_eine_rechte_datei).
+/// — plus P-9.44 (Kap. 5.2): `landungs_herkunft` baut den `herkunft`-Block
+/// des Eingabe-Dokuments (reine Dokumentation, nicht in der Rechnung);
+/// `aufsetzer_eingefroren` und `EingabeTeil` tragen ihn, eingefroren mit der
+/// Eingabe; `landungs_eingabe::dokument` bekommt ihn;
+/// `landung_beim_wegsteigen_abschliessen` traegt die Touch-and-Go-Entscheidung
+/// in die Herkunft desselben Aufsetzers nach (Codex 30.10.). Tests
+/// `landungs_eingabe::tests::herkunft_dokumentiert_nur`,
+/// `aufsetzer_einfrieren_tests`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -125,4 +133,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "535cf7fe7f32c5dfbe9139ab0c3b75b490ae8d907de59efe39a3857e25d1c08b";
+const HASH_VOR_DER_ZERLEGUNG: &str = "bc952aa42edf91365ca6468e91fe24139b6a3b6ab573e55cc59d55397f3bf2a0";

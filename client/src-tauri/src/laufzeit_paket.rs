@@ -89,6 +89,9 @@ pub(crate) struct AktiverStand {
     pub kabine_modul: &'static [u8],
     /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
     pub ui: Vec<(&'static str, &'static str)>,
+    /// OurAirports-Commit aus dem Manifest (`quelle.ourairports_commit`);
+    /// `None` beim eingebauten Stand. Herkunft im Eingabe-Dokument (P-9.44).
+    pub ourairports_commit: Option<String>,
 }
 
 static STAND: OnceLock<AktiverStand> = OnceLock::new();
@@ -140,6 +143,7 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         kabine_modul: Box::leak(p.datei(KABINE_MODUL).map_err(|e| e.to_string())?.into_boxed_slice()),
         vref: landing_scoring::vref::lesen(text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, text(d)?))).collect::<Result<_, String>>()?,
+        ourairports_commit: p.manifest.quelle.ourairports_commit.clone(),
     })
 }
 
@@ -164,6 +168,7 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         kabine_modul: eingebaute_datei(KABINE_MODUL).ok_or(KABINE_MODUL)?,
         vref: landing_scoring::vref::lesen(eingebauter_text(VREF)?)?,
         ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
+        ourairports_commit: None,
     })
 }
 
