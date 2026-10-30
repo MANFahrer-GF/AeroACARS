@@ -1271,6 +1271,8 @@ where
         // v3 (P-4.21): Anzeige-Grenzen und Soll-Band aus dem Modul.
         modul_grenzen: bewertet.as_ref().map(|(a, _)| a.grenzen.clone()),
         modul_sollband,
+        // V9 (`zusatz-1`): Zusatzfelder des Moduls, unveraendert (begrenzt).
+        zusatz: crate::bewertung::zusatz_aus(&bewertet),
         // Lernpaket AP4/AP5 (29.09.2026): reine Forensik, nur lokal.
         anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
         anflug_ruhe: stats.anflug_forensik.ruhe.clone(),

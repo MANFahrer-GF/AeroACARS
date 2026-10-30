@@ -1159,6 +1159,13 @@ pub struct TouchdownPayload {
     // Recorder korrigiert.
     #[serde(flatten)]
     pub herkunft: BahnHerkunftWire,
+    /// V9 (Fähigkeit `zusatz-1`): schemaoffene Zusatzfelder aus der Ausgabe
+    /// des Bewertungsmoduls, unverändert durchgereicht. Der Client begrenzt
+    /// sie vor dem Senden auf `landing_scoring::zusatz::ZUSATZ_MAX_BYTES`
+    /// (16 KB; P-2.14: der Broker verwirft Nachrichten über 64 KiB). Fehlt
+    /// bei 2.x-Clients und Modulen ohne Zusatz.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zusatz: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Die Bahndisziplin-Werte auf der Leitung.
@@ -4490,6 +4497,43 @@ mod tests {
             "die Spur ist {} KB gross — wird sie noch auf Dezimeter gerundet?",
             bytes / 1024
         );
+    }
+
+    /// V9 (`zusatz-1`): das Zusatz-Objekt geht unveraendert auf die Leitung
+    /// und zurueck; ohne Zusatz fehlt der Schluessel, und eine 2.x-Nachricht
+    /// ohne ihn liest sich weiter.
+    #[test]
+    fn zusatz_rundlauf_und_alte_nachricht() {
+        let ohne = TouchdownPayload::default();
+        let v = serde_json::to_value(&ohne).unwrap();
+        assert!(v.get("zusatz").is_none(), "ohne Zusatz kein Schluessel");
+        let alt: TouchdownPayload = serde_json::from_value(v).unwrap();
+        assert_eq!(alt.zusatz, None);
+
+        let z = serde_json::json!({"modul": {"kennzahl": 1.25, "liste": [1, "a", null]}});
+        let td = TouchdownPayload { zusatz: z.as_object().cloned(), ..Default::default() };
+        let v = serde_json::to_value(&td).unwrap();
+        assert_eq!(v["zusatz"], z, "unveraendert auf der Leitung");
+        let zurueck: TouchdownPayload = serde_json::from_value(v).unwrap();
+        assert_eq!(zurueck.zusatz, z.as_object().cloned());
+    }
+
+    /// V9 / P-2.14: Das groesste erlaubte Zusatz-Objekt (16 KB) plus volle
+    /// Spur plus uebriger Touchdown passt durch den Broker (64 KiB).
+    #[test]
+    fn groesster_zusatz_passt_mit_voller_spur_durch_den_broker() {
+        const BROKER_GRENZE: usize = 65_536;
+        let rand = serde_json::to_vec(&serde_json::json!({"k": ""})).unwrap().len();
+        let zusatz = serde_json::json!({"k": "a".repeat(landing_scoring::zusatz::ZUSATZ_MAX_BYTES - rand)});
+        let z = landing_scoring::zusatz::begrenzen(zusatz.as_object().cloned()).expect("genau an der Grenze");
+        let spur: Vec<LateralSampleWire> = (0..400)
+            .map(|i| LateralSampleWire { laengs_m: (5232 + i * 73) as f64 / 10.0, quer_m: -(57 + i * 37) as f64 / 10.0 })
+            .collect();
+        let bahn = BahnWire { rollout_final: true, lateral_samples: Some(spur), clearance_point_m: Some(1831.6), ..Default::default() };
+        let td = TouchdownPayload { zusatz: z, ..Default::default() };
+        let gesamt = serde_json::to_vec(&td).unwrap().len() + serde_json::to_vec(&bahn).unwrap().len() + 6 * 1024;
+        assert!(gesamt < BROKER_GRENZE, "{gesamt} Byte passen nicht durch den Broker ({BROKER_GRENZE})");
+        assert!(gesamt < BROKER_GRENZE * 3 / 4, "weniger als ein Viertel Luft: {gesamt} Byte");
     }
 
     /// Eine leere Spur geht als `null`, nicht als `[]`.

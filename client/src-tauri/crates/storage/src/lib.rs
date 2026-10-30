@@ -1006,6 +1006,13 @@ pub struct LandingRecord {
     /// Anzeige. Fehlt bei Datensaetzen von vorher.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flugzeiten: Option<landing_scoring::flugzeiten::FlugZeiten>,
+    /// V9 (Fähigkeit `zusatz-1`): schemaoffene Zusatzfelder aus der Ausgabe
+    /// des Bewertungsmoduls, unverändert durchgereicht und im Kern auf
+    /// [`landing_scoring::zusatz::ZUSATZ_MAX_BYTES`] begrenzt. Nur ein
+    /// JSON-Objekt, nur Daten. Fehlt bei 2.x-Datensätzen und Modulen ohne
+    /// Zusatz.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zusatz: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 // Lernpaket AP4/AP5: die Forensik-Structs liegen in `landing-scoring`,
@@ -1674,6 +1681,21 @@ mod merge_tests {
         }
         basis = serde_json::from_value(v).expect("test record mit Zusatz");
         basis
+    }
+
+    /// V9 (`zusatz-1`): Datensatz mit und ohne `zusatz` laeuft rund; ein
+    /// alter Datensatz ohne das Feld liest sich weiter und schreibt es nicht.
+    #[test]
+    fn zusatz_rundlauf_mit_und_ohne() {
+        let alt = rec("Z1", "2026-10-30T10:00:00Z", "2026-10-30T10:05:00Z");
+        assert_eq!(alt.zusatz, None, "alter Datensatz ohne Feld");
+        assert!(serde_json::to_value(&alt).unwrap().get("zusatz").is_none(), "ohne Zusatz kein Schluessel");
+
+        let z = serde_json::json!({"modul": {"x": 1.5, "liste": [1, 2, 3]}, "text": "ä"});
+        let mit_z = mit(alt, serde_json::json!({ "zusatz": z.clone() }));
+        assert_eq!(serde_json::Value::Object(mit_z.zusatz.clone().unwrap()), z);
+        let zurueck: LandingRecord = serde_json::from_str(&serde_json::to_string(&mit_z).unwrap()).unwrap();
+        assert_eq!(zurueck.zusatz, mit_z.zusatz, "unveraendert ueber die Speicherung");
     }
 
     fn wegpunkte(r: &LandingRecord) -> usize {

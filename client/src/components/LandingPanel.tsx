@@ -61,6 +61,7 @@ import { LadeblattAbschnitt } from "./LadeblattAbschnitt";
 import { FlugzeitenAbschnitt, FlugzeitenKurz } from "./FlugzeitenAbschnitt";
 import { MetarAbschnitt } from "./MetarAbschnitt";
 import { RohdatenAbschnitt } from "./RohdatenAbschnitt";
+import { ZusatzAbschnitt } from "./ZusatzAbschnitt";
 export { scoreG };
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus, type PirepPruefstatus } from "./PirepPruefstatus";
 import { gateAus, gateMarke } from "../lib/stableGate";
@@ -829,6 +830,8 @@ function LandungsAbschnitte({
 
       {/* Rohdaten zur Nachprüfung: gespiegelt (RohdatenAbschnitt.tsx). */}
       <RohdatenAbschnitt record={record} />
+      {/* Zusatzfelder des Bewertungsmoduls (V9): gespiegelt (ZusatzAbschnitt.tsx). */}
+      <ZusatzAbschnitt record={record} />
     </AltbestandKontext.Provider>
   );
 }

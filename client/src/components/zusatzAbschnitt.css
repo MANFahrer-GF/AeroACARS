@@ -1,0 +1,8 @@
+/* Zusatzfelder der Landung (ZusatzAbschnitt.tsx).
+ * GESPIEGELT in die Webapp (scripts/anzeige-sync.mjs, DATEIEN). */
+
+.zusatz__v {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}

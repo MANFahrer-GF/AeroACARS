@@ -341,6 +341,10 @@ export interface LandingRecord {
   /** v3 (P-4.21): Soll-Band des Anflugs aus dem Modul (Export `sollband`),
    *  mit Gleitwinkel-Faktor und Bandbreite. Fehlt bei 2.x-Datensaetzen. */
   modul_sollband?: ModulSollband | null;
+  /** V9 (`zusatz-1`): schemaoffene Zusatzfelder der Modulausgabe, vom Kern
+   *  unveraendert gespeichert (hoechstens 16 KB). Nur Anzeige. Fehlt bei
+   *  2.x-Datensaetzen und Modulen ohne Zusatz. */
+  zusatz?: Record<string, unknown> | null;
 
   /** Lernpaket AP4 (29.09.2026): geometrische Gleitpfad-Abweichung mit
    *  Quelle — reine Forensik, keine Note. Fehlt bei älteren Landungen. */

@@ -118,6 +118,24 @@ fn rechnen(host: &Host, json: &str) -> Result<Ausgabe, String> {
     serde_json::from_str::<Ausgabe>(&aus).map_err(|_| format!("Ausgabe ungueltig: {}", aus.chars().take(200).collect::<String>()))
 }
 
+/// V9 (`zusatz-1`): die schemaoffenen Zusatzfelder der Modulausgabe, im Kern
+/// auf `ZUSATZ_MAX_BYTES` begrenzt. Zu gross = Feld weglassen und warnen,
+/// nie abbrechen (die Note bleibt). `None` ohne Modulausgabe oder Zusatz.
+pub(crate) fn zusatz_aus(b: &Option<(Ausgabe, Status)>) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let z = b.as_ref().and_then(|(a, _)| a.zusatz.clone());
+    match landing_scoring::zusatz::begrenzen(z) {
+        Ok(z) => z,
+        Err(groesse) => {
+            tracing::warn!(
+                groesse,
+                grenze = landing_scoring::zusatz::ZUSATZ_MAX_BYTES,
+                "Zusatzfelder des Bewertungsmoduls zu gross, werden weggelassen"
+            );
+            None
+        }
+    }
+}
+
 /// Text fuer `bewertung_status` (P-4.33): `endgueltig`, `vorlaeufig` oder
 /// `modulfehler` (keine Note, weil beide Module scheiterten).
 pub(crate) fn status_text(b: &Option<(Ausgabe, Status)>) -> &'static str {
@@ -288,6 +306,33 @@ pub(crate) fn sollband(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    fn ausgabe_mit(zusatz: Option<serde_json::Value>) -> Option<(Ausgabe, Status)> {
+        let mut a = landing_scoring::wasm::bewerten(&Eingabe { landung: LandingScoringInput::default() });
+        a.zusatz = zusatz.and_then(|v| v.as_object().cloned());
+        Some((a, Status::Endgueltig))
+    }
+
+    /// V9: Zusatz aus der Modulausgabe geht unveraendert durch; ohne Zusatz,
+    /// ohne Modulausgabe oder als leeres Objekt kommt nichts.
+    #[test]
+    fn zusatz_geht_unveraendert_durch() {
+        let z = serde_json::json!({"a": {"b": [1, 2, 3]}, "c": "text"});
+        assert_eq!(zusatz_aus(&ausgabe_mit(Some(z.clone()))).map(serde_json::Value::Object), Some(z));
+        assert_eq!(zusatz_aus(&ausgabe_mit(None)), None);
+        assert_eq!(zusatz_aus(&ausgabe_mit(Some(serde_json::json!({})))), None);
+        assert_eq!(zusatz_aus(&None), None);
+    }
+
+    /// V9: Ueberlauf laesst das Feld weg, die Note bleibt (nie Abbruch).
+    #[test]
+    fn zu_grosser_zusatz_faellt_weg() {
+        let gross = serde_json::json!({"k": "a".repeat(landing_scoring::zusatz::ZUSATZ_MAX_BYTES)});
+        let b = ausgabe_mit(Some(gross));
+        assert_eq!(zusatz_aus(&b), None);
+        assert!(b.is_some(), "die Ausgabe selbst bleibt unberuehrt");
+    }
 
     /// P-4.21: Soll-Band, Faktor und Bandbreite kommen aus dem Modul und
     /// gleichen der Regel im Crate (dieselbe Quelle wie das Modul).

@@ -41,6 +41,23 @@ pub struct Ausgabe {
     pub anflug_urteil: Option<String>,
     /// Farbgrenzen der Forensik-Kacheln (Sinkrate fpm, G).
     pub grenzen: Grenzen,
+    /// V9 (`zusatz-1`): schemaoffene Zusatzfelder des Moduls. Der Kern
+    /// reicht das Objekt unveraendert durch (Landungsdatensatz, MQTT-
+    /// Touchdown, Flugprotokoll), begrenzt es aber auf
+    /// [`crate::zusatz::ZUSATZ_MAX_BYTES`]. Aeltere Module liefern es nicht.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "zusatz_nur_objekt")]
+    pub zusatz: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// Ein `zusatz`, das kein JSON-Objekt ist, wird verworfen — es darf nie die
+/// Note kosten (sonst wuerde die ganze Ausgabe als Modulfehler gelten).
+fn zusatz_nur_objekt<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, D::Error> {
+    Ok(match Option::<serde_json::Value>::deserialize(d)? {
+        Some(serde_json::Value::Object(m)) => Some(m),
+        _ => None,
+    })
 }
 
 /// Farbgrenzen der Anzeige — dieselben Werte wie die Teilnoten.
@@ -122,6 +139,7 @@ pub fn bewerten(e: &Eingabe) -> Ausgabe {
             ],
         },
         teilnoten,
+        zusatz: None,
     }
 }
 
@@ -154,6 +172,29 @@ mod tests {
         assert_eq!(ueber_json, nativ);
         assert_eq!(nativ.fassung, 27);
         assert_eq!(nativ.gesamt, aggregate_master_score(&compute_sub_scores(&probe())));
+    }
+
+    /// V9: Modulausgabe mit `zusatz` wird unveraendert gelesen; eine Ausgabe
+    /// ohne das Feld (aeltere Module) liest sich als `None` und schreibt es
+    /// auch nicht zurueck.
+    #[test]
+    fn zusatz_wird_gelesen_und_fehlt_ohne_feld() {
+        let nativ = serde_json::to_value(bewerten(&Eingabe { landung: probe() })).unwrap();
+        assert!(nativ.get("zusatz").is_none(), "ohne Zusatz kein Schluessel in der Ausgabe");
+        let a: Ausgabe = serde_json::from_value(nativ.clone()).unwrap();
+        assert_eq!(a.zusatz, None);
+        let mut mit = nativ;
+        mit["zusatz"] = serde_json::json!({"neu": {"wert": 1.5}, "liste": [1, 2]});
+        let b: Ausgabe = serde_json::from_value(mit).unwrap();
+        assert_eq!(serde_json::Value::Object(b.zusatz.clone().unwrap()), serde_json::json!({"neu": {"wert": 1.5}, "liste": [1, 2]}));
+        // Kein Objekt (Liste, Zahl): das Feld faellt weg, die Note bleibt.
+        for falsch_wert in [serde_json::json!([1, 2]), serde_json::json!(7), serde_json::json!("x")] {
+            let mut falsch = serde_json::to_value(&b).unwrap();
+            falsch["zusatz"] = falsch_wert;
+            let c: Ausgabe = serde_json::from_value(falsch).expect("Note darf nicht am Zusatz scheitern");
+            assert_eq!(c.zusatz, None);
+            assert_eq!(c.gesamt, b.gesamt);
+        }
     }
 
     /// Leitern wie bisher im Client (`aggregate_score_label`, `letter_grade`)

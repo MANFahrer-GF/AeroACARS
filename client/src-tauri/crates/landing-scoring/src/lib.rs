@@ -38,6 +38,7 @@ pub mod sub_rollout;
 pub mod sub_stability;
 pub mod sub_touchdown_point;
 pub mod vref;
+pub mod zusatz;
 /// v3 Etappe 3: Soll-Band des Anflugs (Anzeige, P-4.21).
 pub mod sollband;
 /// v3 Etappe 3: Modul-Schnittstelle (JSON hinein, JSON heraus).

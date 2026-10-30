@@ -2225,6 +2225,11 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 score_algorithm_version: Some(SCORE_ALGORITHMUS_VERSION),
                                 // P-4.40 (Kap. 4.5): Herkunft der Note, siehe `score_grade`.
                                 bewertung_status: payload_bewertung_status,
+                                // V9 (`zusatz-1`): Zusatzfelder des Moduls aus der
+                                // Sofortnote, unveraendert (auf 16 KB begrenzt).
+                                zusatz: crate::bewertung::zusatz_aus(
+                                    &stats.landung_sofort.as_ref().and_then(|g| g.rechnung.ergebnis.clone()),
+                                ),
                                 // v3 (P-5.10): Paketstand, Nummer des Aufsetzers
                                 // und Hash der Eingabe der Sofortnote.
                                 runtime_bundle_id: laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),

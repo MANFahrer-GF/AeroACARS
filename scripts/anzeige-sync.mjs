@@ -139,6 +139,9 @@ export const DATEIEN = [
   "components/metarAbschnitt.css",
   "components/RohdatenAbschnitt.tsx",
   "components/rohdatenAbschnitt.css",
+  // V9 (zusatz-1): Zusatzfelder der Landung als Schluessel/Wert-Liste.
+  "components/ZusatzAbschnitt.tsx",
+  "components/zusatzAbschnitt.css",
   "components/ApproachStabilityHilfeInhalt.tsx",
   "components/approachStabilityHilfe.css",
   "components/landungsBewertung.css",

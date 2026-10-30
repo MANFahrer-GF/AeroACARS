@@ -1819,6 +1819,10 @@
       "titel_2x": "Rated with AeroACARS 2.x; the stored grade is unchanged and is not recalculated.",
       "nachbewertet": "Re-scored on live",
       "titel_nachbewertet": "Scoring failed in the client; live recalculated it from the stored input with the same module of the same package generation."
+    },
+    "zusatz": {
+      "title": "Additional fields",
+      "hinweis": "Additional fields from the scoring module. They are stored and shown unchanged and do not count towards the score."
     }
   },
   "about": {
