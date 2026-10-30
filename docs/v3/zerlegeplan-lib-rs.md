@@ -33,12 +33,29 @@ Verhaltensänderung**.
 | Schritt | Inhalt | Risiko |
 |---|---|---|
 | **1** ✅ | 107 Testmodule nach `src/tests_lib/<name>.rs` (`#[cfg(test)] #[path] mod x;`), Inhalt byte-gleich, relative `include_*!`-Pfade mit `../` | null |
-| 2a | `pirep_queue`, `nachtrag_queue` nach `src/<name>.rs` (gleicher Mechanismus) | null |
-| 2b | 67 Befehle nach `src/befehle/<bereich>.rs` (flight 17, phpvms 6, telemetrie 5, xplane 4, …); Helfer bleiben vorerst in `lib.rs` und werden `pub(crate)`; `generate_handler!` bekommt die neuen Pfade | gering |
-| 2c | in sich geschlossene Graph-Gemeinschaften mit zusammenhängendem Bereich: ACARS-Postausgang (C57, Z. 36 790–37 156), `LandingScore` (C141), MSFS-Flare (C10), Segment/Null-Island (C131), Flicker (C135), Bahndisziplin-Takt (C95), Bahn-Upgrade (C77), Touchdown-Korrelation (C26), Sprit-Plan (C13), `AircraftLimits` (C87) | gering |
-| 2d | die großen, verflochtenen Gemeinschaften: Zustand (`AppState`, `FlightStats`, `ActiveFlight` → `zustand.rs`), Wiederaufnahme/Lage nach Lücke, Bodenphasen, Abgabe-Sperre/`validate_for_filing`, Positions-Takt. Erst den Graphen nach 2a–2c neu bauen und je Gemeinschaft Aufrufer außerhalb zählen | mittel |
+| 2a ✅ | `pirep_queue`, `nachtrag_queue` nach `src/<name>.rs` (gleicher Mechanismus) | null |
+| 2b ✗ verworfen (Umsortieren gibt Funktionen neue Nachbarn, Rumpf-Schneider der Waechter liefen still weiter) | 67 Befehle nach `src/befehle/<bereich>.rs` (flight 17, phpvms 6, telemetrie 5, xplane 4, …); Helfer bleiben vorerst in `lib.rs` und werden `pub(crate)`; `generate_handler!` bekommt die neuen Pfade | gering |
+| 2c ✅ | in sich geschlossene Graph-Gemeinschaften mit zusammenhängendem Bereich: ACARS-Postausgang (C57, Z. 36 790–37 156), `LandingScore` (C141), MSFS-Flare (C10), Segment/Null-Island (C131), Flicker (C135), Bahndisziplin-Takt (C95), Bahn-Upgrade (C77), Touchdown-Korrelation (C26), Sprit-Plan (C13), `AircraftLimits` (C87) | gering |
+| 2d ✅ | die großen, verflochtenen Gemeinschaften: Zustand (`AppState`, `FlightStats`, `ActiveFlight` → `zustand.rs`), Wiederaufnahme/Lage nach Lücke, Bodenphasen, Abgabe-Sperre/`validate_for_filing`, Positions-Takt. Erst den Graphen nach 2a–2c neu bauen und je Gemeinschaft Aufrufer außerhalb zählen | mittel |
 | 3 | Eingangsbau `scoring_eingang`/`fill_v2_rollout_fields` als eigenes Modul (Vorbereitung Eingabe-Dokument, Pflichtenheft Kap. 4) | mittel |
 
 Der Graph wird mit `graphify update client/src-tauri/src --no-cluster` und
 `graphify cluster-only client/src-tauri/src --no-viz --no-label` gebaut (kein Sprachmodell nötig);
 `graphify-out/` ist per `.gitignore` ausgeschlossen.
+
+## Stand nach 2c/2d (30.10.2026, `c6da85ff`)
+
+Umgesetzt nicht als `mod` mit `pub(crate)`, sondern als **`include!("lib_<thema>.rs");` an Ort und
+Stelle**: 47 Dateien `src/lib_*.rs`, Inhalt Zeichen fuer Zeichen aus `lib.rs`, gleiche Reihenfolge.
+`build.rs` setzt daraus `produktion.txt` byte-gleich zusammen; `lib_rs_ist_der_gepruefte_stand`
+blieb mit **unveraendertem** Hash gruen, die Testliste ist vorher = nachher (3 762). `lib.rs`
+56 650 → 1 794 Zeilen (Kopf, Modulliste, `mod pirep_queue`/`nachtrag_queue`, Protokollierung,
+`run()` mit `generate_handler!`, Testmodul-Erklaerungen).
+
+Regeln fuer jede `include!`-Datei: direkt in `src/` (relative `#[path]`/`include_str!` bleiben
+gleich), kein `//!`/`#![…]`, die `include!`-Zeile steht in Spalte 0 ohne Kommentar, davor haengt
+kein `///` oder `#[…]` (es wuerde sich an das Makro heften), die Datei endet nicht mit einem
+Attribut. Eine Aenderung in einer `lib_*.rs` aendert den Hash wie eine in `lib.rs`.
+
+Offen (Schritt 3 ff.): echte Module mit eigenen Namensraeumen. Das aendert Text und Hash und ist
+je Bereich ein eigener, begruendeter Schritt.

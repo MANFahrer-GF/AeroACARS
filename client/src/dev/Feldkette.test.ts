@@ -31,6 +31,18 @@ const CLIENT = resolve(__dirname, "..", "..");
 const WEBAPP = resolve(CLIENT, "..", "..", "aeroacars-live", "webapp");
 
 /**
+ * v3 (Etappe 0): `lib.rs` ist per `include!("lib_x.rs");` zerlegt. Wie
+ * `build.rs` (`produktion.txt`) wird jede solche Zeile durch den Inhalt der
+ * Datei ersetzt — derselbe Text wie vor der Zerlegung.
+ */
+function libGesamt(): string {
+  const src = resolve(CLIENT, "src-tauri", "src");
+  return readFileSync(resolve(src, "lib.rs"), "utf-8").replace(/^include!\("([^"]+)"\);\n/gm, (_, datei: string) =>
+    readFileSync(resolve(src, datei), "utf-8"),
+  );
+}
+
+/**
  * Die dreizehn Felder aus Spec §8.1 plus die, die dazugekommen sind.
  *
  * ⚠ Wer ein Feld ergänzt, trägt es HIER ein. Sonst prüft die Kette es
@@ -81,7 +93,7 @@ const GLIEDER: Array<{ name: string; datei: string; ausschnitt?: RegExp }> = [
 
 function inhalt(datei: string, ausschnitt?: RegExp): string {
   const pfad = resolve(CLIENT, datei);
-  const roh = readFileSync(pfad, "utf-8");
+  const roh = datei === "src-tauri/src/lib.rs" ? libGesamt() : readFileSync(pfad, "utf-8");
   if (!ausschnitt) return roh;
   const treffer = roh.match(ausschnitt);
   if (!treffer) throw new Error(`Ausschnitt nicht gefunden in ${datei}`);
@@ -196,7 +208,7 @@ describe("Feldkette der Bahndisziplin", () => {
 
     // Und im Client muss die Publish-Stelle es ausdrücklich leer lassen —
     // sonst behauptet sie einen Wert, den sie nicht haben kann.
-    const rust = readFileSync(resolve(CLIENT, "src-tauri/src/lib.rs"), "utf-8");
+    const rust = libGesamt();
     expect(
       // Grosszuegiges Fenster: Zwischen dem Aufruf und dem `None` steht
       // die Begründung, warum dort nichts stehen kann — beim ersten Anlauf

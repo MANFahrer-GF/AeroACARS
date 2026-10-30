@@ -39,7 +39,11 @@ const ENTFERNT = ["SPRIT_VERGLEICHSPUNKT_FENSTER", "sprit_fenster_scharf", "spri
 
 function main() {
   const spec = readFileSync(SPEC, "utf-8");
-  const lib = readFileSync(LIB, "utf-8");
+  // v3 (Etappe 0): `lib.rs` ist per `include!("lib_x.rs");` zerlegt — wie
+  // `build.rs` jede solche Zeile durch den Dateiinhalt ersetzen.
+  const lib = readFileSync(LIB, "utf-8").replace(/^include!\("([^"]+)"\);\n/gm, (_, datei) =>
+    readFileSync(resolve(dirname(LIB), datei), "utf-8"),
+  );
   const fehler = [];
 
   const zeilen = spec.split("\n");
