@@ -142,6 +142,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `eingabe_dokument_bleibt_deutlich_unter_der_servergrenze`,
 /// `abtaster_stempel_tests::gemessene_vref_steht_in_der_herkunft`,
 /// `stempel_haelt_sim_profil_und_kategorie_fest`.
+/// — plus Codex 30.10.: `landing_vref_gemessen` wird beim Touch-and-Go
+/// geleert; `aufsetzer_einfrieren` friert hoechstens `SEQ_MAX - 1`
+/// Aufsetzer ein (Server-Grenze, letzte Nummer fuer die Landung). Tests
+/// `touch_and_go_ueber_der_dokumentgrenze`,
+/// `touch_and_go_entscheidung_steht_in_der_herkunft`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -152,4 +157,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "642ba446661a1a27b1734341d1cc0312437164a29b63b1239903c33eedca6750";
+const HASH_VOR_DER_ZERLEGUNG: &str = "2f32dd594ef36dd4dff307adfccf4efdc771e28a5670baaea5d22417c6384c21";

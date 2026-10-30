@@ -37,6 +37,9 @@ use crate::bewertung::Status;
 
 const ORDNER: &str = "landing_inputs";
 const SCHEMA: u32 = 1;
+/// Hoechste `seq`, die der Server annimmt (`landingInput.ts`, `seq > 50`
+/// → 400 `seq_ungueltig`).
+pub(crate) const SEQ_MAX: u32 = 50;
 
 /// Art des Aufsetzers (P-6.01).
 #[derive(Debug, Clone, Copy)]

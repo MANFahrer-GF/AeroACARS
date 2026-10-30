@@ -120,7 +120,9 @@
         s.landung_fenster = vec![probe()];
         aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
         assert_eq!(s.aufsetzer_eingefroren[0].2.herkunft["durchstarts"], 0, "vor der Entscheidung");
+        s.landing_vref_gemessen = Some((131.0, "pmdg"));
         landung_beim_wegsteigen_abschliessen(&mut s, &SimSnapshot::default(), Utc::now());
+        assert_eq!(s.landing_vref_gemessen, None, "Vref des Touch-and-Go nicht an den naechsten Aufsetzer");
         let h = &s.aufsetzer_eingefroren[0].2.herkunft;
         assert_eq!(h["durchstarts"], 1);
         assert_eq!(h["aufsetzer"].as_array().unwrap().last().unwrap()["kind"], "touch_and_go");
@@ -169,8 +171,35 @@
     fn ohne_fenster_wird_nichts_eingefroren() {
         let f = flug();
         let mut s = f.stats.lock().unwrap();
+        // Offene Landung: nur die Fensterbedingung haelt (Codex 30.10.).
+        s.phase = FlightPhase::Landing;
+        s.landing_at = Some(Utc::now());
         aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
         assert!(s.aufsetzer_eingefroren.is_empty());
+        // Gegenprobe: mit Fenster wird eingefroren.
+        s.landung_fenster = vec![probe()];
+        aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
+        assert_eq!(s.aufsetzer_eingefroren.len(), 1);
+    }
+
+    /// Server: `seq` hoechstens `SEQ_MAX`. Die letzte Nummer bleibt der
+    /// Landung; das Fenster des nicht mehr dokumentierten Aufsetzers ist
+    /// trotzdem weg. Gegenprobe: eine Stelle darunter wird eingefroren.
+    #[test]
+    fn touch_and_go_ueber_der_dokumentgrenze() {
+        let f = flug();
+        let mut s = f.stats.lock().unwrap();
+        s.phase = FlightPhase::Landing;
+        s.landing_at = Some(Utc::now());
+        let leer = (landing_scoring::LandingScoringInput::default(), vec![probe()], landungs_eingabe::Begleitung::default());
+        s.aufsetzer_eingefroren = vec![leer; landungs_eingabe::SEQ_MAX as usize - 2];
+        s.landung_fenster = vec![probe()];
+        aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
+        assert_eq!(s.aufsetzer_eingefroren.len(), landungs_eingabe::SEQ_MAX as usize - 1, "Gegenprobe: noch Platz");
+        s.landung_fenster = vec![probe()];
+        aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
+        assert_eq!(s.aufsetzer_eingefroren.len(), landungs_eingabe::SEQ_MAX as usize - 1, "Platz fuer die Landung");
+        assert!(s.landung_fenster.is_empty(), "Fenster nicht an die naechste Landung vererbt");
     }
 
     /// Anflugprobe aus einer echten Fensterprobe (Werte mit voller Stellenzahl).

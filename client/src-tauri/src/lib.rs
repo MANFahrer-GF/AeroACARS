@@ -44278,6 +44278,13 @@ fn aufsetzer_einfrieren(flight: &ActiveFlight, stats: &mut FlightStats, snap: &S
     let eingabe = landungs_bewertungseingabe(flight, stats, muster.as_deref(), &flight.arr_airport);
     let begleitung = landungs_begleitung(flight, stats, &eingabe, muster.as_deref(), &flight.arr_airport);
     let fenster = std::mem::take(&mut stats.landung_fenster);
+    // Der Server nimmt `seq` 1..=SEQ_MAX; die letzte Nummer bleibt der
+    // Landung (Codex 30.10.). Das Fenster ist trotzdem weg — sonst bekaeme
+    // eine spaetere Landung ohne eigenes Fenster das dieses Aufsetzers.
+    if stats.aufsetzer_eingefroren.len() + 1 >= landungs_eingabe::SEQ_MAX as usize {
+        tracing::warn!(eingefroren = stats.aufsetzer_eingefroren.len(), "Touch-and-Go ueber der Dokumentgrenze — kein Eingabe-Dokument");
+        return;
+    }
     stats.aufsetzer_eingefroren.push((eingabe, fenster, begleitung));
 }
 
@@ -44355,6 +44362,10 @@ fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnaps
         }
     }
     stats.vref_gemessen = None;
+    // Kap. 5.2 (Codex 30.10.): Ein Aufsetzer, der den FSM-Landing-Arm nie
+    // erreicht, setzt sie nicht neu — sonst dokumentierte er die Vref
+    // dieses Touch-and-Go.
+    stats.landing_vref_gemessen = None;
     // Lernpaket AP4/AP5: Schnitt fuer die Forensik.
     anflug_forensik_schneiden(stats, Some(now));
     let ga_count = stats.go_around_count;
