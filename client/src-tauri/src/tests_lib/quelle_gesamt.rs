@@ -223,6 +223,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `generate_handler!` (`hilfe::hilfe_vorschau` Stufe `lesen`,
 /// `hilfe::hilfe_anfordern` Stufe `fachlich`); sonst nichts an `lib.rs`.
 /// Tests `hilfe::tests`, `tests/befehlsliste.rs`, vitest `HilfeDialog.test.tsx`.
+/// — plus P-4.44/P-9.01: EINE Zeile im `generate_handler!`,
+/// `landungs_eingabe::landung_nachbewertung` (Stufe `fachlich`, nur lesen von
+/// live mit dem Pilot-Token). Tests `landungs_eingabe::tests::nachbewertung_*`,
+/// vitest `bewertungsFassung.test.tsx`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -233,4 +237,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "4a122c21988d4e8401d2ce4e49d87f4e978cd9662fc58945d83a30f497a861e7";
+const HASH_VOR_DER_ZERLEGUNG: &str = "117c93d848821fcced52b6f9f555aeb357915e53452c977e51a33fda1b8d27fe";

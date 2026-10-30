@@ -1816,7 +1816,9 @@
     },
     "vermerk": {
       "bewertet_2x": "bewertet mit 2.x",
-      "titel_2x": "Mit AeroACARS 2.x bewertet; die gespeicherte Note bleibt unverändert und wird nicht neu gerechnet."
+      "titel_2x": "Mit AeroACARS 2.x bewertet; die gespeicherte Note bleibt unverändert und wird nicht neu gerechnet.",
+      "nachbewertet": "Auf live nachbewertet",
+      "titel_nachbewertet": "Die Bewertung ist im Client gescheitert; live hat sie mit demselben Modul derselben Paket-Generation aus der gespeicherten Eingabe nachgerechnet."
     }
   },
   "about": {

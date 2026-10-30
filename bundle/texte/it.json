@@ -1816,7 +1816,9 @@
     },
     "vermerk": {
       "bewertet_2x": "valutato con 2.x",
-      "titel_2x": "Valutato con AeroACARS 2.x; il voto salvato resta invariato e non viene ricalcolato."
+      "titel_2x": "Valutato con AeroACARS 2.x; il voto salvato resta invariato e non viene ricalcolato.",
+      "nachbewertet": "Rivalutato su live",
+      "titel_nachbewertet": "La valutazione nel client non è riuscita; live l'ha ricalcolata dall'input salvato con lo stesso modulo della stessa generazione del pacchetto."
     }
   },
   "about": {

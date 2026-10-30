@@ -64,7 +64,7 @@ import { RohdatenAbschnitt } from "./RohdatenAbschnitt";
 export { scoreG };
 import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus, type PirepPruefstatus } from "./PirepPruefstatus";
 import { gateAus, gateMarke } from "../lib/stableGate";
-import { bewertetMit2x } from "../lib/bewertungsFassung";
+import { bewertetMit2x, mitNachbewertung, nachbewertungNoetig, type Nachbewertung } from "../lib/bewertungsFassung";
 // Datensatz-Typen: lib/landungsDatensatz.ts (gespiegelt in die Webapp).
 import type {
   ApproachSample,
@@ -1145,7 +1145,15 @@ export function LandingPanel() {
     }
     let weg = false;
     invoke<LandingRecord | null>("landing_get", { pirepId: selectedId })
-      .then((rec) => { if (!weg) setVoll({ id: selectedId, rec: rec ?? null, fehler: false }); })
+      .then(async (rec) => {
+        // P-4.44: Modulfehler im Client → die Note, die live nachbewertet hat
+        // (Pilot-Zugang), mit Vermerk. Scheitert die Abfrage, bleibt es beim Datensatz.
+        if (rec && nachbewertungNoetig(rec)) {
+          const n = await invoke<Nachbewertung | null>("landung_nachbewertung", { pirepId: rec.pirep_id }).catch(() => null);
+          rec = mitNachbewertung(rec, n);
+        }
+        if (!weg) setVoll({ id: selectedId, rec: rec ?? null, fehler: false });
+      })
       .catch((e) => {
         console.warn("landing_get failed", e);
         if (!weg) setVoll({ id: selectedId, rec: null, fehler: true });

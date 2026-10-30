@@ -1816,7 +1816,9 @@
     },
     "vermerk": {
       "bewertet_2x": "rated with 2.x",
-      "titel_2x": "Rated with AeroACARS 2.x; the stored grade is unchanged and is not recalculated."
+      "titel_2x": "Rated with AeroACARS 2.x; the stored grade is unchanged and is not recalculated.",
+      "nachbewertet": "Re-scored on live",
+      "titel_nachbewertet": "Scoring failed in the client; live recalculated it from the stored input with the same module of the same package generation."
     }
   },
   "about": {

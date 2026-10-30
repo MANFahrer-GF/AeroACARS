@@ -267,9 +267,122 @@ pub(crate) async fn nachsenden(app_daten: PathBuf, konto: Option<String>, zeit: 
     }
 }
 
+/// P-4.44 / P-9.01: Note, die live nach einem Modulfehler im Client aus der
+/// gespeicherten Eingabe nachgerechnet hat (`landing_inputs.output_json`,
+/// `bewertung_status = nachbewertet`). Nur Anzeige: nichts wird gespeichert
+/// oder neu gerechnet.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub(crate) struct Nachbewertung {
+    pub seq: u64,
+    pub gesamt: Option<f64>,
+    pub gesamt_buchstabe: String,
+    pub gesamt_wort: String,
+}
+
+const WOERTER: [&str; 5] = ["smooth", "acceptable", "firm", "hard", "severe"];
+const BUCHSTABEN: [&str; 7] = ["A+", "A", "B+", "B", "C", "D", "F"];
+
+/// Aus der Antwort von `GET /api/landing-input/:pirep_id` die nachbewertete
+/// LANDUNG (nicht Touch-and-Go) mit der hoechsten `seq`; Wort und Buchstabe
+/// muessen gueltig sein (wie `modulAus` der Webapp).
+pub(crate) fn nachbewertung_aus(antwort: &serde_json::Value) -> Option<Nachbewertung> {
+    antwort
+        .get("landungen")?
+        .as_array()?
+        .iter()
+        .filter(|l| l.get("nachbewertet").and_then(|n| n.as_bool()) == Some(true))
+        .filter(|l| l.get("art").and_then(|a| a.as_str()) == Some("landung"))
+        .filter_map(|l| {
+            let e = l.get("ergebnis")?;
+            let wort = e.get("gesamt_wort")?.as_str().filter(|w| WOERTER.contains(w))?;
+            let buchstabe = e.get("gesamt_buchstabe")?.as_str().filter(|b| BUCHSTABEN.contains(b))?;
+            Some(Nachbewertung {
+                seq: l.get("seq")?.as_u64()?,
+                gesamt: e.get("gesamt").and_then(|g| g.as_f64()).filter(|g| g.is_finite()),
+                gesamt_buchstabe: buchstabe.to_string(),
+                gesamt_wort: wort.to_string(),
+            })
+        })
+        .max_by_key(|n| n.seq)
+}
+
+fn pirep_kennung_gueltig(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Die nachbewertete Note eines eigenen Flugs von live (Pilot-Zugang, Token
+/// bleibt in Rust). `None`, wenn live keine hat, nicht erreichbar ist oder
+/// kein Token vorliegt — die Anzeige bleibt dann, wie sie ist. Stufe
+/// „fachlich“ (wie `live_inhalt`): Netz nur zu live, Kennung geprueft.
+#[tauri::command]
+pub(crate) async fn landung_nachbewertung(pirep_id: String) -> Result<Option<Nachbewertung>, crate::UiError> {
+    if !pirep_kennung_gueltig(&pirep_id) {
+        return Err(crate::UiError::new("pirep_id_ungueltig", "PIREP-Kennung ungueltig"));
+    }
+    let Some(token) = crate::live_zugang::pilot_token() else {
+        return Ok(None);
+    };
+    let url = format!("{}/api/landing-input/{pirep_id}", crate::live_zugang::live_basis());
+    let antwort = async {
+        let c = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .ok()?;
+        let r = c.get(&url).bearer_auth(&token).send().await.ok()?;
+        if !r.status().is_success() {
+            tracing::debug!(status = r.status().as_u16(), "landing-input: keine Nachbewertung abrufbar");
+            return None;
+        }
+        r.json::<serde_json::Value>().await.ok()
+    }
+    .await;
+    Ok(antwort.as_ref().and_then(nachbewertung_aus))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nachbewertung_nur_landung_mit_gueltiger_ausgabe() {
+        let antwort = serde_json::json!({ "pirep_id": "P1", "landungen": [
+            { "seq": 1, "art": "touch_and_go", "nachbewertet": true,
+              "ergebnis": { "gesamt": 70, "gesamt_wort": "firm", "gesamt_buchstabe": "C" } },
+            { "seq": 2, "art": "landung", "nachbewertet": true,
+              "ergebnis": { "gesamt": 88.0, "gesamt_wort": "acceptable", "gesamt_buchstabe": "B+" } },
+            { "seq": 3, "art": "landung", "nachbewertet": false,
+              "ergebnis": { "gesamt": 99, "gesamt_wort": "smooth", "gesamt_buchstabe": "A+" } }
+        ]});
+        assert_eq!(
+            nachbewertung_aus(&antwort),
+            Some(Nachbewertung { seq: 2, gesamt: Some(88.0), gesamt_buchstabe: "B+".into(), gesamt_wort: "acceptable".into() })
+        );
+        // ungueltiges Wort/Buchstabe zaehlt nicht (wie modulAus der Webapp)
+        let kaputt = serde_json::json!({ "landungen": [
+            { "seq": 2, "art": "landung", "nachbewertet": true, "ergebnis": { "gesamt_wort": "gut", "gesamt_buchstabe": "B+" } },
+            { "seq": 3, "art": "landung", "nachbewertet": true, "ergebnis": { "gesamt_wort": "firm", "gesamt_buchstabe": "Z" } }
+        ]});
+        assert_eq!(nachbewertung_aus(&kaputt), None);
+        assert_eq!(nachbewertung_aus(&serde_json::json!({ "landungen": [] })), None);
+        // Nur das Touch-and-Go ist nachbewertet: das ist nicht die Note der Landung.
+        let nur_tg = serde_json::json!({ "landungen": [
+            { "seq": 1, "art": "touch_and_go", "nachbewertet": true,
+              "ergebnis": { "gesamt": 70, "gesamt_wort": "firm", "gesamt_buchstabe": "C" } },
+            { "seq": 2, "art": "landung", "nachbewertet": false,
+              "ergebnis": { "gesamt": 90, "gesamt_wort": "smooth", "gesamt_buchstabe": "A" } }
+        ]});
+        assert_eq!(nachbewertung_aus(&nur_tg), None);
+    }
+
+    #[test]
+    fn pirep_kennung_wird_geprueft() {
+        assert!(pirep_kennung_gueltig("Ab12_x-9"));
+        assert!(!pirep_kennung_gueltig(""));
+        assert!(!pirep_kennung_gueltig("../admin"));
+        assert!(!pirep_kennung_gueltig("a?b"));
+        assert!(!pirep_kennung_gueltig(&"a".repeat(65)));
+    }
 
     #[test]
     fn dokument_nach_vertrag() {

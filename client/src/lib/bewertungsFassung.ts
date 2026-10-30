@@ -26,3 +26,31 @@ export function bewertetMit2x(r: Datensatz): boolean {
   if (r.score_numeric == null) return false;
   return !istDreiNull(r);
 }
+
+/** P-4.44 / P-9.01: Note, die live nach einem Modulfehler im Client
+ *  nachgerechnet hat (Rust `landung_nachbewertung`, Pilot-Zugang). */
+export interface Nachbewertung {
+  seq: number;
+  gesamt: number | null;
+  gesamt_buchstabe: string;
+  gesamt_wort: string;
+}
+
+/** Nur 3.0-Landungen ohne eigene Note fragen bei live nach. */
+export function nachbewertungNoetig(r: Datensatz): boolean {
+  return istDreiNull(r) && r.score_numeric == null;
+}
+
+/** Anzeige-Kopie mit der nachbewerteten Note und dem Vermerk — nie gespeichert,
+ *  nichts gerechnet; ohne Nachbewertung bleibt der Datensatz, wie er ist. */
+export function mitNachbewertung(r: LandingRecord, n: Nachbewertung | null | undefined): LandingRecord {
+  if (!n || !nachbewertungNoetig(r)) return r;
+  return {
+    ...r,
+    score_numeric: n.gesamt,
+    grade_letter: n.gesamt_buchstabe,
+    score_label: n.gesamt_wort as LandingRecord["score_label"],
+    bewertung_status: "nachbewertet",
+    nachbewertet: true,
+  };
+}

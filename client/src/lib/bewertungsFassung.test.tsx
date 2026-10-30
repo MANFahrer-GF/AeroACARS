@@ -9,7 +9,7 @@ import enCommon from "../../../bundle/texte/en.json";
 import itCommon from "../../../bundle/texte/it.json";
 import THY39 from "./landungsFaelle.thy39.json";
 import type { LandingRecord } from "./landungsDatensatz";
-import { bewertetMit2x, istDreiNull } from "./bewertungsFassung";
+import { bewertetMit2x, istDreiNull, mitNachbewertung, nachbewertungNoetig } from "./bewertungsFassung";
 
 const invokeMock = vi.fn();
 vi.mock("./ipc", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
@@ -78,5 +78,62 @@ describe("bewertetMit2x (Client)", () => {
     expect(vermerke).toHaveLength(1);
     expect(vermerke[0].textContent).toBe("bewertet mit 2.x");
     expect(vermerke[0].closest("td")?.className).toContain("landing-ov-grade");
+  });
+});
+
+// P-4.44 / P-9.01: Modulfehler im Client → die Note, die live nachbewertet hat,
+// mit dem Vermerk „Auf live nachbewertet“ (wie die Webapp), nur zur Anzeige.
+const FEHLER: LandingRecord = { ...DREI, pirep_id: "FEHL", bewertung_status: "modulfehler", score_numeric: null, grade_letter: null, score_label: null };
+const NB = { seq: 2, gesamt: 72, gesamt_buchstabe: "C", gesamt_wort: "firm" };
+
+describe("Nachbewertung über den Pilot-Zugang (Client)", () => {
+  it("nur 3.0 ohne eigene Note; Überlagerung ohne Rechnung", () => {
+    expect(nachbewertungNoetig(FEHLER)).toBe(true);
+    expect(nachbewertungNoetig(DREI)).toBe(false);
+    expect(nachbewertungNoetig({ ...ZWEI, score_numeric: null })).toBe(false);
+    const r = mitNachbewertung(FEHLER, NB);
+    expect([r.score_numeric, r.grade_letter, r.score_label, r.nachbewertet, r.bewertung_status]).toEqual([72, "C", "firm", true, "nachbewertet"]);
+    expect(FEHLER.score_numeric).toBeNull(); // Original unverändert
+    // Gegenproben: keine Antwort bzw. Landung mit eigener Note → nichts überlagert
+    expect(mitNachbewertung(FEHLER, null)).toBe(FEHLER);
+    expect(mitNachbewertung(DREI, NB)).toBe(DREI);
+  });
+
+  it("Kopf: Vermerk in de/en/it wie die Webapp", async () => {
+    for (const [sprache, text] of [["de", "Auf live nachbewertet"], ["en", "Re-scored on live"], ["it", "Rivalutato su live"]] as const) {
+      await act(async () => {
+        await i18next.changeLanguage(sprache);
+      });
+      const k = render(<LandungsKopf record={mitNachbewertung(FEHLER, NB)} callsign="THY41" />);
+      expect(k.getByTestId("kopf-nachbewertet").textContent).toBe(` · ${text}`);
+      expect(k.container.querySelector(".landing-headline")!.textContent).toContain("72/100");
+      k.unmount();
+      const k0 = render(<LandungsKopf record={FEHLER} callsign="THY41" />);
+      expect(k0.queryByTestId("kopf-nachbewertet")).toBeNull();
+      k0.unmount();
+    }
+    await act(async () => {
+      await i18next.changeLanguage("de");
+    });
+  });
+
+  it("Detailansicht holt die Nachbewertung nur für den Modulfehler-Flug", async () => {
+    invokeMock.mockImplementation((cmd: string, a?: { pirepId?: string }) => {
+      if (cmd === "landing_list") return Promise.resolve([ZWEI, FEHLER]);
+      if (cmd === "landing_get") return Promise.resolve([ZWEI, FEHLER].find((r) => r.pirep_id === a?.pirepId) ?? null);
+      if (cmd === "landung_nachbewertung") return Promise.resolve(NB);
+      return Promise.resolve(null);
+    });
+    const v = render(<LandingPanel />);
+    await v.findAllByText(/THY39/);
+    const zeilen = v.container.querySelectorAll(".landing-ov-table tbody tr");
+    await act(async () => {
+      (zeilen[1] as HTMLElement).click();
+    });
+    expect((await v.findByTestId("kopf-nachbewertet")).textContent).toBe(" · Auf live nachbewertet");
+    expect(v.container.querySelector(".landing-headline")!.textContent).toContain("72/100");
+    expect(invokeMock).toHaveBeenCalledWith("landung_nachbewertung", { pirepId: "FEHL" });
+    // Gegenprobe: der 2.x-Flug fragt nicht nach
+    expect(invokeMock.mock.calls.filter((c) => c[0] === "landung_nachbewertung")).toHaveLength(1);
   });
 });

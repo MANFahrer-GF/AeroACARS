@@ -252,6 +252,19 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        // P-4.44: nachbewertete Note von live, mit dem Token des PCs geholt
+        // (das Token geht nicht ueber die Bruecke). Oberflaeche schickt `pirepId`.
+        "landung_nachbewertung" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                pirep_id: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::landungs_eingabe::landung_nachbewertung(a.pirep_id).await),
+                Err(e) => Err(e),
+            }
+        }
         // Laufzeit-Paket (3.0): Flottentabelle und Texte des geltenden Stands
         // auch fuer die LAN-Oberflaeche — nur lesen, nur die feste Liste.
         "paket_datei" => {

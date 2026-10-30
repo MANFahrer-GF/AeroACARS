@@ -1012,6 +1012,13 @@ export function LandungsKopf({
               {" · "}
               {t("landing.vermerk.bewertet_2x")}
             </span>
+          )}
+          {/* P-4.44: Note, die live nachbewertet hat (Modulfehler im Client). */}
+          {record.nachbewertet && (
+            <span data-testid="kopf-nachbewertet" title={t("landing.vermerk.titel_nachbewertet")} style={{ color: "var(--text-muted)" }}>
+              {" · "}
+              {t("landing.vermerk.nachbewertet")}
+            </span>
           )}{" "}
           ·{" "}
           {fmtDateTime(record.touchdown_at, i18n.language)}

@@ -55951,6 +55951,7 @@ pub fn run() {
             live_zugang::live_inhalt,
             hilfe::hilfe_vorschau,
             hilfe::hilfe_anfordern,
+            landungs_eingabe::landung_nachbewertung,
             discord_rpc::discord_rpc_get_settings,
             discord_rpc::discord_rpc_set_settings,
             discord_rpc::discord_rpc_get_status,

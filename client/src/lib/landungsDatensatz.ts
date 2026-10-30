@@ -332,6 +332,9 @@ export interface LandingRecord {
   /** v3 (P-4.33): woher die Note kam — `endgueltig`, `vorlaeufig`,
    *  `modulfehler` (Rust `bewertung_status`); fehlt bei 2.x-Datensaetzen. */
   bewertung_status?: string | null;
+  /** v3 (P-4.44): Anzeige-Kopie mit der Note, die live nachbewertet hat
+   *  (`landung_nachbewertung`); nie gespeichert. */
+  nachbewertet?: boolean;
   /** v3 (P-4.21): Farbgrenzen aus der Modulausgabe (`grenzen`). Fehlt bei
    *  2.x-Datensaetzen — dann gelten `GRENZEN_ALTBESTAND_2X`. */
   modul_grenzen?: Grenzen | null;
