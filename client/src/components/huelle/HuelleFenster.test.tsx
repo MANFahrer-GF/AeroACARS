@@ -6,7 +6,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const ipc = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(async () => () => {}) }));
 vi.mock("../../lib/ipc", () => ipc);
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
+vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k, i18n: { resolvedLanguage: "de" } }) }));
 
 import { HuelleFenster } from "./HuelleFenster";
 
@@ -25,7 +25,8 @@ describe("Hülle-Dialog", () => {
     });
     render(<HuelleFenster />);
     expect(await screen.findByTestId("huelle-befehl")).toHaveTextContent("flight_logs_delete_all");
-    expect(screen.getByTestId("huelle-werte")).toHaveTextContent('"a": 1');
+    expect(screen.getByTestId("huelle-satz")).toHaveTextContent("Alle Flugprotokolle auf diesem Rechner löschen");
+    expect(screen.getByTestId("huelle-werte")).toHaveTextContent("a: 1");
     expect(ipc.invoke).not.toHaveBeenCalledWith("flight_logs_delete_all", expect.anything());
     fireEvent.click(screen.getByText("huelle.ausfuehren"));
     await waitFor(() =>
@@ -47,6 +48,26 @@ describe("Hülle-Dialog", () => {
         id: 7, ok: false, fehler: { code: "x", message: "kaputt" },
       }),
     );
+  });
+
+  it("maskiert Geheimnisse, zeigt übrige Werte", async () => {
+    ipc.invoke.mockImplementation(async () => [
+      { id: 8, befehl: "phpvms_login", werte: { url: "https://german-sky-group.eu", apiKey: "geheim123" } },
+    ]);
+    render(<HuelleFenster />);
+    const werte = await screen.findByTestId("huelle-werte");
+    expect(werte).toHaveTextContent("url: https://german-sky-group.eu");
+    expect(werte).toHaveTextContent("apiKey:");
+    expect(werte).not.toHaveTextContent("geheim123");
+    expect(screen.getByTestId("huelle-satz")).toHaveTextContent("phpVMS");
+  });
+
+  it("unbekannter Befehl: kein Satz, nur der Name", async () => {
+    ipc.invoke.mockImplementation(async () => [{ id: 9, befehl: "gibt_es_nicht", werte: {} }]);
+    render(<HuelleFenster />);
+    expect(await screen.findByTestId("huelle-befehl")).toHaveTextContent("gibt_es_nicht");
+    expect(screen.queryByTestId("huelle-satz")).toBeNull();
+    expect(screen.queryByTestId("huelle-werte")).toBeNull();
   });
 
   it("Ablehnen führt nichts aus", async () => {
