@@ -32,7 +32,13 @@ describe("Updater-Signatur", () => {
     // Sie darf sonst nur die Kennung umstellen — sonst weicht der lokale Build
     // still vom Release ab und man testet etwas anderes als man ausliefert.
     expect(Object.keys(l.bundle)).toEqual(["createUpdaterArtifacts"]);
-    expect(Object.keys(l).filter((k) => k !== "$schema").sort()).toEqual(["bundle", "identifier", "productName"]);
+    expect(Object.keys(l).filter((k) => k !== "$schema").sort()).toEqual(["bundle", "identifier", "plugins", "productName"]);
+    // Ein Dev-Build (eigene Kennung) darf sich nie ein Produktionspaket
+    // (3.x- oder Beta-Kanal) als Update holen: Endpunkt, den es nie gibt.
+    expect(l.plugins.updater.endpoints).toEqual([
+      "https://github.com/MANFahrer-GF/AeroACARS/releases/download/aeroacars3-dev-kanal-gibt-es-nicht/latest.json",
+    ]);
+    expect(Object.keys(l.plugins.updater)).toEqual(["endpoints"]);
   });
 
   it("nutzt die Beikonfiguration nur in den lokalen Skripten", () => {
@@ -123,6 +129,17 @@ describe("Beta-Update-Kanal", () => {
     expect(dev.match(/name: Require X-Plane plugin SHA-256 \(beta\)/g)?.length).toBe(2);
     expect(dev).toContain('ZIP="AeroACARS-XPlane-Plugin-v${VER}.zip"');
     expect(dev).toContain('beta-kanal-bauen.sh roh kanal "$PLUGIN_SHA256"');
+    // Ablauf: Plugin-Jobs nur bei beta; die App-Builds warten bei beta auf
+    // die Pruefsumme, ohne beta laufen sie trotz uebersprungener Plugin-Jobs.
+    const job = (name: string) => dev.split(/\n(?=  [a-z-]+:\n)/).find((b) => b.startsWith(`  ${name}:\n`)) ?? "";
+    expect(job("plugin-build")).toMatch(/^    if: inputs\.beta$/m);
+    expect(job("plugin-zip")).toMatch(/^    if: inputs\.beta$/m);
+    const tor = "    if: ${{ !cancelled() && (needs.plugin-zip.result == 'success' || (!inputs.beta && needs.plugin-zip.result == 'skipped')) }}";
+    for (const b of ["dev-build-windows", "dev-build-macos"]) {
+      expect(job(b)).toContain("    needs: plugin-zip\n");
+      expect(job(b)).toContain(tor);
+    }
+    expect(job("beta-kanal")).toContain("    needs: [plugin-zip, dev-build-windows, dev-build-macos]");
     // Die App laedt das Paket unter genau diesem Namen.
     const rs = readFileSync("src-tauri/src/xplane_plugin_install.rs", "utf8");
     expect(rs).toContain("releases/download/v{VERSION}/AeroACARS-XPlane-Plugin-v{VERSION}.zip");

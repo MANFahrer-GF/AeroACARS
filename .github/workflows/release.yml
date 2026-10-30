@@ -295,7 +295,9 @@ jobs:
           # freigegeben wird es mit scripts/beta-veroeffentlichen.sh --final
           # <tag> (--prerelease=false --latest=false, fuellt die Kanaele).
           # Wer den Entwurf versehentlich in der Oberflaeche veroeffentlicht,
-          # bekommt so trotzdem kein "latest".
+          # bekommt so trotzdem kein "latest" — SOLANGE der Haken
+          # "Pre-release" dabei gesetzt bleibt. Den Haken nie in der
+          # Oberflaeche entfernen; nur ueber das Skript freigeben.
           prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') || startsWith(github.ref_name, 'v3.') }}
           includeUpdaterJson: true
           args: ${{ matrix.args }}
