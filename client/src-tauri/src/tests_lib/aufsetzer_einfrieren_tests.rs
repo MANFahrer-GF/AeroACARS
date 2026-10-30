@@ -55,7 +55,8 @@
         s.bounce_count = 2;
         aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
         assert_eq!(s.aufsetzer_eingefroren.len(), 1);
-        let (eingabe, fenster, herkunft) = s.aufsetzer_eingefroren[0].clone();
+        let (eingabe, fenster, begleitung) = s.aufsetzer_eingefroren[0].clone();
+        let herkunft = begleitung.herkunft;
         assert_eq!(fenster.len(), 2);
         assert!(s.landung_fenster.is_empty(), "Fenster wandert mit dem Aufsetzer");
         assert_eq!(eingabe, landungs_bewertungseingabe(&f, &s, Some("C172"), "ZZZZ"), "Eingabe vor dem Zuruecksetzen");
@@ -67,7 +68,7 @@
         s.bounce_count = 0;
         let jetzt = landungs_herkunft(&f, &s, &eingabe, "ZZZZ");
         assert_eq!(jetzt["sinkrate"]["landing_source"], "smoothed_500ms", "Gegenprobe: liest die Flugdaten");
-        assert_eq!(s.aufsetzer_eingefroren[0].2["sinkrate"]["landing_source"], "vs_at_impact");
+        assert_eq!(s.aufsetzer_eingefroren[0].2.herkunft["sinkrate"]["landing_source"], "vs_at_impact");
     }
 
     /// Kap. 5.2: der Herkunftsblock traegt die Bahnquelle mit Commit, Zyklus
@@ -118,9 +119,9 @@
         s.landing_at = Some(Utc::now());
         s.landung_fenster = vec![probe()];
         aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
-        assert_eq!(s.aufsetzer_eingefroren[0].2["durchstarts"], 0, "vor der Entscheidung");
+        assert_eq!(s.aufsetzer_eingefroren[0].2.herkunft["durchstarts"], 0, "vor der Entscheidung");
         landung_beim_wegsteigen_abschliessen(&mut s, &SimSnapshot::default(), Utc::now());
-        let h = &s.aufsetzer_eingefroren[0].2;
+        let h = &s.aufsetzer_eingefroren[0].2.herkunft;
         assert_eq!(h["durchstarts"], 1);
         assert_eq!(h["aufsetzer"].as_array().unwrap().last().unwrap()["kind"], "touch_and_go");
 
@@ -129,9 +130,9 @@
         s.landing_at = Some(Utc::now() + chrono::Duration::seconds(60));
         s.landung_fenster = vec![probe()];
         aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
-        s.aufsetzer_eingefroren[1].2["aufsetzen"] = serde_json::json!("anderer");
+        s.aufsetzer_eingefroren[1].2.herkunft["aufsetzen"] = serde_json::json!("anderer");
         landung_beim_wegsteigen_abschliessen(&mut s, &SimSnapshot::default(), Utc::now());
-        assert_eq!(s.aufsetzer_eingefroren[1].2["durchstarts"], 1, "fremder Aufsetzer unberuehrt");
+        assert_eq!(s.aufsetzer_eingefroren[1].2.herkunft["durchstarts"], 1, "fremder Aufsetzer unberuehrt");
     }
 
     /// P-4.13: Schliesst `landung_beim_wegsteigen_abschliessen` nicht ab
@@ -160,7 +161,7 @@
         aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
         landung_beim_wegsteigen_abschliessen(&mut s, &SimSnapshot::default(), Utc::now());
         assert_eq!(s.aufsetzer_eingefroren.len(), 1);
-        assert_eq!(s.aufsetzer_eingefroren[0].2["durchstarts"], 1);
+        assert_eq!(s.aufsetzer_eingefroren[0].2.herkunft["durchstarts"], 1);
         assert!(s.landung_fenster.is_empty());
     }
 
@@ -170,4 +171,122 @@
         let mut s = f.stats.lock().unwrap();
         aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
         assert!(s.aufsetzer_eingefroren.is_empty());
+    }
+
+    /// Anflugprobe aus einer echten Fensterprobe (Werte mit voller Stellenzahl).
+    fn anflugprobe(w: &TouchdownWindowSample, at: DateTime<Utc>) -> ApproachBufferSample {
+        ApproachBufferSample {
+            at,
+            agl_ft: w.agl_ft + 900.0,
+            msl_ft: w.agl_ft + 1_300.0,
+            gs_kt: w.groundspeed_kt,
+            ias_kt: w.indicated_airspeed_kt,
+            vs_fpm: w.vs_fpm,
+            bank_deg: w.bank_deg,
+            heading_true_deg: w.heading_true_deg,
+            gear_position: 1.0,
+            flaps_position: 0.75,
+            selected_runway: Some("27R".into()),
+            stall_warning: false,
+            lat: Some(w.lat),
+            lon: Some(w.lon),
+            pitch_deg: Some(w.pitch_deg),
+            n1_mittel_pct: Some(w.g_force * 55.0),
+            headwind_kt: Some(w.bank_deg * 3.0),
+            crosswind_kt: Some(w.pitch_deg * 1.7),
+        }
+    }
+
+    /// P-4.13/Kap. 5.2: `meta` und `roh` (Anflugpuffer, Rollspur, METAR)
+    /// werden mit dem Touch-and-Go eingefroren — der naechste Anflug
+    /// ueberschreibt sie nicht. Gegenprobe: neu gebaut zeigt sie die
+    /// aktuellen Flugdaten.
+    #[test]
+    fn meta_und_roh_werden_mit_eingefroren() {
+        let f = flug();
+        let mut s = f.stats.lock().unwrap();
+        s.phase = FlightPhase::Landing;
+        s.landing_at = Some(Utc::now());
+        s.landung_fenster = vec![probe()];
+        let w = probe();
+        s.approach_buffer = (0..3).map(|i| anflugprobe(&w, Utc::now() + chrono::Duration::seconds(i))).collect();
+        s.anflug_forensik_puffer = (0..5).map(|i| anflugprobe(&w, Utc::now() + chrono::Duration::seconds(i))).collect();
+        s.bahn_spur = vec![(0.0, 0.5), (12.0, 0.7)];
+        s.arr_metar_raw = Some("EDDF 301050Z 25008KT CAVOK 12/04 Q1021".into());
+        s.landing_sim_meta = Some(serde_json::json!({ "sim": "XPlane12", "kategorie": "fixed_wing" }));
+        s.aufgeloestes_muster = Some("A20N".into());
+        aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
+        let b = s.aufsetzer_eingefroren[0].2.clone();
+        assert_eq!(b.roh["anflugpuffer"]["note"].as_array().unwrap().len(), 3);
+        assert_eq!(b.roh["anflugpuffer"]["forensik"].as_array().unwrap().len(), 5);
+        assert_eq!(b.roh["rollspur"]["punkte_laengs_quer_m"].as_array().unwrap().len(), 2);
+        assert_eq!(b.roh["metar"], "EDDF 301050Z 25008KT CAVOK 12/04 Q1021");
+        assert_eq!(b.meta["sim"], "XPlane12");
+        assert_eq!(b.meta["aircraft_icao"], "A20N", "Muster der Rechnung");
+
+        // Naechster Anflug: neue Daten.
+        s.approach_buffer.clear();
+        s.anflug_forensik_puffer.clear();
+        s.bahn_spur.clear();
+        s.arr_metar_raw = Some("EDDF 301120Z 27015KT 9999 BKN012".into());
+        s.landing_sim_meta = None;
+        assert_eq!(s.aufsetzer_eingefroren[0].2.roh, b.roh, "eingefroren");
+        let jetzt = landungs_begleitung(&f, &s, &landing_scoring::LandingScoringInput::default(), Some("A20N"), "ZZZZ");
+        assert_eq!(jetzt.roh["anflugpuffer"]["forensik"].as_array().unwrap().len(), 0, "Gegenprobe: liest die Flugdaten");
+        assert_eq!(jetzt.roh["metar"], "EDDF 301120Z 27015KT 9999 BKN012");
+        assert!(jetzt.meta["sim"].is_null(), "ohne Stempel: Schluessel da, Wert null");
+        assert!(jetzt.meta.get("kategorie").is_some());
+    }
+
+    /// Kap. 5.2 / Server `recorder/src/landingInput.ts`: Ein Dokument mit
+    /// vollen Puffern (120 + 400 Anflugproben, 400 Spurpunkte — die Kappen des
+    /// Clients) und einem echten X-Plane-Fenster (ity324, 627 Proben zu 50 Hz)
+    /// bleibt deutlich unter der Grenze. Geprueft wird der schlimmste Fall,
+    /// den der Server annimmt: das Fenster auf `PROBEN_MAX` = 5000 Proben
+    /// gestreckt. Schranke: die HAELFTE von `GZIP_MAX_BYTES` (2 MiB) und
+    /// `ENTPACKT_MAX_BYTES` (16 MiB) — Luft fuer kuenftige Felder.
+    #[test]
+    fn eingabe_dokument_bleibt_deutlich_unter_der_servergrenze() {
+        const GZIP_MAX_BYTES: u64 = 2 * 1024 * 1024;
+        const ENTPACKT_MAX_BYTES: usize = 16 * 1024 * 1024;
+        const PROBEN_MAX: usize = 5000;
+        let pfad = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ity324_xplane_steep_control.jsonl.gz");
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(std::fs::File::open(pfad).unwrap()), &mut text).unwrap();
+        let echt: Vec<TouchdownWindowSample> = text
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .find(|v| v["type"] == "touchdown_window")
+            .map(|v| serde_json::from_value(v["samples"].clone()).unwrap())
+            .expect("Fenster im Fixture");
+        assert_eq!(echt.len(), 627);
+        let t0 = echt[0].at;
+        let f = flug();
+        let mut s = f.stats.lock().unwrap();
+        s.approach_buffer = (0..120).map(|i| anflugprobe(&echt[i * 5 % echt.len()], t0 + chrono::Duration::seconds(i as i64))).collect();
+        s.anflug_forensik_puffer = (0..400).map(|i| anflugprobe(&echt[i * 3 % echt.len()], t0 + chrono::Duration::seconds(i as i64))).collect();
+        s.bahn_spur = (0..400).map(|i| (i as f32 * 7.3137, (i as f32 * 0.913).sin() * 4.17)).collect();
+        s.arr_metar_raw = Some("LFPG 091300Z 26012G24KT 230V290 9999 FEW030 BKN045 18/09 Q1015 NOSIG".into());
+        let e = landungs_bewertungseingabe(&f, &s, Some("A320"), "LFPG");
+        let b = landungs_begleitung(&f, &s, &e, Some("A320"), "LFPG");
+        let ergebnis = crate::bewertung::bewerten(&e);
+        let ordner = std::env::temp_dir().join(format!("aeroacars-groesse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ordner);
+        let messen = |fenster: &[TouchdownWindowSample], seq: u32| {
+            let doc = landungs_eingabe::dokument("P1", seq, landungs_eingabe::Art::Landung, None, &e, &b, fenster, &ergebnis);
+            let roh = doc.to_string().len();
+            let datei = landungs_eingabe::einreihen(&ordner, "k", "P1", seq, &doc).unwrap();
+            (roh, std::fs::metadata(datei).unwrap().len())
+        };
+        let (roh_echt, gz_echt) = messen(&echt, 1);
+        let gestreckt: Vec<TouchdownWindowSample> = (0..PROBEN_MAX)
+            .map(|i| TouchdownWindowSample { at: t0 + chrono::Duration::milliseconds(i as i64 * 20), ..echt[i % echt.len()] })
+            .collect();
+        let (roh_max, gz_max) = messen(&gestreckt, 2);
+        eprintln!("Eingabe-Dokument: echt {roh_echt} B roh / {gz_echt} B gzip; bei {PROBEN_MAX} Proben {roh_max} B roh / {gz_max} B gzip");
+        let _ = std::fs::remove_dir_all(&ordner);
+        assert!(gz_max <= GZIP_MAX_BYTES / 2, "gzip {gz_max} B");
+        assert!(roh_max <= ENTPACKT_MAX_BYTES / 2, "entpackt {roh_max} B");
+        // Gegenprobe der Messung: die Puffer stehen wirklich im Dokument.
+        assert!(gz_echt > 20_000, "Puffer fehlen? {gz_echt} B");
     }

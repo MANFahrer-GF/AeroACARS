@@ -14,11 +14,16 @@
 //! `landing_inputs/abgelehnt/` (Diagnose, kein endloses Wiederholen).
 //!
 //! Vertrag (Server `recorder/src/landingInput.ts`): gzip-JSON
-//! `{eingabe: {meta, eingang, herkunft}, fenster: {proben}, ergebnis}`.
-//! `herkunft` (P-9.44, Kap. 5.2) erklaert `eingang` und geht nie in die
-//! Rechnung ein: Modul und Server rechnen nur aus `eingang`.
+//! `{eingabe: {meta, eingang, herkunft, roh}, fenster: {proben}, ergebnis}`
+//! (Kap. 5.2). `meta` nennt neben den Kennungen Sim, Simfassung, Profil,
+//! `aircraft_icao` und Kategorie. `herkunft` (P-9.44) erklaert `eingang`;
+//! `roh` (Anflugpuffer 120 + 400, Rollspur, METAR) dient Kontrolle und
+//! Forensik (F-027). Das Fenster (17 Kanaele) steht als `fenster` daneben,
+//! weil der Server es in eigener Spalte (`window_gz`) ablegt. Nichts davon
+//! geht in die Rechnung ein: Modul und Server rechnen nur aus `eingang`.
 //! `meta.input_sha256` = SHA-256 ueber `{"eingang": …, "herkunft": …}` —
-//! die Herkunft ist Teil der Eingabe, `meta` (mit dem Hash selbst) nicht.
+//! die Herkunft ist Teil der Eingabe, `meta` (mit dem Hash selbst) und
+//! `roh` (Forensik) nicht.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -50,6 +55,18 @@ impl Art {
     }
 }
 
+/// Was je Aufsetzer neben Eingabe und Fenster mitgeht (Kap. 5.2), im selben
+/// Augenblick gebaut (beim Touch-and-Go eingefroren, P-4.13). Reine
+/// Dokumentation, nie in der Rechnung.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Begleitung {
+    /// Zusatz zu `meta`: `sim`, `sim_fassung`, `profil`, `profil_variante`,
+    /// `kategorie`, `aircraft_icao`.
+    pub meta: serde_json::Value,
+    pub herkunft: serde_json::Value,
+    pub roh: serde_json::Value,
+}
+
 /// Das Dokument fuer `POST /api/landing-input`.
 pub(crate) fn dokument(
     pirep_id: &str,
@@ -57,10 +74,11 @@ pub(crate) fn dokument(
     art: Art,
     runtime_bundle_id: Option<String>,
     eingang: &LandingScoringInput,
-    herkunft: &serde_json::Value,
+    begleitung: &Begleitung,
     fenster: &[TouchdownWindowSample],
     ergebnis: &Option<(landing_scoring::wasm::Ausgabe, Status)>,
 ) -> serde_json::Value {
+    let herkunft = &begleitung.herkunft;
     let eingang_json = serde_json::json!({ "landung": eingang });
     let gehasht = serde_json::json!({ "eingang": eingang_json, "herkunft": herkunft });
     let input_sha256 = hex(&Sha256::digest(gehasht.to_string().as_bytes()));
@@ -74,19 +92,27 @@ pub(crate) fn dokument(
         }
         None => serde_json::json!({ "bewertung_status": "modulfehler" }),
     };
+    let mut meta = serde_json::json!({
+        "pirep_id": pirep_id,
+        "seq": seq,
+        "art": art.text(),
+        "input_schema": SCHEMA,
+        "runtime_bundle_id": runtime_bundle_id,
+        "input_sha256": input_sha256,
+        "client_version": env!("CARGO_PKG_VERSION"),
+    });
+    // Die Kennungen oben gewinnen: der Zusatz traegt nur Sim, Profil & Co.
+    if let (Some(m), Some(zusatz)) = (meta.as_object_mut(), begleitung.meta.as_object()) {
+        for (k, v) in zusatz {
+            m.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+    }
     serde_json::json!({
         "eingabe": {
-            "meta": {
-                "pirep_id": pirep_id,
-                "seq": seq,
-                "art": art.text(),
-                "input_schema": SCHEMA,
-                "runtime_bundle_id": runtime_bundle_id,
-                "input_sha256": input_sha256,
-                "client_version": env!("CARGO_PKG_VERSION"),
-            },
+            "meta": meta,
             "eingang": eingang_json,
             "herkunft": herkunft,
+            "roh": begleitung.roh,
         },
         "fenster": { "proben": fenster },
         "ergebnis": ergebnis,
@@ -216,7 +242,12 @@ mod tests {
         let e = LandingScoringInput { vs_fpm: Some(-200.0), ..Default::default() };
         let ergebnis = crate::bewertung::bewerten(&e);
         let h = serde_json::json!({ "bahn": { "quelle": { "art": "ourairports" } } });
-        let d = dokument("PIREP1", 1, Art::Landung, Some("3-abcdef123456".into()), &e, &h, &[], &ergebnis);
+        let b = Begleitung {
+            meta: serde_json::json!({ "sim": "XPlane12", "kategorie": "FixedWing", "aircraft_icao": "A20N", "seq": 99 }),
+            herkunft: h.clone(),
+            roh: serde_json::json!({ "metar": "EDDF 301050Z 25008KT CAVOK 12/04 Q1021" }),
+        };
+        let d = dokument("PIREP1", 1, Art::Landung, Some("3-abcdef123456".into()), &e, &b, &[], &ergebnis);
         assert_eq!(d["eingabe"]["meta"]["seq"], 1);
         assert_eq!(d["eingabe"]["meta"]["art"], "landung");
         assert_eq!(d["eingabe"]["meta"]["input_sha256"].as_str().unwrap().len(), 64);
@@ -225,7 +256,13 @@ mod tests {
         assert_eq!(d["ergebnis"]["bewertung_status"], "endgueltig");
         assert!(d["fenster"]["proben"].as_array().unwrap().is_empty());
         assert_eq!(d["eingabe"]["herkunft"], h);
-        let ohne = dokument("PIREP1", 1, Art::Landung, None, &e, &h, &[], &None);
+        // Kap. 5.2: meta traegt den Zusatz, die Kennungen bleiben; roh steht da.
+        assert_eq!(d["eingabe"]["meta"]["sim"], "XPlane12");
+        assert_eq!(d["eingabe"]["meta"]["aircraft_icao"], "A20N");
+        assert_eq!(d["eingabe"]["meta"]["kategorie"], "FixedWing");
+        assert_eq!(d["eingabe"]["meta"]["seq"], 1, "Zusatz ueberschreibt keine Kennung");
+        assert_eq!(d["eingabe"]["roh"], b.roh);
+        let ohne = dokument("PIREP1", 1, Art::Landung, None, &e, &b, &[], &None);
         assert_eq!(ohne["ergebnis"]["bewertung_status"], "modulfehler");
     }
 
@@ -237,7 +274,8 @@ mod tests {
     fn herkunft_dokumentiert_nur() {
         let herkunft = |commit: &str| serde_json::json!({ "bahn": { "quelle": { "art": "ourairports", "ourairports_commit": commit } } });
         let doc = |e: &LandingScoringInput, h: &serde_json::Value| {
-            dokument("P1", 1, Art::Landung, None, e, h, &[], &crate::bewertung::bewerten(e))
+            let b = Begleitung { herkunft: h.clone(), ..Default::default() };
+            dokument("P1", 1, Art::Landung, None, e, &b, &[], &crate::bewertung::bewerten(e))
         };
         let e = LandingScoringInput { vs_fpm: Some(-180.0), ..Default::default() };
         let a = doc(&e, &herkunft("aaaa111"));
@@ -253,6 +291,41 @@ mod tests {
         let hart = LandingScoringInput { vs_fpm: Some(-900.0), ..Default::default() };
         let c = doc(&hart, &herkunft("aaaa111"));
         assert_ne!(a["ergebnis"], c["ergebnis"], "Gegenprobe: eingang wirkt");
+    }
+
+    /// Kap. 5.2: `meta`-Zusatz und `roh` sind Dokumentation und Forensik —
+    /// zwei Dokumente, die sich nur darin unterscheiden, haben dieselbe
+    /// Modul-Eingabe, dasselbe Ergebnis und denselben `input_sha256`.
+    /// Gegenprobe: eine andere Sinkrate in `eingang` aendert Ergebnis und Hash.
+    #[test]
+    fn meta_und_roh_dokumentieren_nur() {
+        let doc = |e: &LandingScoringInput, b: &Begleitung| {
+            dokument("P1", 1, Art::Landung, None, e, b, &[], &crate::bewertung::bewerten(e))
+        };
+        let h = serde_json::json!({ "sinkrate": { "landing_source": "vs_at_impact" } });
+        let b1 = Begleitung {
+            meta: serde_json::json!({ "sim": "Msfs2024", "profil": "fenix_a320", "kategorie": "FixedWing", "aircraft_icao": "A320" }),
+            herkunft: h.clone(),
+            roh: serde_json::json!({ "anflugpuffer": { "note": [{ "vs_fpm": -700.0 }] }, "metar": "EDDF 301050Z 25008KT CAVOK" }),
+        };
+        let b2 = Begleitung {
+            meta: serde_json::json!({ "sim": "XPlane12", "profil": "default", "kategorie": "Helicopter", "aircraft_icao": "H145" }),
+            herkunft: h.clone(),
+            roh: serde_json::json!({ "anflugpuffer": { "note": [{ "vs_fpm": -2400.0 }] }, "metar": "EDDF 301050Z 27035G50KT 0200 FG" }),
+        };
+        let e = LandingScoringInput { vs_fpm: Some(-180.0), ..Default::default() };
+        let a = doc(&e, &b1);
+        let b = doc(&e, &b2);
+        assert_ne!(a["eingabe"]["meta"], b["eingabe"]["meta"]);
+        assert_ne!(a["eingabe"]["roh"], b["eingabe"]["roh"]);
+        assert_eq!(a["eingabe"]["eingang"], b["eingabe"]["eingang"], "Modul-Eingabe unabhaengig von meta/roh");
+        assert_eq!(a["ergebnis"], b["ergebnis"], "Note unabhaengig von meta/roh");
+        assert_eq!(a["eingabe"]["meta"]["input_sha256"], b["eingabe"]["meta"]["input_sha256"], "Hash ohne meta/roh");
+        // Gegenprobe: andere Sinkrate → anderes Ergebnis, anderer Hash.
+        let hart = LandingScoringInput { vs_fpm: Some(-900.0), ..Default::default() };
+        let c = doc(&hart, &b1);
+        assert_ne!(a["ergebnis"], c["ergebnis"], "Gegenprobe: eingang wirkt");
+        assert_ne!(a["eingabe"]["meta"]["input_sha256"], c["eingabe"]["meta"]["input_sha256"]);
     }
 
     #[test]

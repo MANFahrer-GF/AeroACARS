@@ -146,3 +146,24 @@
         let st = flight.stats.lock().unwrap();
         assert_eq!(st.landing_lat, Some(50.040807569984544));
     }
+
+    /// v3 (Kap. 5.2): Die gemessene Vref wird beim Aufsetzen verbraucht
+    /// (`vref_gemessen.take()`), bleibt aber fuer `herkunft.vref` stehen —
+    /// ueber die echte Kette `step_flight_at`. Gegenprobe: ohne Messung
+    /// bleibt sie leer.
+    #[test]
+    fn gemessene_vref_steht_in_der_herkunft() {
+        for (gemessen, erwartet) in [(Some((137.0_f32, "pmdg")), serde_json::json!(137.0)), (None, serde_json::Value::Null)] {
+            let (flight, td_at) = gestempelter_flug();
+            flight.stats.lock().unwrap().vref_gemessen = gemessen;
+            step_flight_at(&flight, &steht(1.2), td_at + chrono::Duration::seconds(292));
+            let st = flight.stats.lock().unwrap();
+            assert_eq!(st.phase, FlightPhase::Landing);
+            assert!(st.vref_gemessen.is_none(), "beim Aufsetzen verbraucht");
+            assert_eq!(st.landing_vref_gemessen, gemessen);
+            let e = landungs_bewertungseingabe(&flight, &st, Some("A320"), "EDDF");
+            let h = landungs_herkunft(&flight, &st, &e, "EDDF");
+            assert_eq!(h["vref"]["gemessen_kt"], erwartet);
+            assert_eq!(h["vref"]["gemessen_quelle"], serde_json::json!(gemessen.map(|(_, q)| q)));
+        }
+    }

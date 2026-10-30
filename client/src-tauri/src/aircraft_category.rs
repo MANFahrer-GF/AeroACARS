@@ -63,6 +63,7 @@ impl AircraftCategory {
     /// NOT yet wired into the payload — the recorder currently re-derives the
     /// category from the ICAO type (see `NON_CONVENTIONAL_ICAOS` there). Kept
     /// as the single source of truth for the tag string when that wiring lands.
+    /// v3: `meta.kategorie` des Eingabe-Dokuments (Kap. 5.2) nutzt ihn.
     pub fn as_tag(self) -> &'static str {
         match self {
             AircraftCategory::FixedWing => "fixed_wing",

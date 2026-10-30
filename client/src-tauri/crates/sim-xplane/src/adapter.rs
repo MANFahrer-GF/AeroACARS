@@ -463,6 +463,9 @@ impl XPlaneAdapter {
         if kennz.is_some() {
             snap.aircraft_registration = kennz;
         }
+        drop(aircraft);
+        // v3 (Kap. 5.2): Simfassung fuer `meta` des Eingabe-Dokuments.
+        snap.sim_version = self.premium.xplane_version().map(|v| v.to_string());
         Some(snap)
     }
 
@@ -2398,6 +2401,8 @@ mod plugin2_loopback_tests {
         assert_eq!(st.protokoll, 2);
         assert_eq!(st.plugin_version.as_deref(), Some("1.0.0"));
         assert_eq!(st.xplane_version, Some(12100));
+        // v3 (Kap. 5.2): dieselbe Fassung im Schnappschuss (meta.sim_fassung).
+        assert_eq!(ad.snapshot().and_then(|s| s.sim_version).as_deref(), Some("12100"));
         assert!(!st.veraltet);
         assert!(st.namen_da > 0 && st.namen_fehlen > 0);
         {

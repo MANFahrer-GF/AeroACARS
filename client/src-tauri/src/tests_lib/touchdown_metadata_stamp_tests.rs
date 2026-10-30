@@ -5807,3 +5807,32 @@
             );
         }
     }
+
+    /// v3 (Kap. 5.2): Der Aufsetzstempel haelt Sim, Simfassung, Profil und
+    /// Kategorie fuer `meta` des Eingabe-Dokuments fest — X-Plane mit der
+    /// Fassung aus dem Plugin. Gegenprobe: MSFS ohne `sim_version` nimmt die
+    /// SimConnect-Kennung; ein Hubschrauber (Kufen) wird `helicopter`.
+    #[test]
+    fn stempel_haelt_sim_profil_und_kategorie_fest() {
+        let mut st = stats_with_buffer();
+        st.sim_kennung = Some("KittyHawk 12.1".into());
+        let mut snap = rollout_snap();
+        snap.simulator = Simulator::XPlane12;
+        snap.sim_version = Some("12100".into());
+        snap.aircraft_profile = sim_core::AircraftProfile::FenixA320;
+        stamp_touchdown_metadata(&mut st, &snap, td_at(), None);
+        let m = st.landing_sim_meta.clone().expect("meta gestempelt");
+        assert_eq!(m["sim"], "XPlane12");
+        assert_eq!(m["sim_fassung"], "12100");
+        assert_eq!(m["profil"], "fenix_a320");
+        assert_eq!(m["kategorie"], "fixed_wing");
+
+        snap.simulator = Simulator::Msfs2024;
+        snap.sim_version = None;
+        snap.gear_is_skid = Some(true);
+        stamp_touchdown_metadata(&mut st, &snap, td_at(), None);
+        let m = st.landing_sim_meta.clone().unwrap();
+        assert_eq!(m["sim"], "Msfs2024");
+        assert_eq!(m["sim_fassung"], "KittyHawk 12.1");
+        assert_eq!(m["kategorie"], "helicopter");
+    }

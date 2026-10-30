@@ -330,6 +330,16 @@ impl PremiumListener {
         }
     }
 
+    /// v3 (Kap. 5.2): Die vom Plugin gemeldete X-Plane-Fassung (z. B.
+    /// `12100` = 12.1.0) — nur solange das Plugin sendet, wie in `status`.
+    pub fn xplane_version(&self) -> Option<u32> {
+        let aktiv = self.shared.last_packet_at.lock().is_some_and(|t| t.elapsed() < ACTIVE_TIMEOUT);
+        if !aktiv {
+            return None;
+        }
+        self.shared.p2_info.lock().xplane_version
+    }
+
     pub fn status(&self) -> PremiumStatus {
         let frisch = |t: Option<Instant>| t.is_some_and(|t| t.elapsed() < ACTIVE_TIMEOUT);
         let active = frisch(*self.shared.last_packet_at.lock());

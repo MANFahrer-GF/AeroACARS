@@ -5789,11 +5789,19 @@ struct FlightStats {
     /// v3 (P-4.11, P-7.02): Aufsetzfenster der letzten Landung (17 Kanaele)
     /// fuer das Eingabe-Dokument an live. Nur im Speicher.
     landung_fenster: Vec<TouchdownWindowSample>,
-    /// v3 (P-4.13): Eingabe, Fenster und Herkunft (P-9.44) jedes
-    /// Touch-and-Go, eingefroren VOR dem Zuruecksetzen der Landungsfelder;
-    /// beim Abgeben je ein Dokument (seq 1 …), die letzte Landung bekommt die
-    /// naechste Nummer.
-    aufsetzer_eingefroren: Vec<(landing_scoring::LandingScoringInput, Vec<TouchdownWindowSample>, serde_json::Value)>,
+    /// v3 (P-4.13): Eingabe, Fenster und Begleitung (meta, Herkunft P-9.44,
+    /// roh — Kap. 5.2) jedes Touch-and-Go, eingefroren VOR dem Zuruecksetzen
+    /// der Landungsfelder; beim Abgeben je ein Dokument (seq 1 …), die letzte
+    /// Landung bekommt die naechste Nummer.
+    aufsetzer_eingefroren: Vec<(landing_scoring::LandingScoringInput, Vec<TouchdownWindowSample>, landungs_eingabe::Begleitung)>,
+    /// v3 (Kap. 5.2): Simulator, Simfassung, Profil und Kategorie beim
+    /// Aufsetzen (`stamp_touchdown_metadata`), fuer `meta` des
+    /// Eingabe-Dokuments. Nur Dokumentation, nie in der Rechnung.
+    landing_sim_meta: Option<serde_json::Value>,
+    /// v3 (Kap. 5.2): Die beim Aufsetzen verbrauchte gemessene Vref
+    /// (`vref_gemessen.take()`) mit Quelle — fuer `herkunft.vref` des
+    /// Eingabe-Dokuments. Die Rechnung liest sie hier nicht.
+    landing_vref_gemessen: Option<(f32, &'static str)>,
     /// v1.6.12 — die letzten Telemetrieproben fuer die Replay-Erkennung.
     ///
     /// Der Aufsetzpuffer taugt dafuer nicht: er reicht nur 2,5 s vor den
@@ -8768,7 +8776,10 @@ fn boeing_detent_rank(label: &str) -> u8 {
 /// `storage`-Crate (welches nur (vs_fpm, bank_deg) ist und an die
 /// PIREP-Notes-Sparkline serialisiert wird) — dieses hier ist das
 /// reichere internal Buffer-Sample.
-#[derive(Debug, Clone)]
+///
+/// Serialize: v3 (Kap. 5.2) — beide Puffer gehen als `roh.anflugpuffer` ins
+/// Eingabe-Dokument.
+#[derive(Debug, Clone, Serialize)]
 pub struct ApproachBufferSample {
     pub at: DateTime<Utc>,
     pub agl_ft: f32,
@@ -26075,6 +26086,8 @@ fn landungs_herkunft(
             },
         },
         "vref": {
+            "gemessen_kt": stats.landing_vref_gemessen.map(|(v, _)| v),
+            "gemessen_quelle": stats.landing_vref_gemessen.map(|(_, q)| q),
             "quelle": stats.landing_vref_source,
             "abweichung_kt": stats.landing_vref_deviation_kt,
             "ias_kt": stats.landing_speed_kt,
@@ -26090,6 +26103,44 @@ fn landungs_herkunft(
         "aufsetzer": stats.touchdown_events,
         "durchstarts": stats.go_around_count,
     })
+}
+
+/// v3 (Kap. 5.2): `meta`-Zusatz, `herkunft` und `roh` eines Aufsetzers, im
+/// selben Augenblick wie die Eingabe gebaut (Touch-and-Go: VOR dem
+/// Zuruecksetzen, P-4.13 — dann wird auch der Anflugpuffer hier kopiert).
+/// Reine Dokumentation: `bewerten` nimmt nur den `LandingScoringInput`.
+/// `muster` ist das Muster, mit dem `eingabe` gebaut wurde.
+fn landungs_begleitung(
+    flight: &ActiveFlight,
+    stats: &FlightStats,
+    eingabe: &landing_scoring::LandingScoringInput,
+    muster: Option<&str>,
+    effective_arr_icao: &str,
+) -> landungs_eingabe::Begleitung {
+    let mut meta = stats.landing_sim_meta.clone().unwrap_or_else(|| {
+        serde_json::json!({ "sim": null, "sim_fassung": null, "profil": null, "profil_variante": null, "kategorie": null })
+    });
+    meta["aircraft_icao"] = muster.into();
+    landungs_eingabe::Begleitung {
+        meta,
+        herkunft: landungs_herkunft(flight, stats, eingabe, effective_arr_icao),
+        // Das Fenster (17 Kanaele) steht als `fenster` daneben — eigene
+        // Spalte `window_gz` beim Server (P-6.01), hier nicht doppelt.
+        roh: serde_json::json!({
+            "anflugpuffer": {
+                // 120: traegt die Note (`compute_approach_stddev`);
+                // 400: Anflug-Forensik. Dieselben Proben, verschieden lang.
+                "note": stats.approach_buffer,
+                "forensik": stats.anflug_forensik_puffer,
+            },
+            "rollspur": {
+                "bahn": stats.runway_match.as_ref().map(|rm| format!("{} {}", rm.airport_ident, rm.runway_ident)),
+                "punkte_laengs_quer_m": stats.bahn_spur,
+                "bezug_veraltet": stats.bahn_spur_bezug_veraltet,
+            },
+            "metar": stats.arr_metar_raw,
+        }),
+    }
 }
 
 fn build_landing_record<F>(
@@ -26657,14 +26708,14 @@ where
 ///
 /// ⚠ Aufrufer dürfen `flight.stats` dabei NICHT halten — die Sperre ist nicht
 /// wiedereintrittsfähig, der Aufruf bliebe für immer stehen.
-/// Ein Eingabe-Dokument: Art, Eingabe, Fenster, Herkunft (P-9.44) und — fuer
-/// die Landung — das Ergebnis der Einreichung. `None` = noch zu rechnen
-/// (Touch-and-Go).
+/// Ein Eingabe-Dokument: Art, Eingabe, Fenster, Begleitung (meta, Herkunft
+/// P-9.44, roh — Kap. 5.2) und — fuer die Landung — das Ergebnis der
+/// Einreichung. `None` = noch zu rechnen (Touch-and-Go).
 type EingabeTeil = (
     landungs_eingabe::Art,
     landing_scoring::LandingScoringInput,
     Vec<TouchdownWindowSample>,
-    serde_json::Value,
+    landungs_eingabe::Begleitung,
     Option<Option<(landing_scoring::wasm::Ausgabe, crate::bewertung::Status)>>,
 );
 
@@ -26688,12 +26739,14 @@ fn eingabe_teile(
         if stats.landung_fenster.is_empty() {
             tracing::info!(pirep_id = %flight.pirep_id, "kein Aufsetzfenster im Speicher — kein Eingabe-Dokument der Landung");
         } else {
-            let herkunft = landungs_herkunft(flight, stats, &rechnung.eingabe, &rechnung.arr);
+            // Dasselbe Muster wie `pirep_rechnung_bilden`.
+            let muster = muster_fuer_landung(stats, &flight.aircraft_icao);
+            let begleitung = landungs_begleitung(flight, stats, &rechnung.eingabe, muster, &rechnung.arr);
             teile.push((
                 landungs_eingabe::Art::Landung,
                 rechnung.eingabe,
                 stats.landung_fenster.clone(),
-                herkunft,
+                begleitung,
                 Some(rechnung.ergebnis),
             ));
         }
@@ -26798,7 +26851,7 @@ fn record_landing_for_filed_flight(
     let konto = crate::live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
     if let (Some(konto), Ok(daten)) = (konto, app.path().app_data_dir()) {
         let mut abgelegt = false;
-        for (i, (art, eingabe, fenster, herkunft, ergebnis)) in teile.iter().enumerate() {
+        for (i, (art, eingabe, fenster, begleitung, ergebnis)) in teile.iter().enumerate() {
             let seq = i as u32 + 1;
             // Touch-and-Go: eigene Landung, eigene Rechnung — ausserhalb der
             // Sperre. Die Landung bringt ihr Ergebnis aus der Einreichung mit.
@@ -26812,7 +26865,7 @@ fn record_landing_for_filed_flight(
                 *art,
                 laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
                 eingabe,
-                herkunft,
+                begleitung,
                 fenster,
                 &ergebnis,
             );
@@ -40582,17 +40635,26 @@ fn stamp_touchdown_metadata(
     if stats.landing_simulator.is_none() {
         stats.landing_simulator = Some(simulator_kennung(snap));
     }
-    if aircraft_category::resolve_category(
+    let kategorie = aircraft_category::resolve_category(
         snap.aircraft_icao.as_deref(),
         snap.gear_is_skid,
         snap.gear_is_floats,
         snap.gear_is_wheels,
         snap.water_rudder_present,
-    )
-    .is_non_conventional()
-    {
+    );
+    if kategorie.is_non_conventional() {
         stats.landing_nicht_konventionell = true;
     }
+    // v3 (Kap. 5.2): `meta` des Eingabe-Dokuments. Simfassung: X-Plane aus
+    // dem Plugin (`sim_version`), MSFS aus der SimConnect-Anmeldung
+    // (`sim_kennung`, „Name Haupt.Neben“); ohne beides `null`.
+    stats.landing_sim_meta = Some(serde_json::json!({
+        "sim": snap.simulator,
+        "sim_fassung": snap.sim_version.clone().or_else(|| stats.sim_kennung.clone()),
+        "profil": snap.aircraft_profile,
+        "profil_variante": snap.pmdg.as_ref().map(|p| p.variant_label.clone()),
+        "kategorie": kategorie.as_tag(),
+    }));
 
     // IAS / pitch / heading: prefer the buffered sample
     // at the actual TD moment (see `td_buf_sample`).
@@ -44214,9 +44276,9 @@ fn aufsetzer_einfrieren(flight: &ActiveFlight, stats: &mut FlightStats, snap: &S
         sim_core::muster_aufloesen(snap.aircraft_icao.as_deref(), &flight.aircraft_icao, snap.aircraft_title.as_deref())
     });
     let eingabe = landungs_bewertungseingabe(flight, stats, muster.as_deref(), &flight.arr_airport);
-    let herkunft = landungs_herkunft(flight, stats, &eingabe, &flight.arr_airport);
+    let begleitung = landungs_begleitung(flight, stats, &eingabe, muster.as_deref(), &flight.arr_airport);
     let fenster = std::mem::take(&mut stats.landung_fenster);
-    stats.aufsetzer_eingefroren.push((eingabe, fenster, herkunft));
+    stats.aufsetzer_eingefroren.push((eingabe, fenster, begleitung));
 }
 
 /// Die Landung, die `landung_beim_wegsteigen_abschliessen` abschliesst: ihr
@@ -44285,7 +44347,8 @@ fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnaps
     // `aufsetzer_einfrieren`) bekommt seine eigene Entscheidung nach.
     let aufsetzer = serde_json::json!(stats.touchdown_events);
     let durchstarts = stats.go_around_count;
-    if let Some((_, _, h)) = stats.aufsetzer_eingefroren.last_mut() {
+    if let Some((_, _, b)) = stats.aufsetzer_eingefroren.last_mut() {
+        let h = &mut b.herkunft;
         if h["aufsetzen"] == serde_json::json!(aufsetzen) {
             h["aufsetzer"] = aufsetzer;
             h["durchstarts"] = durchstarts.into();
@@ -46672,6 +46735,8 @@ fn step_flight_at(
                 // (`typical_vref_kt`) nimmt sie seit 2.0.6 nicht mehr.
                 // Verbraucht: ein Touch-and-go misst im naechsten Anflug neu.
                 let gemessen = stats.vref_gemessen.take();
+                // v3 (Kap. 5.2): fuer `herkunft.vref` festhalten.
+                stats.landing_vref_gemessen = gemessen;
                 // Der PIREP-Eintrag „PMDG VREF (Landing)" nennt denselben Wert
                 // wie die Bewertung, nicht den aus dem ersten Anflug (QS Codex).
                 // Ohne PMDG-Messung beim Aufsetzen bleibt er leer.

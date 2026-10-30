@@ -129,6 +129,19 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// (vorher: Phasenpruefung danach → `touch_and_go` ohne Entscheidung, die
 /// Landung verlor ihr Fenster). Test
 /// `aufsetzer_einfrieren_tests::ohne_abschluss_wird_nichts_eingefroren`.
+/// — plus Kap. 5.2 vollstaendig: `landungs_begleitung` baut `meta`-Zusatz
+/// (Stempel `landing_sim_meta` aus `stamp_touchdown_metadata`: Sim,
+/// Simfassung, Profil, Kategorie; dazu `aircraft_icao` = Muster der
+/// Rechnung), `herkunft` und `roh` (beide Anflugpuffer, Rollspur, METAR;
+/// `ApproachBufferSample` ist dafuer `Serialize`); `aufsetzer_eingefroren`
+/// und `EingabeTeil` tragen `landungs_eingabe::Begleitung`; beim Aufsetzen
+/// haelt `landing_vref_gemessen` die verbrauchte Vref fuer
+/// `herkunft.vref.gemessen_kt` fest. Nichts davon in der Rechnung. Tests
+/// `landungs_eingabe::tests::meta_und_roh_dokumentieren_nur`,
+/// `aufsetzer_einfrieren_tests::meta_und_roh_werden_mit_eingefroren`,
+/// `eingabe_dokument_bleibt_deutlich_unter_der_servergrenze`,
+/// `abtaster_stempel_tests::gemessene_vref_steht_in_der_herkunft`,
+/// `stempel_haelt_sim_profil_und_kategorie_fest`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -139,4 +152,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "c7741eb175cf57ddc39ccd84ac97faed9455912ea80944c24b1531fe00660bec";
+const HASH_VOR_DER_ZERLEGUNG: &str = "642ba446661a1a27b1734341d1cc0312437164a29b63b1239903c33eedca6750";

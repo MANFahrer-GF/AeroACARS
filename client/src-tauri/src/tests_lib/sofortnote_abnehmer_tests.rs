@@ -241,9 +241,9 @@
         let record = build_landing_record(&f, &st, None, Some("A321"), None, "YYYY", Some(&rechnung), |_| None)
             .expect("Datensatz");
         let teile = eingabe_teile(&f, &st, true, rechnung.clone());
-        let (art, eingabe, fenster, herkunft, ergebnis) = teile.last().expect("Dokument der Landung");
+        let (art, eingabe, fenster, begleitung, ergebnis) = teile.last().expect("Dokument der Landung");
         let ergebnis = ergebnis.clone().expect("Ergebnis der Einreichung");
-        let doc = crate::landungs_eingabe::dokument("test-pirep", 1, *art, None, eingabe, herkunft, fenster, &ergebnis);
+        let doc = crate::landungs_eingabe::dokument("test-pirep", 1, *art, None, eingabe, begleitung, fenster, &ergebnis);
 
         assert_eq!(aufrufe(), 1, "eine Modulrechnung je Einreichung");
         assert!(felder.contains_key("Landing Score"), "{felder:?}");
@@ -258,6 +258,9 @@
         // P-9.44: die Herkunft derselben Landung, am eingereichten Flughafen.
         assert_eq!(doc["eingabe"]["herkunft"]["ausweichziel"]["eingereicht"], "YYYY");
         assert_eq!(doc["eingabe"]["herkunft"], landungs_herkunft(&f, &st, &rechnung.eingabe, "YYYY"));
+        // Kap. 5.2: meta nennt das Muster der Rechnung; roh steht im Dokument.
+        assert_eq!(doc["eingabe"]["meta"]["aircraft_icao"], serde_json::json!(muster_fuer_landung(&st, &f.aircraft_icao)));
+        assert!(doc["eingabe"]["roh"]["anflugpuffer"]["forensik"].is_array());
     }
 
     // ── Abgabe-Sperre: haengt nicht vom Modul ab ────────────────────────
