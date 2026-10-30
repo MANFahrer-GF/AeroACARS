@@ -311,7 +311,12 @@ workspace = true
 flate2 = "1"
 # v3 Etappe 4: Ersatzmodul im Test „Kabinenablauf ohne Release geaendert“.
 wat = "1"
+
 # v3 (P-13.20): Testanwendung (MockRuntime) fuer den Lader der Oberflaeche.
+# Nicht unter Windows: Dort startet die Testdatei mit dem Merkmal `test`
+# gar nicht (STATUS_ENTRYPOINT_NOT_FOUND, CI 30.10.2026); der Test
+# `alle_ziele_zeigen_dieselbe_generation` laeuft auf macOS und Linux.
+[target.'cfg(not(windows))'.dev-dependencies]
 tauri = { version = "2", features = ["test"] }
 
 [lints]

@@ -308,6 +308,7 @@ mod tests {
     /// am Lader vorbei auf das eingebaute Frontend (die Testanwendung hat
     /// keins: ein Umweg waere hier ein Fehler).
     #[test]
+    #[cfg(not(windows))]
     fn alle_ziele_zeigen_dieselbe_generation() {
         let app = tauri::test::mock_app();
         let app = app.handle();

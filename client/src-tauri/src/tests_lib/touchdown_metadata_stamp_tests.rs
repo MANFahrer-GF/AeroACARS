@@ -1014,8 +1014,8 @@
     /// wird (v2.0.17).
     ///
     /// Bis 2.0.16 nahm der Abtaster fuer jeden Messwert `flight.stats` — wer
-    /// sie hielt, hielt die Messung an. Hier haelt der Test die Sperre
-    /// 400 ms lang; in der Zeit muessen Messwerte entstehen (Soll: 20).
+    /// sie hielt, hielt die Messung an. Hier haelt der Test die Sperre, bis
+    /// zehn Messwerte da sind (hoechstens 2 s; Soll: 20 je 400 ms).
     #[test]
     fn der_messfaden_misst_weiter_waehrend_die_flugdaten_sperre_gehalten_wird() {
         let flight = Arc::new(flight_fixture("OMDB"));
@@ -1049,9 +1049,16 @@
         let erster = messungen
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("der Messfaden liefert gar nichts, waehrend die Sperre gehalten wird");
-        std::thread::sleep(std::time::Duration::from_millis(400));
-        let waehrenddessen: Vec<AufsetzMessung> =
-            std::iter::once(erster).chain(messungen.try_iter()).collect();
+        // Bis zu 2 s (Soll: 20 Messwerte je 400 ms); ein ausgelasteter
+        // macOS-Laeufer schaffte in festen 400 ms nur 9 (CI 30.10.2026).
+        // Wartete der Faden auf die Sperre, kaeme hier kein zweiter Wert.
+        let mut waehrenddessen: Vec<AufsetzMessung> = vec![erster];
+        let frist = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while waehrenddessen.len() < 10 && std::time::Instant::now() < frist {
+            if let Ok(m) = messungen.recv_timeout(std::time::Duration::from_millis(50)) {
+                waehrenddessen.push(m);
+            }
+        }
         drop(gehalten);
         // Ende durch Abmelden der Auswertung, NICHT durch `stop`: Ist die
         // Auswertung weg, muss der Messfaden enden, statt weiter Plugin-
@@ -1067,7 +1074,7 @@
         assert!(beendet, "der Messfaden laeuft weiter, obwohl die Auswertung abgemeldet ist");
         assert!(
             waehrenddessen.len() >= 10,
-            "nur {} Messwerte in 400 ms gehaltener Sperre — der Messfaden \
+            "nur {} Messwerte in 2 s gehaltener Sperre — der Messfaden \
              wartet auf die Flugdaten",
             waehrenddessen.len()
         );
