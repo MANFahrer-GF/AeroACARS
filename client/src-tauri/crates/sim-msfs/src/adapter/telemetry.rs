@@ -14250,9 +14250,16 @@ mod tests {
                 assert!(!hat_feld(td.name), "{} gehoert nicht in die Hauptdefinition", td.name);
                 assert!(!OPTIONALE_FELDER.iter().any(|f| f.name == td.name));
             }
-            assert_eq!(TOUCHDOWN_FIELDS[0].name, "PLANE TOUCHDOWN NORMAL VELOCITY");
-            assert_eq!(TOUCHDOWN_FIELDS[4].unit, "radians");
-            assert_eq!(TOUCHDOWN_FIELDS[5].unit, "radians");
+            let soll = [
+                ("PLANE TOUCHDOWN NORMAL VELOCITY", "feet per second"),
+                ("PLANE TOUCHDOWN PITCH DEGREES", "degrees"),
+                ("PLANE TOUCHDOWN BANK DEGREES", "degrees"),
+                ("PLANE TOUCHDOWN HEADING DEGREES MAGNETIC", "degrees"),
+                ("PLANE TOUCHDOWN LATITUDE", "radians"),
+                ("PLANE TOUCHDOWN LONGITUDE", "radians"),
+            ];
+            let ist: Vec<(&str, &str)> = TOUCHDOWN_FIELDS.iter().map(|f| (f.name, f.unit)).collect();
+            assert_eq!(ist, soll);
             // Ein vollstaendiger Block wird in Feldreihenfolge gelesen …
             let mut b = Vec::new();
             for v in [-4.0f64, 3.5, -1.0, 270.0, 0.87, 0.15] {
@@ -14320,6 +14327,9 @@ mod tests {
             let fbw0 = s(A32NX, &[("L:A32NX_TOTAL_FUEL_QUANTITY", 0.0), w[1], w[2]]);
             assert!((fbw0.fuel_total_kg - 12_000.0 * 0.453_592_37).abs() < 0.1);
             assert!((s(ASOBO, &w).fuel_total_kg - 12_000.0 * 0.453_592_37).abs() < 0.1);
+            // EX1 = 0 → Legacy-SimVar.
+            let legacy = s(ASOBO, &[("FUEL TOTAL QUANTITY WEIGHT EX1", 0.0), w[2]]);
+            assert!((legacy.fuel_total_kg - 10_000.0 * 0.453_592_37).abs() < 0.1);
         }
 
         #[test]
@@ -14342,6 +14352,12 @@ mod tests {
             );
             assert!(quatsch.total_weight_kg.is_some());
             assert_eq!(quatsch.zfw_kg, None);
+            // Negativer Sprit (Lesefehler) → kein ZFW, obwohl GW > Sprit.
+            let negativ = s(
+                ASOBO,
+                &[("TOTAL WEIGHT", 100_000.0), ("FUEL TOTAL QUANTITY WEIGHT", -500.0)],
+            );
+            assert_eq!(negativ.zfw_kg, None);
         }
 
         #[test]
@@ -14363,6 +14379,9 @@ mod tests {
             assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_WING", 1.0)]).light_wing, Some(true));
             assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_WING", 0.0)]).light_wing, Some(false));
             assert_eq!(s(ASOBO, &[("L:S_OH_EXT_LT_WING", 1.0)]).light_wing, None);
+            // v3: BlueBird 757 fuehrt das Fluegellicht inzwischen ebenfalls.
+            assert_eq!(s(BBS_LTU, &[("L:B757_OVHD_WING_LIGHTS", 1.0)]).light_wing, Some(true));
+            assert_eq!(s(BBS_LTU, &[("L:B757_OVHD_WING_LIGHTS", 0.0)]).light_wing, Some(false));
         }
 
         #[test]
@@ -14389,6 +14408,7 @@ mod tests {
         #[test]
         fn s4_147_rolllicht_fenix_bug_fss_bug_oder_seite_sonst_standard() {
             assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_NOSE", 1.0), ("LIGHT TAXI", 0.0)]).light_taxi, Some(true));
+            assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_NOSE", 2.0), ("LIGHT TAXI", 0.0)]).light_taxi, Some(true));
             assert_eq!(s(FENIX, &[("L:S_OH_EXT_LT_NOSE", 0.0), ("LIGHT TAXI", 1.0)]).light_taxi, Some(false));
             assert_eq!(s(FSS_E190, &[("L:FSS_EXX_OVHD_EXLT_TAXI_SIDE_SWITCH", 1.0)]).light_taxi, Some(true));
             assert_eq!(s(FSS_E190, &[("L:FSS_EXX_OVHD_EXLT_TAXI_NOSE_SWITCH", 1.0)]).light_taxi, Some(true));
@@ -14415,6 +14435,10 @@ mod tests {
             assert!(!pb(FSS_E190, &[("BRAKE PARKING POSITION", 1.0)]));
             assert!(pb(A32NX, &[("L:A32NX_PARK_BRAKE_LEVER_POS", 0.5)]));
             assert!(!pb(A32NX, &[("L:A32NX_PARK_BRAKE_LEVER_POS", 0.4), ("BRAKE PARKING POSITION", 1.0)]));
+            // „ungleich 0" heisst auch negativ (nicht „> 0").
+            assert!(pb(FENIX, &[("L:S_MIP_PARKING_BRAKE", -1.0)]));
+            assert!(pb(FSL, &[("L:VC_PED_PARK_BRAKE_Switch", -1.0)]));
+            assert!(pb(FSS_E190, &[("L:FSS_EXX_PARKBRAKE_BV_LEVER", -1.0)]));
             // A220 bewusst ohne Override: der Standard entscheidet.
             assert!(pb(A220, &[("BRAKE PARKING POSITION", 1.0)]));
             assert!(!pb(A220, &[("BRAKE PARKING POSITION", 0.0)]));

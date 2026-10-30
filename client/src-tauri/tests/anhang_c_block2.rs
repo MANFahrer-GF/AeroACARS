@@ -219,4 +219,54 @@ mod bordbuch_anflug {
         }
         assert_eq!(z.nacht_landung, Some(false), "Mittag in Muenchen: Tag");
     }
+
+    #[test]
+    fn s7_210_fl100_vorbedingung_10500_ft_und_anflugphase_ohne_sinken() {
+        let e = Einstellungen::default();
+        let k = kontext(&e);
+        // Nur bis 10.400 ft: kein FL100-Reiseflug, unter FL100 sinkend
+        // startet KEINE 60-s-Frist (erst der Endanflug unter 1000 ft).
+        let mut z = Zustand::default();
+        let mut s = gestartet(&mut z, &k, 10_400.0);
+        s.altitude_msl_ft = 9_500.0;
+        s.altitude_agl_ft = 9_400.0;
+        s.vertical_speed_fpm = -1_500.0;
+        takte(&mut z, &mut s, FlightPhase::Descent, &k, 1_200, 1_400);
+        assert_eq!(status(&z, Regel::LandelichtAnflug), Status::Offen);
+        // Ueber 10.500 ft gewesen, Anflugphase ohne Sinkrate startet die Frist.
+        let mut z = Zustand::default();
+        let mut s = gestartet(&mut z, &k, 10_600.0);
+        s.altitude_msl_ft = 9_500.0;
+        s.altitude_agl_ft = 9_400.0;
+        s.vertical_speed_fpm = 0.0;
+        takte(&mut z, &mut s, FlightPhase::Approach, &k, 1_200, 1_265);
+        assert_eq!(status(&z, Regel::LandelichtAnflug), Status::DiesmalOhne);
+    }
+
+    #[test]
+    fn s7_211_landephase_zaehlt_am_boden_nicht_nachtlandung_wird_festgehalten() {
+        let e = Einstellungen::default();
+        let k = kontext(&e);
+        // Am Boden (Aufsetzen) gesehen zaehlt nicht als Endanflug.
+        let mut z = Zustand::default();
+        let mut s = gestartet(&mut z, &k, 6_000.0);
+        s.on_ground = true;
+        s.altitude_msl_ft = 1_600.0;
+        s.altitude_agl_ft = 0.0;
+        s.spoilers_armed = Some(true);
+        takte(&mut z, &mut s, FlightPhase::Landing, &k, 1_000, 1_000);
+        assert_eq!(status(&z, Regel::SpoilerLandung), Status::Offen);
+        // In der Luft in Landing-Phase unter 1000 ft: zaehlt; nachts wird die
+        // Nachtlandung festgehalten (EDDM, 23:00 UTC).
+        let mut z = Zustand::default();
+        let mut s = gestartet(&mut z, &k, 6_000.0);
+        s.altitude_msl_ft = 900.0;
+        s.altitude_agl_ft = 800.0;
+        s.spoilers_armed = Some(true);
+        s.lat = 48.35;
+        s.lon = 11.78;
+        takte(&mut z, &mut s, FlightPhase::Landing, &k, 39_600, 39_600);
+        assert_eq!(status(&z, Regel::SpoilerLandung), Status::Erledigt);
+        assert_eq!(z.nacht_landung, Some(true));
+    }
 }
