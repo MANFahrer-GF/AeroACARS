@@ -218,7 +218,7 @@ fn paket_aus(dateien: &[(&str, &[u8])]) -> Paket {
         "bundle_schema": 1, "generation": 0,
         "created_at": "2026-01-01T00:00:00Z", "expires_at": "2999-01-01T00:00:00Z",
         "client_min": "0.0.0", "client_max": "999.0.0", "requires": [],
-        "score_version": 26, "input_schema": 0, "files": files,
+        "score_version": landing_scoring::wasm::FASSUNG, "input_schema": 0, "files": files,
     });
     let inhalt: HashMap<String, Vec<u8>> = dateien.iter().map(|(p, b)| (p.to_string(), b.to_vec())).collect();
     Eingebaut { manifest: serde_json::to_vec(&manifest).expect("Manifest"), dateien: inhalt }

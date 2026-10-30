@@ -41,6 +41,7 @@ dependencies = [
  "landing-scoring",
  "libc",
  "metar",
+ "minisign",
  "objc2",
  "objc2-foundation",
  "paket-endpunkte",

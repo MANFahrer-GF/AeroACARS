@@ -136,3 +136,18 @@ fn fenster_haben_genau_eine_rechte_datei() {
     assert_eq!(huelle, BTreeSet::from(["huelle".to_string()]), "nur das Fenster huelle darf Systembefehle");
     assert!(ui.is_disjoint(&huelle), "Fenster in ui.json UND huelle.json: {:?}", ui.intersection(&huelle).collect::<Vec<_>>());
 }
+
+/// `ui-befehle-4` (30.10.2026, Thomas: Paketstand sichtbar, ohne zweimal
+/// starten): `paket_info` liest nur. „Auf neues Paket pruefen“ fragt nur live
+/// (Host fest, Token im Kern) und „Jetzt neu starten“ startet nur ohne
+/// offenen Flug und nur mit wartendem neuem Stand (Kern prueft
+/// `neustart_erlaubt`) — der Knopf ist die Bestaetigung, wie bei den 17
+/// umgestuften Befehlen; keine zweite Rueckfrage der Huelle.
+#[test]
+fn paket_befehle_der_ui_befehle_4() {
+    let liste = liste();
+    assert_eq!(liste.get("paket_info").map(String::as_str), Some("lesen"));
+    assert_eq!(liste.get("paket_datei").map(String::as_str), Some("lesen"));
+    assert_eq!(liste.get("paket_jetzt_pruefen").map(String::as_str), Some("fachlich"));
+    assert_eq!(liste.get("paket_neu_starten").map(String::as_str), Some("fachlich"));
+}

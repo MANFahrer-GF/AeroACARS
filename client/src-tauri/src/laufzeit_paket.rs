@@ -46,7 +46,19 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 /// nicht (`deny_unknown_fields` in `paket-endpunkte`, Datei unbekannt) — mit
 /// der Faehigkeit uebergeht es das Paket sauber (P-2.30) statt am Lesen zu
 /// scheitern. Kein neuer Befehl: `befehle.json` bleibt.
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-2", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-3", "hilfe-formular-1"];
+/// `ui-befehle-4` (30.10.2026, Analyse V1a/V1b): Obermenge von -3 mit dem
+/// Lesebefehl `paket_info`; `paket_datei` liest jede Datendatei unter
+/// tabellen/, texte/, grenzwerte/ (vorher feste Liste). Eine Oberflaeche,
+/// die das nutzt, verlangt -4 — ein Beta-1-Programm ohne -4 uebergeht ein
+/// solches Paket und nimmt den eingebauten Stand (P-2.30). -3 bleibt, weil
+/// sich an den bisherigen Befehlen nichts aendert. Dazu `paket_jetzt_pruefen`
+/// und `paket_neu_starten` (fachlich, Kern prueft).
+/// `kabine-lage-1` (Analyse V2): Der Kabinenplaner bekommt je Takt das
+/// Flugbild `Tick::lage` (Snapshot, Plan, Ist-Zeiten, Bahn). Ein
+/// `kabine.wasm`, dessen Regeln darauf bauen, verlangt die Faehigkeit; ein
+/// aelteres Programm uebergeht das Paket (P-2.30). Erst in `bundle.yml`
+/// REQUIRES, wenn ein Modul `lage` liest.
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-2", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-3", "ui-befehle-4", "hilfe-formular-1", "kabine-lage-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -74,9 +86,18 @@ const KABINE_MODUL: &str = "module/kabine.wasm";
 /// Referenzfaelle des Bewertungsmoduls (P-3.21, P-13.02).
 const SELBSTTEST: &str = "selftest.json";
 
-/// Dateien, die die Oberflaeche ueber [`paket_datei`] lesen darf: feste
-/// Liste, nur lesen, nur aus dem geltenden Stand.
+/// Dateien, die die eingebaute Oberflaeche beim Start liest: Jedes Paket
+/// muss sie tragen (Selbsttest), `hilfe-formular.json` nur ab
+/// `hilfe-formular-1`.
 const UI_DATEIEN: &[&str] = &[FLOTTE, "texte/de.json", "texte/en.json", "texte/it.json", HILFE_FORMULAR];
+
+/// `ui-befehle-4` (Analyse-Vorschlag V1b): Die Oberflaeche liest ueber
+/// [`paket_datei`] jede reine Datendatei dieser Ordner des geltenden Stands —
+/// eine neue Tabelle braucht so keinen Installer. Module, Selbsttest,
+/// Endpunkte, Profile und OurAirports bleiben gesperrt.
+const LESBARE_ORDNER: &[&str] = &["tabellen/", "texte/", "grenzwerte/"];
+/// Groesste lesbare Datei (die Texte haben ~0,3 MB).
+const LESBAR_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Alles, was aus dem Laufzeit-Paket kommt, als EIN Stand (P-3.02): Er wird
 /// genau einmal je Programmlauf festgelegt — vollstaendig aus dem Paket oder
@@ -121,8 +142,11 @@ pub(crate) struct AktiverStand {
     pub bewertung: &'static [u8],
     /// Kabinenplaner (WASM, P-3.58) dieses Stands.
     pub kabine_modul: &'static [u8],
-    /// Rohtexte der [`UI_DATEIEN`] aus diesem Stand.
-    pub ui: Vec<(&'static str, &'static str)>,
+    /// Das Paket dieses Stands; `None` beim eingebauten Stand (dessen
+    /// Dateien liegen statisch im Programm, [`eingebaute_datei`]).
+    pub paket: Option<Paket>,
+    /// Manifest dieses Stands (auch des eingebauten) fuer [`paket_info`].
+    pub manifest: Manifest,
     /// OurAirports-Commit aus dem Manifest (`quelle.ourairports_commit`);
     /// `None` beim eingebauten Stand. Herkunft im Eingabe-Dokument (P-9.44).
     pub ourairports_commit: Option<String>,
@@ -130,17 +154,23 @@ pub(crate) struct AktiverStand {
 
 static STAND: OnceLock<AktiverStand> = OnceLock::new();
 
+/// Herkunft des geltenden Stands (gesetzt von `starten`; ohne `starten`
+/// gilt der eingebaute Stand).
+static HERKUNFT: OnceLock<Herkunft> = OnceLock::new();
+
+/// Ein Paket, das sich beim Start nicht anwenden liess (`stand_aus_paket`
+/// scheiterte): Es wuerde auch beim naechsten Start nicht gelten, ist also
+/// kein „neues Paket“ (sonst stuende der Hinweis fuer immer da).
+static NICHT_ANWENDBAR: OnceLock<RuntimeBundleId> = OnceLock::new();
+
 /// Einstieg der nachgeladenen Oberflaeche im Paket (Etappe 5, P-8.02).
 pub(crate) const UI_EINSTIEG: &str = "ui/index.html";
 
-/// Das Paket des geltenden Stands, wenn es eine Oberflaeche (`ui/`) traegt.
-/// Gesetzt nur zusammen mit dem Stand aus demselben Paket (P-3.02).
-static UI_PAKET: OnceLock<Paket> = OnceLock::new();
-
 /// Die Oberflaeche dieses Laufs: `Some` = `ui/` der aktiven Generation,
-/// `None` = das eingebaute Frontend (`ui_lader`).
+/// `None` = das eingebaute Frontend (`ui_lader`). Dasselbe Paket wie die
+/// Daten (P-3.02), denn es haengt am Stand.
 pub(crate) fn ui_paket() -> Option<&'static Paket> {
-    UI_PAKET.get()
+    stand().paket.as_ref().filter(|p| p.manifest.datei(UI_EINSTIEG).is_some())
 }
 
 /// PIREP und Stand eines offenen Flugs, dessen Stand in diesem Lauf NICHT gilt
@@ -181,7 +211,7 @@ pub(crate) fn stand() -> &'static AktiverStand {
     STAND.get_or_init(|| eingebauter_stand().expect("eingebauter Stand lesbar (Test eingebauter_stand_besteht_den_selbsttest)"))
 }
 
-fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
+fn stand_aus_paket(p: Paket) -> Result<AktiverStand, String> {
     let text = |pfad: &str| -> Result<&'static str, String> {
         let bytes = p.datei(pfad).map_err(|e| e.to_string())?;
         Ok(Box::leak(String::from_utf8(bytes).map_err(|e| format!("{pfad}: {e}"))?.into_boxed_str()))
@@ -200,7 +230,7 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         kabine: cabin_announcements::lesen(text(KABINE)?)?,
         kabine_json: text(KABINE)?,
         endpunkte: paket_endpunkte::lesen(text(ENDPUNKTE)?)?,
-        hilfe_formular: if darf_fehlen(p, HILFE_FORMULAR) {
+        hilfe_formular: if darf_fehlen(&p, HILFE_FORMULAR) {
             crate::hilfe::HilfeFormular::default()
         } else {
             crate::hilfe::hilfe_formular_lesen(text(HILFE_FORMULAR)?)?
@@ -209,12 +239,9 @@ fn stand_aus_paket(p: &Paket) -> Result<AktiverStand, String> {
         bewertung: Box::leak(p.datei(BEWERTUNG).map_err(|e| e.to_string())?.into_boxed_slice()),
         kabine_modul: Box::leak(p.datei(KABINE_MODUL).map_err(|e| e.to_string())?.into_boxed_slice()),
         vref: landing_scoring::vref::lesen(text(VREF)?)?,
-        ui: UI_DATEIEN
-            .iter()
-            .filter(|&&d| !darf_fehlen(p, d))
-            .map(|&d| Ok((d, text(d)?)))
-            .collect::<Result<_, String>>()?,
         ourairports_commit: p.manifest.quelle.ourairports_commit.clone(),
+        manifest: p.manifest.clone(),
+        paket: Some(p),
     })
 }
 
@@ -239,8 +266,9 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         bewertung: eingebaute_datei(BEWERTUNG).ok_or(BEWERTUNG)?,
         kabine_modul: eingebaute_datei(KABINE_MODUL).ok_or(KABINE_MODUL)?,
         vref: landing_scoring::vref::lesen(eingebauter_text(VREF)?)?,
-        ui: UI_DATEIEN.iter().map(|&d| Ok((d, eingebauter_text(d)?))).collect::<Result<_, String>>()?,
         ourairports_commit: None,
+        manifest: p.manifest,
+        paket: None,
     })
 }
 
@@ -299,15 +327,173 @@ pub(crate) fn eingebautes_kabinenmodul() -> Option<&'static [u8]> {
     eingebaute_datei(KABINE_MODUL)
 }
 
-/// Eine Datei des geltenden Stands fuer die Oberflaeche (nur [`UI_DATEIEN`]).
+/// Darf die Oberflaeche diese Datei lesen? Nur `.json` direkt unter
+/// [`LESBARE_ORDNER`] (eine Ebene), nur die Zeichen der Manifest-Pfade,
+/// kein `..`.
+fn lesbar(pfad: &str) -> bool {
+    let Some(name) = LESBARE_ORDNER.iter().find_map(|o| pfad.strip_prefix(o)) else {
+        return false;
+    };
+    name.len() > ".json".len()
+        && name.ends_with(".json")
+        && !name.starts_with('.')
+        && !name.contains("..")
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+/// Eine Datendatei des geltenden Stands fuer die Oberflaeche (P-3.53,
+/// P-3.56; `ui-befehle-4`: alle Dateien der [`LESBARE_ORDNER`]). Aus dem
+/// Paket mit Hashpruefung bei jedem Lesen; Groesse vorab aus dem Manifest.
 #[tauri::command]
-pub(crate) fn paket_datei(pfad: String) -> Result<&'static str, String> {
-    stand()
-        .ui
-        .iter()
-        .find(|(d, _)| *d == pfad)
-        .map(|(_, t)| *t)
-        .ok_or_else(|| format!("{pfad}: nicht freigegeben"))
+pub(crate) fn paket_datei(pfad: String) -> Result<String, String> {
+    datei_lesen(stand(), &pfad)
+}
+
+fn datei_lesen(s: &AktiverStand, pfad: &str) -> Result<String, String> {
+    let d = s
+        .manifest
+        .datei(pfad)
+        .filter(|_| lesbar(pfad))
+        .ok_or_else(|| format!("{pfad}: nicht freigegeben"))?;
+    if d.size > LESBAR_MAX_BYTES {
+        return Err(format!("{pfad}: zu gross"));
+    }
+    let bytes = match &s.paket {
+        Some(p) => p.datei(pfad).map_err(|e| e.to_string())?,
+        None => eingebaute_datei(pfad).ok_or_else(|| format!("{pfad}: fehlt"))?.to_vec(),
+    };
+    String::from_utf8(bytes).map_err(|e| format!("{pfad}: {e}"))
+}
+
+/// Name der Herkunft fuer die Oberflaeche: `paket` (aktuell oder vorher),
+/// `pin` (Stand des offenen Flugs) oder `eingebaut`.
+fn herkunft_name(h: Herkunft) -> (&'static str, &'static str) {
+    match h {
+        Herkunft::Aktuell => ("paket", "aktuell"),
+        Herkunft::Vorher => ("paket", "vorher"),
+        Herkunft::Pin => ("pin", "pin"),
+        Herkunft::Eingebaut => ("eingebaut", "eingebaut"),
+        Herkunft::EingebautStattPin => ("eingebaut", "eingebaut_statt_pin"),
+    }
+}
+
+/// Das Manifest ohne `files` (die Dateiliste braucht keine Anzeige), mit
+/// allen Feldern — auch denen, die dieses Programm nicht kennt
+/// (`Manifest::weitere`).
+fn manifest_ohne_dateien(m: &Manifest) -> serde_json::Value {
+    let mut v = serde_json::to_value(m).unwrap_or_default();
+    if let Some(o) = v.as_object_mut() {
+        o.remove("files");
+    }
+    v
+}
+
+/// Der Stand, der beim naechsten Start gaelte, wenn es nicht der geltende ist.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+struct Naechster {
+    id: String,
+    generation: u64,
+    bewertung_fassung: u32,
+}
+
+/// Inhalt von [`paket_info`] (rein, testbar).
+fn info_json(
+    s: &AktiverStand,
+    herkunft: Herkunft,
+    pin: Option<(&RuntimeBundleId, bool)>,
+    naechster: Option<&Naechster>,
+    letzte: Option<&Pruefung>,
+) -> serde_json::Value {
+    let (art, genau) = herkunft_name(herkunft);
+    serde_json::json!({
+        "herkunft": art,
+        "herkunft_genau": genau,
+        "id": s.id.to_string(),
+        "generation": s.id.generation,
+        "manifest_sha256": s.id.manifest_sha256,
+        "bewertung_fassung": s.manifest.score_version,
+        "input_schema": s.manifest.input_schema,
+        "kabine_fassung": s.manifest.weitere.get("kabine_fassung"),
+        "manifest": manifest_ohne_dateien(&s.manifest),
+        "faehigkeiten": FAEHIGKEITEN,
+        "client_version": env!("CARGO_PKG_VERSION"),
+        "flug_pin": pin.map(|(id, nachgeholt)| serde_json::json!({
+            "id": id.to_string(), "generation": id.generation, "nachgeholt": nachgeholt,
+        })),
+        "naechster_start": naechster,
+        "letzte_pruefung": letzte,
+    })
+}
+
+/// Zwischenspeicher fuer [`naechster_start`]: je Zeigerstand der Ablage
+/// und Pin des offenen Flugs einmal laden (das prueft alle Hashes).
+type NaechsterSchluessel = (Option<u64>, Option<u64>, Option<RuntimeBundleId>);
+static NAECHSTER: std::sync::Mutex<Option<(NaechsterSchluessel, Option<Naechster>)>> = std::sync::Mutex::new(None);
+
+/// Was der naechste Start laden wird — derselbe Weg wie beim Start
+/// (`Ablage::laden` mit dem Pin des offenen Flugs). Nur ein Paket zaehlt,
+/// das NICHT der geltende Stand ist; ein unpassendes `aktuell` (Thomas
+/// 30.10.: Generation 47 ohne `ui-befehle-2`) zaehlt nicht.
+fn naechster_start(app_daten: &Path, geltend: &RuntimeBundleId) -> Option<Naechster> {
+    let ablage = Ablage::oeffnen(app_daten.join("laufzeit-paket")).ok()?;
+    let pin = pin_des_offenen_flugs(app_daten).map(|(_, id)| id);
+    let schluessel = (ablage.aktuell(), ablage.vorher(), pin.clone());
+    let mut z = NAECHSTER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((k, n)) = z.as_ref() {
+        if *k == schluessel {
+            return n.clone();
+        }
+    }
+    let n = naechster_aus(&ablage, pin.as_ref(), &kontext(), geltend);
+    *z = Some((schluessel, n.clone()));
+    n
+}
+
+fn naechster_aus(ablage: &Ablage, pin: Option<&RuntimeBundleId>, k: &Kontext, geltend: &RuntimeBundleId) -> Option<Naechster> {
+    let l = ablage.laden(pin, k, &eingebaut()).ok()?;
+    let paket = !matches!(l.herkunft, Herkunft::Eingebaut | Herkunft::EingebautStattPin);
+    (paket && &l.paket.id != geltend && NICHT_ANWENDBAR.get() != Some(&l.paket.id)).then(|| Naechster {
+        id: l.paket.id.to_string(),
+        generation: l.paket.id.generation,
+        bewertung_fassung: l.paket.manifest.score_version,
+    })
+}
+
+/// Der geltende Stand fuer die Oberflaeche (Analyse V1a, `ui-befehle-4`):
+/// Herkunft, Generation, Bewertungsfassung, das Manifest ohne Dateiliste
+/// (auch kuenftige Felder), Pin des offenen Flugs und — falls schon geholt —
+/// der Stand, der beim naechsten Start gilt. Stufe „lesen“, keine Geheimnisse.
+#[tauri::command]
+pub(crate) async fn paket_info() -> serde_json::Value {
+    let s = stand();
+    let herkunft = HERKUNFT.get().copied().unwrap_or(Herkunft::Eingebaut);
+    let pin = PIN.get().map(|(_, id)| (id, PIN_MODUL.get().is_some()));
+    let naechster = match APP_DATEN.get().cloned() {
+        Some(daten) => {
+            let geltend = s.id.clone();
+            tokio::task::spawn_blocking(move || naechster_start(&daten, &geltend)).await.ok().flatten()
+        }
+        None => None,
+    };
+    let mut v = info_json(s, herkunft, pin, naechster.as_ref(), letzte().as_ref());
+    // Fuer den Knopf „Jetzt neu starten“ (nur ohne offenen Flug).
+    v["flug_offen"] = APP_DATEN.get().is_some_and(|d| flug_offen(d)).into();
+    v
+}
+
+/// Der geltende Stand in Klartext fuer die Diagnose an live (Feld
+/// `paket_generation`, dort nur angezeigt): Generation und Bewertungsfassung
+/// lesbar, dahinter die Kennung.
+pub(crate) fn klartext() -> String {
+    klartext_von(stand())
+}
+
+fn klartext_von(s: &AktiverStand) -> String {
+    let teil = match s.id.generation {
+        0 => "eingebauter Stand".to_string(),
+        g => format!("Generation {g}"),
+    };
+    format!("{teil} · Landebewertung Fassung {} ({})", s.manifest.score_version, s.id)
 }
 
 /// Die Kennung, die der Flug `pirep_id` traegt: der Stand dieses Laufs.
@@ -363,10 +549,21 @@ fn eingebaut_mit(ersetzt: &[(&str, &[u8])]) -> Eingebaut {
 
 /// Wie [`eingebaut_mit`], dazu ohne die Dateien `ohne` (Tests: aelteres Paket).
 fn eingebaut_mit_ohne(ersetzt: &[(&str, &[u8])], ohne: &[&str]) -> Eingebaut {
+    eingebaut_aus(ersetzt, ohne, &[])
+}
+
+/// Wie [`eingebaut`], dazu neue Dateien (Tests: neueres Paket).
+#[cfg(test)]
+fn eingebaut_mit_neu(neu: &[(&str, &[u8])]) -> Eingebaut {
+    eingebaut_aus(&[], &[], neu)
+}
+
+fn eingebaut_aus(ersetzt: &[(&str, &[u8])], ohne: &[&str], neu: &[(&str, &[u8])]) -> Eingebaut {
     let inhalt: Vec<(&str, &[u8])> = eingebettet::DATEIEN
         .iter()
         .filter(|(p, _)| !ohne.contains(p))
         .map(|&(p, b)| (p, ersetzt.iter().find(|(e, _)| *e == p).map_or(b, |(_, n)| *n)))
+        .chain(neu.iter().copied())
         .collect();
     let dateien: HashMap<String, Vec<u8>> = inhalt.iter().map(|(p, b)| (p.to_string(), b.to_vec())).collect();
     let files: Vec<_> = inhalt
@@ -388,7 +585,8 @@ fn eingebaut_mit_ohne(ersetzt: &[(&str, &[u8])], ohne: &[&str]) -> Eingebaut {
         "client_min": "0.0.0",
         "client_max": "999.0.0",
         "requires": [],
-        "score_version": 26,
+        // Die Fassung des eingebauten Moduls (eine Quelle, P-4.50).
+        "score_version": landing_scoring::wasm::FASSUNG,
         "input_schema": 0,
         "files": files,
     });
@@ -420,6 +618,11 @@ pub(crate) fn starten(app_daten: &Path) {
 }
 
 fn starten_einmal(app_daten: &Path) {
+    // Abweichung P-3.20 (Thomas 30.10.: „installieren, schliessen und erst
+    // dann die neue Version haben — das funktioniert nicht“): Ein neuerer
+    // freigegebener Stand wird VOR dem Festlegen geholt und gilt schon in
+    // diesem Lauf. Nicht bei offenem Flug (sein Pin gilt weiter).
+    beim_start_holen(app_daten);
     // Vor allem anderen: X-Plane-Profile kommen ab jetzt aus DIESEM Stand.
     sim_xplane::profile_quelle_setzen(|| stand().xplane_profile);
     hoppie_protocol::elements_data::tabelle_quelle_setzen(|| stand().cpdlc);
@@ -452,29 +655,80 @@ fn starten_einmal(app_daten: &Path) {
     };
     // Erst den ganzen Stand lesen, dann EINMAL festlegen (P-3.02). Laesst
     // sich ein Teil nicht lesen, gilt der eingebaute Stand.
-    let (neu, aus_paket) = match stand_aus_paket(&paket) {
+    let _ = APP_DATEN.set(app_daten.to_path_buf());
+    let paket_id = paket.id.clone();
+    let (neu, aus_paket) = match stand_aus_paket(paket) {
         Ok(neu) => (Some(neu), true),
         Err(e) => {
-            tracing::warn!(stand = %paket.id, error = %e, "Laufzeit-Paket: Stand nicht anwendbar, eingebauter Stand gilt");
+            tracing::warn!(stand = %paket_id, error = %e, "Laufzeit-Paket: Stand nicht anwendbar, eingebauter Stand gilt");
+            let _ = NICHT_ANWENDBAR.set(paket_id.clone());
             (eingebauter_stand().ok(), false)
         }
     };
+    // Etappe 5 (P-8.20): Die Oberflaeche kommt aus DERSELBEN Generation wie
+    // die Daten (`ui_paket` haengt am Stand) — oder ganz aus dem Programm.
     if let Some(neu) = neu {
         if !uebernehmen(neu) {
             tracing::warn!("Laufzeit-Paket: ein Stand galt schon (vorher gelesen), er bleibt");
-        } else if aus_paket && paket.manifest.datei(UI_EINSTIEG).is_some() {
-            // Etappe 5 (P-8.20): Die Oberflaeche kommt aus DERSELBEN
-            // Generation wie die Daten — oder ganz aus dem Programm.
-            let _ = UI_PAKET.set(paket);
         }
     }
     let wirksam = stand().id.clone();
+    // Herkunft dessen, was WIRKLICH gilt: Galt schon ein Stand oder war das
+    // Paket nicht anwendbar, ist es der eingebaute.
+    let _ = HERKUNFT.set(if aus_paket && wirksam == paket_id { herkunft } else { Herkunft::Eingebaut });
     if let Some((pirep, pin)) = pin {
         if pin != wirksam {
             let _ = PIN.set((pirep, pin));
         }
     }
     tracing::info!(stand = %wirksam, ?herkunft, "Laufzeit-Paket geladen");
+}
+
+/// Startabruf: Frist je Anfrage und insgesamt. Reicht sie nicht (langsame
+/// Leitung, grosser erster Download), startet das Programm mit dem
+/// vorhandenen Stand; der Abruf im Hintergrund holt den Rest, aktiv dann
+/// beim naechsten Start bzw. per „Jetzt neu starten“.
+const START_FRIST_ANFRAGE: std::time::Duration = std::time::Duration::from_secs(4);
+const START_FRIST_GESAMT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Holt beim Start einen neueren Stand, bevor er festgelegt wird. Anonym
+/// (P-7.03; der Schluesselspeicher ist hier noch nicht eingerichtet) und von
+/// der eingebauten live-Adresse (die Quellen der Crates sind noch nicht
+/// angemeldet, `stand()` darf hier nicht laufen). Eigener Faden mit eigener
+/// Laufzeit: `setup` laeuft ausserhalb von tokio.
+fn beim_start_holen(app_daten: &Path) {
+    if PRUEFSCHLUESSEL.is_empty() || STAND.get().is_some() {
+        return;
+    }
+    let Ok(basis) = paket_endpunkte::lesen(paket_endpunkte::EINGEBAUT).map(|e| e.live) else { return };
+    let daten = app_daten.to_path_buf();
+    let lauf = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
+        let weg = Holweg { basis: &basis, token: None, frist: START_FRIST_ANFRAGE, kontext: kontext(), selbsttest, pins: Vec::new() };
+        rt.block_on(vorab_holen(&daten, weg, START_FRIST_GESAMT))
+    });
+    let Some(ergebnis) = lauf.join().ok().flatten() else { return };
+    match &ergebnis {
+        Ok(Some(id)) => {
+            pruefung_vermerken(app_daten, chrono::Utc::now());
+            tracing::info!(stand = %id, "Laufzeit-Paket: neuer Stand beim Start geholt, gilt sofort");
+        }
+        Ok(None) => pruefung_vermerken(app_daten, chrono::Utc::now()),
+        Err(e) => tracing::warn!(error = %e, "Laufzeit-Paket: Startabruf ohne Ergebnis, vorhandener Stand gilt"),
+    }
+    *LETZTE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Pruefung::aus(&ergebnis));
+}
+
+/// Der Startabruf mit Gesamtfrist; `None` bei offenem Flug (P-3.20 gilt
+/// fuer ihn weiter: kein Wechsel unter einem laufenden Flug).
+async fn vorab_holen(app_daten: &Path, weg: Holweg<'_>, gesamt: std::time::Duration) -> Option<Result<Option<RuntimeBundleId>, String>> {
+    if flug_offen(app_daten) {
+        return None;
+    }
+    Some(match tokio::time::timeout(gesamt, holen_und_installieren(app_daten, weg)).await {
+        Ok(r) => r,
+        Err(_) => Err(format!("keine Antwort binnen {} s", gesamt.as_secs())),
+    })
 }
 
 /// P-3.04: Zeitpunkt der letzten erfolgreichen Pruefung bei live (Datei in
@@ -545,7 +799,7 @@ pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf, hinweis: impl FnO
         return;
     }
     tauri::async_runtime::spawn(async move {
-        abrufen(&app_daten, false).await;
+        abrufen(&app_daten, false, true).await;
         if let Some(tage) = pruefung_ueberfaellig(&app_daten, chrono::Utc::now()) {
             hinweis(tage);
         }
@@ -588,15 +842,57 @@ where
     }
 }
 
-/// Ein Abruf bei live (seriell), mit einer Wiederholung; vermerkt die
-/// erfolgreiche Pruefung (P-3.04). `nur_ohne_token`: entfaellt, wenn
-/// inzwischen (unter der Sperre geprueft) ein Abruf mit Token durchging.
-async fn abrufen(app_daten: &Path, nur_ohne_token: bool) {
+/// Ein HTTP-Fehler von live kurz und lesbar („HTTP 401“), sonst der Text.
+fn http_fehler(e: reqwest::Error) -> String {
+    e.status().map_or_else(|| e.to_string(), |s| format!("HTTP {}", s.as_u16()))
+}
+
+/// Ergebnis der letzten Pruefung bei live in diesem Lauf (fuer `paket_info`
+/// und den Knopf „Auf neues Paket pruefen“).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub(crate) struct Pruefung {
+    /// RFC 3339, UTC.
+    pub zeit: String,
+    /// `neu` (Stand geholt, aktiv ab naechstem Start), `kein_neueres`,
+    /// `fehler`, `flug_offen` (im Flug wird nicht geholt).
+    pub ergebnis: &'static str,
+    pub generation: Option<u64>,
+    pub fehler: Option<String>,
+}
+
+impl Pruefung {
+    fn aus(e: &Result<Option<RuntimeBundleId>, String>) -> Self {
+        let (ergebnis, generation, fehler) = match e {
+            Ok(Some(id)) => ("neu", Some(id.generation), None),
+            Ok(None) => ("kein_neueres", None, None),
+            Err(f) => ("fehler", None, Some(f.clone())),
+        };
+        Self { zeit: chrono::Utc::now().to_rfc3339(), ergebnis, generation, fehler }
+    }
+}
+
+static LETZTE: std::sync::Mutex<Option<Pruefung>> = std::sync::Mutex::new(None);
+
+fn letzte() -> Option<Pruefung> {
+    LETZTE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Ein Abruf bei live (seriell), mit einer Wiederholung (`wiederholen`);
+/// vermerkt die erfolgreiche Pruefung (P-3.04) und das Ergebnis.
+/// `nur_ohne_token`: entfaellt, wenn inzwischen (unter der Sperre geprueft)
+/// ein Abruf mit Token durchging.
+async fn abrufen(app_daten: &Path, nur_ohne_token: bool, wiederholen: bool) -> Option<Pruefung> {
     let _sperre = ABRUF.lock().await;
     if nur_ohne_token && MIT_TOKEN_GEPRUEFT.load(std::sync::atomic::Ordering::SeqCst) {
-        return;
+        return None;
     }
-    match mit_einer_wiederholung(|| aktualisieren(app_daten), WIEDERHOLEN_NACH, || !flug_offen(app_daten)).await {
+    let warten = if wiederholen { WIEDERHOLEN_NACH } else { std::time::Duration::ZERO };
+    let ergebnis = if wiederholen {
+        mit_einer_wiederholung(|| aktualisieren(app_daten), warten, || !flug_offen(app_daten)).await
+    } else {
+        aktualisieren(app_daten).await
+    };
+    match &ergebnis {
         Ok(Some(id)) => {
             pruefung_vermerken(app_daten, chrono::Utc::now());
             tracing::info!(stand = %id, "Laufzeit-Paket: neuer Stand, aktiv ab naechstem Start");
@@ -604,6 +900,63 @@ async fn abrufen(app_daten: &Path, nur_ohne_token: bool) {
         Ok(None) => pruefung_vermerken(app_daten, chrono::Utc::now()),
         Err(e) => tracing::warn!(error = %e, "Laufzeit-Paket: Aktualisierung nicht moeglich"),
     }
+    let p = Pruefung::aus(&ergebnis);
+    *LETZTE.lock().unwrap_or_else(|e| e.into_inner()) = Some(p.clone());
+    Some(p)
+}
+
+/// Knopf „Auf neues Paket pruefen“: sofort bei live fragen (ohne
+/// Wiederholung, der Pilot sieht das Ergebnis). Stufe „fachlich“: Netz nur
+/// zu live (Adresse aus dem Paket, Host fest), das Token setzt der Kern.
+/// Im Flug wird nicht geholt (P-3.20). Hoechstens alle 5 s (sonst die
+/// letzte Antwort).
+#[tauri::command]
+pub(crate) async fn paket_jetzt_pruefen() -> Pruefung {
+    let jetzt = || chrono::Utc::now().to_rfc3339();
+    let Some(daten) = APP_DATEN.get().cloned() else {
+        return Pruefung { zeit: jetzt(), ergebnis: "fehler", generation: None, fehler: Some("Paket noch nicht gestartet".into()) };
+    };
+    if flug_offen(&daten) {
+        return Pruefung { zeit: jetzt(), ergebnis: "flug_offen", generation: None, fehler: None };
+    }
+    if let Some(l) = letzte().filter(|l| {
+        chrono::DateTime::parse_from_rfc3339(&l.zeit).is_ok_and(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc) < chrono::Duration::seconds(5))
+    }) {
+        return l;
+    }
+    match abrufen(&daten, false, false).await {
+        Some(p) => p,
+        None => letzte().unwrap_or_else(|| Pruefung { zeit: jetzt(), ergebnis: "kein_neueres", generation: None, fehler: None }),
+    }
+}
+
+/// Darf „Jetzt neu starten“? Nur ohne offenen Flug und nur, wenn wirklich
+/// ein anderer, ladbarer Stand wartet — so kann auch eine fremde Oberflaeche
+/// (P-8.12) keine Neustart-Schleife ausloesen: Nach dem Neustart gilt der
+/// neue Stand, und es wartet keiner mehr.
+fn neustart_erlaubt(flug_offen: bool, wartet: bool) -> Result<(), &'static str> {
+    if flug_offen {
+        return Err("flug_offen");
+    }
+    if !wartet {
+        return Err("kein_neues_paket");
+    }
+    Ok(())
+}
+
+/// Knopf „Jetzt neu starten“ (neues Paket aktivieren, P-3.20). Stufe
+/// „fachlich“ (30.10.: die eigene Oberflaeche ist die Bestaetigung, der Kern
+/// prueft [`neustart_erlaubt`]); derselbe Neustart wie nach dem Update
+/// (`huelle::update_installieren`).
+#[tauri::command]
+pub(crate) async fn paket_neu_starten(app: tauri::AppHandle) -> Result<(), crate::UiError> {
+    let daten = APP_DATEN.get().cloned().ok_or_else(|| crate::UiError::new("kein_neues_paket", "Paket noch nicht gestartet"))?;
+    let geltend = stand().id.clone();
+    let offen = flug_offen(&daten);
+    let wartet = tokio::task::spawn_blocking(move || naechster_start(&daten, &geltend).is_some()).await.unwrap_or(false);
+    neustart_erlaubt(offen, wartet).map_err(|c| crate::UiError::new(c, "Neustart nicht moeglich"))?;
+    tracing::info!("Laufzeit-Paket: Neustart fuer den neuen Stand");
+    app.restart()
 }
 
 /// Soll nach dem Setzen des Pilot-Tokens noch einmal abgerufen werden? Nur
@@ -630,7 +983,9 @@ pub(crate) fn token_bereit() {
         drop(daten);
     }
     #[cfg(not(test))]
-    tauri::async_runtime::spawn(async move { abrufen(&daten, true).await });
+    tauri::async_runtime::spawn(async move {
+        abrufen(&daten, true, true).await;
+    });
 }
 
 #[cfg(test)]
@@ -644,15 +999,37 @@ struct AktuellAntwort {
     blobs: String,
 }
 
+/// Woher und wie ein Stand geholt wird: im laufenden Programm von der
+/// Adresse des Stands mit Pilot-Token, beim Start (vor dem Festlegen des
+/// Stands) von der eingebauten Adresse, anonym und mit kurzer Frist.
+struct Holweg<'a> {
+    basis: &'a str,
+    token: Option<String>,
+    frist: std::time::Duration,
+    kontext: Kontext,
+    selbsttest: fn(&Paket) -> Result<(), String>,
+    /// Staende, die das Aufraeumen behalten muss.
+    pins: Vec<u64>,
+}
+
 async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, String> {
-    let basis = crate::live_zugang::live_basis();
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let pins: Vec<u64> = [Some(stand().id.generation), PIN.get().map(|(_, p)| p.generation)].into_iter().flatten().collect();
     // Mit Pilot-Token: Vorab-Piloten bekommen den neueren Vorabstand (P-3.13).
+    let weg = Holweg {
+        basis: crate::live_zugang::live_basis(),
+        token: crate::live_zugang::pilot_token(),
+        frist: std::time::Duration::from_secs(60),
+        kontext: kontext(),
+        selbsttest,
+        pins,
+    };
+    holen_und_installieren(app_daten, weg).await
+}
+
+async fn holen_und_installieren(app_daten: &Path, weg: Holweg<'_>) -> Result<Option<RuntimeBundleId>, String> {
+    let Holweg { basis, token: mit_token, frist, kontext: k, selbsttest: test, pins } = weg;
+    let client = reqwest::Client::builder().timeout(frist).build().map_err(|e| e.to_string())?;
     let mut anfrage = client.get(format!("{basis}/api/bundle/current"));
-    let mit_token = crate::live_zugang::pilot_token();
     if let Some(token) = &mit_token {
         anfrage = anfrage.bearer_auth(token);
     }
@@ -664,7 +1041,7 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
         return Ok(None);
     }
     let a: AktuellAntwort =
-        antwort.error_for_status().map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+        antwort.error_for_status().map_err(http_fehler)?.json().await.map_err(|e| e.to_string())?;
     // live hat geantwortet: Mit Token war das der Stand fuer DIESEN Piloten.
     if mit_token.is_some() {
         MIT_TOKEN_GEPRUEFT.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -675,15 +1052,16 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
     }
     let holen = |pfad: String| {
         let client = client.clone();
+        let token = mit_token.clone();
         async move {
             // Mit Token: Vorabstaende gibt es auch ueber die Nummer nur fuer
             // Vorab-Piloten (P-3.13).
             let mut anfrage = client.get(format!("{basis}{pfad}"));
-            if let Some(token) = crate::live_zugang::pilot_token() {
+            if let Some(token) = token {
                 anfrage = anfrage.bearer_auth(token);
             }
             let r = anfrage.send().await.map_err(|e| e.to_string())?;
-            r.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())
+            r.error_for_status().map_err(http_fehler)?.bytes().await.map_err(|e| e.to_string())
         }
     };
     let manifest = holen(a.manifest).await?.to_vec();
@@ -693,10 +1071,6 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
     for d in ablage.fehlende(&m) {
         geholt.insert(d.sha256.clone(), holen(format!("{}{}", a.blobs, d.sha256)).await?.to_vec());
     }
-    let pins: Vec<u64> = [Some(stand().id.generation), PIN.get().map(|(_, p)| p.generation)]
-        .into_iter()
-        .flatten()
-        .collect();
     let daten = app_daten.to_path_buf();
     tokio::task::spawn_blocking(move || {
         // Erneut unmittelbar davor: Ein Flug kann waehrend des Ladens begonnen haben.
@@ -706,9 +1080,9 @@ async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, Stri
         let id = ablage
             .installieren(
                 Eingang { manifest: &manifest, signatur: &signatur },
-                &kontext(),
+                &k,
                 &mut |d| geholt.get(&d.sha256).cloned().ok_or_else(|| "nicht geholt".to_string()),
-                &selbsttest,
+                &test,
             )
             .map_err(|e| {
                 // P-3.21: Ein Stand, der seinen Selbsttest nicht besteht, wird
@@ -747,7 +1121,7 @@ async fn pin_nachholen(app_daten: &Path, pin: &RuntimeBundleId) -> Result<(), St
                 anfrage = anfrage.bearer_auth(token);
             }
             let r = anfrage.send().await.map_err(|e| e.to_string())?;
-            r.error_for_status().map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())
+            r.error_for_status().map_err(http_fehler)?.bytes().await.map_err(|e| e.to_string())
         }
     };
     let g = pin.generation;
@@ -899,7 +1273,7 @@ mod tests {
         for f in liste.split(',') {
             assert!(FAEHIGKEITEN.contains(&f), "bundle.yml verlangt {f}, das Programm kennt es nicht");
         }
-        assert!(liste.split(',').any(|f| f == "ui-befehle-3"), "Paket mit ui/ ohne ui-befehle-3");
+        assert!(liste.split(',').any(|f| f == "ui-befehle-4"), "Paket mit ui/ ohne ui-befehle-4 (paket_info)");
         // Gegenprobe: eine aeltere Oberflaeche (ui-befehle-1/-2) passt nicht mehr.
         assert!(!FAEHIGKEITEN.contains(&"ui-befehle-2") && !FAEHIGKEITEN.contains(&"ui-befehle-1"));
         assert!(liste.split(',').any(|f| f == "grenzwerte-2"), "Paket mit den Grenzwerten dieses Stands ohne grenzwerte-2");
@@ -1007,7 +1381,7 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     #[test]
     fn kabinenablauf_aendert_sich_mit_dem_paket() {
         use cabin_announcements::{modul::Befehl, Flugart, Flugdaten, Slot};
-        let aus = |ersetzt: &[(&str, &[u8])]| stand_aus_paket(&eingebaut_mit(ersetzt).paket().unwrap()).unwrap();
+        let aus = |ersetzt: &[(&str, &[u8])]| stand_aus_paket(eingebaut_mit(ersetzt).paket().unwrap()).unwrap();
         // 165-min-Flug im Reiseflug: Halbzeit-Ansage und Weg.
         let plane = |s: &AktiverStand| {
             let flug = Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(165), abheben_epoch: Some(1_000), ..Default::default() };
@@ -1050,17 +1424,43 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert_eq!(stand().endpunkte.live, "https://live.kant.ovh");
     }
 
+    /// `ui-befehle-4` (V1b): jede Datendatei unter tabellen/, texte/,
+    /// grenzwerte/ des geltenden Stands ist lesbar — auch eine, die das
+    /// Programm nicht kennt. Gegenproben: Module, Selbsttest, Endpunkte,
+    /// Profile, OurAirports, `..`, Unterordner, Nicht-JSON bleiben gesperrt.
     #[test]
-    fn paket_datei_gibt_nur_freigegebene_dateien() {
+    fn paket_datei_liest_alle_datendateien_und_sonst_nichts() {
         assert_eq!(paket_datei(FLOTTE.into()).unwrap().as_bytes(), eingebaute_datei(FLOTTE).unwrap());
         for sprache in ["de", "en", "it"] {
             let text = paket_datei(format!("texte/{sprache}.json")).unwrap();
-            assert!(serde_json::from_str::<serde_json::Value>(text).unwrap().is_object());
+            assert!(serde_json::from_str::<serde_json::Value>(&text).unwrap().is_object());
         }
-        // Die Hilfe-Seite liest ihre Zusatzfelder aus demselben Stand.
         assert_eq!(paket_datei(HILFE_FORMULAR.into()).unwrap().as_bytes(), eingebaute_datei(HILFE_FORMULAR).unwrap());
-        assert!(paket_datei(CPDLC.into()).is_err());
-        assert!(paket_datei("../geheim".into()).is_err());
+        // Frueher gesperrt, jetzt offen: jede Tabelle und jeder Grenzwert.
+        assert_eq!(paket_datei(CPDLC.into()).unwrap().as_bytes(), eingebaute_datei(CPDLC).unwrap());
+        assert!(paket_datei("grenzwerte/landung.json".into()).is_ok());
+        for gesperrt in [
+            BEWERTUNG, KABINE_MODUL, SELBSTTEST, ENDPUNKTE, XPLANE_PROFILE, MSFS_PROFILE, RUNWAYS, AIRPORTS,
+            "../geheim", "tabellen/../endpunkte.json", "tabellen/..json", "tabellen/.json", "tabellen/x/y.json",
+            "texte/de.json/", "/texte/de.json", "tabellen\\flotte.json", "ui/index.html", "tabellen/fehlt.json",
+        ] {
+            assert!(paket_datei(gesperrt.into()).is_err(), "{gesperrt}");
+        }
+    }
+
+    /// Eine neue Tabelle im Paket ist ohne Programmaenderung lesbar — aus
+    /// dem Paket, mit Hashpruefung; eine zu grosse wird abgewiesen.
+    #[test]
+    fn neue_tabelle_im_paket_ist_lesbar() {
+        let neu = br#"{"format":1,"zeilen":[1,2,3]}"#;
+        let p = eingebaut_mit_neu(&[("tabellen/neu.json", neu)]).paket().unwrap();
+        let s = stand_aus_paket(p).unwrap();
+        assert_eq!(datei_lesen(&s, "tabellen/neu.json").unwrap().as_bytes(), neu);
+        // Gegenprobe: der eingebaute Stand kennt sie nicht.
+        assert!(paket_datei("tabellen/neu.json".into()).is_err());
+        let gross = vec![b' '; LESBAR_MAX_BYTES as usize + 1];
+        let s = stand_aus_paket(eingebaut_mit_neu(&[("tabellen/gross.json", &gross)]).paket().unwrap()).unwrap();
+        assert_eq!(datei_lesen(&s, "tabellen/gross.json").unwrap_err(), "tabellen/gross.json: zu gross");
     }
 
     #[test]
@@ -1075,7 +1475,7 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         let neu = br#"{"format":1,"felder":[{"name":"flugnummer","typ":"text","bezeichnung":{"de":"Flugnummer"}}]}"#;
         let p = eingebaut_mit(&[(HILFE_FORMULAR, neu)]).paket().unwrap();
         assert_eq!(selbsttest(&p), Ok(()));
-        assert_eq!(stand_aus_paket(&p).unwrap().hilfe_formular.namen, ["flugnummer"]);
+        assert_eq!(stand_aus_paket(p).unwrap().hilfe_formular.namen, ["flugnummer"]);
         let boese = br#"{"format":1,"felder":[{"name":"api_key","typ":"text"}]}"#;
         let fehler = selbsttest(&eingebaut_mit(&[(HILFE_FORMULAR, boese)]).paket().unwrap()).unwrap_err();
         assert!(fehler.contains("hilfe-formular.json"), "{fehler}");
@@ -1083,7 +1483,7 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         let mut e: serde_json::Value = serde_json::from_slice(eingebaute_datei(ENDPUNKTE).unwrap()).unwrap();
         e["helpdesk_pfad"] = "/api/helpdesk/v2/tickets".into();
         let p = eingebaut_mit(&[(ENDPUNKTE, e.to_string().as_bytes())]).paket().unwrap();
-        assert_eq!(stand_aus_paket(&p).unwrap().endpunkte.helpdesk_pfad(), "/api/helpdesk/v2/tickets");
+        assert_eq!(stand_aus_paket(p).unwrap().endpunkte.helpdesk_pfad(), "/api/helpdesk/v2/tickets");
         e["helpdesk_pfad"] = "https://evil.example/api/t".into();
         assert!(selbsttest(&eingebaut_mit(&[(ENDPUNKTE, e.to_string().as_bytes())]).paket().unwrap()).is_err());
     }
@@ -1098,14 +1498,14 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         let alt = eingebaut_mit_ohne(&[(ENDPUNKTE, e.to_string().as_bytes())], &[HILFE_FORMULAR]).paket().unwrap();
         assert!(alt.manifest.datei(HILFE_FORMULAR).is_none());
         assert_eq!(selbsttest(&alt), Ok(()));
-        let stand = stand_aus_paket(&alt).unwrap();
+        let stand = stand_aus_paket(alt).unwrap();
         assert!(stand.hilfe_formular.namen.is_empty());
         assert_eq!(stand.endpunkte.helpdesk_pfad(), "/api/helpdesk/tickets");
-        assert!(stand.ui.iter().all(|(d, _)| *d != HILFE_FORMULAR));
-        assert!(stand.ui.iter().any(|(d, _)| *d == FLOTTE));
+        assert!(stand.manifest.datei(HILFE_FORMULAR).is_none());
+        assert!(stand.manifest.datei(FLOTTE).is_some());
         let ohne_klappen = eingebaut_mit_ohne(&[], &[KLAPPEN]).paket().unwrap();
         assert!(selbsttest(&ohne_klappen).is_err());
-        assert!(stand_aus_paket(&ohne_klappen).is_err());
+        assert!(stand_aus_paket(ohne_klappen).is_err());
     }
 
     /// P-3.21/P-13.02: Das Paket traegt den ganzen Korpus (je Simulator
@@ -1180,6 +1580,192 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert_eq!(pruefung_ueberfaellig(&dir, jetzt), Some(31), "letzter Erfolg vor 31 Tagen");
         pruefung_vermerken(&dir, jetzt - tag * 29);
         assert_eq!(pruefung_ueberfaellig(&dir, jetzt), None, "Gegenprobe: 29 Tage");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// V1a: `paket_info` im eingebauten Stand nennt die Fassung des
+    /// eingebauten Moduls (frueher stand im Manifest 26, das Modul rechnet 27).
+    #[test]
+    fn paket_info_eingebaut_nennt_die_modulfassung() {
+        let v = info_json(stand(), Herkunft::Eingebaut, None, None, None);
+        assert_eq!(v["herkunft"], "eingebaut");
+        assert_eq!(v["generation"], 0);
+        assert_eq!(v["bewertung_fassung"], landing_scoring::wasm::FASSUNG);
+        assert_eq!(v["manifest"]["score_version"], landing_scoring::wasm::FASSUNG);
+        assert!(v["manifest"].get("files").is_none(), "Dateiliste bleibt draussen");
+        assert!(v["kabine_fassung"].is_null());
+        assert!(v["naechster_start"].is_null() && v["flug_pin"].is_null());
+        assert!(v["faehigkeiten"].as_array().unwrap().iter().any(|f| f == "ui-befehle-4"));
+    }
+
+    /// Abweichung P-3.20 (Thomas 30.10.): Beim Start holt der Client einen
+    /// neueren Stand und dieser gilt sofort — derselbe Ladeweg wie
+    /// `starten_einmal` (`Ablage::laden`) findet ihn. Gegenproben: offener
+    /// Flug → kein Abruf, Stand bleibt; Server nicht erreichbar → Fehler,
+    /// vorhandener (hier eingebauter) Stand gilt.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn startabruf_nutzt_neuen_stand_sofort_ausser_im_flug() {
+        use std::io::Cursor;
+        let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let k = || Kontext {
+            client_version: "3.0.0".into(),
+            faehigkeiten: vec!["probe-1".into()],
+            schluessel: vec![kp.pk.to_base64()],
+            jetzt: chrono::Utc::now(),
+        };
+        let datei = br#"{"probe":1}"#.to_vec();
+        let sha = runtime_bundle::hex(&Sha256::digest(&datei));
+        let m = serde_json::to_vec(&serde_json::json!({
+            "bundle_schema": 1, "generation": 54, "created_at": chrono::Utc::now(),
+            "expires_at": chrono::Utc::now() + chrono::Duration::days(30),
+            "client_min": "3.0.0", "client_max": "3.99.0", "requires": ["probe-1"],
+            "score_version": 27, "input_schema": 1,
+            "files": [{"path": "tabellen/probe.json", "sha256": sha, "size": datei.len(), "kind": "tabellen"}],
+        }))
+        .unwrap();
+        let sig = minisign::sign(Some(&kp.pk), &kp.sk, Cursor::new(&m), None, None).unwrap().into_string();
+        let mut inhalt: HashMap<String, Vec<u8>> = HashMap::new();
+        inhalt.insert("/api/bundle/current".into(), br#"{"generation":54,"manifest":"/m","signatur":"/s","blobs":"/b/"}"#.to_vec());
+        inhalt.insert("/m".into(), m);
+        inhalt.insert("/s".into(), sig.into_bytes());
+        inhalt.insert(format!("/b/{sha}"), datei);
+        let inhalt = std::sync::Arc::new(inhalt);
+        let app = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+            let inhalt = inhalt.clone();
+            async move {
+                match inhalt.get(uri.path()) {
+                    Some(b) => (axum::http::StatusCode::OK, b.clone()),
+                    None => (axum::http::StatusCode::NOT_FOUND, Vec::new()),
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let basis = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let ok: fn(&Paket) -> Result<(), String> = |_| Ok(());
+        let weg = |basis: &str| Holweg { basis: Box::leak(basis.to_string().into_boxed_str()), token: None, frist: START_FRIST_ANFRAGE, kontext: k(), selbsttest: ok, pins: Vec::new() };
+        let ordner = |n: &str| {
+            let d = std::env::temp_dir().join(format!("aeroacars-startabruf-{n}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            d
+        };
+        let geladen = |d: &Path| {
+            let l = Ablage::oeffnen(d.join("laufzeit-paket")).unwrap().laden(None, &k(), &eingebaut()).unwrap();
+            (l.herkunft, l.paket.id.generation)
+        };
+        // Frische Ablage: der erste Start nutzt die geholte Generation.
+        let frisch = ordner("frisch");
+        let r = vorab_holen(&frisch, weg(&basis), START_FRIST_GESAMT).await.expect("kein Flug offen");
+        assert_eq!(r.unwrap().map(|id| id.generation), Some(54));
+        assert_eq!(geladen(&frisch), (Herkunft::Aktuell, 54));
+        // Gegenprobe: offener Flug → nichts geholt, es bleibt beim Stand.
+        let flug = ordner("flug");
+        std::fs::write(flug.join(crate::ACTIVE_FLIGHT_FILE), "{}").unwrap();
+        assert!(vorab_holen(&flug, weg(&basis), START_FRIST_GESAMT).await.is_none());
+        assert_eq!(geladen(&flug), (Herkunft::Eingebaut, 0));
+        // Gegenprobe: Server nicht erreichbar → Fehler, eingebauter Stand.
+        let offline = ordner("offline");
+        let r = vorab_holen(&offline, weg("http://127.0.0.1:9"), START_FRIST_GESAMT).await.expect("kein Flug offen");
+        assert!(r.is_err(), "{r:?}");
+        assert_eq!(geladen(&offline), (Herkunft::Eingebaut, 0));
+        for d in [frisch, flug, offline] {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+
+    /// „Jetzt neu starten“ nur ohne Flug und nur mit wartendem Stand
+    /// (keine Neustart-Schleife durch eine fremde Oberflaeche).
+    #[test]
+    fn neustart_nur_ohne_flug_und_mit_wartendem_paket() {
+        assert_eq!(neustart_erlaubt(false, true), Ok(()));
+        assert_eq!(neustart_erlaubt(true, true), Err("flug_offen"));
+        assert_eq!(neustart_erlaubt(false, false), Err("kein_neues_paket"));
+    }
+
+    /// Ergebnis fuer den Knopf „Auf neues Paket pruefen“.
+    #[test]
+    fn pruefung_nennt_ergebnis_generation_und_fehler() {
+        let id = RuntimeBundleId { generation: 54, manifest_sha256: "ab".repeat(32) };
+        let p = Pruefung::aus(&Ok(Some(id)));
+        assert_eq!((p.ergebnis, p.generation, p.fehler), ("neu", Some(54), None));
+        assert_eq!(Pruefung::aus(&Ok(None)).ergebnis, "kein_neueres");
+        let f = Pruefung::aus(&Err("HTTP 401".into()));
+        assert_eq!((f.ergebnis, f.fehler.as_deref()), ("fehler", Some("HTTP 401")));
+    }
+
+    /// Die Diagnose nennt Generation und Fassung lesbar (Thomas 30.10.).
+    #[test]
+    fn klartext_fuer_die_diagnose() {
+        let k = klartext_von(stand());
+        assert!(k.starts_with(&format!("eingebauter Stand · Landebewertung Fassung {} (0-", landing_scoring::wasm::FASSUNG)), "{k}");
+        let mut s = stand_aus_paket(eingebaut().paket().unwrap()).unwrap();
+        s.id = RuntimeBundleId { generation: 53, manifest_sha256: "ab".repeat(32) };
+        assert_eq!(klartext_von(&s), format!("Generation 53 · Landebewertung Fassung {} (53-abababababab)", landing_scoring::wasm::FASSUNG));
+        assert!(klartext_von(&s).chars().count() <= 120, "META_FELD_MAX");
+    }
+
+    /// Gegenprobe Paket: Herkunft, Generation und Fassung kommen aus DIESEM
+    /// Manifest, ein kuenftiges Feld (`kabine_fassung`, `notiz`) reicht der
+    /// Kern unveraendert durch; Pin und naechster Start erscheinen.
+    #[test]
+    fn paket_info_reicht_das_manifest_durch() {
+        let mut s = stand_aus_paket(eingebaut().paket().unwrap()).unwrap();
+        s.id = RuntimeBundleId { generation: 53, manifest_sha256: "ab".repeat(32) };
+        s.manifest.score_version = 28;
+        s.manifest.weitere.insert("kabine_fassung".into(), 4.into());
+        s.manifest.weitere.insert("notiz".into(), "Probe".into());
+        let pin = RuntimeBundleId { generation: 52, manifest_sha256: "cd".repeat(32) };
+        let n = Naechster { id: "54-efefefefefef".into(), generation: 54, bewertung_fassung: 28 };
+        let v = info_json(&s, Herkunft::Aktuell, Some((&pin, false)), Some(&n), Some(&Pruefung { zeit: "t".into(), ergebnis: "fehler", generation: None, fehler: Some("HTTP 401".into()) }));
+        assert_eq!(v["herkunft"], "paket");
+        assert_eq!(v["id"], "53-abababababab");
+        assert_eq!(v["bewertung_fassung"], 28);
+        assert_eq!(v["kabine_fassung"], 4);
+        assert_eq!(v["manifest"]["notiz"], "Probe");
+        assert_eq!(v["flug_pin"]["generation"], 52);
+        assert_eq!(v["naechster_start"]["generation"], 54);
+        assert_eq!(v["letzte_pruefung"]["fehler"], "HTTP 401");
+        assert_eq!(info_json(&s, Herkunft::Pin, None, None, None)["herkunft"], "pin");
+        assert_eq!(info_json(&s, Herkunft::Vorher, None, None, None)["herkunft_genau"], "vorher");
+    }
+
+    /// „Neues Paket wird beim naechsten Start aktiv“: derselbe Ladeweg wie
+    /// beim Start. Ein geholtes, passendes Paket zaehlt; Gegenproben: leere
+    /// Ablage, das Paket gilt schon, und ein unpassendes `aktuell` (Thomas
+    /// 30.10.: 47 ohne Faehigkeit → eingebaut) zaehlt nicht.
+    #[test]
+    fn naechster_start_nur_fuer_ein_ladbares_anderes_paket() {
+        use std::io::Cursor;
+        let dir = std::env::temp_dir().join(format!("aeroacars-naechster-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let ablage = Ablage::oeffnen(&dir).unwrap();
+        let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let k = |f: &[&str]| Kontext {
+            client_version: "3.0.0".into(),
+            faehigkeiten: f.iter().map(|s| s.to_string()).collect(),
+            schluessel: vec![kp.pk.to_base64()],
+            jetzt: chrono::Utc::now(),
+        };
+        let eingebaut_id = eingebaut().paket().unwrap().id;
+        assert_eq!(naechster_aus(&ablage, None, &k(&[]), &eingebaut_id), None, "leere Ablage");
+        let datei = b"{}";
+        let m = serde_json::json!({
+            "bundle_schema": 1, "generation": 54, "created_at": chrono::Utc::now(),
+            "expires_at": chrono::Utc::now() + chrono::Duration::days(30),
+            "client_min": "3.0.0", "client_max": "3.99.0", "requires": ["probe-1"],
+            "score_version": 27, "input_schema": 1,
+            "files": [{"path": "tabellen/x.json", "sha256": runtime_bundle::hex(&Sha256::digest(datei)), "size": 2, "kind": "tabellen"}],
+        });
+        let bytes = serde_json::to_vec(&m).unwrap();
+        let sig = minisign::sign(Some(&kp.pk), &kp.sk, Cursor::new(&bytes), None, None).unwrap().into_string();
+        let id = ablage
+            .installieren(Eingang { manifest: &bytes, signatur: &sig }, &k(&["probe-1"]), &mut |_| Ok(datei.to_vec()), &|_| Ok(()))
+            .unwrap();
+        let n = naechster_aus(&ablage, None, &k(&["probe-1"]), &eingebaut_id).expect("geholtes Paket");
+        assert_eq!((n.generation, n.bewertung_fassung, n.id.clone()), (54, 27, id.to_string()));
+        assert_eq!(naechster_aus(&ablage, None, &k(&["probe-1"]), &id), None, "gilt schon");
+        assert_eq!(naechster_aus(&ablage, None, &k(&[]), &eingebaut_id), None, "unpassend: eingebaut");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

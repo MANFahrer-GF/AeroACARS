@@ -245,6 +245,15 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// die Navigraph-Bahn vor der Uebernahme; `mod achse_msfs_cfg2001_tests`.
 /// Tests `achse_msfs_cfg2001_tests::*` (58, Gegenprobe 25, ILS mit
 /// Gegenprobe), `szenerie_bahn::tests::msfs_*`.
+/// — plus Kernbausteine 30.10. (ui-befehle-4, kabine-lage-1): drei Zeilen im
+/// `generate_handler!` (`laufzeit_paket::paket_info` Stufe `lesen`,
+/// `paket_jetzt_pruefen` und `paket_neu_starten` Stufe `fachlich`, Kern
+/// prueft Flug und wartenden Stand); `kabinen_schritt` setzt `Tick::lage`
+/// aus der neuen `kabinen_lage` (Snapshot, Plan, Ist-Zeiten, Bahn, hoechstens
+/// 64 KB). Sonst nichts an `lib.rs`. Tests `laufzeit_paket::tests::paket_info_*`,
+/// `neustart_nur_ohne_flug_und_mit_wartendem_paket`,
+/// `arrived_fallback_geometry_tests::kabinen_lage_traegt_das_flugbild_zum_modul`,
+/// `tests/befehlsliste.rs::paket_befehle_der_ui_befehle_4`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -255,4 +264,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "b7e1c1fd7198b06d560c17d2c350ab35a994745a23d5fe6bb8e0d56e8788f293";
+const HASH_VOR_DER_ZERLEGUNG: &str = "7ec1492ef3e19017850beff0c27c94ff075dc12762a8262987fff8c587586ae1";

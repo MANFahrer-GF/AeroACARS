@@ -326,6 +326,36 @@
         assert_eq!((stats.pax_count, stats.max_passengers), (None, None));
     }
 
+    /// 3.0 (Analyse V2, `kabine-lage-1`): Das Kabinenmodul bekommt mit
+    /// jedem Takt das Flugbild — der Fall v2.1.4 (`planned_zfw_kg`) braucht
+    /// so kein neues Kernfeld mehr. Durch den Befehlskanal unveraendert.
+    /// Gegenproben: ohne Lage geht das Feld gar nicht mit (alte Module sehen
+    /// dieselben Bytes wie bisher), und ein Takt ohne `lage` (alter Client)
+    /// liest sich als `Null`.
+    #[test]
+    fn kabinen_lage_traegt_das_flugbild_zum_modul() {
+        use cabin_announcements::modul::Befehl;
+        let mut stats = FlightStats::new();
+        stats.phase = FlightPhase::Boarding;
+        stats.planned_zfw_kg = Some(61_234.0);
+        let mut snap = SimSnapshot::default();
+        snap.altitude_msl_ft = 1_234.0;
+        let lage = kabinen_lage(&stats, &snap, "EDDH", Some(60), "A320");
+        assert_eq!(lage["ofp"]["zfw_kg"], 61_234.0);
+        assert_eq!(lage["snapshot"]["altitude_msl_ft"], 1_234.0);
+        assert_eq!(lage["flug"]["ziel_plan_icao"], "EDDH");
+        assert_eq!(lage["phase"], serde_json::to_value(FlightPhase::Boarding).unwrap());
+        assert!(serde_json::to_vec(&lage).unwrap().len() <= KABINEN_LAGE_MAX_BYTES);
+        let takt = |lage: serde_json::Value| Befehl::Tick { tick: cabin_announcements::Tick { lage, ..Default::default() } };
+        let zurueck: Befehl = serde_json::from_str(&serde_json::to_string(&takt(lage.clone())).unwrap()).unwrap();
+        let Befehl::Tick { tick } = zurueck else { panic!("kein Takt") };
+        assert_eq!(tick.lage, lage);
+        let ohne = serde_json::to_string(&takt(serde_json::Value::Null)).unwrap();
+        assert!(!ohne.contains("lage"), "{ohne}");
+        let Befehl::Tick { tick } = serde_json::from_str::<Befehl>(&ohne).unwrap() else { panic!("kein Takt") };
+        assert!(tick.lage.is_null());
+    }
+
     /// Kabinenansagen (Beta), die Kette: Eckdaten in `FlightStats` →
     /// Flugdaten → Planer → faellige Ansage. Fracht bleibt stumm, ein
     /// Linienflug bekommt im Boarding seine Ansage, sobald die Zuladung

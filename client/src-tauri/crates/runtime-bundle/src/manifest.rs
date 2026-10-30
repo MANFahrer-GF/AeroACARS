@@ -26,6 +26,11 @@ pub struct Manifest {
     #[serde(default)]
     pub quelle: Quelle,
     pub files: Vec<Datei>,
+    /// Felder, die dieses Programm (noch) nicht kennt — ein neueres Paket-
+    /// Werkzeug kann sie setzen; `paket_info` reicht sie an die Oberflaeche
+    /// durch, ohne dass der Kern sie kennen muss (Analyse V1a).
+    #[serde(flatten, default)]
+    pub weitere: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,4 +117,35 @@ fn pfad_pruefen(p: &str) -> Result<(), Fehler> {
 /// SemVer; eine Vorabversion (`3.0.0-beta.1`) liegt vor dem Release `3.0.0`.
 pub fn version(v: &str) -> Result<semver::Version, Fehler> {
     semver::Version::parse(v).map_err(|_| Fehler::Manifest(format!("Version ungueltig: {v}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ein Feld, das dieses Programm nicht kennt, ueberlebt das Lesen (fuer
+    /// `paket_info`); bekannte Felder landen nicht doppelt in `weitere`.
+    /// Gegenprobe: ohne Zusatzfeld ist `weitere` leer, und ein Rundlauf
+    /// schreibt dasselbe JSON.
+    #[test]
+    fn unbekannte_felder_bleiben_erhalten() {
+        let basis = serde_json::json!({
+            "bundle_schema": 1, "generation": 53, "created_at": "2026-10-30T00:00:00Z",
+            "expires_at": "2027-01-01T00:00:00Z", "client_min": "3.0.0-beta.1", "client_max": "3.99.0",
+            "requires": ["ui-befehle-4"], "score_version": 27, "input_schema": 1, "files": [],
+        });
+        let m = Manifest::lesen(basis.to_string().as_bytes()).unwrap();
+        assert!(m.weitere.is_empty());
+        let mut neu = basis.clone();
+        neu["kabine_fassung"] = 3.into();
+        neu["notiz"] = serde_json::json!({"de": "Probe"});
+        let m = Manifest::lesen(neu.to_string().as_bytes()).unwrap();
+        assert_eq!(m.weitere.len(), 2);
+        assert_eq!(m.weitere["kabine_fassung"], 3);
+        assert_eq!(serde_json::to_value(&m).unwrap(), {
+            let mut v = neu;
+            v["quelle"] = serde_json::json!({"repo_commit": null, "ourairports_commit": null});
+            v
+        });
+    }
 }

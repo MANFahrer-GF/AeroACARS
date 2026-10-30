@@ -1,0 +1,60 @@
+/* Paket-Übersicht (Über + Hilfe anfordern): Generation und Fassung der
+   Landebewertung auf den ersten Blick, darunter nur bei Bedarf „neues Paket
+   wartet“ und der Prüfknopf. Farben aus der Hausform (App.css). */
+
+.paket-uebersicht {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.paket-uebersicht__zeile {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.paket-uebersicht__hinweis {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.paket-uebersicht__fehler {
+  margin: 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.paket-uebersicht__neu {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  font-size: 14px;
+}
+
+.paket-uebersicht__pruefen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+/* Über-Seite: der Kopf ist zentriert, die Übersicht bleibt ein ruhiger Block. */
+.about__hero .paket-uebersicht {
+  max-width: 560px;
+  margin: 12px auto 4px;
+}

@@ -47,13 +47,13 @@ describe("Über-Seite", () => {
   });
 });
 
-describe("Über-Seite: Paket-Generation", () => {
-  const rendern = async (kennung: string | null) => {
+describe("Über-Seite: Paket und Landebewertung (paket_info)", () => {
+  const rendern = async (info: Record<string, unknown> | null) => {
     invokeMock.mockImplementation((cmd: string) =>
       cmd === "app_info"
         ? Promise.resolve({ version: "3.0.0", commit: null, credit: "x" })
-        : cmd === "hilfe_vorschau" && kennung
-          ? Promise.resolve({ meta: { paket_generation: kennung } })
+        : cmd === "paket_info" && info
+          ? Promise.resolve(info)
           : Promise.reject(new Error("aus")),
     );
     render(<AboutPanel onShowReleaseNotes={() => {}} onHilfe={() => {}} />);
@@ -62,16 +62,21 @@ describe("Über-Seite: Paket-Generation", () => {
       await Promise.resolve();
     });
   };
-  it("zeigt die Generation aus der Kennung", async () => {
-    await rendern("12-0123456789ab");
-    expect(screen.getByTestId("about-paket").textContent).toBe("Laufzeit-Paket: Generation 12");
+  const basis = { herkunft: "paket", id: "53-ab", flug_pin: null, naechster_start: null, letzte_pruefung: null, flug_offen: false };
+  it("zeigt Generation und Fassung in Klartext", async () => {
+    await rendern({ ...basis, generation: 53, bewertung_fassung: 27 });
+    expect(screen.getByTestId("paket-zeile").textContent).toBe("Paket: Generation 53 · Landebewertung: Fassung 27");
   });
-  it("Generation 0 heißt eingebauter Stand", async () => {
-    await rendern("0-0123456789ab");
-    expect(screen.getByTestId("about-paket").textContent).toBe("Laufzeit-Paket: eingebauter Stand");
+  it("Generation 0 heißt eingebauter Stand, mit Fassung", async () => {
+    await rendern({ ...basis, herkunft: "eingebaut", generation: 0, bewertung_fassung: 27 });
+    expect(screen.getByTestId("paket-zeile").textContent).toBe("Paket: eingebauter Stand · Landebewertung: Fassung 27");
   });
-  it("ohne Angabe keine Zeile", async () => {
+  it("holt die Angabe nicht mehr über die Hilfe-Vorschau", async () => {
+    await rendern({ ...basis, generation: 53, bewertung_fassung: 27 });
+    expect(invokeMock.mock.calls.some((c) => c[0] === "hilfe_vorschau")).toBe(false);
+  });
+  it("ohne Angabe keine Übersicht", async () => {
     await rendern(null);
-    expect(screen.queryByTestId("about-paket")).toBeNull();
+    expect(screen.queryByTestId("paket-uebersicht")).toBeNull();
   });
 });

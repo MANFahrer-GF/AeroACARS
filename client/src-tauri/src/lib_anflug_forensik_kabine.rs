@@ -503,6 +503,8 @@ fn kabinen_schritt(
         planned_zfw_kg: stats.planned_zfw_kg.map(f64::from),
         // „Rollt“ für „Plätze für den Start“ (2.1.1 B, ab 3 kt).
         bodengeschwindigkeit_kt: Some(f64::from(snap.groundspeed_kt)),
+        // 3.0 (Analyse V2): das Flugbild fuer neue Planer-Regeln ohne Kernfeld.
+        lage: kabinen_lage(stats, snap, ziel, planzeit_min, muster),
     };
     let zweiter_service = kabinenansagen::zweiter_service(&stats.kabinen_lauf);
     let (faellig, ruhephase) = stats
@@ -516,6 +518,48 @@ fn kabinen_schritt(
         })
         .unwrap_or_default();
     KabinenSchritt { faellig, ruhephase, phase: tick.phase, rest_min: tick.rest_min }
+}
+
+/// Hoechstgroesse des Lage-Dokuments (JSON); darueber geht `Null` mit — der
+/// Takt bleibt klein, der Planer arbeitet mit den festen Feldern weiter.
+const KABINEN_LAGE_MAX_BYTES: usize = 64 * 1024;
+
+/// Weiter Eingang des Kabinenmoduls (`Tick::lage`, Faehigkeit
+/// `kabine-lage-1`): der ganze Snapshot plus Plan- und Flugdaten. Nicht in
+/// die Bewertung (P-0.10: deren Eingabe bleibt die verdichtete Ebene).
+fn kabinen_lage(stats: &FlightStats, snap: &SimSnapshot, ziel: &str, planzeit_min: Option<i32>, muster: &str) -> serde_json::Value {
+    let lage = serde_json::json!({
+        "fassung": 1,
+        "snapshot": snap,
+        "phase": stats.phase,
+        "flug": {
+            "ziel_plan_icao": ziel,
+            "muster": muster,
+            "planzeit_min": planzeit_min,
+            "umleitung_ziel": stats.umleitung_ziel,
+            "landung_erwartet": stats.landung_erwartet,
+            "tod_erwartet": stats.tod_erwartet,
+            "durchstarts": stats.go_around_count,
+            "zeiten": flugzeiten(stats),
+        },
+        "ofp": {
+            "zfw_kg": stats.planned_zfw_kg,
+            "tow_kg": stats.planned_tow_kg,
+            "ldw_kg": stats.planned_ldw_kg,
+            "block_fuel_kg": stats.planned_block_fuel_kg,
+            "burn_kg": stats.planned_burn_kg,
+            "reserve_kg": stats.planned_reserve_kg,
+            "reiseflughoehe_ft": stats.planned_cruise_alt_ft,
+            "ausweiche": stats.planned_alternate,
+            "rufzeichen": stats.planned_atc_callsign,
+        },
+        "zfw_kg": stats.last_zfw_kg,
+        "bahn": stats.runway_nav_geometry,
+    });
+    match serde_json::to_vec(&lage) {
+        Ok(b) if b.len() <= KABINEN_LAGE_MAX_BYTES => lage,
+        _ => serde_json::Value::Null,
+    }
 }
 
 /// „Zeiten gegen Flugplan": Plan des OFP plus die Ist-Zeiten dieses Fluges.

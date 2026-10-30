@@ -499,7 +499,9 @@ fn meta_sammeln(app: &AppHandle) -> HilfeMeta {
         sim_version: snap.as_ref().and_then(|s| s.sim_version.clone()),
         flugzeug_profil: snap.as_ref().map(|s| s.aircraft_profile.label().to_string()),
         addon: snap.as_ref().and_then(|s| s.aircraft_title.clone()),
-        paket_generation: crate::laufzeit_paket::stand().id.to_string(),
+        // Lesbar fuer live (Thomas 30.10.): „Generation 53 · Landebewertung
+        // Fassung 27 (53-…)“ — live zeigt das Feld nur an.
+        paket_generation: crate::laufzeit_paket::klartext(),
         letzte_flugdatei: letzte_flugdatei(app),
     }
 }

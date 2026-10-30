@@ -117,10 +117,25 @@ describe("HilfeSeite", () => {
   });
 
   it("sagt, wenn das Log wegen RUST_LOG nicht mitgeht", async () => {
-    invokeMock.mockResolvedValueOnce({ ...VORSCHAU, log_gesperrt: true });
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "hilfe_vorschau" ? Promise.resolve({ ...VORSCHAU, log_gesperrt: true }) : Promise.reject(new Error(cmd)),
+    );
     render(<HilfeSeite />);
     await flush();
     expect(screen.getByTestId("hilfe-mitgeht").textContent).toContain("RUST_LOG");
+  });
+
+  it("zeigt Paket und Landebewertung auf den ersten Blick (paket_info)", async () => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "paket_info"
+        ? Promise.resolve({ herkunft: "paket", id: "53-ab", generation: 53, bewertung_fassung: 27, flug_pin: null, naechster_start: null, letzte_pruefung: null, flug_offen: false })
+        : cmd === "hilfe_vorschau"
+          ? Promise.resolve(VORSCHAU)
+          : Promise.reject(new Error(cmd)),
+    );
+    render(<HilfeSeite />);
+    await flush();
+    expect(screen.getByTestId("paket-zeile").textContent).toBe("Paket: Generation 53 · Landebewertung: Fassung 27");
   });
 
   it("Ticket angelegt: Nummer und Kennung", async () => {

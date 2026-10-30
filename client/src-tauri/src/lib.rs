@@ -1011,6 +1011,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             laufzeit_paket::paket_datei,
+            laufzeit_paket::paket_info,
+            laufzeit_paket::paket_jetzt_pruefen,
+            laufzeit_paket::paket_neu_starten,
             huelle::shell_request,
             huelle::shell_auftraege,
             huelle::shell_auftrag_beantworten,

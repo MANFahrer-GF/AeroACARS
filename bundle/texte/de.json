@@ -1822,8 +1822,6 @@
     }
   },
   "about": {
-    "paket_eingebaut": "Laufzeit-Paket: eingebauter Stand",
-    "paket_generation": "Laufzeit-Paket: Generation {{n}}",
     "lizenz": "© {{jahr}} Thomas Kant · Proprietär, nur für Piloten der German Sky Group. Weitergabe und Umgehung der Zugangsbeschränkung sind untersagt.",
     "tagline": "Modernes ACARS für phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",
     "purpose_title": "Was ist AeroACARS?",
@@ -1832,6 +1830,22 @@
     "acknowledgements_intro": "Diese Projekte wurden ausgiebig studiert, vermessen oder als Referenz benutzt:",
     "thresholds_title": "Score-Schwellen — verifizierte Quellen",
     "thresholds_intro": "Die Smooth/Acceptable/Firm/Hard/Severe-Grenzen kommen aus echter Pilot-Literatur:"
+  },
+  "paket": {
+    "zeile_generation": "Paket: Generation {{n}} · Landebewertung: Fassung {{f}}",
+    "zeile_eingebaut": "Paket: eingebauter Stand · Landebewertung: Fassung {{f}}",
+    "pin": "Für den offenen Flug gilt weiter Generation {{n}}.",
+    "neu_wartet": "Neues Paket {{n}} geladen, wird beim nächsten Start aktiv.",
+    "neu_starten": "Jetzt neu starten",
+    "neu_starten_nach_flug": "Neustart nach dem Flug möglich.",
+    "pruefen": "Auf neues Paket prüfen",
+    "pruefe": "Prüfe …",
+    "ergebnis_kein_neueres": "Kein neueres Paket.",
+    "ergebnis_neu": "Generation {{n}} geladen.",
+    "ergebnis_fehler": "Prüfung fehlgeschlagen: {{fehler}}",
+    "ergebnis_flug_offen": "Während eines Flugs wird kein Paket geladen.",
+    "letzte_fehler": "Letzte Prüfung fehlgeschlagen: {{fehler}}",
+    "neustart_fehler": "Neustart nicht möglich."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",

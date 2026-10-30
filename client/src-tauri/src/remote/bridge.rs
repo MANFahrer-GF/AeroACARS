@@ -270,8 +270,12 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
-        // Laufzeit-Paket (3.0): Flottentabelle und Texte des geltenden Stands
-        // auch fuer die LAN-Oberflaeche — nur lesen, nur die feste Liste.
+        // Laufzeit-Paket (3.0): Datendateien des geltenden Stands auch fuer
+        // die LAN-Oberflaeche — nur lesen (tabellen/, texte/, grenzwerte/).
+        // Dazu die Paket-Uebersicht und „Auf neues Paket pruefen“ (holt nur
+        // von live, aktiv erst beim naechsten Start).
+        "paket_info" => ok_json(crate::laufzeit_paket::paket_info().await),
+        "paket_jetzt_pruefen" => ok_json(crate::laufzeit_paket::paket_jetzt_pruefen().await),
         "paket_datei" => {
             #[derive(Deserialize)]
             struct A {
@@ -1654,6 +1658,9 @@ mod tests {
             "shell_auftraege",
             "shell_auftrag_beantworten",
             "update_installieren",
+            // 30.10.2026: Den Client neu starten nur am Sim-PC — das Tablet
+            // verloere dabei ohnehin die Verbindung.
+            "paket_neu_starten",
         ];
 
         // v1.5.6: LEER — die frueher hier geparkten Luecken (Taxi-Karte,
