@@ -162,6 +162,8 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // Hilfe anfordern (P-9.22): vom Tablet wie am PC — Diagnose und
         // Schluessel bleiben auf dem Sim-PC, das Tablet sieht nur das Ergebnis.
         "hilfe_vorschau" => ok_json(crate::hilfe::hilfe_vorschau(app.clone())),
+        // „Meine Anfragen“ am Tablet wie am Sim-PC (nur lesen).
+        "hilfe_tickets" => from_uierr(crate::hilfe::hilfe_tickets(app.clone()).await),
         "hilfe_anfordern" => {
             #[derive(Deserialize)]
             struct A {
