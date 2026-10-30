@@ -13,6 +13,13 @@
 // (`lib/hilfeBilder.ts`, dort die Grenzen) und gehen als Anhang ans Ticket —
 // nicht in die Diagnose. Über die LAN-Brücke (Tablet) nicht: deren
 // Befehlsweg nimmt höchstens 2 MiB.
+//
+// Zusatzfelder (Flugnummer, Simulator …) beschreibt das Laufzeit-Paket in
+// `tabellen/hilfe-formular.json` (Fähigkeit `hilfe-formular-1`); die Seite
+// zeigt sie ohne Codeänderung und schickt sie als `zusatz` mit. Der Kern
+// nimmt nur die dort genannten Namen an und reicht sie als
+// `custom_fields[<name>]` ans Ticket. Fehlt die Datei, sieht die Seite aus
+// wie vorher.
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, isTauri } from "../lib/ipc";
@@ -54,6 +61,59 @@ export interface HilfeErgebnis {
 
 const BETREFF_MAX = 200;
 const TEXT_MAX = 20000;
+/** Grenzen wie im Kern (`hilfe.rs`: ZUSATZ_MAX_ANZAHL, ZUSATZ_WERT_MAX). */
+const ZUSATZ_MAX_ANZAHL = 12;
+const ZUSATZ_WERT_MAX = 2000;
+const ZUSATZ_NAME = /^[a-z][a-z0-9_]{0,31}$/;
+
+type Sprachtext = Partial<Record<string, string>>;
+
+export interface ZusatzFeld {
+  name: string;
+  /** `text`, `mehrzeilig`, `auswahl`; Unbekanntes wird als Textfeld gezeigt. */
+  typ: string;
+  pflicht: boolean;
+  max: number;
+  bezeichnung: Sprachtext;
+  hinweis: Sprachtext;
+  optionen: { wert: string; bezeichnung: Sprachtext }[];
+}
+
+function sprachtext(v: unknown): Sprachtext {
+  if (!v || typeof v !== "object") return {};
+  return Object.fromEntries(Object.entries(v).filter(([, x]) => typeof x === "string")) as Sprachtext;
+}
+
+/**
+ * Liest `tabellen/hilfe-formular.json`. Nachsichtig: Ein Feld, das der Kern
+ * nicht annähme (Name, Auswahl ohne Optionen), fällt weg statt die Seite zu
+ * stören — der Selbsttest des Pakets hat es ohnehin schon abgewiesen.
+ */
+export function formularLesen(json: unknown): ZusatzFeld[] {
+  if (!json || typeof json !== "object") return [];
+  const d = json as { format?: unknown; felder?: unknown };
+  if (d.format !== 1 || !Array.isArray(d.felder)) return [];
+  const namen = new Set<string>();
+  const felder: ZusatzFeld[] = [];
+  for (const roh of d.felder) {
+    if (!roh || typeof roh !== "object") continue;
+    const f = roh as Record<string, unknown>;
+    const name = typeof f.name === "string" ? f.name : "";
+    if (!ZUSATZ_NAME.test(name) || namen.has(name)) continue;
+    const optionen = Array.isArray(f.optionen)
+      ? f.optionen
+          .filter((o): o is Record<string, unknown> => !!o && typeof o === "object" && typeof (o as { wert?: unknown }).wert === "string")
+          .map((o) => ({ wert: o.wert as string, bezeichnung: sprachtext(o.bezeichnung) }))
+      : [];
+    const typ = typeof f.typ === "string" ? f.typ : "text";
+    if (typ === "auswahl" && optionen.length === 0) continue;
+    const max = typeof f.max === "number" && f.max > 0 ? Math.min(Math.floor(f.max), ZUSATZ_WERT_MAX) : ZUSATZ_WERT_MAX;
+    namen.add(name);
+    felder.push({ name, typ, pflicht: f.pflicht === true, max, bezeichnung: sprachtext(f.bezeichnung), hinweis: sprachtext(f.hinweis), optionen });
+    if (felder.length === ZUSATZ_MAX_ANZAHL) break;
+  }
+  return felder;
+}
 
 /** F1 ohne Zusatztaste und ohne Tastenwiederholung öffnet „Hilfe anfordern“ (App.tsx). */
 export function istHilfeTaste(e: Pick<KeyboardEvent, "key" | "repeat" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">): boolean {
@@ -86,7 +146,7 @@ export async function extern(url: string) {
  * ausgeblendet hört sie nicht auf Einfügen.
  */
 export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const titel = useRef<HTMLHeadingElement>(null);
   const [vorschau, setVorschau] = useState<HilfeVorschau | null>(null);
   const [betreff, setBetreff] = useState("");
@@ -99,6 +159,8 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
   const [bildFehler, setBildFehler] = useState<BildFehler[]>([]);
   const [ziehen, setZiehen] = useState(false);
   const dateiWahl = useRef<HTMLInputElement>(null);
+  const [zusatzFelder, setZusatzFelder] = useState<ZusatzFeld[]>([]);
+  const [zusatz, setZusatz] = useState<Record<string, string>>({});
   // Zählt laufende Vorbereitungen mit, damit zwei schnelle Einfügungen
   // zusammen nicht über die Höchstzahl kommen.
   const belegt = useRef(0);
@@ -120,6 +182,31 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
       weg = true;
     };
   }, [sichtbar]);
+
+  // Zusatzfelder aus dem Paket (der Stand gilt den ganzen Lauf). Ohne Datei
+  // (älteres Paket/Programm) bleibt die Seite wie vorher.
+  useEffect(() => {
+    let weg = false;
+    void (async () => {
+      try {
+        const roh = await invoke<string>("paket_datei", { pfad: "tabellen/hilfe-formular.json" });
+        const felder = formularLesen(JSON.parse(roh));
+        if (!weg) setZusatzFelder(felder);
+      } catch {
+        /* keine Zusatzfelder */
+      }
+    })();
+    return () => {
+      weg = true;
+    };
+  }, []);
+
+  const sprache = (i18n.language || "de").slice(0, 2);
+  const inSprache = (v: Sprachtext, ersatz: string) => v[sprache] ?? v.de ?? v.en ?? ersatz;
+  const zusatzWerte = () =>
+    Object.fromEntries(
+      zusatzFelder.map((f) => [f.name, (zusatz[f.name] ?? "").trim()] as const).filter(([, w]) => w !== ""),
+    );
 
   const fehlerText = (code: string) =>
     t(`hilfe.fehler.${code}`, { defaultValue: t("hilfe.fehler.unbekannt") });
@@ -189,8 +276,14 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
     setFehler(null);
     setSendet(true);
     try {
-      // Ohne Bilder genau die bisherigen Argumente (älteres Programm).
-      const args = bilder.length > 0 ? { betreff, text, bilder: bilder.map((b) => ({ daten: b.daten })) } : { betreff, text };
+      // Ohne Bilder und Zusatzfelder genau die bisherigen Argumente (älteres Programm).
+      const werte = zusatzWerte();
+      const args = {
+        betreff,
+        text,
+        ...(bilder.length > 0 ? { bilder: bilder.map((b) => ({ daten: b.daten })) } : {}),
+        ...(Object.keys(werte).length > 0 ? { zusatz: werte } : {}),
+      };
       setErgebnis(await invoke<HilfeErgebnis>("hilfe_anfordern", args));
     } catch (e) {
       setFehler(fehlerText(fehlerCode(e)));
@@ -203,6 +296,7 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
     setErgebnis(null);
     setBetreff("");
     setText("");
+    setZusatz({});
     setBilder([]);
     setBildFehler([]);
     belegt.current = 0;
@@ -211,7 +305,13 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
   const m = vorschau?.meta;
   const wert = (v: string | null | undefined) => (v && v.length > 0 ? v : t("hilfe.unbekannt"));
   const kannSenden =
-    !sendet && bereitet === 0 && betreff.trim().length > 0 && text.trim().length > 0 && betreff.length <= BETREFF_MAX && text.length <= TEXT_MAX;
+    !sendet &&
+    bereitet === 0 &&
+    betreff.trim().length > 0 &&
+    text.trim().length > 0 &&
+    betreff.length <= BETREFF_MAX &&
+    text.length <= TEXT_MAX &&
+    zusatzFelder.every((f) => !f.pflicht || (zusatz[f.name] ?? "").trim().length > 0);
   const voll = bilder.length + bereitet >= BILD_MAX_ANZAHL;
 
   return (
@@ -253,6 +353,49 @@ export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
                 disabled={sendet}
               />
             </label>
+            {zusatzFelder.map((f) => {
+              const wert = zusatz[f.name] ?? "";
+              const setzen = (v: string) => setZusatz((alt) => ({ ...alt, [f.name]: v }));
+              const hinweis = inSprache(f.hinweis, "") || undefined;
+              return (
+                <label key={f.name} className="settings__field hilfe-seite__feld" data-testid={`hilfe-zusatz-${f.name}`}>
+                  <span className="settings__field-label">
+                    {inSprache(f.bezeichnung, f.name)}
+                    {f.pflicht && <span className="hilfe-seite__pflicht"> ({t("hilfe.pflicht")})</span>}
+                  </span>
+                  {f.typ === "auswahl" ? (
+                    <select value={wert} onChange={(e) => setzen(e.target.value)} disabled={sendet} required={f.pflicht}>
+                      <option value="">{t("hilfe.zusatz_waehlen")}</option>
+                      {f.optionen.map((o) => (
+                        <option key={o.wert} value={o.wert}>
+                          {inSprache(o.bezeichnung, o.wert)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : f.typ === "mehrzeilig" ? (
+                    <textarea
+                      value={wert}
+                      maxLength={f.max}
+                      rows={3}
+                      placeholder={hinweis}
+                      onChange={(e) => setzen(e.target.value)}
+                      disabled={sendet}
+                      required={f.pflicht}
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      value={wert}
+                      maxLength={f.max}
+                      placeholder={hinweis}
+                      onChange={(e) => setzen(e.target.value.replace(/[\r\n]/g, " "))}
+                      disabled={sendet}
+                      required={f.pflicht}
+                    />
+                  )}
+                </label>
+              );
+            })}
           </div>
 
           <div

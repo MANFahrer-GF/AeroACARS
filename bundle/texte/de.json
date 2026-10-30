@@ -5080,7 +5080,9 @@
       "hilfe_bild_gross": "Ein Bild ist zu groß (höchstens 5 MB).",
       "hilfe_bild_typ": "Ein Bild ist kein PNG, JPEG oder WebP.",
       "ticket_bild_ungueltig": "Das HelpDesk hat ein Bild abgelehnt; das Ticket wurde nicht angelegt. Ohne das Bild erneut senden.",
-      "ticket_zu_gross": "Die Anfrage ist zu groß für german-sky-group.eu. Weniger oder kleinere Bilder anhängen."
+      "ticket_zu_gross": "Die Anfrage ist zu groß für german-sky-group.eu. Weniger oder kleinere Bilder anhängen.",
+      "hilfe_zusatz": "Ein Zusatzfeld ist ungültig (zu lang oder unzulässige Zeichen).",
+      "ticket_zusatz_ungueltig": "Das HelpDesk hat ein Zusatzfeld abgelehnt. Bitte die Angabe prüfen."
     },
     "kuerzel": "Hilfe anfordern (F1)",
     "zurueck": "Zurück zur Anfrage",
@@ -5109,6 +5111,8 @@
         "gross": "Das Bild ist zu groß (höchstens 25 MB, verkleinert höchstens 5 MB).",
         "lesen": "Das Bild ließ sich nicht lesen."
       }
-    }
+    },
+    "pflicht": "Pflichtfeld",
+    "zusatz_waehlen": "Bitte wählen"
   }
 }

@@ -10,7 +10,18 @@
 //! 2. Das **Ticket** geht an das HelpDesk-Modul auf german-sky-group.eu:
 //!    `POST /api/helpdesk/tickets` mit dem phpVMS-Schluessel des Piloten,
 //!    Felder `subject`, `body`, `diagnose`. Grosse Dateien landen so nie in
-//!    phpVMS; das Ticket traegt nur die Kennung.
+//!    phpVMS; das Ticket traegt nur die Kennung. Den **Pfad** darf das
+//!    Laufzeit-Paket aendern (`endpunkte.json` → `helpdesk_pfad`, geprueft in
+//!    `paket-endpunkte`), der Host bleibt fest `ALLOWED_PHPVMS_HOST`.
+//!
+//! **Zusatzfelder** (Faehigkeit `hilfe-formular-1`): Welche weiteren
+//! Textfelder das Formular hat (Flugnummer, Simulator …), beschreibt das
+//! Paket in `tabellen/hilfe-formular.json`; die Seite zeigt sie ohne
+//! Codeaenderung, der Kern nimmt nur dort genannte Namen an, prueft sie
+//! ([`zusatz_pruefen`]) und reicht sie als `custom_fields[<name>]` ans
+//! Ticket — dasselbe Feld, unter dem das HelpDesk-Formular seine
+//! Admin-Zusatzfelder schickt. Ein neues Feld braucht so Paket (und im
+//! HelpDesk hoechstens ein Admin-Zusatzfeld), aber kein Client-Release.
 //!
 //! **Bilder** (Screenshots, Beta-1-Rueckmeldung „man kann kein Bild
 //! hochladen“) gehen NICHT in die Diagnose, sondern als Anhang direkt ans
@@ -39,6 +50,7 @@ use crate::UiError;
 use base64::Engine as _;
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -57,6 +69,19 @@ const META_FELD_MAX: usize = 120;
 /// HelpDesk-Controller (`IMAGE_MAX_COUNT`, `IMAGE_MAX_KB` = 5120).
 pub(crate) const BILD_MAX_ANZAHL: usize = 5;
 pub(crate) const BILD_MAX_BYTES: usize = 5 * 1024 * 1024;
+/// Zusatzfelder: hoechstens so viele, Wert je hoechstens so viele Zeichen.
+pub(crate) const ZUSATZ_MAX_ANZAHL: usize = 12;
+pub(crate) const ZUSATZ_WERT_MAX: usize = 2000;
+/// Namen, die ein Zusatzfeld nie tragen darf: die festen Felder des Tickets,
+/// die Spalten, die das HelpDesk selbst fuellt, und die Argumente von
+/// `hilfe_anfordern`.
+const ZUSATZ_GESPERRT: &[&str] = &[
+    "subject", "body", "diagnose", "attachments", "custom_fields", "zusatz", "pirep_id", "flight_id", "aircraft_id",
+    "category_id", "source", "status", "priority", "betreff", "text", "bilder",
+];
+/// Teilwoerter, die nach einem Geheimnis klingen: ein solches Feld wird nie
+/// angenommen (auch `monkey` faellt damit weg — bewusst grob).
+const ZUSATZ_GEHEIMNIS: &[&str] = &["key", "token", "password", "passwort", "secret", "geheim"];
 
 /// Ein Bild aus dem Dialog: nur die Bytes (Base64). Name und Typ bestimmt Rust.
 #[derive(Debug, Clone, Deserialize)]
@@ -135,6 +160,125 @@ pub(crate) fn eingaben_pruefen(betreff: &str, text: &str) -> Result<(String, Str
         return Err(UiError::new("hilfe_text", "Text fehlt oder ist zu lang"));
     }
     Ok((b.to_string(), t.to_string()))
+}
+
+/// Name eines Zusatzfelds: `[a-z][a-z0-9_]{0,31}`, nicht gesperrt, kein
+/// Geheimnis-Muster.
+pub(crate) fn zusatz_name_ok(name: &str) -> bool {
+    let b = name.as_bytes();
+    !b.is_empty()
+        && b.len() <= 32
+        && b[0].is_ascii_lowercase()
+        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_')
+        && !ZUSATZ_GESPERRT.contains(&name)
+        && !ZUSATZ_GEHEIMNIS.iter().any(|g| name.contains(g))
+}
+
+/// Zusatzfelder aus der Oberflaeche pruefen. Nur Namen, die die
+/// Formularbeschreibung des geltenden Stands nennt (`erlaubt`), nur Text
+/// (getrimmt, hoechstens [`ZUSATZ_WERT_MAX`] Zeichen, keine Steuerzeichen
+/// ausser Zeilenumbruch und Tab). Leere Werte fallen weg. Ein schlechtes Feld
+/// verwirft alle (kein halbes Senden). Pflichtfelder prueft die Oberflaeche,
+/// nicht der Kern: sonst koennte eine aeltere Oberflaeche (oder die
+/// LAN-Bruecke) ohne das Feld gar keine Hilfe mehr anfordern.
+pub(crate) fn zusatz_pruefen(zusatz: &BTreeMap<String, String>, erlaubt: &[String]) -> Result<BTreeMap<String, String>, UiError> {
+    if zusatz.len() > ZUSATZ_MAX_ANZAHL {
+        return Err(UiError::new("hilfe_zusatz", "too many extra fields"));
+    }
+    let mut aus = BTreeMap::new();
+    for (name, wert) in zusatz {
+        if !zusatz_name_ok(name) || !erlaubt.iter().any(|e| e == name) {
+            return Err(UiError::new("hilfe_zusatz", format!("extra field {name:?} not allowed")));
+        }
+        let w = wert.trim();
+        if w.chars().count() > ZUSATZ_WERT_MAX || w.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+            return Err(UiError::new("hilfe_zusatz", format!("extra field {name:?}: value invalid")));
+        }
+        if !w.is_empty() {
+            aus.insert(name.clone(), w.to_string());
+        }
+    }
+    Ok(aus)
+}
+
+/// Was der Kern aus `tabellen/hilfe-formular.json` braucht: die Namen der
+/// Zusatzfelder. Bezeichnungen, Typen, Pflicht und Optionen liest nur die
+/// Oberflaeche — die Datei darf dafuer weitere Schluessel tragen.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct HilfeFormular {
+    pub namen: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct FormularDatei {
+    format: u32,
+    #[serde(default)]
+    felder: Vec<FormularFeld>,
+}
+
+#[derive(Deserialize)]
+struct FormularFeld {
+    name: String,
+    typ: String,
+    #[serde(default)]
+    optionen: Vec<FormularOption>,
+}
+
+#[derive(Deserialize)]
+struct FormularOption {
+    wert: String,
+}
+
+/// Liest `tabellen/hilfe-formular.json` (fail-closed, im Selbsttest des
+/// Pakets): Format 1, hoechstens [`ZUSATZ_MAX_ANZAHL`] Felder, jeder Name
+/// besteht dieselbe Pruefung wie beim Senden ([`zusatz_name_ok`]) und kommt
+/// nur einmal vor, Typ `[a-z]{1,20}`, `auswahl` mit mindestens einer Option,
+/// jeder Optionswert ein gueltiger Zusatzwert. Sonst zeigte die Seite ein
+/// Feld, dessen Wert der Kern beim Senden ablehnt.
+pub(crate) fn hilfe_formular_lesen(json: &str) -> Result<HilfeFormular, String> {
+    let d: FormularDatei = serde_json::from_str(json).map_err(|e| format!("hilfe-formular.json: {e}"))?;
+    if d.format != 1 {
+        return Err(format!("hilfe-formular.json: Format {} unbekannt", d.format));
+    }
+    if d.felder.len() > ZUSATZ_MAX_ANZAHL {
+        return Err("hilfe-formular.json: zu viele Felder".into());
+    }
+    let mut namen: Vec<String> = Vec::new();
+    for f in &d.felder {
+        if !zusatz_name_ok(&f.name) || namen.contains(&f.name) {
+            return Err(format!("hilfe-formular.json: Name {:?} ungueltig oder doppelt", f.name));
+        }
+        if f.typ.is_empty() || f.typ.len() > 20 || !f.typ.bytes().all(|b| b.is_ascii_lowercase()) {
+            return Err(format!("hilfe-formular.json: {}: Typ ungueltig", f.name));
+        }
+        if f.typ == "auswahl" && f.optionen.is_empty() {
+            return Err(format!("hilfe-formular.json: {}: Auswahl ohne Optionen", f.name));
+        }
+        for o in &f.optionen {
+            let w = o.wert.trim();
+            if w.is_empty() || w != o.wert || w.chars().count() > ZUSATZ_WERT_MAX || w.chars().any(char::is_control) {
+                return Err(format!("hilfe-formular.json: {}: Optionswert ungueltig", f.name));
+            }
+        }
+        namen.push(f.name.clone());
+    }
+    Ok(HilfeFormular { namen })
+}
+
+/// Name des Zusatzfelds im Ticket (multipart) — wie die Admin-Zusatzfelder
+/// im HelpDesk-Formular (`CustomFieldService::inputNameFor`).
+pub(crate) fn zusatz_feldname(name: &str) -> String {
+    format!("custom_fields[{name}]")
+}
+
+/// JSON-Koerper des Tickets ohne Bilder. Ohne Zusatzfelder genau wie vor
+/// `hilfe-formular-1` (kein `custom_fields`-Schluessel).
+pub(crate) fn json_koerper(betreff: &str, text: &str, kennung: Option<&str>, zusatz: &BTreeMap<String, String>) -> serde_json::Value {
+    let mut k = serde_json::json!({ "subject": betreff, "body": text, "diagnose": kennung });
+    if !zusatz.is_empty() {
+        k["custom_fields"] = serde_json::json!(zusatz);
+    }
+    k
 }
 
 /// Typ an den ersten Bytes: PNG, JPEG oder WebP — sonst `None`.
@@ -299,6 +443,13 @@ pub(crate) fn ticket_antwort(status: u16, body: &str) -> Result<Ticket, &'static
         {
             Err("ticket_bild_ungueltig")
         }
+        // Ein abgelehntes Zusatzfeld nennt der Controller unter `felder.custom_fields…`.
+        422 if json()
+            .and_then(|v| v.get("felder").and_then(|f| f.as_object()).map(|f| f.keys().any(|k| k.starts_with("custom_fields"))))
+            == Some(true) =>
+        {
+            Err("ticket_zusatz_ungueltig")
+        }
         422 => Err("ticket_ungueltig"),
         // Webserver/PHP-Grenze fuer den Koerper (nur mit Bildern denkbar).
         413 => Err("ticket_zu_gross"),
@@ -364,10 +515,13 @@ pub(crate) async fn hilfe_anfordern(
     betreff: String,
     text: String,
     bilder: Option<Vec<HilfeBild>>,
+    zusatz: Option<BTreeMap<String, String>>,
 ) -> Result<HilfeErgebnis, UiError> {
     let (betreff, text) = eingaben_pruefen(&betreff, &text)?;
-    // Bilder vor jedem Netzweg pruefen: ein ungueltiges Bild sendet gar nichts.
+    // Bilder und Zusatzfelder vor jedem Netzweg pruefen: ein ungueltiges
+    // sendet gar nichts.
     let bilder = bilder_pruefen(bilder.as_deref().unwrap_or_default())?;
+    let zusatz = zusatz_pruefen(&zusatz.unwrap_or_default(), &crate::laufzeit_paket::stand().hilfe_formular.namen)?;
     let Some(pilot) = angemeldet(&app) else {
         return Err(UiError::new("not_logged_in", "no active session"));
     };
@@ -439,15 +593,18 @@ pub(crate) async fn hilfe_anfordern(
         erg.ticket_fehler = Some("ticket_anmeldung".into());
         return Ok(erg);
     };
-    let url = format!("https://{}/api/helpdesk/tickets", crate::ALLOWED_PHPVMS_HOST);
-    let koerper = serde_json::json!({ "subject": betreff, "body": text, "diagnose": erg.kennung });
+    // Host fest, Pfad aus dem Paket (geprueft in `paket-endpunkte`).
+    let url = format!("https://{}{}", crate::ALLOWED_PHPVMS_HOST, paket_endpunkte::endpunkte().helpdesk_pfad());
+    let koerper = json_koerper(&betreff, &text, erg.kennung.as_deref(), &zusatz);
     // Mit Bildern multipart (Feldnamen wie im HelpDesk-Formular), sonst JSON wie bisher.
     let mehrteilig = (!bilder.is_empty()).then(|| {
         let grenze = format!("aeroacars-{}", uuid::Uuid::new_v4().simple());
+        let namen: Vec<String> = zusatz.keys().map(|n| zusatz_feldname(n)).collect();
         let mut felder = vec![("subject", betreff.as_str()), ("body", text.as_str())];
         if let Some(k) = erg.kennung.as_deref() {
             felder.push(("diagnose", k));
         }
+        felder.extend(namen.iter().map(String::as_str).zip(zusatz.values().map(String::as_str)));
         (format!("multipart/form-data; boundary={grenze}"), multipart_koerper(&grenze, &felder, &bilder))
     });
     let antwort = async {
@@ -583,6 +740,112 @@ mod tests {
         assert_eq!(ticket_antwort(422, bild_weg), Err("ticket_bild_ungueltig"));
         assert_eq!(ticket_antwort(422, r#"{"error":"ungueltig","felder":{"subject":["x"]}}"#), Err("ticket_ungueltig"));
         assert_eq!(ticket_antwort(413, "<html>Request Entity Too Large</html>"), Err("ticket_zu_gross"));
+        // abgelehntes Zusatzfeld: eigener Schluessel
+        let zusatz_weg = r#"{"error":"ungueltig","felder":{"custom_fields.flugnummer":["x"]}}"#;
+        assert_eq!(ticket_antwort(422, zusatz_weg), Err("ticket_zusatz_ungueltig"));
+    }
+
+    fn karte(paare: &[(&str, &str)]) -> BTreeMap<String, String> {
+        paare.iter().map(|(n, w)| (n.to_string(), w.to_string())).collect()
+    }
+
+    #[test]
+    fn zusatzfelder_werden_geprueft() {
+        let erlaubt: Vec<String> = ["flugnummer", "simulator", "a1_b"].map(String::from).to_vec();
+        // gut: getrimmt, leere fallen weg, Zeilenumbruch und Tab erlaubt
+        let ok = zusatz_pruefen(&karte(&[("flugnummer", " GSG1234 "), ("simulator", ""), ("a1_b", "x\n\ty")]), &erlaubt).unwrap();
+        assert_eq!(ok, karte(&[("flugnummer", "GSG1234"), ("a1_b", "x\n\ty")]));
+        assert_eq!(zusatz_pruefen(&BTreeMap::new(), &[]).unwrap(), BTreeMap::new());
+        // nicht in der Beschreibung des Stands → abgelehnt (auch wenn der Name an sich gut ist)
+        assert_eq!(zusatz_pruefen(&karte(&[("rueckruf", "x")]), &erlaubt).unwrap_err().code, "hilfe_zusatz");
+        // Wertgrenze: genau 2000 Zeichen gehen (auch Umlaute), eines mehr nicht
+        assert!(zusatz_pruefen(&karte(&[("flugnummer", &"ä".repeat(ZUSATZ_WERT_MAX))]), &erlaubt).is_ok());
+        assert!(zusatz_pruefen(&karte(&[("flugnummer", &"ä".repeat(ZUSATZ_WERT_MAX + 1))]), &erlaubt).is_err());
+        // Steuerzeichen ausser \n/\t
+        for w in ["a\u{0}b", "a\rb", "a\u{1b}[31m"] {
+            assert!(zusatz_pruefen(&karte(&[("flugnummer", w)]), &erlaubt).is_err(), "{w:?}");
+        }
+        // ein schlechtes unter guten verwirft alle
+        assert!(zusatz_pruefen(&karte(&[("flugnummer", "x"), ("api_key", "y")]), &erlaubt).is_err());
+        // Anzahl: 12 gehen, 13 nicht
+        let viele: Vec<String> = (0..13).map(|i| format!("f{i}")).collect();
+        let zwoelf: BTreeMap<String, String> = viele[..12].iter().map(|n| (n.clone(), "x".into())).collect();
+        assert_eq!(zusatz_pruefen(&zwoelf, &viele).unwrap().len(), 12);
+        let dreizehn: BTreeMap<String, String> = viele.iter().map(|n| (n.clone(), "x".into())).collect();
+        assert!(zusatz_pruefen(&dreizehn, &viele).is_err());
+    }
+
+    #[test]
+    fn zusatz_namen() {
+        for gut in ["flugnummer", "a", "sim_version2", &"a".repeat(32)] {
+            assert!(zusatz_name_ok(gut), "{gut}");
+        }
+        for boese in [
+            "", "Flugnummer", "1abc", "_a", "a-b", "a b", "a.b", "a[b]", "flugnümmer", &"a".repeat(33),
+            // feste Felder und Spalten
+            "subject", "body", "diagnose", "attachments", "custom_fields", "pirep_id", "category_id", "betreff",
+            // Geheimnis-Muster
+            "api_key", "token", "pilot_password", "passwort", "client_secret", "geheimzahl", "monkey",
+        ] {
+            assert!(!zusatz_name_ok(boese), "{boese}");
+        }
+    }
+
+    #[test]
+    fn formularbeschreibung_wird_geprueft() {
+        let gut = r#"{"format":1,"notiz":["x"],"felder":[
+            {"name":"flugnummer","typ":"text","pflicht":true,"bezeichnung":{"de":"Flugnummer"},"neu_in_spaeter":1},
+            {"name":"simulator","typ":"auswahl","optionen":[{"wert":"msfs2024","bezeichnung":{"de":"MSFS 2024"}}]}]}"#;
+        assert_eq!(hilfe_formular_lesen(gut).unwrap().namen, ["flugnummer", "simulator"]);
+        assert_eq!(hilfe_formular_lesen(r#"{"format":1,"felder":[]}"#).unwrap(), HilfeFormular::default());
+        // Der eingebaute Stand ist lesbar.
+        hilfe_formular_lesen(crate::laufzeit_paket::eingebaute_datei_text("tabellen/hilfe-formular.json")).unwrap();
+        let feld = |f: &str| format!(r#"{{"format":1,"felder":[{f}]}}"#);
+        for boese in [
+            r#"{"format":2,"felder":[]}"#.to_string(),
+            "kein json".to_string(),
+            feld(r#"{"name":"api_key","typ":"text"}"#),
+            feld(r#"{"name":"subject","typ":"text"}"#),
+            feld(r#"{"name":"Flug","typ":"text"}"#),
+            feld(r#"{"name":"a","typ":"text"},{"name":"a","typ":"text"}"#),
+            feld(r#"{"name":"a","typ":"Text"}"#),
+            feld(r#"{"name":"a","typ":""}"#),
+            feld(r#"{"name":"a"}"#),
+            feld(r#"{"name":"a","typ":"auswahl"}"#),
+            feld(r#"{"name":"a","typ":"auswahl","optionen":[{"wert":""}]}"#),
+            feld(r#"{"name":"a","typ":"auswahl","optionen":[{"wert":" x"}]}"#),
+            feld(r#"{"name":"a","typ":"auswahl","optionen":[{"bezeichnung":{}}]}"#),
+            feld(&(0..13).map(|i| format!(r#"{{"name":"f{i}","typ":"text"}}"#)).collect::<Vec<_>>().join(",")),
+        ] {
+            assert!(hilfe_formular_lesen(&boese).is_err(), "{boese}");
+        }
+        // Gegenprobe zur Grenze: zwoelf Felder gehen
+        assert!(hilfe_formular_lesen(&feld(&(0..12).map(|i| format!(r#"{{"name":"f{i}","typ":"text"}}"#)).collect::<Vec<_>>().join(","))).is_ok());
+    }
+
+    #[test]
+    fn json_koerper_ohne_zusatz_wie_bisher() {
+        let alt = serde_json::json!({ "subject": "B", "body": "T", "diagnose": "D-0123456789ab" });
+        assert_eq!(json_koerper("B", "T", Some("D-0123456789ab"), &BTreeMap::new()), alt);
+        assert_eq!(json_koerper("B", "T", None, &BTreeMap::new()), serde_json::json!({ "subject": "B", "body": "T", "diagnose": null }));
+        let mit = json_koerper("B", "T", None, &karte(&[("flugnummer", "GSG1"), ("simulator", "xp12")]));
+        assert_eq!(mit["custom_fields"], serde_json::json!({ "flugnummer": "GSG1", "simulator": "xp12" }));
+        assert_eq!(mit["subject"], "B");
+    }
+
+    #[test]
+    fn multipart_enthaelt_zusatzfelder() {
+        let zusatz = karte(&[("flugnummer", "GSG1234"), ("simulator", "Zeile 1\nZeile 2")]);
+        let namen: Vec<String> = zusatz.keys().map(|n| zusatz_feldname(n)).collect();
+        let mut felder = vec![("subject", "B"), ("body", "T")];
+        felder.extend(namen.iter().map(String::as_str).zip(zusatz.values().map(String::as_str)));
+        let k = multipart_koerper("G", &felder, &[Bild { bytes: PNG.to_vec(), mime: "image/png", endung: "png" }]);
+        let text = String::from_utf8_lossy(&k);
+        assert!(text.contains("--G\r\nContent-Disposition: form-data; name=\"custom_fields[flugnummer]\"\r\n\r\nGSG1234\r\n"), "{text}");
+        assert!(text.contains("name=\"custom_fields[simulator]\"\r\n\r\nZeile 1\nZeile 2\r\n"), "{text}");
+        // Gegenprobe: ohne Zusatz kein custom_fields-Teil
+        let ohne = String::from_utf8_lossy(&multipart_koerper("G", &[("subject", "B")], &[])).into_owned();
+        assert!(!ohne.contains("custom_fields"));
     }
 
     const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13];
@@ -627,7 +890,8 @@ mod tests {
     /// Schreibt einen Koerper mit zwei Bildern (Bytes mit CRLF und `--` darin)
     /// nach `HILFE_MULTIPART_DATEI`, damit ein echter PHP-Parser ihn lesen
     /// kann (Gegenprobe zum handgebauten Format, 30.10.):
-    /// `php -S` + `curl --data-binary`, erwartet `$_FILES['attachments']`.
+    /// `php -S` + `curl --data-binary`, erwartet `$_FILES['attachments']`
+    /// und `$_POST['custom_fields']['flugnummer'] === 'GSG1234'`.
     #[test]
     #[ignore = "nur fuer die PHP-Gegenprobe, schreibt eine Datei"]
     fn multipart_fuer_php_gegenprobe() {
@@ -640,7 +904,16 @@ mod tests {
             Bild { bytes: jpeg, mime: "image/jpeg", endung: "jpg" },
         ];
         let grenze = format!("aeroacars-{}", uuid::Uuid::new_v4().simple());
-        let k = multipart_koerper(&grenze, &[("subject", "Betreff ä"), ("body", "Zeile 1\r\nZeile 2"), ("diagnose", "D-0123456789ab")], &bilder);
+        let k = multipart_koerper(
+            &grenze,
+            &[
+                ("subject", "Betreff ä"),
+                ("body", "Zeile 1\r\nZeile 2"),
+                ("diagnose", "D-0123456789ab"),
+                (&zusatz_feldname("flugnummer"), "GSG1234"),
+            ],
+            &bilder,
+        );
         std::fs::write(&ziel, &k).unwrap();
         std::fs::write(format!("{ziel}.grenze"), &grenze).unwrap();
         for (i, b) in bilder.iter().enumerate() {

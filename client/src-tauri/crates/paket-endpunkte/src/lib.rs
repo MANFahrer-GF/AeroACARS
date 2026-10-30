@@ -41,6 +41,25 @@ pub struct Endpunkte {
     pub metar: String,
     /// VATSIM-VDGS-Seite.
     pub vatsim_vdgs: String,
+    /// Pfad der Ticket-Schnittstelle des GSG-HelpDesk (Hilfe anfordern,
+    /// P-9.22). Nur der **Pfad**: Der Host bleibt im Programm fest
+    /// (`ALLOWED_PHPVMS_HOST`), denn dorthin geht der phpVMS-Schluessel des
+    /// Piloten. Fehlt das Feld (Paket vor `hilfe-formular-1`), gilt
+    /// [`HELPDESK_PFAD_STANDARD`].
+    #[serde(default)]
+    helpdesk_pfad: Option<String>,
+}
+
+/// Pfad der HelpDesk-Ticket-Schnittstelle, wenn das Paket keinen nennt.
+pub const HELPDESK_PFAD_STANDARD: &str = "/api/helpdesk/tickets";
+/// Laengster erlaubter HelpDesk-Pfad.
+pub const HELPDESK_PFAD_MAX: usize = 120;
+
+impl Endpunkte {
+    /// Pfad der HelpDesk-Ticket-Schnittstelle (geprueft beim Lesen).
+    pub fn helpdesk_pfad(&self) -> &str {
+        self.helpdesk_pfad.as_deref().unwrap_or(HELPDESK_PFAD_STANDARD)
+    }
 }
 
 /// Eingebauter Stand = Datei im Paketordner (eine Quelle).
@@ -85,7 +104,31 @@ pub fn lesen(json: &str) -> Result<Endpunkte, String> {
         let host = HOSTS.iter().find(|(f, _)| *f == name).map(|(_, h)| *h).ok_or("Feld ohne Host")?;
         pruefe_url(url, host).map_err(|x| format!("endpunkte.json: {name}: {x}"))?;
     }
+    if let Some(pfad) = &e.helpdesk_pfad {
+        pruefe_pfad(pfad).map_err(|x| format!("endpunkte.json: helpdesk_pfad: {x}"))?;
+    }
     Ok(e)
+}
+
+/// Ein Pfad auf dem festen phpVMS-Host: beginnt mit `/api/`, nur ASCII
+/// `[A-Za-z0-9/_.-]` (also kein `?`, `#`, `@`, `%`, Leerzeichen, `\` — eine
+/// Abfrage mit Geheimnissen oder ein anderer Host sind so ausgeschlossen),
+/// kein `..`, kein `//`, kein abschliessender Schraegstrich, hoechstens
+/// [`HELPDESK_PFAD_MAX`] Zeichen.
+fn pruefe_pfad(pfad: &str) -> Result<(), String> {
+    if pfad.len() > HELPDESK_PFAD_MAX {
+        return Err("zu lang".into());
+    }
+    if !pfad.starts_with("/api/") || pfad.ends_with('/') {
+        return Err("muss mit /api/ beginnen und ohne / enden".into());
+    }
+    if !pfad.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'.' | b'-')) {
+        return Err("Zeichen ungueltig".into());
+    }
+    if pfad.contains("..") || pfad.contains("//") {
+        return Err("Form ungueltig".into());
+    }
+    Ok(())
 }
 
 fn pruefe_url(url: &str, erlaubt: &str) -> Result<(), String> {
@@ -113,6 +156,50 @@ mod tests {
         assert_eq!(e.simbrief, "https://www.simbrief.com");
         assert_eq!(e.metar, "https://aviationweather.gov");
         assert_eq!(e.vatsim_vdgs, "https://vats.im/vdgs");
+        assert_eq!(e.helpdesk_pfad(), "/api/helpdesk/tickets");
+    }
+
+    #[test]
+    fn helpdesk_pfad_aus_dem_paket_mit_rueckfall() {
+        let gut: serde_json::Value = serde_json::from_str(EINGEBAUT).unwrap();
+        // Paket ohne das Feld (vor hilfe-formular-1): heutiger Pfad.
+        let mut ohne = gut.clone();
+        ohne.as_object_mut().unwrap().remove("helpdesk_pfad");
+        assert_eq!(lesen(&ohne.to_string()).unwrap().helpdesk_pfad(), HELPDESK_PFAD_STANDARD);
+        // Anderer Pfad aus dem Paket wird genutzt.
+        let mut neu = gut.clone();
+        neu["helpdesk_pfad"] = "/api/helpdesk/v2/tickets".into();
+        assert_eq!(lesen(&neu.to_string()).unwrap().helpdesk_pfad(), "/api/helpdesk/v2/tickets");
+        let lang = format!("/api/{}", "a".repeat(HELPDESK_PFAD_MAX - 5));
+        assert_eq!(lang.len(), HELPDESK_PFAD_MAX);
+        neu["helpdesk_pfad"] = lang.clone().into();
+        assert!(lesen(&neu.to_string()).is_ok(), "genau an der Grenze");
+        for boese in [
+            format!("{lang}b"),
+            "/helpdesk/tickets".into(),
+            "api/helpdesk/tickets".into(),
+            "/api/".into(),
+            "/api/helpdesk/tickets/".into(),
+            "/api/../admin".into(),
+            "/api/helpdesk/..".into(),
+            "/api//helpdesk".into(),
+            "/api/t?api_key=x".into(),
+            "/api/t#x".into(),
+            "/api/t%2F..".into(),
+            "/api/t@evil.example".into(),
+            "/api/t x".into(),
+            "/api/t\\x".into(),
+            "https://evil.example/api/t".into(),
+            "//evil.example/api/t".into(),
+            "/api/tick\u{e4}ts".into(),
+        ] {
+            let mut v = gut.clone();
+            v["helpdesk_pfad"] = boese.clone().into();
+            assert!(lesen(&v.to_string()).is_err(), "{boese}");
+        }
+        let mut kein_text = gut;
+        kein_text["helpdesk_pfad"] = 5.into();
+        assert!(lesen(&kein_text.to_string()).is_err());
     }
 
     #[test]
