@@ -232,7 +232,7 @@ describe("HilfeSeite", () => {
     vorbereitenWieEcht();
     oeffnen({ kennung: null, link: null, diagnose_fehler: null, ticket: null, ticket_fehler: null });
     await flush();
-    const zwischenablage = { files: [bildDatei("eingefuegt.png")], items: [] };
+    const zwischenablage = { files: [bildDatei("eingefuegt.png")], items: [], getData: () => "" };
     fireEvent.paste(screen.getByLabelText("Was ist passiert?"), { clipboardData: zwischenablage });
     await flush();
     await flush();
@@ -252,6 +252,43 @@ describe("HilfeSeite", () => {
     });
     expect(ereignis).toBe(true);
     expect(screen.queryByAltText("Bild 4")).toBeNull();
+  });
+
+  it("Text mit Bildvorschau (Word/Browser) im Textfeld: Text gewinnt, kein Bild", async () => {
+    vorbereitenWieEcht();
+    oeffnen({ kennung: null, link: null, diagnose_fehler: null, ticket: null, ticket_fehler: null });
+    await flush();
+    const ereignis = fireEvent.paste(screen.getByLabelText("Was ist passiert?"), {
+      clipboardData: { files: [bildDatei("vorschau.png")], items: [], getData: (f: string) => (f === "text/plain" ? "kopierter Text" : "") },
+    });
+    await flush();
+    expect(ereignis).toBe(true); // nicht verhindert: der Browser fügt den Text ein
+    expect(screen.queryByAltText("Bild 1")).toBeNull();
+  });
+
+  it("ausgeblendet (anderer Reiter): Einfügen landet nicht in der Hilfe", async () => {
+    vorbereitenWieEcht();
+    invokeMock.mockImplementation((cmd: string) => (cmd === "hilfe_vorschau" ? Promise.resolve(VORSCHAU) : Promise.reject(new Error(cmd))));
+    const { rerender } = render(<HilfeSeite sichtbar={false} />);
+    await flush();
+    fireEvent.paste(document.body, { clipboardData: { files: [bildDatei("woanders.png")], items: [] } });
+    await flush();
+    await flush();
+    expect(screen.queryByAltText("Bild 1")).toBeNull();
+    // Gegenprobe: wieder sichtbar -> Einfügen wirkt
+    rerender(<HilfeSeite sichtbar />);
+    fireEvent.paste(document.body, { clipboardData: { files: [bildDatei("hier.png")], items: [] } });
+    await flush();
+    await flush();
+    expect(screen.getByAltText("Bild 1").getAttribute("src")).toContain(btoa("hier.png"));
+  });
+
+  it("nach dem Senden liegt der Fokus auf der Ergebnis-Überschrift", async () => {
+    oeffnen({ kennung: null, link: null, diagnose_fehler: null, ticket: { id: 1, ticket_number: "HD-1", url: null }, ticket_fehler: null });
+    await flush();
+    await ausfuellenUndSenden();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 2 }));
+    expect(document.activeElement?.textContent).toBe("Ticket angelegt");
   });
 
   it("Grenzen: falscher Typ und mehr als fünf Bilder werden benannt", async () => {

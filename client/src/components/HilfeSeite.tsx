@@ -79,8 +79,15 @@ export async function extern(url: string) {
   }
 }
 
-export function HilfeSeite() {
+/**
+ * `sichtbar`: App hängt die Seite nach dem ersten Besuch nicht mehr aus
+ * (Entwurf, Bilder und ein laufendes Senden überleben den Reiterwechsel —
+ * sonst ginge die Ticketnummer verloren und der Pilot sendete doppelt);
+ * ausgeblendet hört sie nicht auf Einfügen.
+ */
+export function HilfeSeite({ sichtbar = true }: { sichtbar?: boolean } = {}) {
   const { t } = useTranslation();
+  const titel = useRef<HTMLHeadingElement>(null);
   const [vorschau, setVorschau] = useState<HilfeVorschau | null>(null);
   const [betreff, setBetreff] = useState("");
   const [text, setText] = useState("");
@@ -141,16 +148,26 @@ export function HilfeSeite() {
   hinzuRef.current = bilderHinzu;
   const formularOffen = ergebnis === null;
   useEffect(() => {
-    if (!formularOffen) return;
+    if (!formularOffen || !sichtbar) return;
     const beimEinfuegen = (e: ClipboardEvent) => {
       const dateien = dateienAus(e.clipboardData);
-      if (dateien.length === 0) return;
+      if (dateien.length === 0 || !isTauri) return;
+      // Text aus Word/Browser bringt oft eine Bildvorschau mit: in einem
+      // Textfeld gewinnt der Text.
+      const ziel = e.target as HTMLElement | null;
+      if (ziel?.closest?.("input, textarea") && (e.clipboardData?.getData("text/plain") ?? "") !== "") return;
       e.preventDefault();
       void hinzuRef.current(dateien);
     };
     document.addEventListener("paste", beimEinfuegen);
     return () => document.removeEventListener("paste", beimEinfuegen);
-  }, [formularOffen]);
+  }, [formularOffen, sichtbar]);
+
+  // Nach dem Senden verschwindet der fokussierte Knopf: Fokus auf die
+  // Überschrift des Ergebnisses, damit Tastatur und Screenreader folgen.
+  useEffect(() => {
+    if (ergebnis) titel.current?.focus();
+  }, [ergebnis]);
 
   const bildWeg = (i: number) => {
     belegt.current -= 1;
@@ -196,7 +213,7 @@ export function HilfeSeite() {
   return (
     <section className="settings hilfe-seite" aria-labelledby="hilfe-titel">
       <header className="settings__header">
-        <h2 id="hilfe-titel">
+        <h2 id="hilfe-titel" ref={titel} tabIndex={-1} className="hilfe-seite__titel">
           {ergebnis ? (ergebnis.ticket ? t("hilfe.ok_titel") : t("hilfe.fehler_titel")) : t("hilfe.titel")}
         </h2>
         {!ergebnis && <p className="settings__hint">{t("hilfe.einleitung")}</p>}
@@ -238,7 +255,7 @@ export function HilfeSeite() {
             className="settings__section"
             data-testid="hilfe-bilder"
             onDragOver={(e) => {
-              if (!isTauri) return;
+              if (!isTauri || !e.dataTransfer?.types?.includes("Files")) return;
               e.preventDefault();
               setZiehen(true);
             }}
@@ -409,7 +426,14 @@ export function HilfeSeite() {
           <div className="hilfe-seite__aktionen">
             {!ergebnis.ticket && (
               // Betreff, Text und Bilder stehen noch im Formular.
-              <button type="button" className="button" onClick={() => setErgebnis(null)}>
+              <button
+                type="button"
+                className="button"
+                onClick={() => {
+                  setBildFehler([]);
+                  setErgebnis(null);
+                }}
+              >
                 {t("hilfe.zurueck")}
               </button>
             )}

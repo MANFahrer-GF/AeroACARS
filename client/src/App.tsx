@@ -290,6 +290,10 @@ function App() {
   const [status, setStatus] = useState<SessionStatus>({ kind: "loading" });
   // Hilfe anfordern (Beta-1-Rückmeldung „zu versteckt“): eigene Seite in
   // der Seitenleiste und F1, solange angemeldet; „Über“ führt ebenfalls hin.
+  const [hilfeBesucht, setHilfeBesucht] = useState(false);
+  useEffect(() => {
+    if (status.kind !== "loggedIn") setHilfeBesucht(false);
+  }, [status.kind]);
   useEffect(() => {
     if (status.kind !== "loggedIn") return;
     const taste = (e: KeyboardEvent) => {
@@ -334,6 +338,9 @@ function App() {
     string | null
   >(null);
   const [tab, setTab] = useState<Tab>("briefing");
+  useEffect(() => {
+    if (tab === "hilfe") setHilfeBesucht(true);
+  }, [tab]);
   const tabRef = useRef<Tab>(tab);
   const phaseRef = useRef<string | null>(null);
   const geklungen = useRef<Set<number>>(new Set());
@@ -1292,7 +1299,13 @@ function App() {
         status.kind === "loggedIn" &&
         tab === "devpreview" && <RunwayDiagramPreview />}
 
-      {status.kind === "loggedIn" && tab === "hilfe" && <HilfeSeite />}
+      {/* Nach dem ersten Besuch eingehängt lassen (Entwurf und laufendes
+          Senden überleben den Reiterwechsel), beim Abmelden weg. */}
+      {status.kind === "loggedIn" && (tab === "hilfe" || hilfeBesucht) && (
+        <div hidden={tab !== "hilfe"}>
+          <HilfeSeite sichtbar={tab === "hilfe"} />
+        </div>
+      )}
 
       {releaseNotesVersion && (
         <Suspense fallback={null}>
