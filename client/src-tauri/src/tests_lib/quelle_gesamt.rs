@@ -179,6 +179,15 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `landungs_eingabe::input_sha256` als eine Stelle fuer den Hash. Tests
 /// `sofortnote_abnehmer_tests::pirep_nutzlast_nennt_das_eingabe_dokument`,
 /// `touchdown_nennt_seq_und_hash_der_sofortnote`, `aeroacars-mqtt::p5_10_felder_rundlauf`.
+/// — plus P-4.10: Felder `landung_sofort`/`landung_endgueltig`
+/// (`GespeicherteRechnung`, Schluessel Aufsetzzeit + `bahn_revision`);
+/// `touchdown_bewertung_festhalten` speichert die Sofortnote (dieselbe
+/// Rechnung wie vorher `canonical_landing_bewertung`, jetzt `cfg(test)`, ebenso
+/// `compute_bewertung`); `endgueltige_rechnung_festhalten` im Streamer nach dem
+/// Ausrollen; `pirep_bewertete_teile` nimmt `gespeicherte_rechnung` und rechnet
+/// nur ohne passende selbst; beide Felder fallen mit Touch-and-Go und
+/// verworfener Note. Tests `sofortnote_abnehmer_tests::pirep_uebernimmt_gespeicherte_ausgabe`,
+/// `neuer_aufsetzer_nimmt_keine_alte_rechnung`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -189,4 +198,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "5ecd6173e64cf71df2fe81dfc69637be091dff9a3bb3d386d97dd4b292b95d8b";
+const HASH_VOR_DER_ZERLEGUNG: &str = "f5364e18fbc56bf70d44666f7b15ded43d9c8dd279a1b421e1af9a7fedc2edc8";

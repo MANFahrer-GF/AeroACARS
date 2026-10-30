@@ -7035,10 +7035,16 @@ struct FlightStats {
     /// Die Bewertung der Landung, einmal gerechnet in
     /// [`announce_landing_score`] und von der Meldung und dem
     /// Touchdown-Payload gelesen (Codex-Befund zu P-4.40: vorher rechneten
-    /// beide getrennt, mit verschiedenem Ankunftsflughafen). Der PIREP rechnet
-    /// beim Einreichen selbst — mit Ausrollen und bestaetigtem Ausweichziel.
-    /// Nicht persistiert.
+    /// beide getrennt, mit verschiedenem Ankunftsflughafen). Der PIREP
+    /// uebernimmt die gespeicherte Rechnung (`landung_endgueltig`, sonst
+    /// `landung_sofort`, P-4.10). Nicht persistiert.
     landung_bewertung: Option<LandungsBewertung>,
+    /// v3 (P-4.10): die Modulrechnung der Sofortnote (T+~9 s, am
+    /// Aufsetz-Flughafen) — Eingabe und Ausgabe. Nicht persistiert.
+    landung_sofort: Option<GespeicherteRechnung>,
+    /// v3 (P-4.10): die endgueltige Modulrechnung nach `RolloutFinalized`
+    /// (Ausrollen und Rollspur fertig). Nicht persistiert.
+    landung_endgueltig: Option<GespeicherteRechnung>,
     /// Die Modulrechnung der laufenden Einreichung ([`PirepRechnung`]),
     /// gesetzt von [`pirep_bewertete_teile`]. Nicht persistiert.
     pirep_rechnung: Option<PirepRechnung>,
@@ -24033,7 +24039,9 @@ fn compute_aggregate_master_score(
         .and_then(|(a, _)| a.gesamt)
 }
 
-/// Die Bewertung mit Herkunft (P-4.33): `None` = `modulfehler`.
+/// Die Bewertung mit Herkunft (P-4.33): `None` = `modulfehler`. Seit P-4.10
+/// nur noch fuer Tests (die Abnehmer lesen gespeicherte Rechnungen).
+#[cfg(test)]
 fn compute_bewertung(
     stats: &FlightStats,
     aircraft_icao: Option<&str>,
@@ -24185,7 +24193,9 @@ pub(crate) struct LandungsBewertung {
     pub fassung: Option<u32>,
 }
 
-/// `None`, solange es keinen Aufsetzer gibt.
+/// `None`, solange es keinen Aufsetzer gibt. Seit P-4.10 nur noch fuer Tests
+/// (`touchdown_bewertung_festhalten` rechnet dasselbe und speichert es).
+#[cfg(test)]
 fn canonical_landing_bewertung(
     flight: &ActiveFlight,
     stats: &FlightStats,
@@ -24326,13 +24336,79 @@ fn aufsetz_flughafen(flight: &ActiveFlight, stats: &FlightStats) -> String {
 
 /// Rechnet die Bewertung der Landung EINMAL (am Aufsetz-Flughafen) und haelt
 /// sie in `stats.landung_bewertung` fest — fuer Meldung und Payload.
+///
+/// v3 (P-4.10): Eingabe und Ausgabe dieser Rechnung bleiben als Sofortnote
+/// (`landung_sofort`) gespeichert — dieselbe Rechnung wie
+/// `canonical_landing_bewertung` (`compute_bewertung` baut dieselbe Eingabe
+/// wie `landungs_bewertungseingabe`).
 fn touchdown_bewertung_festhalten(
     flight: &ActiveFlight,
     stats: &mut FlightStats,
 ) -> Option<LandungsBewertung> {
-    let b = canonical_landing_bewertung(flight, stats, &aufsetz_flughafen(flight, stats));
+    if stats.landing_score.is_none() {
+        stats.landung_bewertung = None;
+        return None;
+    }
+    let rechnung = pirep_rechnung_bilden(flight, stats, &aufsetz_flughafen(flight, stats));
+    let b = landungs_bewertung_aus(stats, &rechnung.ergebnis);
+    stats.landung_sofort = rechnung_schluessel(stats).map(|schluessel| GespeicherteRechnung { schluessel, rechnung });
     stats.landung_bewertung = b;
     b
+}
+
+/// v3 (P-4.10): eine gespeicherte Modulrechnung je Aufsetzer. Der Schluessel
+/// (Aufsetzzeit in ms, `bahn_revision`) sagt, fuer welchen Aufsetzer und
+/// welchen Bahnstand sie gilt.
+#[derive(Debug, Clone)]
+pub(crate) struct GespeicherteRechnung {
+    pub schluessel: (i64, u32),
+    pub rechnung: PirepRechnung,
+}
+
+fn rechnung_schluessel(stats: &FlightStats) -> Option<(i64, u32)> {
+    Some((aufsetzzeit(stats)?.timestamp_millis(), stats.bahn_revision))
+}
+
+/// v3 (P-4.10): Das Modul rechnet je Aufsetzer ein zweites Mal, sobald das
+/// Ausrollen fertig ist (`rollout_finalized`) und keine Rollspur mehr
+/// laeuft — dieselbe Schwelle wie der Rollout-Nachtrag, aber unabhaengig von
+/// der Verbindung. Aendert sich die Bahn danach (`bahn_revision`), wird
+/// erneut gerechnet; die Rechnung selbst laeuft ausserhalb der Sperre.
+fn endgueltige_rechnung_festhalten(flight: &ActiveFlight) {
+    let (schluessel, arr, eingabe) = {
+        let stats = flight.stats.lock().expect("flight stats");
+        if stats.landing_score.is_none() || !stats.rollout_finalized || stats.bahn_spur_laeuft {
+            return;
+        }
+        let Some(schluessel) = rechnung_schluessel(&stats) else { return };
+        if stats.landung_endgueltig.as_ref().is_some_and(|g| g.schluessel == schluessel) {
+            return;
+        }
+        let arr = aufsetz_flughafen(flight, &stats);
+        let eingabe = landungs_bewertungseingabe(flight, &stats, muster_fuer_landung(&stats, &flight.aircraft_icao), &arr);
+        (schluessel, arr, eingabe)
+    };
+    let ergebnis = crate::bewertung::bewerten(&eingabe);
+    let mut stats = flight.stats.lock().expect("flight stats");
+    // Nur, wenn derselbe Aufsetzer mit demselben Bahnstand noch gilt.
+    if rechnung_schluessel(&stats) == Some(schluessel) {
+        stats.landung_endgueltig = Some(GespeicherteRechnung { schluessel, rechnung: PirepRechnung { arr, eingabe, ergebnis } });
+    }
+}
+
+/// v3 (P-4.10): die letzte gespeicherte Rechnung, die fuer diese Einreichung
+/// gilt — endgueltig vor Sofortnote. Keine gilt (dann rechnet die
+/// Einreichung selbst, mit Logzeile), wenn nichts gespeichert ist (Neustart,
+/// Abgabe vor dem Ausrollen), ein anderer Ankunftsflughafen eingereicht wird
+/// als der, auf dem aufgesetzt wurde (andere Eingabe: `diverted`), oder sich
+/// die Bahnzuordnung seither geaendert hat (`bahn_revision`).
+fn gespeicherte_rechnung(stats: &FlightStats, effective_arr_icao: &str) -> Option<PirepRechnung> {
+    let schluessel = rechnung_schluessel(stats)?;
+    [stats.landung_endgueltig.as_ref(), stats.landung_sofort.as_ref()]
+        .into_iter()
+        .flatten()
+        .find(|g| g.schluessel == schluessel && g.rechnung.arr == effective_arr_icao)
+        .map(|g| g.rechnung.clone())
 }
 
 /// Note, Buchstabe und Status des Touchdown-Payloads aus der in
@@ -35811,6 +35887,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                             // vorbei, er beendet sich bei vorhandenem Score.
                             stats.landing_score = None;
                             stats.landung_bewertung = None;
+                            stats.landung_sofort = None;
+                            stats.landung_endgueltig = None;
                             Some(fehlt)
                         }
                     };
@@ -38930,6 +39008,9 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // gesendet, wird in diesem Takt nichts gebaut. Erneut
                 // gesendet wird, wenn die Bahnwerte sich SEITHER geaendert
                 // haben — nicht nur einmal je Aufsetzen.
+                // v3 (P-4.10): endgueltige Rechnung nach dem Ausrollen,
+                // auch ohne Verbindung.
+                endgueltige_rechnung_festhalten(&flight);
                 let faellig = {
                     let stats = flight.stats.lock().expect("flight stats");
                     rollout_nachtrag_faellig(&flight, &stats, last_published_rollout)
@@ -44605,6 +44686,8 @@ fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnaps
     stats.landung_live_bestaetigt = false;
     stats.gemeldete_landung = None;
     stats.landung_bewertung = None;
+    stats.landung_sofort = None;
+    stats.landung_endgueltig = None;
 
     // ── Die Landung des Aufsetz-Samplers ──────────────────────────────
     // Re-armiert den Sampler fuer den naechsten Aufsetzer (sein
@@ -48129,9 +48212,20 @@ fn pirep_bewertete_teile(
     stats: &mut FlightStats,
     effective_arr_icao: &str,
 ) -> (Option<i32>, HashMap<String, String>, String) {
-    // Frisch je Einreichung; Datensatz, MQTT-PIREP und Dokument lesen sie
-    // danach aus `stats.pirep_rechnung`.
-    let rechnung = pirep_rechnung_bilden(flight, stats, effective_arr_icao);
+    // v3 (P-4.10): die letzte gespeicherte Ausgabe ohne Neurechnung; nur ohne
+    // passende gespeicherte rechnet die Einreichung selbst. Datensatz,
+    // MQTT-PIREP und Dokument lesen sie danach aus `stats.pirep_rechnung`.
+    let rechnung = match gespeicherte_rechnung(stats, effective_arr_icao) {
+        Some(r) => r,
+        None => {
+            tracing::info!(
+                pirep_id = %flight.pirep_id,
+                gespeichert = stats.landung_endgueltig.is_some() || stats.landung_sofort.is_some(),
+                "PIREP: keine passende gespeicherte Bewertung — Einreichung rechnet selbst"
+            );
+            pirep_rechnung_bilden(flight, stats, effective_arr_icao)
+        }
+    };
     let bewertung = landungs_bewertung_aus(stats, &rechnung.ergebnis);
     stats.pirep_rechnung = Some(rechnung);
     let stats = &*stats;

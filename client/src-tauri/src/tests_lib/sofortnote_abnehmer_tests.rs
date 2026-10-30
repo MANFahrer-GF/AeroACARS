@@ -320,6 +320,75 @@
         assert_ne!(touchdown_input_sha256(&f, &st), vorher);
     }
 
+    /// P-4.10: phpVMS-Feld, Notiz und PIREP uebernehmen die zuletzt
+    /// gespeicherte Ausgabe OHNE Neurechnung — erst die Sofortnote, nach dem
+    /// Ausrollen die endgueltige. Belegt ueber den Aufrufzaehler (0) und den
+    /// Status: die Sofortnote wurde bei ausgefallenem Paketmodul gerechnet
+    /// („vorlaeufig“), beim Einreichen rechnet es wieder — uebernommen wird
+    /// trotzdem das Gespeicherte. Gegenproben: nach einem Bahnwechsel und mit
+    /// anderem Ankunftsflughafen rechnet die Einreichung selbst (1 Aufruf).
+    #[test]
+    fn pirep_uebernimmt_gespeicherte_ausgabe() {
+        let f = fixture();
+        mit_landung(&f);
+        let teile = |arr: &str| {
+            let mut st = f.stats.lock().unwrap();
+            pirep_bewertete_teile(&f, &mut st, arr)
+        };
+        {
+            let _w = erzwingen(Erzwungen::PaketKaputt);
+            let mut st = f.stats.lock().unwrap();
+            touchdown_bewertung_festhalten(&f, &mut st);
+        }
+        aufrufe_zuruecksetzen();
+        let (_, _, notiz) = teile("YYYY");
+        assert_eq!(aufrufe(), 0, "kein bewerten beim Einreichen");
+        assert!(notiz.contains("Bewertung     vorläufig"), "die gespeicherte Sofortnote: {notiz}");
+
+        // Nach dem Ausrollen: die endgueltige Rechnung (Paketmodul rechnet).
+        {
+            let mut st = f.stats.lock().unwrap();
+            st.rollout_finalized = true;
+            st.bahn_spur_laeuft = false;
+        }
+        endgueltige_rechnung_festhalten(&f);
+        aufrufe_zuruecksetzen();
+        let (score, _, notiz) = teile("YYYY");
+        assert_eq!(aufrufe(), 0, "kein bewerten beim Einreichen");
+        assert!(!notiz.contains("vorläufig"), "die endgueltige geht vor: {notiz}");
+        let st = f.stats.lock().unwrap();
+        let gespeichert = st.landung_endgueltig.as_ref().unwrap().rechnung.clone();
+        assert_eq!(score, gespeichert.ergebnis.as_ref().and_then(|(a, _)| a.gesamt).map(i32::from));
+        assert_eq!(st.pirep_rechnung.as_ref().unwrap().eingabe, gespeichert.eingabe, "PIREP traegt die gespeicherte Eingabe");
+        drop(st);
+
+        // Gegenprobe 1: anderer eingereichter Ankunftsflughafen → eigene Rechnung.
+        aufrufe_zuruecksetzen();
+        teile("ZZZZ");
+        assert_eq!(aufrufe(), 1);
+        // Gegenprobe 2: Bahnzuordnung seither geaendert → eigene Rechnung.
+        f.stats.lock().unwrap().bahn_revision += 1;
+        aufrufe_zuruecksetzen();
+        teile("YYYY");
+        assert_eq!(aufrufe(), 1);
+    }
+
+    /// P-4.10: Eine gespeicherte Rechnung gilt nur fuer ihren Aufsetzer — die
+    /// naechste Landung bekommt nie die Ausgabe des vorigen (zusaetzlich zum
+    /// Abraeumen beim Touch-and-Go).
+    #[test]
+    fn neuer_aufsetzer_nimmt_keine_alte_rechnung() {
+        let f = fixture();
+        mit_landung(&f);
+        let mut st = f.stats.lock().unwrap();
+        touchdown_bewertung_festhalten(&f, &mut st);
+        assert!(st.landung_sofort.is_some());
+        st.landung_endgueltig = st.landung_sofort.clone();
+        // Neuer Aufsetzer: anderer Zeitpunkt → keine gespeicherte gilt.
+        st.landing_at = Some(Utc::now() + chrono::Duration::seconds(90));
+        assert!(gespeicherte_rechnung(&st, "YYYY").is_none(), "Schluessel haengt am Aufsetzer");
+    }
+
     // ── Abgabe-Sperre: haengt nicht vom Modul ab ────────────────────────
 
     /// Mit gemessener Landung keine Rueckfrage, ohne sie nach langer
