@@ -965,7 +965,7 @@ pub(crate) async fn paket_jetzt_pruefen() -> Pruefung {
 }
 
 /// Fruehester Neustart nach Programmstart (siehe [`neustart_erlaubt`]).
-const NEUSTART_FRUEHESTENS: std::time::Duration = std::time::Duration::from_secs(60);
+const NEUSTART_FRUEHESTENS: std::time::Duration = std::time::Duration::from_secs(15);
 /// Programmstart (gesetzt in `starten`).
 static GESTARTET: OnceLock<std::time::Instant> = OnceLock::new();
 
@@ -978,7 +978,9 @@ fn neustart_erlaubt(flug_offen: bool, wartet: bool, laufzeit: std::time::Duratio
         return Err("flug_offen");
     }
     // Bremse gegen eine Neustart-Schleife ueber immer neue Generationen
-    // (kompromittierter Server UND Schluessel, P-8.12): nicht in der ersten Minute.
+    // (kompromittierter Server UND Schluessel, P-8.12): nicht in den ersten 15 s
+    // (eine Runde braucht ohnehin Abruf, Selbsttest und Neustart; Thomas soll
+    // ein gerade angekommenes Paket ohne Warten aktivieren koennen).
     if laufzeit < NEUSTART_FRUEHESTENS {
         return Err("zu_frueh");
     }

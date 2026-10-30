@@ -1846,7 +1846,7 @@
     "ergebnis_flug_offen": "Während eines Flugs wird kein Paket geladen.",
     "letzte_fehler": "Letzte Prüfung fehlgeschlagen: {{fehler}}",
     "neustart_fehler": "Neustart nicht möglich.",
-    "neustart_zu_frueh": "Bitte eine Minute nach dem Start erneut versuchen.",
+    "neustart_zu_frueh": "Bitte in ein paar Sekunden erneut versuchen.",
     "ergebnis_laeuft": "Eine Prüfung läuft gerade, bitte gleich noch einmal."
   },
   "cockpit": {
