@@ -5,7 +5,7 @@
 //! Reihenfolge: Modul des geltenden Paketstands → eingebautes Modul
 //! (`vorlaeufig`) → keine Note (`modulfehler`).
 
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use bewertung_host::Host;
 use landing_scoring::wasm::{Ausgabe, Eingabe};
@@ -191,17 +191,34 @@ pub(crate) fn bewerten_fuer(pirep_id: &str, landung: &LandingScoringInput) -> Op
     }
 }
 
-/// Der Host des nachgeholten Stands eines offenen Flugs (P-3.31), einmal je Lauf.
-fn nachgeholter_host(modul: &'static [u8]) -> Option<&'static Host> {
-    static H: OnceLock<Option<Host>> = OnceLock::new();
-    H.get_or_init(|| match Host::neu(modul) {
-        Ok(h) => Some(h),
+/// Wie viele Hosts nachgeholter Staende geladen bleiben (die zuletzt gebrauchten).
+const NACHGEHOLT_MAX: usize = 3;
+
+/// Der Host des nachgeholten Stands eines offenen Flugs (P-3.31), je Modul
+/// einmal geladen (auch ein Ladefehler gilt fuer dieses Modul). Schluessel ist
+/// die Adresse des Moduls: `pin_nachholen` legt jedes nachgeholte Modul als
+/// eigenen, nie freigegebenen Speicher ab (`Box::leak`) — andere Adresse =
+/// anderer Stand (Codex 30.10.: vorher EIN Host fuer alle Fluege).
+fn nachgeholter_host(modul: &'static [u8]) -> Option<Arc<Host>> {
+    type Eintrag = ((usize, usize), Option<Arc<Host>>);
+    static H: Mutex<Vec<Eintrag>> = Mutex::new(Vec::new());
+    let schluessel = (modul.as_ptr() as usize, modul.len());
+    let mut h = H.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(i) = h.iter().position(|(k, _)| *k == schluessel) {
+        let e = h.remove(i);
+        h.insert(0, e);
+        return h[0].1.clone();
+    }
+    let host = match Host::neu(modul) {
+        Ok(h) => Some(Arc::new(h)),
         Err(e) => {
             tracing::error!(error = %e, "Bewertungsmodul des nachgeholten Stands nicht ladbar");
             None
         }
-    })
-    .as_ref()
+    };
+    h.insert(0, (schluessel, host.clone()));
+    h.truncate(NACHGEHOLT_MAX);
+    host
 }
 
 /// Bewertet eine Landung im Modul. `None` = `modulfehler` (beide Module
@@ -259,7 +276,7 @@ pub(crate) fn sollband(
         crate::laufzeit_paket::PinStand::Nachgeholt(modul) => nachgeholter_host(modul),
         _ => None,
     };
-    for host in [nachgeholt, paket_host(), eingebauter_host()].into_iter().flatten() {
+    for host in [nachgeholt.as_deref(), paket_host(), eingebauter_host()].into_iter().flatten() {
         match mit(host) {
             Some(b) => return Some(b),
             None => tracing::warn!("Soll-Band im Modul gescheitert, naechstes Modul"),
@@ -334,6 +351,24 @@ mod tests {
         let (a, s) = bewerten_fuer("P", &e).expect("nachgeholtes Modul rechnet");
         assert_eq!((s, a.gesamt), (Status::Endgueltig, normal.gesamt));
         assert!(!pin_fehlt("P"));
+    }
+
+    /// P-3.31 (Codex 30.10.): Jeder Flug rechnet mit dem Modul SEINES
+    /// nachgeholten Stands, nicht mit dem zuerst nachgeholten. Stellvertreter:
+    /// ein ladbares Modul (`endgueltig`) und ein unladbares (Rueckfall,
+    /// `vorlaeufig`) — mit einem einzigen Host je Lauf rechnete der zweite
+    /// Flug mit dem Modul des ersten.
+    #[test]
+    fn nachgeholt_rechnet_je_flug_mit_dem_eigenen_modul() {
+        use crate::laufzeit_paket::PinStand;
+        let e = LandingScoringInput { vs_fpm: Some(-210.0), peak_g_load: Some(1.3), bounce_count: Some(0), ..Default::default() };
+        let gut = crate::laufzeit_paket::eingebautes_bewertungsmodul().unwrap();
+        let kaputt: &'static [u8] = Box::leak(b"kein wasm".to_vec().into_boxed_slice());
+        for (pirep, modul, erwartet) in [("A", gut, Status::Endgueltig), ("B", kaputt, Status::Vorlaeufig), ("C", gut, Status::Endgueltig)] {
+            let _w = pin_erzwingen(PinStand::Nachgeholt(modul));
+            assert_eq!(bewerten_fuer(pirep, &e).map(|(_, s)| s), Some(erwartet), "Flug {pirep}");
+            assert!(sollband(pirep, &[], None).is_some(), "Soll-Band {pirep}");
+        }
     }
 
     /// P-4.50: Die Fassung, die der Client schreibt, ist die des eingebauten
