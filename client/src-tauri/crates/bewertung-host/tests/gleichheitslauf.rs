@@ -241,7 +241,11 @@ fn nachbauen(f: &Flug, tick: Option<&Value>, nicht_konv: bool, p: &Paket) -> Opt
             None
         }
     };
-    l.bahn_geometrie_aus_szenerie = Some(bahn("bahn_szenerie_status") == "uebernommen");
+    // P-4.14 (b): Nur eine ACHSE aus der Szenerie zaehlt. 2.x uebernahm sie
+    // allein bei X-Plane; bei MSFS hiess „uebernommen" nur Breite/Laenge,
+    // die Mittellinie blieb Navigraph (CFG2001, FQNP 23).
+    l.bahn_geometrie_aus_szenerie =
+        Some(bahn("bahn_szenerie_status") == "uebernommen" && td["simulator"].as_str() == Some("xplane"));
     l.abfangen = match &pf["abfangen"] {
         Value::Null => None,
         v => match serde_json::from_value(v.clone()) {

@@ -354,34 +354,39 @@ fn passende_szenerie_bahn<'a>(
 /// ENDE es ist, entscheidet die Nähe der Szenerie-Schwelle zur
 /// Navdaten-Schwelle (die Mitte ist für beide Enden dieselbe). Szenerie-
 /// Bahnen, deren Bezeichner zu einer Navdaten-Bahn passt, gehören dieser
-/// und sind hier ausgeschlossen. Nur für `ohne_treffer`, nie für
+/// und sind hier ausgeschlossen, ebenso schon über die Lage vergebene
+/// (`vergeben`, Index in `sz.bahnen`) — sonst bekämen zwei eng benachbarte
+/// Navdaten-Bahnen dieselbe. Nur für `ohne_treffer`, nie für
 /// `verworfen` — passte der Bezeichner und die Lage nicht, ist es eine
 /// andere Bahn (FACT 19, EDHE).
-fn szenerie_bahn_ueber_lage<'a>(
+fn szenerie_bahn_ueber_lage(
     nav: &NavAirport,
     bahn: &NavRunway,
-    sz: &'a SzenerieFlughafen,
-) -> Option<&'a SzenerieBahn> {
+    sz: &SzenerieFlughafen,
+    vergeben: &[usize],
+) -> Option<usize> {
     let g = &crate::grenzwerte::grenzwerte().szenerie;
     let schwelle = (bahn.threshold.lat, bahn.threshold.lon);
     sz.bahnen
         .iter()
-        .filter(|s| {
+        .enumerate()
+        .filter(|(i, _)| !vergeben.contains(i))
+        .filter(|(_, s)| {
             let n = normiert(&s.bezeichner);
             !nav.runways.iter().any(|r| normiert(&r.designator) == n)
         })
-        .filter(|s| abstand_m(s.schwelle, schwelle) < abstand_m(s.gegenende, schwelle))
-        .filter_map(|s| {
+        .filter(|(_, s)| abstand_m(s.schwelle, schwelle) < abstand_m(s.gegenende, schwelle))
+        .filter_map(|(i, s)| {
             let mitte = ((s.schwelle.0 + s.gegenende.0) / 2.0, (s.schwelle.1 + s.gegenende.1) / 2.0);
             let (laengs, quer) = achsenversatz_m(
                 (bahn.threshold.lat, bahn.threshold.lon),
                 (bahn.far_end.lat, bahn.far_end.lon),
                 mitte,
             );
-            (quer <= g.querabstand_hoechst_m.wert && laengs <= g.laengsversatz_hoechst_m.wert).then_some((s, quer))
+            (quer <= g.querabstand_hoechst_m.wert && laengs <= g.laengsversatz_hoechst_m.wert).then_some((i, quer))
         })
         .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(s, _)| s)
+        .map(|(i, _)| i)
 }
 
 /// P-4.15 (d): Die nächsten Szenerie-Bahnen einer nicht übernommenen
@@ -742,6 +747,7 @@ pub fn uebernimm_szenerie(
     let achse_belastbar = quelle == Quelle::XPlaneDatei;
     let mut aus = nav.clone();
     let mut b = UebernahmeBericht::default();
+    let mut ueber_lage_vergeben: Vec<usize> = Vec::new();
 
     for (i, bahn) in aus.runways.iter_mut().enumerate() {
         // Die UNVERAENDERTE Navdaten-Bahn — Bezug fuer Mitte und Versatz.
@@ -750,7 +756,10 @@ pub fn uebernimm_szenerie(
         // P-4.15 (a): Passte der Bezeichner nirgends, über die Lage.
         let ueber_lage = treffer.is_none() && !bezeichner_passte;
         if ueber_lage {
-            treffer = szenerie_bahn_ueber_lage(nav, orig, sz);
+            if let Some(i) = szenerie_bahn_ueber_lage(nav, orig, sz, &ueber_lage_vergeben) {
+                ueber_lage_vergeben.push(i);
+                treffer = Some(&sz.bahnen[i]);
+            }
         }
         let Some(s) = treffer else {
             if bezeichner_passte {
@@ -897,6 +906,11 @@ pub fn uebernimm_szenerie(
     // Versatz der Gegenschwelle. Die zuerst geführte Richtung gibt die Lage
     // vor, die andere übernimmt sie umgekehrt.
     if !achse_belastbar {
+        let verschoben = |b: &UebernahmeBericht, d: &str| {
+            b.achsen
+                .iter()
+                .any(|a| a.bahn == d && a.herkunft == AchsenHerkunft::SzenerieMitte)
+        };
         for i in 0..aus.runways.len() {
             let (ti, ei) = (&nav.runways[i].threshold, &nav.runways[i].far_end);
             let partner = (0..i).find(|&j| {
@@ -904,35 +918,54 @@ pub fn uebernimm_szenerie(
                 tj.lat == ei.lat && tj.lon == ei.lon && ej.lat == ti.lat && ej.lon == ti.lon
             });
             let Some(j) = partner else { continue };
-            if !(b.achse_aus_szenerie(&aus.runways[i].designator)
-                && b.achse_aus_szenerie(&aus.runways[j].designator))
-            {
-                continue;
-            }
+            // Wer gibt vor? Beide verschoben: die zuerst gefuehrte. Nur eine:
+            // diese — sonst laege die andere Richtung derselben Bahn weiter
+            // auf Navigraph, und die Gegenschwelle waere nicht mehr
+            // bit-gleich (Pruefer 30.10.).
+            let (quelle, ziel) = match (
+                verschoben(&b, &aus.runways[j].designator),
+                verschoben(&b, &aus.runways[i].designator),
+            ) {
+                (true, _) => (j, i),
+                (false, true) => (i, j),
+                (false, false) => continue,
+            };
             let (t, e) = (
-                (aus.runways[j].far_end.lat, aus.runways[j].far_end.lon),
-                (aus.runways[j].threshold.lat, aus.runways[j].threshold.lon),
+                (aus.runways[quelle].far_end.lat, aus.runways[quelle].far_end.lon),
+                (aus.runways[quelle].threshold.lat, aus.runways[quelle].threshold.lon),
             );
-            let vorgabe_kurs = aus.runways[j].true_course;
-            let r = &mut aus.runways[i];
+            let vorgabe_kurs = aus.runways[quelle].true_course;
+            let r = &mut aus.runways[ziel];
             (r.threshold.lat, r.threshold.lon) = t;
             (r.far_end.lat, r.far_end.lon) = e;
-            // Der Bericht von i beschreibt jetzt die Geometrie von j.
-            let (di, dj) = (aus.runways[i].designator.clone(), aus.runways[j].designator.clone());
-            let quelle_j = b.achsen.iter().find(|a| a.bahn == dj).map(|a| a.kurs_quelle);
-            if let (Some(q), Some(a)) = (quelle_j, b.achsen.iter_mut().find(|a| a.bahn == di)) {
-                a.kurs_quelle = q;
-                let zusatz = format!("geometrie_von({dj})");
-                a.grund = Some(match a.grund.take() {
-                    Some(g) => format!("{g}, {zusatz}"),
-                    None => zusatz,
-                });
-                aus.runways[i].true_course = if q == KursHerkunft::Navigraph {
-                    nav.runways[i].true_course
-                } else {
-                    (vorgabe_kurs + 180.0).rem_euclid(360.0)
-                };
-            }
+            // Der Bericht des Ziels beschreibt jetzt die Geometrie der Quelle
+            // — in seiner eigenen Landerichtung (quer/laengs gespiegelt).
+            let (dq, dz) = (aus.runways[quelle].designator.clone(), aus.runways[ziel].designator.clone());
+            let Some(vorgabe) = b.achsen.iter().find(|a| a.bahn == dq).cloned() else { continue };
+            let pos = match b.achsen.iter().position(|a| a.bahn == dz) {
+                Some(p) => p,
+                None => {
+                    b.achsen.push(AchsenUebernahme { bahn: dz.clone(), ..Default::default() });
+                    b.achsen.len() - 1
+                }
+            };
+            let a = &mut b.achsen[pos];
+            a.herkunft = AchsenHerkunft::SzenerieMitte;
+            a.kurs_quelle = vorgabe.kurs_quelle;
+            a.szenerie_mitte = vorgabe.szenerie_mitte;
+            a.verschiebung_quer_m = vorgabe.verschiebung_quer_m.map(|v| -v);
+            a.verschiebung_laengs_m = vorgabe.verschiebung_laengs_m.map(|v| -v);
+            a.laengs_gemessen_m = vorgabe.laengs_gemessen_m.map(|v| -v);
+            let zusatz = format!("geometrie_von({dq})");
+            a.grund = Some(match a.grund.take() {
+                Some(g) => format!("{g}, {zusatz}"),
+                None => zusatz,
+            });
+            aus.runways[ziel].true_course = if vorgabe.kurs_quelle == KursHerkunft::Navigraph {
+                nav.runways[ziel].true_course
+            } else {
+                (vorgabe_kurs + 180.0).rem_euclid(360.0)
+            };
         }
     }
 
@@ -1500,6 +1533,45 @@ pub(crate) mod tests {
         let (_, b) = uebernimm_szenerie(&nav, &gleich, Quelle::XPlaneDatei);
         assert_eq!(b.uebernommen.len(), 6);
         assert!(b.achsen.iter().all(|a| a.grund.is_none() && a.szenerie_bezeichner.is_none()), "{b:?}");
+    }
+
+    /// Pruefer 30.10.: Eine Szenerie-Bahn wird ueber die Lage nur EINMAL
+    /// vergeben. Zwei Navdaten-Bahnen 60 m nebeneinander, die Szenerie hat
+    /// nur eine (anders benannt): die naehere bekommt sie, die andere nicht.
+    #[test]
+    fn ueber_die_lage_wird_eine_szenerie_bahn_nur_einmal_vergeben() {
+        let mut nav = edhe_nav();
+        let mut neben = nav.runways[0].clone();
+        neben.designator = "09R".into();
+        neben.threshold.lat -= 60.0 / 111_320.0;
+        neben.far_end.lat -= 60.0 / 111_320.0;
+        nav.runways[0].designator = "09L".into();
+        nav.runways.push(neben);
+        // Szenerie-Bahn „10" 10 m suedlich der 09L.
+        let sz = szenerie_aus_mitte("10", (53.6459 - 10.0 / 111_320.0, 9.7042), 90.0, 1100.0);
+        let (_, b) = uebernimm_szenerie(&nav, &sz, Quelle::XPlaneDatei);
+        assert_eq!(b.uebernommen, vec!["09L"], "{b:?}");
+        assert_eq!(b.ohne_treffer, vec!["09R"]);
+    }
+
+    /// Pruefer 30.10.: Wird nur EINE Richtung verschoben, folgt die andere —
+    /// sonst waere die Gegenschwelle nicht mehr bit-gleich.
+    #[test]
+    fn msfs_einseitig_verschoben_die_gegenrichtung_folgt() {
+        let mut nav = edhe_paar();
+        // 27 so kurz gefuehrt, dass ihre halbe Laenge die Mitte nicht deckt.
+        nav.runways[1].length_ft = (40.0 / 0.3048) as i32;
+        let geo = Rahmen::aus(&nav.runways[0]).unwrap().kurs_grad();
+        let mitte = (53.6459 - 30.0 / 111_320.0, 9.7042);
+        let (aus, b) = uebernimm_szenerie(&nav, &msfs_szenerie(mitte, geo, None), Quelle::MsfsFacility);
+        let a27 = b.achsen.iter().find(|a| a.bahn == "27").unwrap();
+        assert!(a27.grund.as_deref().unwrap().contains("mitte_zu_weit"), "{a27:?}");
+        assert!(a27.grund.as_deref().unwrap().contains("geometrie_von(09)"), "{a27:?}");
+        assert!(b.achse_aus_szenerie("27"));
+        assert!((a27.verschiebung_quer_m.unwrap() + 30.0).abs() < 0.05, "gespiegelt: {a27:?}");
+        assert_eq!(aus.runways[1].threshold.lat, aus.runways[0].far_end.lat);
+        assert_eq!(aus.runways[1].threshold.lon, aus.runways[0].far_end.lon);
+        assert_eq!(aus.runways[1].far_end.lat, aus.runways[0].threshold.lat);
     }
 
     /// P-4.15 (d): Findet sich nichts, stehen die naechsten Szenerie-Bahnen
