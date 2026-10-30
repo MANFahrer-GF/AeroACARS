@@ -44,9 +44,15 @@ on:
         type: string
         default: ''
 
+# Sammeln statt jede Kleinigkeit einzeln (Thomas 30.10.2026): ein neuer Lauf
+# ersetzt den noch nicht freigegebenen. Es wartet immer nur das neueste Paket
+# mit allem seit der letzten Freigabe; Vorab-Piloten bekommen die Zwischen-
+# staende, alle anderen erst die Freigabe. Der Hinweistext beschreibt dann
+# alles Gesammelte (Zusammenfassung zeigt die Commits seit der Freigabe).
+# Die Freigabe auf live ist ein Befehl unter Sperre (veroeffentlichen.lock).
 concurrency:
   group: laufzeit-paket
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
