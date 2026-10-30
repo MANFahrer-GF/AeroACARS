@@ -39,6 +39,17 @@ describe("UploadAusstehend", () => {
     expect(text).toMatch(/Flugprotokoll · Upload ausstehend seit .* · Noch nicht gesendet/);
   });
 
+  it("Konflikt (409) wird als Konflikt gezeigt, nicht als „ausstehend“", () => {
+    const konflikt: UploadAusstehend = { ...eingabe, versuche: 0, grund: "HTTP 409", konflikt: true };
+    const marke = render(<UploadMarke eintraege={[konflikt, protokoll]} />).getByTestId("upload-marke");
+    expect(marke.textContent).toBe("Upload-Konflikt");
+    expect(marke.getAttribute("title")).toMatch(/^Konflikt: Der Live-Server hat für diese Landung schon andere Daten/);
+    const text = render(<UploadKasten eintraege={[konflikt, protokoll]} />).getAllByTestId("upload-kasten")[0].textContent ?? "";
+    expect(text).toMatch(/Landungsdaten · Konflikt: /);
+    expect(text).not.toMatch(/Landungsdaten · Upload ausstehend/);
+    expect(text).toMatch(/Flugprotokoll · Upload ausstehend seit/);
+  });
+
   it("Hook fragt uploads_ausstehend und gruppiert je PIREP", async () => {
     tauriInvoke.mockResolvedValue([eingabe, protokoll, { ...eingabe, pirep_id: "P2" }]);
     const { result } = renderHook(() => useUploadsAusstehend());

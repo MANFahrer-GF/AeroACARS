@@ -12,8 +12,10 @@
 //! (Netz, live nicht erreichbar, 5xx), bleibt die Datei liegen; der Arbeiter
 //! (`upload_warteschlange`) versucht sie mit wachsendem Abstand erneut und
 //! gibt nie auf. Endgueltige Antworten: 200 (auch „wiederholt“) loescht die
-//! Datei; 400/403/409/413 legen sie nach `abgelehnt/` (Diagnose, kein
-//! endloses Wiederholen; nach 30 Tagen aufgeraeumt).
+//! Datei; 400/403/413 legen sie nach `abgelehnt/` (Diagnose, kein
+//! endloses Wiederholen; nach 30 Tagen aufgeraeumt); 409 (live hat fuer
+//! `(pirep_id, seq)` schon eine andere Fassung) nach `konflikt/` — nie
+//! geloescht, als Konflikt angezeigt (Codex 30.10.).
 //!
 //! Vertrag (Server `recorder/src/landingInput.ts`): gzip-JSON
 //! `{eingabe: {meta, eingang, herkunft, roh}, fenster: {proben}, ergebnis}`
@@ -147,6 +149,12 @@ pub(crate) fn konto(pilot_id: &str) -> String {
     hex(&Sha256::digest(format!("pilot:{pilot_id}").as_bytes()))[..16].to_string()
 }
 
+/// Kontoordner bis `8082a527`: Kurzhash des Pilot-Tokens. Nur, um dessen
+/// Eintraege zu uebernehmen (`upload_warteschlange::konto_uebernehmen`).
+fn alter_konto(token: &str) -> String {
+    hex(&Sha256::digest(token.as_bytes()))[..16].to_string()
+}
+
 /// Legt das Dokument gzip-gepackt in die Warteschlange des Kontos.
 pub(crate) fn einreihen(app_daten: &Path, konto: &str, pirep_id: &str, seq: u32, doc: &serde_json::Value) -> std::io::Result<PathBuf> {
     let ordner = crate::upload_warteschlange::eingabe_ordner(app_daten, &sicher(konto));
@@ -165,6 +173,8 @@ pub(crate) fn einreihen(app_daten: &Path, konto: &str, pirep_id: &str, seq: u32,
 pub(crate) enum Folge {
     Loeschen,
     Ablehnen,
+    /// 409: andere Fassung bei live — aufbewahren und anzeigen, nicht senden.
+    Konflikt,
     Behalten,
 }
 
@@ -172,21 +182,22 @@ pub(crate) enum Folge {
 pub(crate) fn folge(status: Option<u16>) -> Folge {
     match status {
         Some(200..=299) => Folge::Loeschen,
-        Some(400 | 403 | 409 | 413) => Folge::Ablehnen,
+        Some(400 | 403 | 413) => Folge::Ablehnen,
+        Some(409) => Folge::Konflikt,
         _ => Folge::Behalten,
     }
 }
 
-/// Legt ein abgelehntes Dokument nach `abgelehnt/`. Bei Fehler bleibt es, wo
-/// es ist.
-fn nach_abgelehnt(ordner: &Path, pfad: &Path) -> std::io::Result<()> {
-    let abgelehnt = ordner.join("abgelehnt");
-    std::fs::create_dir_all(&abgelehnt)?;
-    std::fs::rename(pfad, abgelehnt.join(pfad.file_name().unwrap_or_default()))
+/// Legt ein abgelehntes Dokument nach `<unter>/` (`abgelehnt` oder
+/// `konflikt`). Bei Fehler bleibt es, wo es ist.
+fn ablegen(ordner: &Path, unter: &str, pfad: &Path) -> std::io::Result<()> {
+    let ziel = ordner.join(unter);
+    std::fs::create_dir_all(&ziel)?;
+    std::fs::rename(pfad, ziel.join(pfad.file_name().unwrap_or_default()))
 }
 
-/// Altes Abgelehntes aufraeumen. Offene Eintraege bleiben, egal wie alt
-/// (P-7.21: gibt nie auf).
+/// Altes Abgelehntes aufraeumen. Offene Eintraege und Konflikte bleiben,
+/// egal wie alt (P-7.21: gibt nie auf).
 fn aufraeumen(ordner: &Path) {
     let Ok(es) = std::fs::read_dir(ordner.join("abgelehnt")) else { return };
     for e in es.flatten() {
@@ -211,6 +222,7 @@ pub(crate) async fn nachsenden(app_daten: PathBuf, konto: Option<String>, zeit: 
         return;
     };
     let ordner = uw::eingabe_ordner(&app_daten, &konto);
+    uw::konto_uebernehmen(&uw::eingabe_ordner(&app_daten, &alter_konto(&token)), &ordner);
     aufraeumen(&ordner);
     uw::verwaiste_merker_raeumen(&ordner);
     let url = format!("{}/api/landing-input", crate::live_zugang::live_basis());
@@ -240,10 +252,11 @@ pub(crate) async fn nachsenden(app_daten: PathBuf, konto: Option<String>, zeit: 
                 uw::erledigt(&pfad);
                 tracing::info!(datei = %pfad.display(), "Eingabe-Dokument an live uebergeben");
             }
-            Folge::Ablehnen => {
+            f @ (Folge::Ablehnen | Folge::Konflikt) => {
                 // Nur wenn das Verschieben gelingt, ist der Eintrag erledigt —
                 // sonst bleibt er liegen (Codex 30.10.: kein Datenverlust).
-                match nach_abgelehnt(&ordner, &pfad) {
+                let unter = if f == Folge::Konflikt { "konflikt" } else { "abgelehnt" };
+                match ablegen(&ordner, unter, &pfad) {
                     Ok(()) => {
                         uw::erledigt(&pfad);
                         tracing::warn!(datei = %pfad.display(), ?status, "Eingabe-Dokument von live abgelehnt");
@@ -501,9 +514,10 @@ mod tests {
     #[test]
     fn folge_der_antworten() {
         assert_eq!(folge(Some(200)), Folge::Loeschen);
-        for s in [400, 403, 409, 413] {
+        for s in [400, 403, 413] {
             assert_eq!(folge(Some(s)), Folge::Ablehnen, "{s}");
         }
+        assert_eq!(folge(Some(409)), Folge::Konflikt);
         for s in [Some(401), Some(500), Some(503), None] {
             assert_eq!(folge(s), Folge::Behalten, "{s:?}");
         }
@@ -520,10 +534,10 @@ mod tests {
         let doc = ordner.join("P1_1.json.gz");
         std::fs::write(&doc, b"x").unwrap();
         std::fs::write(ordner.join("abgelehnt"), b"keine Mappe").unwrap();
-        assert!(nach_abgelehnt(&ordner, &doc).is_err());
+        assert!(ablegen(&ordner, "abgelehnt", &doc).is_err());
         assert!(doc.exists(), "bleibt liegen");
         std::fs::remove_file(ordner.join("abgelehnt")).unwrap();
-        nach_abgelehnt(&ordner, &doc).unwrap();
+        ablegen(&ordner, "abgelehnt", &doc).unwrap();
         assert!(!doc.exists() && ordner.join("abgelehnt").join("P1_1.json.gz").exists());
     }
 
@@ -541,6 +555,76 @@ mod tests {
         aufraeumen(&ordner);
         assert!(ordner.join("P1_1.json.gz").exists(), "offener Eintrag bleibt");
         assert!(!ordner.join("abgelehnt").join("P0_1.json.gz").exists(), "Gegenprobe: altes Abgelehntes geht");
+    }
+
+    /// Codex 30.10.: 409 (andere Fassung bei live) liegt unter `konflikt/`,
+    /// bleibt nach 31 Tagen stehen, wird als Konflikt angezeigt und nicht
+    /// erneut gesendet. Gegenprobe: altes Abgelehntes (400) geht.
+    #[test]
+    fn konflikt_bleibt_sichtbar_und_wird_nie_geloescht() {
+        use crate::upload_warteschlange as uw;
+        let d = std::env::temp_dir().join(format!("aeroacars-li-konflikt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let ordner = uw::eingabe_ordner(&d, "k1");
+        std::fs::create_dir_all(&ordner).unwrap();
+        let (k, a) = (ordner.join("P1_2.json.gz"), ordner.join("P0_1.json.gz"));
+        for p in [&k, &a] {
+            std::fs::write(p, b"x").unwrap();
+        }
+        ablegen(&ordner, "konflikt", &k).unwrap();
+        ablegen(&ordner, "abgelehnt", &a).unwrap();
+        let alt = std::time::SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 3600);
+        for p in [ordner.join("konflikt").join("P1_2.json.gz"), ordner.join("abgelehnt").join("P0_1.json.gz")] {
+            std::fs::File::options().write(true).open(&p).unwrap().set_modified(alt).unwrap();
+        }
+        aufraeumen(&ordner);
+        assert!(ordner.join("konflikt").join("P1_2.json.gz").exists(), "Konflikt bleibt");
+        assert!(!ordner.join("abgelehnt").join("P0_1.json.gz").exists(), "Gegenprobe: altes Abgelehntes geht");
+        assert!(uw::eingaben(&d, "k1").is_empty(), "nicht erneut gesendet");
+        assert!(uw::eingaben_offen(&d, Some("k1")).is_empty(), "haelt das Flugprotokoll nicht auf");
+        let v = uw::ausstehend(&d, Some("k1"), None);
+        assert_eq!(v.iter().map(|x| (x.pirep_id.as_str(), x.konflikt)).collect::<Vec<_>>(), [("P1", true)]);
+        assert!(uw::ausstehend(&d, Some("k2"), None).is_empty(), "fremdes Konto sieht ihn nicht");
+    }
+
+    /// Codex 30.10.: Eintraege im alten Token-Hash-Ordner kommen in den
+    /// Ordner der Pilot-ID — mit Merker, Abgelehntem und Konflikt; ein
+    /// gleichnamiger anderer Eintrag im neuen Ordner bleibt, der alte auch.
+    /// Gegenprobe: vor der Uebernahme sieht der neue Ordner nichts.
+    #[test]
+    fn alter_kontoordner_wird_uebernommen() {
+        use crate::upload_warteschlange as uw;
+        let d = std::env::temp_dir().join(format!("aeroacars-li-uebernahme-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (alt, neu) = (uw::eingabe_ordner(&d, &alter_konto("tok")), uw::eingabe_ordner(&d, &konto("7")));
+        for o in [alt.join("abgelehnt"), alt.join("konflikt"), neu.clone()] {
+            std::fs::create_dir_all(o).unwrap();
+        }
+        std::fs::write(alt.join("A_1.json.gz"), b"a").unwrap();
+        uw::fehlschlag(&alt.join("A_1.json.gz"), 0, "HTTP 503");
+        uw::fehlschlag(&alt.join("A_1.json.gz"), 0, "HTTP 503");
+        std::fs::write(alt.join("A_1.json.tmp"), b"halb").unwrap();
+        std::fs::write(alt.join("abgelehnt").join("B_2.json.gz"), b"b").unwrap();
+        std::fs::write(alt.join("konflikt").join("K_1.json.gz"), b"k").unwrap();
+        std::fs::write(alt.join("C_3.json.gz"), b"c-alt").unwrap();
+        std::fs::write(neu.join("C_3.json.gz"), b"c-neu").unwrap();
+        std::fs::write(alt.join("D_4.json.gz"), b"d").unwrap();
+        std::fs::write(neu.join("D_4.json.gz"), b"d").unwrap();
+        let k7 = konto("7");
+        assert_eq!(uw::eingaben_offen(&d, Some(&k7)), ["C".to_string(), "D".to_string()].into(), "Gegenprobe");
+        uw::konto_uebernehmen(&alt, &neu);
+        assert_eq!(uw::eingaben_offen(&d, Some(&k7)), ["A".to_string(), "C".to_string(), "D".to_string()].into());
+        assert_eq!(uw::versuch(&neu.join("A_1.json.gz")).versuche, 2, "Merker kommt mit");
+        assert!(neu.join("abgelehnt").join("B_2.json.gz").exists());
+        assert!(neu.join("konflikt").join("K_1.json.gz").exists());
+        assert_eq!(std::fs::read(neu.join("C_3.json.gz")).unwrap(), b"c-neu", "nichts ueberschrieben");
+        assert_eq!(std::fs::read(alt.join("C_3.json.gz")).unwrap(), b"c-alt", "nichts verloren");
+        assert!(!alt.join("D_4.json.gz").exists(), "gleicher Inhalt: keine Doppelten");
+        assert!(!alt.join("A_1.json.gz.versuch").exists() && !alt.join("abgelehnt").exists());
+        // Zweiter Lauf aendert nichts; gleicher Ordner ist kein Fall.
+        uw::konto_uebernehmen(&alt, &neu);
+        uw::konto_uebernehmen(&neu, &neu);
+        assert_eq!(uw::eingaben(&d, &k7).len(), 3);
     }
 
     #[test]

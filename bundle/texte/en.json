@@ -2181,7 +2181,9 @@
     "upload_grund": "Last failure: {{grund}}",
     "upload_noch_kein_versuch": "Not sent yet",
     "upload_art_eingabe": "Landing data",
-    "upload_art_protokoll": "Flight log"
+    "upload_art_protokoll": "Flight log",
+    "upload_konflikt_marke": "Upload conflict",
+    "upload_konflikt": "Conflict: the live server already holds different data for this landing. This version stays saved and is not sent again — please report it to the GSG team."
   },
   "error_reporting": {
     "section_title": "Error telemetry (anonymous)",

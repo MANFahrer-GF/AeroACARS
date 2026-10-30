@@ -3,8 +3,8 @@
 //! PIREP-Warteschlange (`pending_pireps/`).
 //!
 //! - `pending_uploads/eingabe/<konto>/<pirep>_<seq>.json.gz`: Eingabe-Dokumente
-//!   (`landungs_eingabe`), `<konto>` = Kurzhash des Pilot-Tokens; Abgelehntes
-//!   unter `abgelehnt/`.
+//!   (`landungs_eingabe`), `<konto>` = Kurzhash der phpVMS-Pilot-ID; Abgelehntes
+//!   unter `abgelehnt/`, Konflikte (HTTP 409) unter `konflikt/`.
 //! - `pending_uploads/protokoll/<pirep>.json`: ein Eintrag je Flugprotokoll mit
 //!   `owner_identity`; das Protokoll selbst bleibt in `flight_logs/` (die
 //!   Loeschautomatik der Huelle laesst Protokolle mit offenem Eintrag stehen).
@@ -100,6 +100,52 @@ pub(crate) fn verwaiste_merker_raeumen(ordner: &Path) {
         if p.extension().and_then(|x| x.to_str()) == Some("versuch") && !p.with_extension("").exists() {
             let _ = std::fs::remove_file(p);
         }
+    }
+}
+
+/// Codex 30.10.: Bis `8082a527` hiess der Kontoordner nach dem Kurzhash des
+/// Pilot-Tokens (`alt`). Uebernimmt dessen Eintraege samt Merker, Abgelehntes
+/// und Konflikte in den Ordner `neu` (je Datei ein `rename`, nichts wird
+/// ueberschrieben). Liegt in `neu` schon ein gleichnamiger Eintrag: gleicher
+/// Inhalt → der alte faellt weg (keine Doppelten); anderer Inhalt → der alte
+/// bleibt mit Merker in `alt` liegen (nichts verloren). Ein leer gewordener
+/// alter Ordner wird entfernt.
+pub(crate) fn konto_uebernehmen(alt: &Path, neu: &Path) {
+    if alt == neu || !alt.is_dir() {
+        return;
+    }
+    for unter in ["", "abgelehnt", "konflikt"] {
+        let (von, nach) = (alt.join(unter), neu.join(unter));
+        let Ok(es) = std::fs::read_dir(&von) else { continue };
+        for e in es.flatten() {
+            let p = e.path();
+            if !p.is_file() || !p.to_str().is_some_and(|s| s.ends_with(".json.gz")) {
+                continue;
+            }
+            let ziel = nach.join(e.file_name());
+            if ziel.exists() {
+                if std::fs::read(&p).ok().is_some_and(|a| std::fs::read(&ziel).ok().as_ref() == Some(&a)) {
+                    erledigt(&p);
+                } else {
+                    tracing::warn!(datei = %p.display(), "Alter Kontoordner: gleichnamiger Eintrag mit anderem Inhalt — bleibt liegen");
+                }
+                continue;
+            }
+            let verschoben = std::fs::create_dir_all(&nach).and_then(|()| std::fs::rename(&p, &ziel));
+            match verschoben {
+                Ok(()) if merker(&p).exists() => {
+                    if let Err(e) = std::fs::rename(merker(&p), merker(&ziel)) {
+                        tracing::warn!(datei = %p.display(), error = %e, "Alter Kontoordner: Merker nicht uebernommen");
+                    }
+                }
+                Ok(()) => {}
+                Err(e) => tracing::warn!(datei = %p.display(), error = %e, "Alter Kontoordner: Eintrag nicht uebernommen — bleibt liegen"),
+            }
+        }
+    }
+    verwaiste_merker_raeumen(alt);
+    for leer in [alt.join("abgelehnt"), alt.join("konflikt"), alt.to_path_buf()] {
+        let _ = std::fs::remove_dir(leer);
     }
 }
 
@@ -226,14 +272,22 @@ pub(crate) struct Ausstehend {
     pub versuche: u32,
     /// Grund des letzten Fehlschlags.
     pub grund: Option<String>,
+    /// live hat fuer `(pirep_id, seq)` schon eine ANDERE Fassung (HTTP 409):
+    /// wird nicht mehr gesendet und nie automatisch geloescht (Codex 30.10.).
+    pub konflikt: bool,
 }
 
 /// Alle ausstehenden Uploads des angemeldeten Kontos: Eingaben seines
-/// Token-Ordners, Protokolle mit seiner Pilot-ID. Fremde bleiben verborgen.
+/// Kontoordners (offene und Konflikte), Protokolle mit seiner Pilot-ID.
+/// Fremde bleiben verborgen.
 pub(crate) fn ausstehend(app_daten: &Path, konto: Option<&str>, besitzer: Option<&str>) -> Vec<Ausstehend> {
     let mut v = Vec::new();
     if let Some(k) = konto {
-        for p in eingaben(app_daten, k) {
+        let konflikte = std::fs::read_dir(eingabe_ordner(app_daten, k).join("konflikt"))
+            .map(|es| es.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let offen = eingaben(app_daten, k).into_iter().map(|p| (p, false));
+        for (p, konflikt) in offen.chain(konflikte.into_iter().map(|p| (p, true))) {
             let Some(pirep_id) = eingabe_pirep(&p) else { continue };
             let seit_ms = std::fs::metadata(&p)
                 .and_then(|m| m.modified())
@@ -241,7 +295,7 @@ pub(crate) fn ausstehend(app_daten: &Path, konto: Option<&str>, besitzer: Option
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_millis() as i64);
             let w = versuch(&p);
-            v.push(Ausstehend { pirep_id, art: "eingabe", seit_ms, versuche: w.versuche, grund: w.grund });
+            v.push(Ausstehend { pirep_id, art: "eingabe", seit_ms, versuche: w.versuche, grund: w.grund, konflikt });
         }
     }
     for (p, e) in protokolle(app_daten) {
@@ -249,7 +303,7 @@ pub(crate) fn ausstehend(app_daten: &Path, konto: Option<&str>, besitzer: Option
             continue;
         }
         let w = versuch(&p);
-        v.push(Ausstehend { pirep_id: e.pirep_id, art: "protokoll", seit_ms: e.seit_ms, versuche: w.versuche, grund: w.grund });
+        v.push(Ausstehend { pirep_id: e.pirep_id, art: "protokoll", seit_ms: e.seit_ms, versuche: w.versuche, grund: w.grund, konflikt: false });
     }
     v
 }

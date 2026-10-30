@@ -2181,7 +2181,9 @@
     "upload_grund": "Letzter Fehlschlag: {{grund}}",
     "upload_noch_kein_versuch": "Noch nicht gesendet",
     "upload_art_eingabe": "Landungsdaten",
-    "upload_art_protokoll": "Flugprotokoll"
+    "upload_art_protokoll": "Flugprotokoll",
+    "upload_konflikt_marke": "Upload-Konflikt",
+    "upload_konflikt": "Konflikt: Der Live-Server hat für diese Landung schon andere Daten. Die Fassung bleibt gespeichert und wird nicht erneut gesendet — bitte beim GSG-Team melden."
   },
   "error_reporting": {
     "section_title": "Fehler-Telemetrie (anonym)",
