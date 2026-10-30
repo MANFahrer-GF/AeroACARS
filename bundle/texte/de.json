@@ -1822,6 +1822,8 @@
     }
   },
   "about": {
+    "paket_eingebaut": "Laufzeit-Paket: eingebauter Stand",
+    "paket_generation": "Laufzeit-Paket: Generation {{n}}",
     "lizenz": "© {{jahr}} Thomas Kant · Proprietär, nur für Piloten der German Sky Group. Weitergabe und Umgehung der Zugangsbeschränkung sind untersagt.",
     "tagline": "Modernes ACARS für phpVMS 7 — MSFS 2020/2024 + X-Plane 11/12",
     "purpose_title": "Was ist AeroACARS?",

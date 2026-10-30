@@ -46,3 +46,32 @@ describe("Über-Seite", () => {
     expect(invokeMock).toHaveBeenCalledWith("plugin:opener|open_url", { url: "https://github.com/MANFahrer-GF/AeroACARS/releases" });
   });
 });
+
+describe("Über-Seite: Paket-Generation", () => {
+  const rendern = async (kennung: string | null) => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "app_info"
+        ? Promise.resolve({ version: "3.0.0", commit: null, credit: "x" })
+        : cmd === "hilfe_vorschau" && kennung
+          ? Promise.resolve({ meta: { paket_generation: kennung } })
+          : Promise.reject(new Error("aus")),
+    );
+    render(<AboutPanel onShowReleaseNotes={() => {}} onHilfe={() => {}} />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+  it("zeigt die Generation aus der Kennung", async () => {
+    await rendern("12-0123456789ab");
+    expect(screen.getByTestId("about-paket").textContent).toBe("Laufzeit-Paket: Generation 12");
+  });
+  it("Generation 0 heißt eingebauter Stand", async () => {
+    await rendern("0-0123456789ab");
+    expect(screen.getByTestId("about-paket").textContent).toBe("Laufzeit-Paket: eingebauter Stand");
+  });
+  it("ohne Angabe keine Zeile", async () => {
+    await rendern(null);
+    expect(screen.queryByTestId("about-paket")).toBeNull();
+  });
+});
