@@ -49,6 +49,15 @@ describe("statusLesen", () => {
     expect(statusLesen({ version: 2, wartung: [wartung("2026-10-30T11:00:00Z", "2026-10-30T13:00:00Z")] }, JETZT)).toBeNull();
     expect(statusLesen("kaputt", JETZT)).toBeNull();
   });
+
+  it("Texte, die keine Zeichenketten sind, fallen weg (Codex 30.10.)", () => {
+    const h = statusLesen(status({
+      wartung: [wartung("2026-10-30T11:00:00Z", "2026-10-30T13:00:00Z", { text: { de: { x: 1 }, en: "Move" } })],
+      dienste: [{ id: "mqtt", name: { de: ["x"] }, status: "stoerung" }],
+    }), JETZT);
+    expect(h?.wartung?.text).toEqual({ en: "Move" });
+    expect(h?.stoerungen).toEqual([]);
+  });
 });
 
 describe("WartungsBand", () => {

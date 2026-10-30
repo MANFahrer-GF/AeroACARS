@@ -33,8 +33,15 @@ export interface StatusHinweis {
   stoerungen: Text3[];
 }
 
-const istText3 = (v: unknown): v is Text3 =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
+/** Nur Zeichenketten je Sprache — ein Objekt an dieser Stelle braeche die
+ *  Darstellung (Codex 30.10.). `null`, wenn keine Sprache Text hat. */
+function text3Aus(v: unknown): Text3 | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const t: Text3 = {};
+  for (const k of ["de", "en", "it"] as const) if (typeof o[k] === "string") t[k] = o[k] as string;
+  return Object.keys(t).length > 0 ? t : null;
+}
 
 /** Liest `status.json` (Format `version: 1`). Alles Unbekannte oder Kaputte
  *  ergibt `null` — dann zeigt der Client nichts. */
@@ -47,7 +54,7 @@ export function statusLesen(roh: unknown, jetzt: number): StatusHinweis | null {
     .map((w) => ({
       von: String(w.von ?? ""),
       bis: String(w.bis ?? ""),
-      text: istText3(w.text) ? w.text : {},
+      text: text3Aus(w.text) ?? {},
       notfall: w.notfall === true,
       aktiv: false,
     }))
@@ -58,8 +65,9 @@ export function statusLesen(roh: unknown, jetzt: number): StatusHinweis | null {
     .sort((a, b) => Number(b.aktiv) - Number(a.aktiv) || Date.parse(a.von) - Date.parse(b.von));
   const stoerungen = (Array.isArray(s.dienste) ? s.dienste : [])
     .filter((d): d is Record<string, unknown> => typeof d === "object" && d !== null)
-    .filter((d) => d.status === "stoerung" && istText3(d.name))
-    .map((d) => d.name as Text3);
+    .filter((d) => d.status === "stoerung")
+    .map((d) => text3Aus(d.name))
+    .filter((n): n is Text3 => n !== null);
   return { wartung: wartungen[0] ?? null, stoerungen };
 }
 

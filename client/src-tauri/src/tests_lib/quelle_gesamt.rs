@@ -216,7 +216,9 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// dieselben `approach_samples` und denselben Gleitwinkel wie die Grafik);
 /// `ohne_schwere_felder` leert `modul_sollband`. Tests
 /// `sofortnote_abnehmer_tests::datensatz_traegt_grenzen_und_sollband_aus_dem_modul`,
-/// `bewertung::tests::sollband_kommt_aus_dem_modul`.
+/// `bewertung::tests::sollband_kommt_aus_dem_modul`. Codex 30.10.:
+/// `bewertung::sollband` bekommt `&flight.pirep_id` (dasselbe Modul wie die
+/// Note, auch beim nachgeholten Stand).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -227,4 +229,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "1d82f20097198c78314acfe9d4a765768752922dddfcb2560b2b034fdb641bff";
+const HASH_VOR_DER_ZERLEGUNG: &str = "641c77e36c0b1700a2a9af11d2887d577dc3c528697ec54b559b2f95fa067fda";

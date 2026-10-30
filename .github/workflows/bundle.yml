@@ -275,6 +275,13 @@ jobs:
         run: |
           V=$(git show "$TAG:client/src-tauri/tauri.conf.json" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')
           F=$(git show "$TAG:client/src-tauri/src/laufzeit_paket.rs" | python3 -c 'import re,sys;t=sys.stdin.read();m=re.search(r"const FAEHIGKEITEN: &\[&str\] = &\[(.*?)\];",t,re.S);print(",".join(re.findall(r"\"([^\"]+)\"",m.group(1))))')
+          # Der Code DES ALTEN CLIENTS liest das Paket (Manifest-Parser und
+          # Pruefregel aus dem Tag), nicht der heutige (Codex 30.10.).
+          git worktree add -q "$RUNNER_TEMP/alt" "$TAG"
+          cd "$RUNNER_TEMP/alt/client/src-tauri"
+          if [ ! -f crates/runtime-bundle/src/bin/paket-pruefen.rs ]; then
+            echo "::error::$TAG hat kein paket-pruefen (aelter als die Matrix)"; exit 1
+          fi
           cargo run -q -p runtime-bundle --bin paket-pruefen -- "$GITHUB_WORKSPACE/paket/manifest.json" \
             --client-version "$V" --faehigkeiten "$F" | tee -a "$GITHUB_STEP_SUMMARY"
 

@@ -178,14 +178,7 @@ pub(crate) fn bewerten_fuer(pirep_id: &str, landung: &LandingScoringInput) -> Op
         PinStand::Nachgeholt(modul) => {
             #[cfg(test)]
             AUFRUFE.with(|c| c.set(c.get() + 1));
-            static H: OnceLock<Option<Host>> = OnceLock::new();
-            let host = H.get_or_init(|| match Host::neu(modul) {
-                Ok(h) => Some(h),
-                Err(e) => {
-                    tracing::error!(error = %e, "Bewertungsmodul des nachgeholten Stands nicht ladbar");
-                    None
-                }
-            });
+            let host = nachgeholter_host(modul);
             let json = serde_json::to_string(&Eingabe { landung: landung.clone() }).ok()?;
             match host.as_ref().map(|h| rechnen(h, &json)) {
                 Some(Ok(a)) => Some((a, Status::Endgueltig)),
@@ -196,6 +189,19 @@ pub(crate) fn bewerten_fuer(pirep_id: &str, landung: &LandingScoringInput) -> Op
             }
         }
     }
+}
+
+/// Der Host des nachgeholten Stands eines offenen Flugs (P-3.31), einmal je Lauf.
+fn nachgeholter_host(modul: &'static [u8]) -> Option<&'static Host> {
+    static H: OnceLock<Option<Host>> = OnceLock::new();
+    H.get_or_init(|| match Host::neu(modul) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            tracing::error!(error = %e, "Bewertungsmodul des nachgeholten Stands nicht ladbar");
+            None
+        }
+    })
+    .as_ref()
 }
 
 /// Bewertet eine Landung im Modul. `None` = `modulfehler` (beide Module
@@ -219,33 +225,47 @@ pub(crate) fn bewerten(landung: &LandingScoringInput) -> Option<(Ausgabe, Status
     }
 }
 
-/// v3 (P-4.21): Soll-Band des Anflugs aus dem Modul (Export `sollband`) —
-/// Paketmodul, sonst eingebautes. Faktor und Bandbreite fragt es ebenfalls
-/// beim Modul ab (eine Probe 100 kt beim Winkel und bei 3°), wie die Webapp
-/// (`sollbandModul.ts`). `None`, wenn kein Modul antwortet.
-pub(crate) fn sollband(proben: &[landing_scoring::sollband::Probe], winkel_grad: Option<f64>) -> Option<storage::ModulSollband> {
+/// v3 (P-4.21): Soll-Band des Anflugs aus dem Modul (Export `sollband`) des
+/// Flugs `pirep_id` — dieselbe Wahl wie bei der Note ([`bewerten_fuer`]):
+/// nachgeholter Stand, sonst Paketmodul, sonst eingebautes. Faktor und
+/// Bandbreite fragt es beim selben Modul ab (eine Probe 100 kt beim Winkel
+/// und bei 3°), wie die Webapp (`sollbandModul.ts`); scheitert ein Aufruf,
+/// rechnet das naechste Modul alles neu — nie gemischt (Codex 30.10.).
+/// `None`, wenn kein Modul antwortet.
+pub(crate) fn sollband(
+    pirep_id: &str,
+    proben: &[landing_scoring::sollband::Probe],
+    winkel_grad: Option<f64>,
+) -> Option<storage::ModulSollband> {
     use landing_scoring::sollband::{Anfrage, Probe, Punkt};
-    let rufen = |anfrage: Anfrage| -> Option<Vec<Punkt>> {
-        let json = serde_json::to_string(&anfrage).ok()?;
-        for host in [paket_host(), eingebauter_host()].into_iter().flatten() {
-            match host.sollband(&json, FUEL_GRENZE).map(|t| serde_json::from_str::<Vec<Punkt>>(&t)) {
-                Ok(Ok(p)) => return Some(p),
-                _ => tracing::warn!("Soll-Band im Modul gescheitert"),
-            }
+    let mit = |host: &Host| -> Option<storage::ModulSollband> {
+        let rufen = |anfrage: Anfrage| -> Option<Vec<Punkt>> {
+            let json = serde_json::to_string(&anfrage).ok()?;
+            serde_json::from_str(&host.sollband(&json, FUEL_GRENZE).ok()?).ok()
+        };
+        let bezug = |w: Option<f64>| {
+            rufen(Anfrage { proben: vec![Probe { gs_kt: Some(100.0), ..Default::default() }], winkel_grad: w })?
+                .into_iter()
+                .next()
+        };
+        let (beim_winkel, bei_3) = (bezug(winkel_grad)?, bezug(Some(3.0))?);
+        Some(storage::ModulSollband {
+            punkte: rufen(Anfrage { proben: proben.to_vec(), winkel_grad })?,
+            faktor: beim_winkel.soll / bei_3.soll,
+            toleranz: bei_3.oben - bei_3.soll,
+        })
+    };
+    let nachgeholt = match pin_stand(pirep_id) {
+        crate::laufzeit_paket::PinStand::Nachgeholt(modul) => nachgeholter_host(modul),
+        _ => None,
+    };
+    for host in [nachgeholt, paket_host(), eingebauter_host()].into_iter().flatten() {
+        match mit(host) {
+            Some(b) => return Some(b),
+            None => tracing::warn!("Soll-Band im Modul gescheitert, naechstes Modul"),
         }
-        None
-    };
-    let bezug = |w: Option<f64>| {
-        rufen(Anfrage { proben: vec![Probe { gs_kt: Some(100.0), ..Default::default() }], winkel_grad: w })?
-            .into_iter()
-            .next()
-    };
-    let (beim_winkel, bei_3) = (bezug(winkel_grad)?, bezug(Some(3.0))?);
-    Some(storage::ModulSollband {
-        punkte: rufen(Anfrage { proben: proben.to_vec(), winkel_grad })?,
-        faktor: beim_winkel.soll / bei_3.soll,
-        toleranz: bei_3.oben - bei_3.soll,
-    })
+    }
+    None
 }
 
 #[cfg(test)]
@@ -261,12 +281,23 @@ mod tests {
             .into_iter()
             .map(|(gs_kt, is_flare, t_ms)| sb::Probe { gs_kt, is_flare, t_ms })
             .collect();
-        let m = sollband(&proben, Some(4.0)).expect("Modul antwortet");
-        assert_eq!(m.punkte, sb::sollband(&proben, Some(4.0)));
+        let m = sollband("TEST", &proben, Some(4.0)).expect("Modul antwortet");
+        // Bis 1e-9 wie das Crate nativ: `tan` im Modul (wasm, libm) und
+        // nativ (Windows-CRT) unterscheiden sich in der letzten Stelle
+        // (CI 30.10.: -991.9060244483051 gegen ...052). Gezeigt wird, was
+        // das Modul rechnet — auf jeder Plattform dasselbe.
+        let nativ = sb::sollband(&proben, Some(4.0));
         assert_eq!(m.punkte.len(), 1, "nur die erste Probe zaehlt");
+        assert_eq!(m.punkte.len(), nativ.len());
+        for (a, b) in m.punkte.iter().zip(&nativ) {
+            assert_eq!(a.index, b.index);
+            for (x, y) in [(a.soll, b.soll), (a.oben, b.oben), (a.unten, b.unten)] {
+                assert!((x - y).abs() < 1e-9, "{x} gegen {y}");
+            }
+        }
         assert!((m.faktor - sb::gleitwinkel_faktor(Some(4.0))).abs() < 1e-12, "{}", m.faktor);
         assert!((m.toleranz - sb::SOLLBAND_TOLERANZ_FPM).abs() < 1e-12);
-        let drei = sollband(&proben, None).unwrap();
+        let drei = sollband("TEST", &proben, None).unwrap();
         assert!((drei.faktor - 1.0).abs() < 1e-12);
     }
 

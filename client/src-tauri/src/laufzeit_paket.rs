@@ -723,7 +723,16 @@ fn bewertung_selbsttest(modul: &[u8], selftest: &[u8]) -> Result<(), String> {
     if s.faelle.is_empty() {
         return Err(format!("{SELBSTTEST}: keine Faelle"));
     }
-    let host = bewertung_host::Host::neu(modul).map_err(|e| format!("{BEWERTUNG}: {e}"))?;
+    // P-4.21: Auch das Soll-Band kommt aus dem Modul — ohne den Export
+    // `sollband` fiele die Anzeige still auf das eingebaute zurueck (Codex 30.10.).
+    let host = bewertung_host::Host::neu_mit(modul, &["memory", "alloc", "bewerte", "sollband"])
+        .map_err(|e| format!("{BEWERTUNG}: {e}"))?;
+    let band = host
+        .sollband(r#"{"proben":[{"gs_kt":140.0}],"winkel_grad":3.0}"#, crate::bewertung::FUEL_GRENZE)
+        .map_err(|e| format!("{BEWERTUNG}: sollband: {e}"))?;
+    if serde_json::from_str::<Vec<landing_scoring::sollband::Punkt>>(&band).map_or(true, |p| p.len() != 1) {
+        return Err(format!("{BEWERTUNG}: sollband rechnet nicht: {}", band.chars().take(120).collect::<String>()));
+    }
     for f in &s.faelle {
         let aus = host
             .bewerten(&f.eingabe, crate::bewertung::FUEL_GRENZE)
@@ -931,6 +940,15 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         let falsch = serde_json::to_vec(&v).unwrap();
         let fehler = selbsttest(&eingebaut_mit(&[(SELBSTTEST, &falsch)]).paket().unwrap()).unwrap_err();
         assert!(fehler.contains("weicht ab"), "{fehler}");
+        // Ein Modul ohne Export `sollband` (P-4.21) wird abgelehnt (Codex 30.10.).
+        let ohne_sollband = wat::parse_str(
+            r#"(module (memory (export "memory") 1)
+                 (func (export "alloc") (param i32) (result i32) i32.const 0)
+                 (func (export "bewerte") (param i32 i32) (result i64) i64.const 0))"#,
+        )
+        .unwrap();
+        let fehler = selbsttest(&eingebaut_mit(&[(BEWERTUNG, &ohne_sollband)]).paket().unwrap()).unwrap_err();
+        assert!(fehler.contains("sollband"), "{fehler}");
         // Ein Paket ohne einen einzigen Fall prueft nichts — abgelehnt.
         let leer = br#"{"format":1,"faelle":[]}"#;
         assert!(selbsttest(&eingebaut_mit(&[(SELBSTTEST, leer)]).paket().unwrap()).is_err());

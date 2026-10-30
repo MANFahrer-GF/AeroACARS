@@ -26467,6 +26467,7 @@ where
     // v3 (P-4.21): Soll-Band aus dem Modul, ueber dieselben Proben und
     // denselben Gleitwinkel, die die Anfluggrafik zeigt.
     let modul_sollband = crate::bewertung::sollband(
+        &flight.pirep_id,
         &approach_samples
             .iter()
             .map(|p| landing_scoring::sollband::Probe {
