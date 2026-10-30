@@ -42,6 +42,7 @@ mod huelle;
 mod datenuebernahme;
 mod bewertung;
 mod landungs_eingabe;
+mod upload_warteschlange;
 mod runway;
 mod runway_assessment;
 mod stands;
@@ -13330,11 +13331,14 @@ async fn init_mqtt_publisher_via_provisioning(app: AppHandle) {
     spawn_flug_logs_nachreichen(&app);
 }
 
-/// Wie weit das Nachreichen zurueckschaut. Aeltere Fluege sind entweder
-/// laengst angekommen oder ohnehin nur noch fuer Admins interessant.
-const NACHREICHEN_MAX_ALTER: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
-/// Hoechstens so viele Protokolle je Programmstart hochladen.
+/// Wie weit das Nachreichen zurueckschaut (P-7.23: 30 Tage, ohne
+/// Stueckgrenze — fehlende Protokolle gehen in die Warteschlange, die sie
+/// einzeln sendet).
+const NACHREICHEN_MAX_ALTER: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+/// Hoechstens so viele DIAGNOSE-Logs je Programmstart hochladen.
 const NACHREICHEN_MAX_UPLOADS: usize = 5;
+/// Hoechstens so viele IDs je Statusabfrage (Grenze des Endpunkts).
+const NACHREICHEN_ABFRAGE_MAX: usize = 50;
 /// So weit zurueck werden fehlende DIAGNOSE-Logs nachgereicht. Kurz, weil
 /// der Client nur das Tagesprotokoll von heute und gestern mitschickt.
 const NACHREICHEN_DIAGNOSE_MAX_ALTER: std::time::Duration =
@@ -13423,6 +13427,18 @@ fn diagnose_kandidaten(
         .collect()
 }
 
+/// P-7.23: alle Kandidaten ohne Stueckgrenze, Diagnose zuerst, jede ID
+/// einmal, in Abfragen zu hoechstens `NACHREICHEN_ABFRAGE_MAX` IDs.
+fn abfrage_bloecke(diagnose: &[String], flug: &[String]) -> Vec<Vec<String>> {
+    let mut alle: Vec<String> = Vec::new();
+    for id in diagnose.iter().chain(flug) {
+        if !alle.contains(id) {
+            alle.push(id.clone());
+        }
+    }
+    alle.chunks(NACHREICHEN_ABFRAGE_MAX).map(<[String]>::to_vec).collect()
+}
+
 /// Steht `"type":"pirep_filed"` im letzten Stueck der Datei?
 fn protokoll_ist_eingereicht(pfad: &std::path::Path) -> bool {
     use std::io::{Read, Seek, SeekFrom};
@@ -13443,7 +13459,9 @@ fn protokoll_ist_eingereicht(pfad: &std::path::Path) -> bool {
 }
 
 /// Reicht Flugprotokolle nach, die der Server nicht hat — einmal je
-/// Programmstart, kurz nach der ersten erfolgreichen Verbindung.
+/// Programmstart, kurz nach der ersten erfolgreichen Verbindung. Seit 3.0
+/// (P-7.23) das Sicherheitsnetz hinter der Warteschlange: Fehlendes wird dort
+/// eingereiht, nicht hier hochgeladen.
 ///
 /// Befund 21.09.2026 (Sven M): Ein Flug ohne Live-Sitzung verlor sein
 /// Flugprotokoll, weil der Upload nur EINMAL beim Einreichen versucht wurde
@@ -13539,59 +13557,28 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
         }
     }
     let flug_kandidaten =
-        nachreich_kandidaten(&protokolle, aktiv.as_deref(), NACHREICHEN_MAX_ALTER, 50);
+        nachreich_kandidaten(&protokolle, aktiv.as_deref(), NACHREICHEN_MAX_ALTER, usize::MAX);
     let diag_kandidaten = diagnose_kandidaten(
         &protokolle,
         aktiv.as_deref(),
         NACHREICHEN_DIAGNOSE_MAX_ALTER,
-        50,
+        NACHREICHEN_ABFRAGE_MAX,
     );
-    // Eine Abfrage fuer beides; der Server nimmt hoechstens 50 IDs. Die
-    // Diagnose-Kandidaten kommen ZUERST: Sonst verdraengten 50 nicht
-    // eingereichte Flugprotokolle das Nachreichen der Diagnose komplett,
-    // und zwar stumm (Cloud-QS 23.09.2026).
-    let mut kandidaten: Vec<String> = diag_kandidaten.iter().take(10).cloned().collect();
-    for id in flug_kandidaten.iter().chain(diag_kandidaten.iter()) {
-        if kandidaten.len() >= 50 {
-            break;
-        }
-        if !kandidaten.contains(id) {
-            kandidaten.push(id.clone());
-        }
-    }
-    let uebersprungen = flug_kandidaten.len() + diag_kandidaten.len()
-        - flug_kandidaten
-            .iter()
-            .filter(|id| diag_kandidaten.contains(id))
-            .count()
-        - kandidaten.len();
-    if uebersprungen > 0 {
-        // Nicht stumm bleiben: Der Server nimmt 50 IDs, mehr Kandidaten
-        // fallen hinten runter (Cloud-QS 23.09.2026).
-        tracing::info!(
-            uebersprungen,
-            flug = flug_kandidaten.len(),
-            diagnose = diag_kandidaten.len(),
-            "Nachreichen: mehr Kandidaten als die Abfrage fasst"
-        );
-    }
-    if kandidaten.is_empty() {
+    let bloecke = abfrage_bloecke(&diag_kandidaten, &flug_kandidaten);
+    if bloecke.is_empty() {
         return true;
     }
-    let status = match aeroacars_mqtt::pirep_status::pruefstatus_abrufen(
-        &kandidaten,
-        &username,
-        &password,
-        None,
-    )
-    .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(error = %e, "Nachreichen: Status nicht abrufbar — naechster Start");
-            return true;
+    let geprueft: usize = bloecke.iter().map(Vec::len).sum();
+    let mut status = Vec::new();
+    for teil in &bloecke {
+        match aeroacars_mqtt::pirep_status::pruefstatus_abrufen(teil, &username, &password, None).await {
+            Ok(s) => status.extend(s),
+            Err(e) => {
+                tracing::warn!(error = %e, "Nachreichen: Status nicht abrufbar — naechster Start");
+                return true;
+            }
         }
-    };
+    }
     // Nur Fluege, die auch eingereicht wurden: Seit die Diagnose-Kandidaten
     // in derselben Abfrage stehen, enthaelt die Antwort auch abgebrochene
     // Fluege — deren VOLLES Flugprotokoll darf nicht hochgehen, sonst legt
@@ -13602,32 +13589,20 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
         .filter(|id| flug_kandidaten.contains(id))
         .collect();
     tracing::info!(
-        geprueft = kandidaten.len(),
+        geprueft,
         fehlend = fehlend.len(),
         "Nachreichen: Flugprotokolle mit dem Server abgeglichen"
     );
-    for pirep_id in fehlend.into_iter().take(NACHREICHEN_MAX_UPLOADS) {
-        if aktuelle_epoche(&state) != epoche {
-            tracing::info!("Nachreichen: Sitzung gewechselt — abgebrochen");
-            break;
-        }
-        let pfad = dir.join(format!("{pirep_id}.jsonl"));
-        let _ = tokio::task::spawn_blocking(flugprotokoll_abwarten).await;
-        match aeroacars_mqtt::log_upload::upload_flight_log(
-            &pfad, &pirep_id, &username, &password, None,
-        )
-        .await
-        {
-            Ok(stats) => tracing::info!(
-                pirep_id = %pirep_id,
-                gzip_kb = stats.compressed_size / 1024,
-                "Nachreichen: Flugprotokoll hochgeladen"
-            ),
-            Err(e) => tracing::warn!(
-                pirep_id = %pirep_id,
-                error = %e,
-                "Nachreichen: Upload fehlgeschlagen — naechster Start versucht es wieder"
-            ),
+    // P-7.23: in die Warteschlange (Besitzer = angemeldetes Konto); der
+    // Arbeiter sendet sie einzeln und wiederholt, bis sie ankommen.
+    if !fehlend.is_empty() {
+        if let Ok(daten) = app.path().app_data_dir() {
+            for pirep_id in &fehlend {
+                if let Err(e) = upload_warteschlange::protokoll_einreihen(&daten, pirep_id, &angemeldet.to_string()) {
+                    tracing::warn!(pirep_id = %pirep_id, error = %e, "Nachreichen: nicht einreihbar");
+                }
+            }
+            upload_warteschlange_anstossen();
         }
     }
 
@@ -13678,6 +13653,7 @@ async fn flug_logs_nachreichen(app: &AppHandle) -> bool {
                 tracing::info!("Nachreichen: Sitzung gewechselt — abgebrochen");
                 break;
             }
+            let _sperre = UPLOAD_SPERRE.lock().await;
             match aeroacars_mqtt::log_upload::diagnose_paket_senden(
                 &paket, &pirep_id, &username, &password, None,
             )
@@ -17536,7 +17512,9 @@ fn flight_logs_purge_older_than(
         .path()
         .app_data_dir()
         .map_err(|_| UiError::new("no_app_data_dir", "no app data dir"))?;
-    let n = recorder::flight_logs_purge_older_than(dir, older_than_days).map_err(|e| {
+    // P-7.21: noch nicht hochgeladene Protokolle bleiben stehen.
+    let behalten = upload_warteschlange::offene_protokolle(&dir);
+    let n = recorder::flight_logs_purge_older_than_ausser(dir, older_than_days, &behalten).map_err(|e| {
         UiError::new(
             "flight_logs_purge_failed",
             format!("could not purge flight logs: {e}"),
@@ -20529,6 +20507,8 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                             // für den Recorder-seitigen JSONL-Gap-Fill.
                             // Null = altes queued-File ohne das Feld → skip.
                             if !q.pirep_payload_json.is_null() {
+                                // P-7.21: Eingabe vor dem PIREP bei live.
+                                eingabe_vor_dem_bericht(&app).await;
                                 let mqtt = state.mqtt.lock().await;
                                 finalize_filed_pirep(
                                     &app,
@@ -26875,7 +26855,7 @@ fn record_landing_for_filed_flight(
             }
         }
         if abgelegt {
-            tauri::async_runtime::spawn(landungs_eingabe::nachsenden(daten));
+            upload_warteschlange_anstossen();
         }
     }
 
@@ -29393,6 +29373,8 @@ async fn flight_end(
                 // QS-P1: JSONL-PirepFiled IMMER, MQTT nur bei Handle.
                 let pirep_payload_json =
                     serde_json::to_value(&pirep_payload).unwrap_or(serde_json::Value::Null);
+                // P-7.21: Eingabe vor dem PIREP bei live.
+                eingabe_vor_dem_bericht(&app).await;
                 let mqtt = state.mqtt.lock().await;
                 finalize_filed_pirep(
                     &app,
@@ -30438,6 +30420,8 @@ async fn flight_end_manual(
                     .filter(|s| !s.is_empty());
                 let pirep_payload_json =
                     serde_json::to_value(&pirep_payload).unwrap_or(serde_json::Value::Null);
+                // P-7.21: Eingabe vor dem PIREP bei live.
+                eingabe_vor_dem_bericht(&app).await;
                 // QS-P1: JSONL-PirepFiled IMMER, MQTT nur bei Handle.
                 let mqtt = state.mqtt.lock().await;
                 finalize_filed_pirep(
@@ -32223,20 +32207,190 @@ async fn flight_resume_after_disconnect(
 /// the bounce rebound that the single 1 Hz sample was catching.
 ///
 /// Exits when `flight.stop` is set, just like the streamer.
-/// v0.5.23 Forensik-Upload. Spawnt einen async-Task der das per-Flug
-/// JSONL-Logfile `<app_data>/flight_logs/<pirep_id>.jsonl` gzippt und an
-/// aeroacars-live POSTet. Endpoint: `/api/flight-logs/upload`. Auth via
-/// HTTP Basic gegen die provisioned_pilots-Tabelle (gleiche Cred-Pair wie
-/// Mosquitto-MQTT-Login).
+/// Pfad des Flugprotokolls `pirep_id` (gleiche Abbildung wie der Recorder).
+fn flugprotokoll_pfad(app_daten: &std::path::Path, pirep_id: &str) -> std::path::PathBuf {
+    let stamm = upload_warteschlange::protokoll_stamm(pirep_id);
+    app_daten.join("flight_logs").join(format!("{stamm}.jsonl"))
+}
+
+/// Stoesst den Arbeiter der Upload-Warteschlange an (sofortiger Durchlauf).
+fn upload_warteschlange_anstossen() {
+    upload_anstoss().notify_one();
+}
+
+fn upload_anstoss() -> &'static tokio::sync::Notify {
+    static N: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+    N.get_or_init(tokio::sync::Notify::new)
+}
+
+/// P-7.23: immer nur EIN Upload von Protokoll oder Diagnose gleichzeitig.
+static UPLOAD_SPERRE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// v3 (P-7.21): Dauer-Arbeiter der Upload-Warteschlange (`pending_uploads/`,
+/// siehe `upload_warteschlange`). Laeuft ab dem Start alle 60 s und sofort
+/// nach jedem Einreihen; ersetzt den einmaligen Versuch beim Abgeben.
+fn spawn_upload_arbeiter(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            uploads_durchlauf(&app).await;
+            let _ = tokio::time::timeout(upload_warteschlange::TAKT, upload_anstoss().notified()).await;
+        }
+    });
+}
+
+/// Ein Durchlauf: erst die Eingaben, dann die Flugprotokolle (Reihenfolge
+/// je Flug P-7.21).
+async fn uploads_durchlauf(app: &AppHandle) {
+    let Ok(daten) = app.path().app_data_dir() else { return };
+    landungs_eingabe::nachsenden(daten.clone(), std::time::Duration::from_secs(30)).await;
+    flugprotokolle_senden(app, &daten).await;
+}
+
+/// P-7.21: Vor dem PIREP bei live die Eingaben dieses Laufs senden — ein
+/// Versuch, hoechstens 15 s (dieselbe Schranke wie
+/// `landung_vor_dem_einreichen_nachschicken`). Scheitert er, bleibt alles in
+/// der Warteschlange; der PIREP wartet nicht auf live.
+async fn eingabe_vor_dem_bericht(app: &AppHandle) {
+    let Ok(daten) = app.path().app_data_dir() else { return };
+    let senden = landungs_eingabe::nachsenden(daten, std::time::Duration::from_secs(10));
+    if tokio::time::timeout(std::time::Duration::from_secs(15), senden).await.is_err() {
+        tracing::info!("Eingabe vor dem Bericht: live antwortet nicht — die Warteschlange sendet spaeter");
+    }
+}
+
+/// Sendet die faelligen Flugprotokolle der Warteschlange, je eins (P-7.21,
+/// P-7.22). Ein Eintrag wartet, bis sein Besitzer angemeldet ist, sein PIREP
+/// die PIREP-Warteschlange verlassen hat und keine Eingabe desselben Flugs
+/// mehr offen ist. Fehlt das Protokoll (z. B. von Hand geloescht), gibt es
+/// nichts mehr zu senden.
+async fn flugprotokolle_senden(app: &AppHandle, daten: &std::path::Path) {
+    use upload_warteschlange::{self as uw, Protokoll};
+    let eintraege = uw::protokolle(daten);
+    if eintraege.is_empty() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let epoche = aktuelle_epoche(&state);
+    let angemeldet = *state
+        .authenticated_pilot_id
+        .lock()
+        .expect("authenticated_pilot_id lock");
+    let angemeldet_text = angemeldet.map(|id| id.to_string());
+    let aktiv = state
+        .active_flight
+        .lock()
+        .expect("active_flight lock")
+        .as_ref()
+        .map(|f| f.pirep_id.clone());
+    let pireps_offen: std::collections::HashSet<String> =
+        pirep_queue::list_all(app).into_iter().map(|q| q.pirep_id).collect();
+    let konto = live_zugang::pilot_token().map(|t| landungs_eingabe::konto(&t));
+    let eingaben_offen = uw::eingaben_offen(daten, konto.as_deref());
+    // Nur mit Zugangsdaten DIESES Kontos (siehe `MQTT_KEYRING_PHPVMS_PILOT`).
+    let zugang = angemeldet.and_then(|id| {
+        let nr = secrets::load_api_key(MQTT_KEYRING_PHPVMS_PILOT).ok().flatten();
+        if !mqtt_cache_gehoert_angemeldetem(nr.as_deref(), id) {
+            return None;
+        }
+        Some((
+            secrets::load_api_key(MQTT_KEYRING_USERNAME).ok().flatten()?,
+            secrets::load_api_key(MQTT_KEYRING_PASSWORD).ok().flatten()?,
+        ))
+    });
+    for (pfad, e) in eintraege {
+        if !uw::faellig(&pfad, Utc::now().timestamp_millis()) {
+            continue;
+        }
+        let entscheidung = uw::protokoll_entscheiden(
+            &e,
+            angemeldet_text.as_deref(),
+            aktiv.as_deref(),
+            &pireps_offen,
+            &eingaben_offen,
+        );
+        if entscheidung != Protokoll::Senden {
+            tracing::debug!(pirep_id = %e.pirep_id, ?entscheidung, "Flugprotokoll wartet");
+            continue;
+        }
+        let Some((username, password)) = zugang.as_ref() else {
+            continue;
+        };
+        let log_path = flugprotokoll_pfad(daten, &e.pirep_id);
+        // Erst lesen, wenn alles geschrieben ist (Schreib-Faden, siehe
+        // `record_event`) — sonst fehlten Aufsetzfenster und Analyse.
+        let _ = tokio::task::spawn_blocking(flugprotokoll_abwarten).await;
+        if !log_path.exists() {
+            tracing::warn!(pirep_id = %e.pirep_id, "Flugprotokoll fehlt lokal — Eintrag entfernt");
+            uw::erledigt(&pfad);
+            continue;
+        }
+        let _sperre = UPLOAD_SPERRE.lock().await;
+        // Kontowechsel waehrend des Durchlaufs: nichts mit fremden Daten senden.
+        if aktuelle_epoche(&state) != epoche {
+            tracing::info!("Flugprotokolle: Sitzung gewechselt — Durchlauf abgebrochen");
+            return;
+        }
+        match aeroacars_mqtt::log_upload::upload_flight_log(
+            &log_path, &e.pirep_id, username, password,
+            None, // default endpoint = https://live.kant.ovh/api/flight-logs/upload
+        )
+        .await
+        {
+            Ok(stats) => {
+                uw::erledigt(&pfad);
+                tracing::info!(
+                    pirep_id = %e.pirep_id,
+                    raw_kb = stats.raw_size / 1024,
+                    gzip_kb = stats.compressed_size / 1024,
+                    "flight log uploaded",
+                );
+                // v0.5.23: Pilot-UI-Feedback im Activity-Log damit der
+                // Pilot sieht dass der Upload geklappt hat. Detail-Spalte
+                // zeigt die Groessen-Statistik fuer Debugging.
+                log_activity_handle(
+                    app,
+                    ActivityLevel::Info,
+                    "Flight log uploaded to live-tracking server",
+                    Some(format!(
+                        "{} KB raw, {} KB gzip ({}% Kompression)",
+                        stats.raw_size / 1024,
+                        stats.compressed_size / 1024,
+                        ((stats.compressed_size as f64 / stats.raw_size as f64) * 100.0) as i32,
+                    )),
+                );
+            }
+            Err(err) => {
+                let erstmals = uw::versuch(&pfad).versuche == 0;
+                uw::fehlschlag(&pfad, Utc::now().timestamp_millis(), &err.to_string());
+                tracing::warn!(
+                    pirep_id = %e.pirep_id,
+                    error = %err,
+                    "flight log upload failed — Warteschlange versucht es erneut",
+                );
+                // Nur beim ersten Fehlschlag ins Aktivitaetsprotokoll; die
+                // Anzeige „Upload ausstehend“ (P-7.24) zeigt den Rest.
+                if erstmals {
+                    log_activity_handle(
+                        app,
+                        ActivityLevel::Warn,
+                        "Flight log upload failed — wird automatisch wiederholt",
+                        Some(format!(
+                            "{} — Log liegt lokal in flight_logs/{}.jsonl",
+                            err, e.pirep_id
+                        )),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Reiht das Flugprotokoll ein (P-7.21; der Arbeiter sendet es) und laedt
+/// das DIAGNOSE-Log hoch.
 ///
-/// Failure-Modi (alle non-fatal):
-///   * Log-Datei nicht vorhanden — z.B. Recording war disabled oder
-///     PIREP wurde manuell gefilet ohne dass das Recorder-Modul den
-///     Flug initialisiert hat. → tracing::debug, kein Retry.
-///   * Keyring-Read fehlgeschlagen — auch non-fatal. Pilot kann beim
-///     naechsten App-Start neu provisionieren.
-///   * Server gibt non-2xx zurueck (401 / 403 / 5xx) — gelogged, keine
-///     Retry-Queue heute (kann spaeter mit Pending-Folder kommen).
+/// Besitzer des Eintrags ist `owner_identity` (wer einreichte), sonst der
+/// gerade Angemeldete. Die Diagnose geht wie bisher sofort und best effort.
 /// `nur_diagnose`: nur die technischen Zeilen hochladen, NICHT das
 /// Flugprotokoll. Für abgebrochene Flüge: Deren Protokoll darf nicht in den
 /// Import, sonst entstünde eine Sitzung für einen Flug, den phpVMS so nie
@@ -32247,48 +32401,34 @@ fn spawn_flight_log_upload(
     owner_identity: Option<String>,
     nur_diagnose: bool,
 ) {
+    if !nur_diagnose {
+        let besitzer = owner_identity.clone().or_else(|| {
+            app.state::<AppState>()
+                .authenticated_pilot_id
+                .lock()
+                .expect("authenticated_pilot_id lock")
+                .map(|id| id.to_string())
+        });
+        match (app.path().app_data_dir(), besitzer) {
+            (Ok(daten), Some(besitzer)) if flugprotokoll_pfad(&daten, &pirep_id).exists() => {
+                match upload_warteschlange::protokoll_einreihen(&daten, &pirep_id, &besitzer) {
+                    Ok(_) => upload_warteschlange_anstossen(),
+                    Err(e) => tracing::warn!(pirep_id = %pirep_id, error = %e, "Flugprotokoll nicht einreihbar"),
+                }
+            }
+            (Ok(_), Some(_)) => tracing::debug!(pirep_id = %pirep_id, "kein Flugprotokoll — nur Diagnose"),
+            _ => tracing::warn!(pirep_id = %pirep_id, "Flugprotokoll ohne Besitzer — nicht eingereiht"),
+        }
+    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        // 1. Pfad zur JSONL-Datei zusammensetzen — gleiche Logik wie der
-        //    Recorder selbst (sanitize_pirep_id).
-        let app_data_dir = match app.path().app_data_dir() {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::warn!(error = %e, "log-upload: no app_data_dir");
-                return;
-            }
-        };
-        let safe_pirep = pirep_id
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>();
-        let log_path = app_data_dir
-            .join("flight_logs")
-            .join(format!("{safe_pirep}.jsonl"));
-        // Fehlt das Flugprotokoll, ist das KEIN Grund, auch die Diagnose
-        // wegzulassen: Genau dann (Aufzeichnung aus, Client kaputt,
-        // manuell eingereicht) will man sie haben (Abnahme 20.09.2026).
-        // Erst lesen, wenn alles geschrieben ist (Schreib-Faden, siehe
-        // `record_event`) — sonst fehlten Aufsetzfenster und Analyse.
-        let _ = tokio::task::spawn_blocking(flugprotokoll_abwarten).await;
-        let flugprotokoll_da = !nur_diagnose && log_path.exists();
-        if !flugprotokoll_da {
-            tracing::debug!(path = ?log_path, "log-upload: file missing — nur Diagnose");
-        }
-
         // Codex-Folgefund (adversarial, 05.09.2026, zehnte Runde): dieser
         // Task laeuft ERST NACH `tauri::async_runtime::spawn` irgendwann
         // spaeter — jede Identitaets-Pruefung am AUFRUFORT (spawn-Zeit)
         // sagt nichts darueber, wer noch angemeldet ist, WENN dieser Task
         // tatsaechlich die Keyring-Credentials unten liest. Erst hier, im
         // Moment des eigentlichen Lesens, nachpruefen — sonst haette ein
-        // Kontowechsel zwischen Spawn und Ausfuehrung Pilot As Flugprotokoll
+        // Kontowechsel zwischen Spawn und Ausfuehrung Pilot As Diagnose
         // mit Pilot Bs MQTT-Credentials hochladen koennen.
         if let Some(erwartet) = owner_identity.as_deref() {
             let aktuell = app
@@ -32300,13 +32440,13 @@ fn spawn_flight_log_upload(
             if aktuell.as_deref() != Some(erwartet) {
                 tracing::warn!(
                     pirep_id = %pirep_id,
-                    "log-upload: Konto wechselte seit dem Filing — Upload uebersprungen"
+                    "log-upload: Konto wechselte seit dem Filing — Diagnose uebersprungen"
                 );
                 return;
             }
         }
 
-        // 2. MQTT-Credentials aus Keyring (= identisch zu HTTP-Basic).
+        // MQTT-Credentials aus Keyring (= identisch zu HTTP-Basic).
         let username = match secrets::load_api_key(MQTT_KEYRING_USERNAME) {
             Ok(Some(u)) => u,
             _ => {
@@ -32321,59 +32461,6 @@ fn spawn_flight_log_upload(
                 return;
             }
         };
-
-        // 3. Hochladen.
-        if flugprotokoll_da {
-            match aeroacars_mqtt::log_upload::upload_flight_log(
-                &log_path, &pirep_id, &username, &password,
-                None, // default endpoint = https://live.kant.ovh/api/flight-logs/upload
-            )
-            .await
-            {
-                Ok(stats) => {
-                    tracing::info!(
-                        pirep_id = %pirep_id,
-                        raw_kb = stats.raw_size / 1024,
-                        gzip_kb = stats.compressed_size / 1024,
-                        "flight log uploaded",
-                    );
-                    // v0.5.23: Pilot-UI-Feedback im Activity-Log damit der
-                    // Pilot sieht dass der Upload geklappt hat. Detail-Spalte
-                    // zeigt die Groessen-Statistik fuer Debugging.
-                    log_activity_handle(
-                        &app,
-                        ActivityLevel::Info,
-                        "Flight log uploaded to live-tracking server",
-                        Some(format!(
-                            "{} KB raw, {} KB gzip ({}% Kompression)",
-                            stats.raw_size / 1024,
-                            stats.compressed_size / 1024,
-                            ((stats.compressed_size as f64 / stats.raw_size as f64) * 100.0) as i32,
-                        )),
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        pirep_id = %pirep_id,
-                        error = %e,
-                        "flight log upload failed (non-fatal)",
-                    );
-                    // Fehler ist non-fatal — JSONL bleibt lokal verfuegbar.
-                    // Wir loggen mit ActivityLevel::Warn damit der Pilot
-                    // weiss dass Forensik-Upload nicht klappte (= bei
-                    // Bug-Reports den Pfad zur lokalen Datei nennen).
-                    log_activity_handle(
-                        &app,
-                        ActivityLevel::Warn,
-                        "Flight log upload failed (non-fatal)",
-                        Some(format!(
-                            "{} — Log liegt lokal in flight_logs/{}.jsonl",
-                            e, pirep_id
-                        )),
-                    );
-                }
-            }
-        }
 
         // v1.7.41: das DIAGNOSE-Log gleich mit.
         //
@@ -32399,6 +32486,7 @@ fn spawn_flight_log_upload(
         } else {
             let dateien = diagnose_logs_fuer_upload();
             if !dateien.is_empty() {
+                let _sperre = UPLOAD_SPERRE.lock().await;
                 match aeroacars_mqtt::log_upload::upload_diagnose_logs(
                     &dateien, &pirep_id, &username, &password, None,
                 )
@@ -55205,7 +55293,7 @@ pub fn run() {
         })
         .setup(|app| {
             // v3 (Etappe 1a): Laufzeit-Paket zuerst — legt OurAirports fest, bevor jemand Bahnen liest.
-            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten.clone()); tauri::async_runtime::spawn(landungs_eingabe::nachsenden(daten)); }
+            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten.clone()); spawn_upload_arbeiter(app.handle()); }
             // v3 (Etappe 5): CI-Messlauf P-8.03 (nur Fenster `ui`), sonst Einstellungen der Huelle anwenden.
             if ui_lader::selbsttest_starten(app) { return Ok(()); } else { huelle::beim_start_anwenden(app.handle()); }
             // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-

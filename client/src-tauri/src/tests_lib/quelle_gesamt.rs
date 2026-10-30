@@ -147,6 +147,19 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Aufsetzer ein (Server-Grenze, letzte Nummer fuer die Landung). Tests
 /// `touch_and_go_ueber_der_dokumentgrenze`,
 /// `touch_and_go_entscheidung_steht_in_der_herkunft`.
+/// — plus P-7.21/P-7.22/P-7.23 (Upload-Warteschlange): `mod upload_warteschlange`;
+/// Eingabe-Dokumente unter `pending_uploads/eingabe/<konto>/`; der Start
+/// laeuft `spawn_upload_arbeiter` (Takt 60 s, Anstoss nach jedem Einreihen,
+/// `uploads_durchlauf` = Eingaben, dann `flugprotokolle_senden`) statt eines
+/// einmaligen `nachsenden`; `spawn_flight_log_upload` reiht das Protokoll
+/// ein (`protokoll_einreihen`, Besitzer = Einreicher) und laedt nur noch die
+/// Diagnose selbst; `eingabe_vor_dem_bericht` (15 s) vor jedem
+/// `finalize_filed_pirep`; Abgleich beim Start 30 Tage, ohne Stueckgrenze
+/// (`abfrage_bloecke`), reiht ein statt hochzuladen; `UPLOAD_SPERRE` (ein
+/// Upload gleichzeitig); Loeschautomatik laesst offene Protokolle stehen.
+/// Tests `upload_warteschlange::tests`, `landungs_eingabe::tests::aufraeumen_laesst_offene_eintraege_stehen`,
+/// `nachreichen_tests::abgleich_ohne_stueckgrenze_ueber_dreissig_tage`,
+/// `recorder::purge_tests`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -157,4 +170,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "2f32dd594ef36dd4dff307adfccf4efdc771e28a5670baaea5d22417c6384c21";
+const HASH_VOR_DER_ZERLEGUNG: &str = "72bdf1904b2e560b1593ec43c7b4b77be4017eb519af8fb04565cdbf9c2b10b8";

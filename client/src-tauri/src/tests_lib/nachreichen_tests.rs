@@ -1,5 +1,6 @@
     use super::{
-        fehlt_auf_dem_server, nachreich_kandidaten, protokoll_ist_eingereicht, LokalesProtokoll,
+        abfrage_bloecke, fehlt_auf_dem_server, nachreich_kandidaten, protokoll_ist_eingereicht,
+        LokalesProtokoll,
     };
     use aeroacars_mqtt::pirep_status::PirepPruefstatus;
     use std::time::Duration;
@@ -41,6 +42,23 @@
             nachreich_kandidaten(&liste, Some("aktiv"), WOCHE, 1),
             vec!["a"]
         );
+    }
+
+    /// P-7.23: 30 Tage, ohne Stueckgrenze — 120 Kandidaten gehen in drei
+    /// Abfragen, keiner faellt hinten runter, doppelte nur einmal, Diagnose
+    /// zuerst. Gegenprobe: ein 31 Tage altes Protokoll bleibt draussen.
+    #[test]
+    fn abgleich_ohne_stueckgrenze_ueber_dreissig_tage() {
+        assert_eq!(super::NACHREICHEN_MAX_ALTER, Duration::from_secs(30 * 24 * 3600));
+        let flug: Vec<String> = (0..120).map(|i| format!("F{i}")).collect();
+        let diag = vec!["D1".to_string(), "F5".to_string()];
+        let b = abfrage_bloecke(&diag, &flug);
+        assert_eq!(b.iter().map(Vec::len).collect::<Vec<_>>(), [50, 50, 21]);
+        assert_eq!(&b[0][..2], ["D1", "F5"]);
+        let alle: std::collections::HashSet<&String> = b.iter().flatten().collect();
+        assert_eq!(alle.len(), 121);
+        let liste = [p("neu", 24 * 29, true), p("zu_alt", 24 * 31, true)];
+        assert_eq!(nachreich_kandidaten(&liste, None, super::NACHREICHEN_MAX_ALTER, usize::MAX), vec!["neu"]);
     }
 
     fn status(id: &str, da: Option<bool>) -> PirepPruefstatus {

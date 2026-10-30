@@ -636,6 +636,17 @@ pub fn flight_logs_purge_older_than(
     app_data_dir: impl AsRef<Path>,
     older_than_days: u32,
 ) -> Result<u32, RecorderError> {
+    flight_logs_purge_older_than_ausser(app_data_dir, older_than_days, &std::collections::HashSet::new())
+}
+
+/// Wie [`flight_logs_purge_older_than`], laesst aber die Protokolle stehen,
+/// deren Dateiname (ohne `.jsonl`) in `behalten` steht — v3 (P-7.21): noch
+/// nicht hochgeladene Protokolle der Warteschlange.
+pub fn flight_logs_purge_older_than_ausser(
+    app_data_dir: impl AsRef<Path>,
+    older_than_days: u32,
+    behalten: &std::collections::HashSet<String>,
+) -> Result<u32, RecorderError> {
     let dir = app_data_dir.as_ref().join(LOGS_SUBDIR);
     if !dir.exists() {
         return Ok(0);
@@ -652,6 +663,9 @@ pub fn flight_logs_purge_older_than(
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
+        if path.file_stem().and_then(|e| e.to_str()).is_some_and(|stamm| behalten.contains(stamm)) {
+            continue;
+        }
         let Ok(meta) = entry.metadata() else { continue };
         let Ok(mtime) = meta.modified() else { continue };
         if mtime < cutoff && std::fs::remove_file(&path).is_ok() {
@@ -659,6 +673,28 @@ pub fn flight_logs_purge_older_than(
         }
     }
     Ok(removed)
+}
+
+#[cfg(test)]
+mod purge_tests {
+    /// v3 (P-7.21): Ein altes Protokoll mit offenem Upload bleibt stehen, ein
+    /// gleich altes ohne Eintrag wird geloescht (Gegenprobe).
+    #[test]
+    fn offene_uploads_bleiben_stehen() {
+        let d = std::env::temp_dir().join(format!("aeroacars-purge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(super::LOGS_SUBDIR)).unwrap();
+        let alt = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
+        for name in ["offen", "fertig"] {
+            let f = std::fs::File::create(d.join(super::LOGS_SUBDIR).join(format!("{name}.jsonl"))).unwrap();
+            f.set_modified(alt).unwrap();
+        }
+        let behalten: std::collections::HashSet<String> = ["offen".to_string()].into();
+        assert_eq!(super::flight_logs_purge_older_than_ausser(&d, 30, &behalten).unwrap(), 1);
+        assert!(d.join(super::LOGS_SUBDIR).join("offen.jsonl").exists());
+        assert!(!d.join(super::LOGS_SUBDIR).join("fertig.jsonl").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
 
 #[cfg(test)]

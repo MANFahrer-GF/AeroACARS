@@ -2,16 +2,17 @@
 //! Aufsetzer an live (`POST /api/landing-input`).
 //!
 //! Das Dokument wird beim Abgeben gebaut und ZUERST auf die Platte gelegt
-//! (`landing_inputs/<konto>/`, `<konto>` = Kurzhash des Pilot-Tokens: nach
-//! einem Kontowechsel bleiben fremde Dokumente liegen statt mit dem falschen
-//! Token abgelehnt zu werden), dann gesendet. Ohne Aufsetzfenster gibt es kein
-//! Dokument (der Server verlangt mindestens eine Probe). Immer nur EIN
-//! Sendevorgang; geloescht wird nur, wenn die Datei noch genau das Gesendete
-//! enthaelt. Dateien aelter als 30 Tage werden aufgeraeumt. Scheitert das Senden (Netz, live
-//! nicht erreichbar, 5xx), bleibt die Datei liegen und wird beim naechsten
-//! Abgeben und beim Programmstart erneut versucht. Endgueltige Antworten:
-//! 200 (auch „wiederholt“) loescht die Datei; 400/403/409/413 legen sie nach
-//! `landing_inputs/abgelehnt/` (Diagnose, kein endloses Wiederholen).
+//! (Warteschlange `pending_uploads/eingabe/<konto>/`, P-7.21; `<konto>` =
+//! Kurzhash des Pilot-Tokens: nach einem Kontowechsel warten fremde
+//! Dokumente, statt mit dem falschen Token abgelehnt zu werden), dann
+//! gesendet. Ohne Aufsetzfenster gibt es kein Dokument (der Server verlangt
+//! mindestens eine Probe). Immer nur EIN Sendevorgang; geloescht wird nur,
+//! wenn die Datei noch genau das Gesendete enthaelt. Scheitert das Senden
+//! (Netz, live nicht erreichbar, 5xx), bleibt die Datei liegen; der Arbeiter
+//! (`upload_warteschlange`) versucht sie mit wachsendem Abstand erneut und
+//! gibt nie auf. Endgueltige Antworten: 200 (auch „wiederholt“) loescht die
+//! Datei; 400/403/409/413 legen sie nach `abgelehnt/` (Diagnose, kein
+//! endloses Wiederholen; nach 30 Tagen aufgeraeumt).
 //!
 //! Vertrag (Server `recorder/src/landingInput.ts`): gzip-JSON
 //! `{eingabe: {meta, eingang, herkunft, roh}, fenster: {proben}, ergebnis}`
@@ -35,7 +36,6 @@ use sha2::{Digest, Sha256};
 
 use crate::bewertung::Status;
 
-const ORDNER: &str = "landing_inputs";
 const SCHEMA: u32 = 1;
 /// Hoechste `seq`, die der Server annimmt (`landingInput.ts`, `seq > 50`
 /// → 400 `seq_ungueltig`).
@@ -130,7 +130,7 @@ fn sicher(s: &str) -> String {
     s.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect()
 }
 
-/// Aufbewahrung von Warteschlange und Abgelehntem.
+/// Aufbewahrung des Abgelehnten (offene Eintraege bleiben, P-7.21).
 const AUFBEWAHREN: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
 
 /// Kontoordner: Kurzhash des Pilot-Tokens (keine Kennung im Klartext).
@@ -140,7 +140,7 @@ pub(crate) fn konto(token: &str) -> String {
 
 /// Legt das Dokument gzip-gepackt in die Warteschlange des Kontos.
 pub(crate) fn einreihen(app_daten: &Path, konto: &str, pirep_id: &str, seq: u32, doc: &serde_json::Value) -> std::io::Result<PathBuf> {
-    let ordner = app_daten.join(ORDNER).join(sicher(konto));
+    let ordner = crate::upload_warteschlange::eingabe_ordner(app_daten, &sicher(konto));
     std::fs::create_dir_all(&ordner)?;
     let ziel = ordner.join(format!("{}_{seq}.json.gz", sicher(pirep_id)));
     let tmp = ziel.with_extension("tmp");
@@ -168,40 +168,37 @@ pub(crate) fn folge(status: Option<u16>) -> Folge {
     }
 }
 
-/// Alte Dateien (Warteschlange und Abgelehntes) aufraeumen.
+/// Altes Abgelehntes aufraeumen. Offene Eintraege bleiben, egal wie alt
+/// (P-7.21: gibt nie auf).
 fn aufraeumen(ordner: &Path) {
-    for unter in [ordner.to_path_buf(), ordner.join("abgelehnt")] {
-        let Ok(es) = std::fs::read_dir(&unter) else { continue };
-        for e in es.flatten() {
-            let alt = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
-            if e.path().is_file() && alt.is_some_and(|a| a > AUFBEWAHREN) {
-                let _ = std::fs::remove_file(e.path());
-            }
+    let Ok(es) = std::fs::read_dir(ordner.join("abgelehnt")) else { return };
+    for e in es.flatten() {
+        let alt = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+        if e.path().is_file() && alt.is_some_and(|a| a > AUFBEWAHREN) {
+            let _ = std::fs::remove_file(e.path());
         }
     }
 }
 
-/// Sendet alle wartenden Dokumente des angemeldeten Kontos. Ohne
-/// Pilot-Token passiert nichts (die Dateien bleiben liegen). Immer nur ein
-/// Durchlauf gleichzeitig (Codex 29.10.).
-pub(crate) async fn nachsenden(app_daten: PathBuf) {
+/// Sendet alle faelligen Dokumente des angemeldeten Kontos (je Anfrage
+/// hoechstens `zeit`). Ohne Pilot-Token passiert nichts (die Dateien bleiben
+/// liegen). Immer nur ein Durchlauf gleichzeitig (Codex 29.10.).
+pub(crate) async fn nachsenden(app_daten: PathBuf, zeit: std::time::Duration) {
+    use crate::upload_warteschlange as uw;
     static NUR_EINER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _einer = NUR_EINER.lock().await;
     let Some(token) = crate::live_zugang::pilot_token() else {
         return;
     };
-    let ordner = app_daten.join(ORDNER).join(konto(&token));
+    let ordner = uw::eingabe_ordner(&app_daten, &konto(&token));
     aufraeumen(&ordner);
-    let Ok(eintraege) = std::fs::read_dir(&ordner) else {
-        return;
-    };
+    uw::verwaiste_merker_raeumen(&ordner);
     let url = format!("{}/api/landing-input", crate::live_zugang::live_basis());
-    let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build() else {
+    let Ok(client) = reqwest::Client::builder().timeout(zeit).build() else {
         return;
     };
-    for e in eintraege.flatten() {
-        let pfad = e.path();
-        if pfad.extension().and_then(|x| x.to_str()) != Some("gz") {
+    for pfad in uw::eingaben(&app_daten, &konto(&token)) {
+        if !uw::faellig(&pfad, chrono::Utc::now().timestamp_millis()) {
             continue;
         }
         let Ok(koerper) = std::fs::read(&pfad) else { continue };
@@ -220,16 +217,25 @@ pub(crate) async fn nachsenden(app_daten: PathBuf) {
         }
         match folge(status) {
             Folge::Loeschen => {
-                let _ = std::fs::remove_file(&pfad);
+                uw::erledigt(&pfad);
                 tracing::info!(datei = %pfad.display(), "Eingabe-Dokument an live uebergeben");
             }
             Folge::Ablehnen => {
                 let abgelehnt = ordner.join("abgelehnt");
                 let _ = std::fs::create_dir_all(&abgelehnt);
-                let _ = std::fs::rename(&pfad, abgelehnt.join(e.file_name()));
+                if let Some(name) = pfad.file_name() {
+                    let _ = std::fs::rename(&pfad, abgelehnt.join(name));
+                }
+                uw::erledigt(&pfad);
                 tracing::warn!(datei = %pfad.display(), ?status, "Eingabe-Dokument von live abgelehnt");
             }
             Folge::Behalten => {
+                let grund = match (&antwort, status) {
+                    (_, Some(s)) => format!("HTTP {s}"),
+                    (Err(e), None) => e.to_string(),
+                    _ => "unbekannt".to_string(),
+                };
+                uw::fehlschlag(&pfad, chrono::Utc::now().timestamp_millis(), &grund);
                 tracing::info!(datei = %pfad.display(), ?status, "Eingabe-Dokument: live nicht erreichbar, spaeter erneut");
             }
         }
@@ -342,6 +348,22 @@ mod tests {
         }
     }
 
+    /// P-7.21: offene Eintraege werden nie wegen ihres Alters geloescht,
+    /// altes Abgelehntes schon (Gegenprobe).
+    #[test]
+    fn aufraeumen_laesst_offene_eintraege_stehen() {
+        let ordner = std::env::temp_dir().join(format!("aeroacars-li-alt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ordner);
+        std::fs::create_dir_all(ordner.join("abgelehnt")).unwrap();
+        let alt = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 3600);
+        for p in [ordner.join("P1_1.json.gz"), ordner.join("abgelehnt").join("P0_1.json.gz")] {
+            std::fs::File::create(&p).unwrap().set_modified(alt).unwrap();
+        }
+        aufraeumen(&ordner);
+        assert!(ordner.join("P1_1.json.gz").exists(), "offener Eintrag bleibt");
+        assert!(!ordner.join("abgelehnt").join("P0_1.json.gz").exists(), "Gegenprobe: altes Abgelehntes geht");
+    }
+
     #[test]
     fn einreihen_legt_gzip_datei_ab() {
         let ordner = std::env::temp_dir().join(format!("aeroacars-li-{}", std::process::id()));
@@ -349,7 +371,7 @@ mod tests {
         let d = serde_json::json!({"a": 1});
         let p = einreihen(&ordner, "k1", "AB/../C", 2, &d).unwrap();
         assert_eq!(p.file_name().unwrap(), "ABC_2.json.gz");
-        assert!(p.starts_with(ordner.join(ORDNER).join("k1")), "je Konto ein Ordner");
+        assert!(p.starts_with(ordner.join("pending_uploads").join("eingabe").join("k1")), "je Konto ein Ordner");
         assert_ne!(konto("token-a"), konto("token-b"));
         assert_eq!(konto("token-a").len(), 16);
         let mut text = String::new();

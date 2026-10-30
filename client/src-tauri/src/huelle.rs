@@ -348,7 +348,9 @@ pub(crate) fn flight_logs_auto_purge_set(app: AppHandle, enabled: bool) -> Resul
 
 fn alte_flugprotokolle_loeschen(app: &AppHandle) {
     let Ok(dir) = app.path().app_data_dir() else { return };
-    match recorder::flight_logs_purge_older_than(dir, FLUGPROTOKOLLE_TAGE) {
+    // P-7.21: noch nicht hochgeladene Protokolle bleiben stehen.
+    let behalten = crate::upload_warteschlange::offene_protokolle(&dir);
+    match recorder::flight_logs_purge_older_than_ausser(dir, FLUGPROTOKOLLE_TAGE, &behalten) {
         Ok(n) if n > 0 => tracing::info!(deleted = n, days = FLUGPROTOKOLLE_TAGE, "flight logs purged (auto)"),
         Ok(_) => {}
         Err(e) => tracing::warn!(error = %e, "flight logs purge failed"),

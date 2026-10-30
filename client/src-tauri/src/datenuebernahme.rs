@@ -6,7 +6,8 @@
 //!
 //! **Nicht** kopiert wird, was beide Apps sonst doppelt an den Server
 //! schicken koennten: die Warteschlangen fuer PIREPs, Nachtraege und
-//! Flugprotokolle und der offene Flug. Dazu die Logs von 2.x (eigene Logs
+//! Flugprotokolle (2.x `flight_logs`, 3.0 `pending_uploads` und der fruehere
+//! 3.0-Ordner `landing_inputs`, P-7.21) und der offene Flug. Dazu die Logs von 2.x (eigene Logs
 //! je App). Laeuft ganz am Anfang von `run`, bevor irgendetwas den Ordner
 //! liest; Fehler werden protokolliert, der Start geht weiter.
 
@@ -23,6 +24,8 @@ const AUSGENOMMEN: &[&str] = &[
     "pending_pireps",
     "nachtrag",
     "flight_logs",
+    "pending_uploads",
+    "landing_inputs",
     "active_flight.json",
     "logs",
     "laufzeit-paket",
@@ -101,7 +104,7 @@ mod tests {
         std::fs::write(q.join("landings.json"), "[]").unwrap();
         std::fs::create_dir_all(q.join("bordbuch/2026")).unwrap();
         std::fs::write(q.join("bordbuch/2026/a.json"), "{}").unwrap();
-        for weg in ["pending_pireps", "nachtrag", "flight_logs", "logs"] {
+        for weg in ["pending_pireps", "nachtrag", "flight_logs", "pending_uploads", "landing_inputs", "logs"] {
             std::fs::create_dir_all(q.join(weg)).unwrap();
             std::fs::write(q.join(weg).join("x"), "1").unwrap();
         }
@@ -111,7 +114,7 @@ mod tests {
         assert_eq!(kopiert, ["bordbuch", "landings.json", "secrets.json"]);
         assert_eq!(std::fs::read_to_string(z.join("secrets.json")).unwrap(), "geheim");
         assert!(z.join("bordbuch/2026/a.json").exists());
-        for weg in ["pending_pireps", "nachtrag", "flight_logs", "logs", "active_flight.json"] {
+        for weg in ["pending_pireps", "nachtrag", "flight_logs", "pending_uploads", "landing_inputs", "logs", "active_flight.json"] {
             assert!(!z.join(weg).exists(), "{weg} darf nicht mit");
         }
         // 2.x unveraendert (Rueckweg)
