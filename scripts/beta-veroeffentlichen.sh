@@ -9,17 +9,20 @@
 #       bieten alle Beta-Installationen das Update an.
 #
 #   scripts/beta-veroeffentlichen.sh --final <tag>
-#       Spaeter beim finalen 3.0: kopiert latest.json des fertigen Releases
-#       <tag> (z. B. v3.0.0) in den Beta-Kanal, damit die Betas auf die finale
-#       Fassung wechseln (semver: 3.0.0 > 3.0.0-beta.N).
+#       Finales 3.x (z. B. v3.0.0, von release.yml als Entwurf/Pre-Release
+#       gebaut): veroeffentlicht es als normales Release OHNE "latest" und
+#       setzt dessen latest.json in den 3.x-Kanal aeroacars3-kanal und in den
+#       Beta-Kanal (semver: 3.0.0 > 3.0.0-beta.N, die Betas wechseln mit).
 #
 # Idempotent: erneuter Aufruf laedt alles mit --clobber neu hoch.
-# Nichts davon darf je "latest" werden — 2.x fragt releases/latest ab.
+# Nichts von 3.x darf je GitHub-"latest" werden — 2.x-Installationen fragen
+# releases/latest/download/latest.json ab und bekaemen es sonst angeboten.
+# 3.x fragt nur seine Kanaele (tauri.conf.json / tauri.beta.conf.json).
 set -euo pipefail
 
 REPO=MANFahrer-GF/AeroACARS
 KANAL=aeroacars3-beta-kanal
-KANAL_URL="https://github.com/${REPO}/releases/download/${KANAL}/latest.json"
+KANAL_FINAL=aeroacars3-kanal
 
 fehler() { echo "FEHLER: $*" >&2; exit 1; }
 [[ $# -ge 1 ]] || fehler "Aufruf: $0 <run-id> | --final <tag>"
@@ -37,30 +40,53 @@ pruefe_vorab() {
 }
 
 # Kanal-Release anlegen (falls noetig) und latest.json ersetzen — immer zuletzt.
+# Kanaele sind Pre-Releases: die werden nie GitHub-"latest".
 kanal_setzen() {
-  local json=$1 ziel=$2
-  if ! gh release view "$KANAL" -R "$REPO" >/dev/null 2>&1; then
-    gh release create "$KANAL" -R "$REPO" --prerelease --latest=false --target "$ziel" \
-      --title "AeroACARS 3 – Beta-Update-Kanal" \
-      --notes "Nur fuer den Auto-Updater der AeroACARS-3-Betas (latest.json). Bitte nicht loeschen und nicht als Latest markieren."
+  local kanal=$1 json=$2 ziel=$3 titel=$4
+  if ! gh release view "$kanal" -R "$REPO" >/dev/null 2>&1; then
+    gh release create "$kanal" -R "$REPO" --prerelease --latest=false --target "$ziel" \
+      --title "$titel" \
+      --notes "Nur fuer den Auto-Updater von AeroACARS 3 (latest.json). Bitte nicht loeschen und nicht als Latest markieren."
   fi
-  pruefe_vorab "$KANAL"
-  gh release upload "$KANAL" "$json" -R "$REPO" --clobber
+  pruefe_vorab "$kanal"
+  gh release upload "$kanal" "$json" -R "$REPO" --clobber
   # Kontrolle nur als Hinweis: der Upload ist durch, die Auslieferung kann
   # kurz verzoegert noch den alten Stand liefern.
   local live
-  live=$(curl -fsSL "$KANAL_URL" 2>/dev/null | jq -r .version 2>/dev/null) || live="(noch nicht abrufbar)"
-  echo "Kanal $KANAL liefert gerade Version: $live (erwartet: $(jq -r .version "$json"))"
+  live=$(curl -fsSL "https://github.com/${REPO}/releases/download/${kanal}/latest.json" 2>/dev/null | jq -r .version 2>/dev/null) || live="(noch nicht abrufbar)"
+  echo "Kanal $kanal liefert gerade Version: $live (erwartet: $(jq -r .version "$json"))"
+}
+
+# 2.x-Schutz: GitHub-"latest" muss ein 2.x-Release bleiben.
+pruefe_latest_2x() {
+  local latest
+  latest=$(gh api "repos/${REPO}/releases/latest" -q .tag_name)
+  [[ "$latest" != v3.* ]] \
+    || fehler "GitHub-latest ist $latest — 2.x-Installationen bekaemen 3.x angeboten! Sofort zurueckstellen: gh release edit <letztes v2-Release> -R $REPO --latest"
+  echo "GitHub-latest bleibt $latest (2.x)."
 }
 
 if [[ $1 == "--final" ]]; then
   TAG=${2:?Tag fehlt, z. B. v3.0.0}
-  [[ $(gh release view "$TAG" -R "$REPO" --json isPrerelease,isDraft -q '.isPrerelease or .isDraft') == "false" ]] \
-    || fehler "$TAG ist kein veroeffentlichtes finales Release"
+  [[ "$TAG" =~ ^v3\.[0-9]+\.[0-9]+$ ]] || fehler "$TAG ist kein finales 3.x-Tag (vX.Y.Z mit X=3)"
+  gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 || fehler "Release $TAG fehlt — erst release.yml (Tag-Push) bauen lassen"
   gh release download "$TAG" -R "$REPO" -p latest.json -D "$TMP"
   VER=$(jq -r .version "$TMP/latest.json")
-  [[ "v$VER" == "$TAG" && "$VER" != *-* ]] || fehler "latest.json von $TAG traegt Version $VER"
-  kanal_setzen "$TMP/latest.json" "$(gh release view "$TAG" -R "$REPO" --json targetCommitish -q .targetCommitish)"
+  [[ "v$VER" == "$TAG" ]] || fehler "latest.json von $TAG traegt Version $VER"
+  while read -r url; do
+    [[ "$url" == "https://github.com/${REPO}/releases/download/${TAG}/"* ]] || fehler "fremde URL in latest.json: $url"
+  done < <(jq -r '.platforms[].url' "$TMP/latest.json")
+  pruefe_latest_2x
+  # Veroeffentlichen als normales Release, ausdruecklich nicht "latest".
+  gh release edit "$TAG" -R "$REPO" --draft=false --prerelease=false --latest=false
+  [[ $(gh release view "$TAG" -R "$REPO" --json isPrerelease,isDraft -q '.isPrerelease or .isDraft') == "false" ]] \
+    || fehler "$TAG ist nach dem Veroeffentlichen noch Entwurf/Pre-Release"
+  pruefe_latest_2x
+  ZIEL=$(gh release view "$TAG" -R "$REPO" --json targetCommitish -q .targetCommitish)
+  kanal_setzen "$KANAL_FINAL" "$TMP/latest.json" "$ZIEL" "AeroACARS 3 – Update-Kanal"
+  kanal_setzen "$KANAL" "$TMP/latest.json" "$ZIEL" "AeroACARS 3 – Beta-Update-Kanal"
+  pruefe_latest_2x
+  echo "Fertig: $TAG veroeffentlicht (nicht latest), 3.x- und Beta-Kanal zeigen auf $VER."
   exit 0
 fi
 
@@ -85,7 +111,9 @@ gh run download "$RUN" -R "$REPO" -n AeroACARS-beta-kanal -D "$TMP/kanal" \
 cd "$TMP/kanal"
 
 P="AeroACARS.3_${VER}"
-DATEIEN=("${P}_x64-setup.exe" "${P}_x64-setup.exe.sig" "${P}_aarch64.dmg" "${P}_aarch64.app.tar.gz" "${P}_aarch64.app.tar.gz.sig")
+# Das Plugin-Paket laedt die App von releases/download/v<ver>/ (Pruefsumme
+# eingebaut, beta-kanal-bauen.sh hat sie gegen das Paket geprueft).
+DATEIEN=("${P}_x64-setup.exe" "${P}_x64-setup.exe.sig" "${P}_aarch64.dmg" "${P}_aarch64.app.tar.gz" "${P}_aarch64.app.tar.gz.sig" "AeroACARS-XPlane-Plugin-${TAG}.zip")
 for f in "${DATEIEN[@]}" latest.json; do [[ -s "$f" ]] || fehler "$f fehlt im Artefakt"; done
 [[ $(jq -r .version latest.json) == "$VER" ]] || fehler "latest.json traegt $(jq -r .version latest.json), tauri.conf.json $VER"
 # Jede URL zeigt auf eine Datei, die hier hochgeladen wird, und jede Signatur
@@ -108,5 +136,6 @@ gh release upload "$TAG" "${DATEIEN[@]}" -R "$REPO" --clobber
 pruefe_vorab "$TAG"
 
 # Erst wenn alle Dateien liegen, den Kanal umstellen.
-kanal_setzen latest.json "$SHA"
+kanal_setzen "$KANAL" latest.json "$SHA" "AeroACARS 3 – Beta-Update-Kanal"
+pruefe_latest_2x
 echo "Fertig: $TAG veroeffentlicht, Beta-Kanal aktualisiert."

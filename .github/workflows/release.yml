@@ -287,7 +287,16 @@ jobs:
           # Ohne diese Zeile waere `prerelease: false` hart verdrahtet und
           # ein Beta-Tag ginge an JEDEN Piloten raus. Genau das soll die
           # Beta verhindern.
-          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+          #
+          # AeroACARS 3 (eigene Kennung com.aeroacars.app3, GSG-exklusiv) fragt
+          # NICHT releases/latest, sondern den eigenen Kanal aeroacars3-kanal
+          # (tauri.conf.json). Damit ein v3-Release nie "latest" fuer die
+          # 2.x-Installationen wird, entsteht es hier immer als Pre-Release;
+          # freigegeben wird es mit scripts/beta-veroeffentlichen.sh --final
+          # <tag> (--prerelease=false --latest=false, fuellt die Kanaele).
+          # Wer den Entwurf versehentlich in der Oberflaeche veroeffentlicht,
+          # bekommt so trotzdem kein "latest".
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') || startsWith(github.ref_name, 'v3.') }}
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 

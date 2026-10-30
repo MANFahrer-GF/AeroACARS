@@ -29,6 +29,9 @@ name: Dev Build (unsigned, manual)
 # beta-kanal legt Installer, Update-Dateien und latest.json als Artefakt
 # AeroACARS-beta-kanal ab — VEROEFFENTLICHT NICHTS. Das macht nach Freigabe
 # scripts/beta-veroeffentlichen.sh <run-id>.
+# Wie im Release baut ein Beta-Lauf zuerst das X-Plane-Plugin-Paket; die App
+# traegt dessen SHA-256 fest eingebaut (ADR-0004 §8) und installiert nur genau
+# dieses Paket. Ohne Pruefsumme kein Beta-Build.
 on:
   workflow_dispatch:
     inputs:
@@ -42,7 +45,124 @@ on:
         default: false
 
 jobs:
+  # ---- Nur beta: X-Plane-Plugin bauen (wie release.yml plugin-build) ----
+  plugin-build:
+    if: inputs.beta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # windows-2022 wie in release.yml (windows-latest ohne VS-Instanz).
+          - platform: windows-2022
+            generator: 'Visual Studio 17 2022'
+            cmake_args: '-A x64'
+            xpl_name: 'win.xpl'
+            os_label: 'Windows x64'
+          - platform: macos-latest
+            generator: 'Unix Makefiles'
+            cmake_args: '-DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64"'
+            xpl_name: 'mac.xpl'
+            os_label: 'macOS universal'
+          - platform: ubuntu-latest
+            generator: 'Unix Makefiles'
+            cmake_args: '-DCMAKE_BUILD_TYPE=Release'
+            xpl_name: 'lin.xpl'
+            os_label: 'Linux x64'
+    runs-on: ${{ matrix.platform }}
+    name: Plugin — ${{ matrix.os_label }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: OpenGL-Header (Linux, fuer das HUD-Band)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl-dev
+
+      - name: Configure CMake
+        working-directory: xplane-plugin
+        shell: bash
+        run: |
+          cmake -B build -G "${{ matrix.generator }}" ${{ matrix.cmake_args }}
+
+      - name: Build plugin (Release)
+        working-directory: xplane-plugin
+        shell: bash
+        run: |
+          cmake --build build --config Release --target AeroACARS
+
+      - name: Sign mac.xpl
+        if: matrix.xpl_name == 'mac.xpl'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER_SECRET: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_SECRET: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8_SECRET: ${{ secrets.APPLE_API_KEY_P8 }}
+          AEROACARS_SIGNATUR_PFLICHT: "1"
+        run: .github/scripts/apple-plugin-signieren.sh xplane-plugin/build/AeroACARS/64/mac.xpl
+
+      - name: Upload .xpl artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: xplane-plugin-${{ matrix.xpl_name }}-${{ github.sha }}
+          path: xplane-plugin/build/AeroACARS/64/${{ matrix.xpl_name }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---- Nur beta: Plugin-Paket + Pruefsumme (VOR der App, wie release.yml) ----
+  # Name wie in der App erwartet (xplane_plugin_install.rs:
+  # releases/download/v{VERSION}/AeroACARS-XPlane-Plugin-v{VERSION}.zip).
+  plugin-zip:
+    if: inputs.beta
+    needs: plugin-build
+    runs-on: ubuntu-latest
+    outputs:
+      sha256: ${{ steps.summe.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: .xpl laden
+        uses: actions/download-artifact@v8
+        with:
+          pattern: xplane-plugin-*.xpl-${{ github.sha }}
+          path: pkg/AeroACARS/64
+          merge-multiple: true
+
+      - name: Stage attribution + readme
+        run: |
+          set -euo pipefail
+          for x in win.xpl mac.xpl lin.xpl; do test -s "pkg/AeroACARS/64/$x"; done
+          cp xplane-plugin/README.md pkg/AeroACARS/README.md
+          cp xplane-plugin/third_party/XPSDK430/license.txt pkg/AeroACARS/XPLM_SDK_LICENSE.txt
+          cp xplane-plugin/third_party/opensans/OFL.txt pkg/AeroACARS/OpenSans_OFL.txt
+          cp xplane-plugin/third_party/stb/LICENSE pkg/AeroACARS/stb_LICENSE.txt
+          find pkg -type f -printf '%p (%s bytes)\n'
+
+      - name: Zip + SHA-256
+        id: summe
+        run: |
+          set -euo pipefail
+          VER=$(jq -r .version client/src-tauri/tauri.conf.json)
+          ZIP="AeroACARS-XPlane-Plugin-v${VER}.zip"
+          (cd pkg && zip -r "../$ZIP" AeroACARS)
+          SUMME=$(sha256sum "$ZIP" | cut -d' ' -f1)
+          echo "sha256=$SUMME" >> "$GITHUB_OUTPUT"
+          echo "Plugin-Paket $ZIP SHA-256: $SUMME"
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: AeroACARS-xplane-plugin-zip-${{ github.sha }}
+          path: AeroACARS-XPlane-Plugin-v*.zip
+          if-no-files-found: error
+          retention-days: 7
+
   dev-build-windows:
+    # Bei beta erst das Plugin-Paket (Pruefsumme), ohne beta wird es
+    # uebersprungen und der Dev-Build laeuft wie bisher sofort los.
+    needs: plugin-zip
+    if: ${{ !cancelled() && (needs.plugin-zip.result == 'success' || (!inputs.beta && needs.plugin-zip.result == 'skipped')) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -66,6 +186,19 @@ jobs:
         working-directory: client
         run: npm ci
 
+      # Wie release.yml: Ohne Pruefsumme installierte die App das X-Plane-
+      # Plugin ungeprueft. Eine Beta geht an Piloten — hier sperren.
+      - name: Require X-Plane plugin SHA-256 (beta)
+        if: inputs.beta
+        shell: bash
+        env:
+          SUMME: ${{ needs.plugin-zip.outputs.sha256 }}
+        run: |
+          if [[ ! "$SUMME" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Keine gueltige SHA-256 des X-Plane-Plugin-Pakets ('$SUMME')"
+            exit 1
+          fi
+
       - name: Build (Updater-Dateien nur bei beta)
         shell: bash
         working-directory: client
@@ -77,6 +210,8 @@ jobs:
           # Beta an Piloten: Fehlerberichte wie im Release (release.yml).
           AEROACARS_SENTRY_DSN: ${{ inputs.beta && secrets.AEROACARS_SENTRY_DSN || '' }}
           VITE_SENTRY_DSN_CLIENT: ${{ inputs.beta && secrets.VITE_SENTRY_DSN_CLIENT || '' }}
+          # Pruefsumme des Plugin-Pakets (leer ohne beta = Dev-Build, Warnung).
+          AEROACARS_XPLANE_PLUGIN_SHA256: ${{ needs.plugin-zip.outputs.sha256 }}
         run: npx tauri build --bundles nsis --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Upload installer
@@ -96,6 +231,10 @@ jobs:
           retention-days: 7
 
   dev-build-macos:
+    # Bei beta erst das Plugin-Paket (Pruefsumme), ohne beta wird es
+    # uebersprungen und der Dev-Build laeuft wie bisher sofort los.
+    needs: plugin-zip
+    if: ${{ !cancelled() && (needs.plugin-zip.result == 'success' || (!inputs.beta && needs.plugin-zip.result == 'skipped')) }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -135,6 +274,19 @@ jobs:
           AEROACARS_SIGNATUR_PFLICHT: ${{ inputs.beta && '1' || '0' }}
         run: .github/scripts/apple-signatur-vorbereiten.sh
 
+      # Wie release.yml: Ohne Pruefsumme installierte die App das X-Plane-
+      # Plugin ungeprueft. Eine Beta geht an Piloten — hier sperren.
+      - name: Require X-Plane plugin SHA-256 (beta)
+        if: inputs.beta
+        shell: bash
+        env:
+          SUMME: ${{ needs.plugin-zip.outputs.sha256 }}
+        run: |
+          if [[ ! "$SUMME" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Keine gueltige SHA-256 des X-Plane-Plugin-Pakets ('$SUMME')"
+            exit 1
+          fi
+
       - name: Build (Updater-Dateien nur bei beta)
         shell: bash
         working-directory: client
@@ -146,6 +298,8 @@ jobs:
           # Beta an Piloten: Fehlerberichte wie im Release (release.yml).
           AEROACARS_SENTRY_DSN: ${{ inputs.beta && secrets.AEROACARS_SENTRY_DSN || '' }}
           VITE_SENTRY_DSN_CLIENT: ${{ inputs.beta && secrets.VITE_SENTRY_DSN_CLIENT || '' }}
+          # Pruefsumme des Plugin-Pakets (leer ohne beta = Dev-Build, Warnung).
+          AEROACARS_XPLANE_PLUGIN_SHA256: ${{ needs.plugin-zip.outputs.sha256 }}
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Apple-Signatur pruefen
@@ -176,7 +330,7 @@ jobs:
   # an ein Release — das macht scripts/beta-veroeffentlichen.sh nach Freigabe.
   beta-kanal:
     if: inputs.beta
-    needs: [dev-build-windows, dev-build-macos]
+    needs: [plugin-zip, dev-build-windows, dev-build-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -188,7 +342,9 @@ jobs:
           path: roh
 
       - name: latest.json bauen
-        run: .github/scripts/beta-kanal-bauen.sh roh kanal
+        env:
+          PLUGIN_SHA256: ${{ needs.plugin-zip.outputs.sha256 }}
+        run: .github/scripts/beta-kanal-bauen.sh roh kanal "$PLUGIN_SHA256"
 
       - name: Upload Beta-Kanal-Paket
         uses: actions/upload-artifact@v7

@@ -92,12 +92,42 @@ describe("Beta-Update-Kanal", () => {
     expect(Object.keys(beta.bundle)).toEqual(["createUpdaterArtifacts"]);
   });
 
-  it("laesst die Release-Konfiguration auf dem 2.x-Kanal", () => {
+  it("gibt auch dem finalen 3.x einen eigenen Kanal, nie releases/latest (2.x)", () => {
+    // 3.x ist GSG-exklusiv mit eigener Kennung: es darf weder 2.x-Updates
+    // ziehen noch ueber releases/latest an 2.x-Installationen gehen.
     const c = lies("src-tauri/tauri.conf.json");
     expect(c.plugins.updater.endpoints).toEqual([
-      "https://github.com/MANFahrer-GF/AeroACARS/releases/latest/download/latest.json",
+      "https://github.com/MANFahrer-GF/AeroACARS/releases/download/aeroacars3-kanal/latest.json",
     ]);
+    expect(JSON.stringify(c)).not.toContain("releases/latest");
+    expect(c.plugins.updater.endpoints).not.toEqual(lies("src-tauri/tauri.beta.conf.json").plugins.updater.endpoints);
     expect(readFileSync("../.github/workflows/release.yml", "utf8")).not.toContain("tauri.beta");
+  });
+
+  it("baut v3-Releases als Pre-Release und gibt sie nur ohne latest frei", () => {
+    const rel = readFileSync("../.github/workflows/release.yml", "utf8");
+    const zeile = rel.split("\n").find((z) => z.trim().startsWith("prerelease:"));
+    expect(zeile).toContain("startsWith(github.ref_name, 'v3.')");
+    const skript = readFileSync("../scripts/beta-veroeffentlichen.sh", "utf8");
+    expect(skript).toContain('gh release edit "$TAG" -R "$REPO" --draft=false --prerelease=false --latest=false');
+    expect(skript).toContain("KANAL_FINAL=aeroacars3-kanal");
+    // Nach jedem Schritt pruefen, dass GitHub-latest ein 2.x bleibt.
+    expect(skript.match(/^\s*pruefe_latest_2x$/gm)?.length ?? 0).toBeGreaterThanOrEqual(4);
+  });
+
+  it("verlangt im Beta-Build die Plugin-Pruefsumme und reicht sie in die App", () => {
+    const dev = readFileSync("../.github/workflows/dev-build.yml", "utf8");
+    const env = dev.split("\n").filter((z) => z.includes("AEROACARS_XPLANE_PLUGIN_SHA256:"));
+    expect(env.length).toBe(2);
+    for (const z of env) expect(z).toContain("needs.plugin-zip.outputs.sha256");
+    expect(dev.match(/name: Require X-Plane plugin SHA-256 \(beta\)/g)?.length).toBe(2);
+    expect(dev).toContain('ZIP="AeroACARS-XPlane-Plugin-v${VER}.zip"');
+    expect(dev).toContain('beta-kanal-bauen.sh roh kanal "$PLUGIN_SHA256"');
+    // Die App laedt das Paket unter genau diesem Namen.
+    const rs = readFileSync("src-tauri/src/xplane_plugin_install.rs", "utf8");
+    expect(rs).toContain("releases/download/v{VERSION}/AeroACARS-XPlane-Plugin-v{VERSION}.zip");
+    const skript = readFileSync("../scripts/beta-veroeffentlichen.sh", "utf8");
+    expect(skript).toContain('"AeroACARS-XPlane-Plugin-${TAG}.zip"');
   });
 
   it("signiert im Dev-Build nur bei beta und baut das Kanal-Paket, ohne zu veroeffentlichen", () => {
@@ -120,7 +150,14 @@ describe("Beta-Update-Kanal", () => {
     expect(skript).toContain("KANAL=aeroacars3-beta-kanal");
     expect(KANAL).toContain("/aeroacars3-beta-kanal/");
     // Kein v-Praefix am Kanal-Tag: release.yml laeuft auf v*.
-    expect(skript).not.toMatch(/--latest(?!=false)/);
+    // Jeder ausgefuehrte gh-release-Befehl setzt latest nur auf false (der
+    // Rueckstell-Hinweis im Fehlertext ist kein Befehl).
+    const befehle = skript.split("\n").filter((z) => /^\s*gh release (create|edit)/.test(z));
+    expect(befehle.length).toBe(3);
+    for (const z of befehle) {
+      expect(z).toContain("--latest=false");
+      expect(z).not.toMatch(/--latest(?!=false)/);
+    }
   });
 
   it("nutzt beim Bauen und Veroeffentlichen dieselben Dateinamen", () => {
