@@ -47,6 +47,8 @@
     fn touch_and_go_wird_vor_dem_zuruecksetzen_eingefroren() {
         let f = flug();
         let mut s = f.stats.lock().unwrap();
+        s.phase = FlightPhase::Landing;
+        s.landing_at = Some(Utc::now());
         s.landung_fenster = vec![probe(), probe()];
         s.landing_peak_vs_fpm = Some(-240.0);
         s.landing_source = Some("vs_at_impact".into());
@@ -130,6 +132,36 @@
         s.aufsetzer_eingefroren[1].2["aufsetzen"] = serde_json::json!("anderer");
         landung_beim_wegsteigen_abschliessen(&mut s, &SimSnapshot::default(), Utc::now());
         assert_eq!(s.aufsetzer_eingefroren[1].2["durchstarts"], 1, "fremder Aufsetzer unberuehrt");
+    }
+
+    /// P-4.13: Schliesst `landung_beim_wegsteigen_abschliessen` nicht ab
+    /// (Phasenpruefung: nach dem Abrollen, oder Startlauf ohne Abheben), ist
+    /// es kein Touch-and-Go. Dann wird auch nichts eingefroren — sonst ginge
+    /// ein Dokument `touch_and_go` ohne Entscheidung hinaus, und die echte
+    /// Landung verloere ihr Fenster. Gegenprobe: in der Landung, nach dem
+    /// Fliegen, wird eingefroren und die Entscheidung nachgetragen.
+    #[test]
+    fn ohne_abschluss_wird_nichts_eingefroren() {
+        let f = flug();
+        let mut s = f.stats.lock().unwrap();
+        for (phase, in_der_luft) in [(FlightPhase::TaxiIn, true), (FlightPhase::Takeoff, false)] {
+            s.phase = phase;
+            s.was_airborne = in_der_luft;
+            s.landing_at = Some(Utc::now());
+            s.landung_fenster = vec![probe(), probe()];
+            aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
+            landung_beim_wegsteigen_abschliessen(&mut s, &SimSnapshot::default(), Utc::now());
+            assert!(s.aufsetzer_eingefroren.is_empty(), "{phase:?}/{in_der_luft}: kein Touch-and-Go");
+            assert_eq!(s.landung_fenster.len(), 2, "{phase:?}/{in_der_luft}: Fenster bleibt der Landung");
+        }
+        // Gegenprobe: offene Landung → eingefroren, Entscheidung steht drin.
+        s.phase = FlightPhase::Landing;
+        s.was_airborne = true;
+        aufsetzer_einfrieren(&f, &mut s, &SimSnapshot::default());
+        landung_beim_wegsteigen_abschliessen(&mut s, &SimSnapshot::default(), Utc::now());
+        assert_eq!(s.aufsetzer_eingefroren.len(), 1);
+        assert_eq!(s.aufsetzer_eingefroren[0].2["durchstarts"], 1);
+        assert!(s.landung_fenster.is_empty());
     }
 
     #[test]

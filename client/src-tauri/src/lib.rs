@@ -44200,6 +44200,38 @@ fn steigflug_gehalten(seit: &mut Option<DateTime<Utc>>, steigt: bool, now: DateT
     (now - beginn).num_milliseconds() >= crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_dwell_secs.wert * 1_000
 }
 
+/// v3 (P-4.13): Eingabe-Dokument eines Touch-and-Go einfrieren, bevor
+/// `landung_beim_wegsteigen_abschliessen` die Landungsfelder zuruecksetzt.
+/// Ohne Fenster nichts (der Server verlangt mindestens eine Probe), und
+/// nichts, wenn der Abschluss nicht stattfindet (`offene_landung_beim_
+/// wegsteigen`): Sonst ginge ein `touch_and_go` ohne Entscheidung hinaus, und
+/// die echte Landung verloere ihr Fenster.
+fn aufsetzer_einfrieren(flight: &ActiveFlight, stats: &mut FlightStats, snap: &SimSnapshot) {
+    if stats.landung_fenster.is_empty() || offene_landung_beim_wegsteigen(stats).is_none() {
+        return;
+    }
+    let muster = stats.aufgeloestes_muster.clone().or_else(|| {
+        sim_core::muster_aufloesen(snap.aircraft_icao.as_deref(), &flight.aircraft_icao, snap.aircraft_title.as_deref())
+    });
+    let eingabe = landungs_bewertungseingabe(flight, stats, muster.as_deref(), &flight.arr_airport);
+    let herkunft = landungs_herkunft(flight, stats, &eingabe, &flight.arr_airport);
+    let fenster = std::mem::take(&mut stats.landung_fenster);
+    stats.aufsetzer_eingefroren.push((eingabe, fenster, herkunft));
+}
+
+/// Die Landung, die `landung_beim_wegsteigen_abschliessen` abschliesst: ihr
+/// Aufsetzzeitpunkt — `None`, wenn keine offen ist. Eine Bedingung fuer
+/// Abschliessen und Einfrieren (`aufsetzer_einfrieren`).
+fn offene_landung_beim_wegsteigen(stats: &FlightStats) -> Option<DateTime<Utc>> {
+    // Nach dem Abrollen ist die Landung fertig. Ein Slew, ein Neuladen oder
+    // ein Versetzen in die Hoehe danach ist kein Touch-and-Go — hier und
+    // nicht beim Aufrufer, weil der Sampler ohne Phasenpruefung ruft.
+    if !is_touchdown_capturable_phase(stats.phase, stats.was_airborne) {
+        return None;
+    }
+    stats.landing_at.or(stats.sampler_touchdown_at)
+}
+
 /// Schliesst die laufende Landung ab, weil das Flugzeug wieder wegsteigt
 /// (Touch-and-Go, abgebrochene Landung, Durchstart nach Bodenlauf) — die
 /// EINE Stelle dafuer (20.10.2026, „Stück 3“).
@@ -44220,30 +44252,8 @@ fn steigflug_gehalten(seit: &mut Option<DateTime<Utc>>, steigt: bool, now: DateT
 /// JGXrGwlwa4aOGZpn) und von `step_flight_at` (nach der Haltezeit, wenn kein
 /// Sampler laeuft). Wer zuerst kommt, schliesst ab; danach ist keine Landung
 /// mehr offen.
-/// v3 (P-4.13): Eingabe-Dokument eines Touch-and-Go einfrieren, bevor
-/// `landung_beim_wegsteigen_abschliessen` die Landungsfelder zuruecksetzt.
-/// Ohne Fenster nichts (der Server verlangt mindestens eine Probe).
-fn aufsetzer_einfrieren(flight: &ActiveFlight, stats: &mut FlightStats, snap: &SimSnapshot) {
-    if stats.landung_fenster.is_empty() {
-        return;
-    }
-    let muster = stats.aufgeloestes_muster.clone().or_else(|| {
-        sim_core::muster_aufloesen(snap.aircraft_icao.as_deref(), &flight.aircraft_icao, snap.aircraft_title.as_deref())
-    });
-    let eingabe = landungs_bewertungseingabe(flight, stats, muster.as_deref(), &flight.arr_airport);
-    let herkunft = landungs_herkunft(flight, stats, &eingabe, &flight.arr_airport);
-    let fenster = std::mem::take(&mut stats.landung_fenster);
-    stats.aufsetzer_eingefroren.push((eingabe, fenster, herkunft));
-}
-
 fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnapshot, now: DateTime<Utc>) {
-    // Nach dem Abrollen ist die Landung fertig. Ein Slew, ein Neuladen oder
-    // ein Versetzen in die Hoehe danach ist kein Touch-and-Go — hier und
-    // nicht beim Aufrufer, weil der Sampler ohne Phasenpruefung ruft.
-    if !is_touchdown_capturable_phase(stats.phase, stats.was_airborne) {
-        return;
-    }
-    let Some(aufsetzen) = stats.landing_at.or(stats.sampler_touchdown_at) else {
+    let Some(aufsetzen) = offene_landung_beim_wegsteigen(stats) else {
         return;
     };
     let event = TouchdownEvent {

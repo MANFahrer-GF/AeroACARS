@@ -123,6 +123,12 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// in die Herkunft desselben Aufsetzers nach (Codex 30.10.). Tests
 /// `landungs_eingabe::tests::herkunft_dokumentiert_nur`,
 /// `aufsetzer_einfrieren_tests`.
+/// — plus P-4.13 (Fehler aus 900ae7f7): `offene_landung_beim_wegsteigen`
+/// ist die eine Bedingung fuer Abschliessen und Einfrieren;
+/// `aufsetzer_einfrieren` friert nur ein, wenn der Abschluss stattfindet
+/// (vorher: Phasenpruefung danach → `touch_and_go` ohne Entscheidung, die
+/// Landung verlor ihr Fenster). Test
+/// `aufsetzer_einfrieren_tests::ohne_abschluss_wird_nichts_eingefroren`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -133,4 +139,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "bc952aa42edf91365ca6468e91fe24139b6a3b6ab573e55cc59d55397f3bf2a0";
+const HASH_VOR_DER_ZERLEGUNG: &str = "c7741eb175cf57ddc39ccd84ac97faed9455912ea80944c24b1531fe00660bec";
