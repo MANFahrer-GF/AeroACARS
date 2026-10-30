@@ -169,7 +169,9 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 text: String,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::hilfe::hilfe_anfordern(app.clone(), a.betreff, a.text).await),
+                // Ohne Bilder: Der Befehlsweg der Bruecke nimmt hoechstens 2 MiB
+                // (axum-Standard), das Tablet bietet das Anhaengen daher nicht an.
+                Ok(a) => from_uierr(crate::hilfe::hilfe_anfordern(app.clone(), a.betreff, a.text, None).await),
                 Err(e) => Err(e),
             }
         }

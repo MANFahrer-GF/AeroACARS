@@ -488,6 +488,16 @@ body {
   background: var(--sem-ok);
   flex: 0 0 auto;
 }
+/* Hilfe anfordern: fester Eintrag über den Statuspunkten, in Akzentfarbe,
+   damit er nicht als weiterer Reiter untergeht. */
+.navitem--hilfe {
+  color: var(--acc);
+  font-weight: var(--fw-bold);
+}
+.navitem--hilfe:hover {
+  color: var(--acc);
+  background: var(--acc-quiet);
+}
 .nav__foot {
   border-top: 1px solid var(--line);
   padding: var(--sp-2);

@@ -106,6 +106,26 @@ describe("Sidebar — nichts darf beim Umbau verloren gehen", () => {
     expect(screen.getByText("MSFS")).toBeTruthy();
   });
 
+  // Beta 1 (Thomas): „Hilfe anfordern ist mir zu versteckt“ — fester Eintrag
+  // im Fuß bei den Statuspunkten, nicht nur unter „Über“.
+  it("führt „Hilfe anfordern“ fest im Fuß, mit F1 und auch eingeklappt beschriftet", () => {
+    const onHilfe = vi.fn();
+    const { container } = renderNav({ onHilfe, collapsed: true });
+    const knopf = screen.getByRole("button", { name: deCommon.hilfe.knopf });
+    expect(container.querySelector(".nav__foot")?.contains(knopf)).toBe(true);
+    expect(knopf.getAttribute("aria-keyshortcuts")).toBe("F1");
+    expect(knopf.getAttribute("title")).toBe(deCommon.hilfe.kuerzel);
+    knopf.click();
+    expect(onHilfe).toHaveBeenCalledTimes(1);
+    // ein Dialog, kein Reiter: der aktive Bereich bleibt
+    expect(knopf.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("ohne Hilfe-Handler kein Hilfe-Eintrag (Gegenprobe)", () => {
+    renderNav();
+    expect(screen.queryByRole("button", { name: deCommon.hilfe.knopf })).toBeNull();
+  });
+
   it("hat einen beschrifteten Einklapp-Knopf", () => {
     renderNav({ collapsed: false });
     expect(screen.getByRole("button", { name: deCommon.nav.collapse })).toBeTruthy();
