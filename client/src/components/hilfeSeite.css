@@ -3,6 +3,16 @@
    (.settings, .settings__section, .settings__field in App.css); hier nur,
    was die Seite zusätzlich braucht. */
 
+.hilfe-seite__titel:focus {
+  outline: none;
+}
+
+.hilfe-seite__titel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
 .hilfe-seite__kategorie {
   display: flex;
   align-items: center;
