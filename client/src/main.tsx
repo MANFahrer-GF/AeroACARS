@@ -12,6 +12,7 @@ import { texteAusPaketLaden } from "./i18n";
 import { flotteAusPaketLaden } from "./lib/aircraftIcon";
 import "./App.css";
 import { applyTheme, getInitialTheme } from "./theme";
+import { sichtbereichHalten } from "./lib/sichtbereich";
 import { GsgSkinProvider } from "./components/GsgSkinProvider";
 import { BasemapProvider } from "./components/BasemapContext";
 import { initSentry, consentIsUnset, setConsent, Sentry } from "./lib/sentry";
@@ -85,6 +86,9 @@ applyTheme(getInitialTheme());
 // wo das native Menu (z. B. Reload) sinnvoll bleibt.
 if (isTauri) {
   document.addEventListener("contextmenu", (e) => e.preventDefault());
+} else {
+  // iPad über die LAN-Brücke: Tastatur darf das Dokument nicht verschieben.
+  sichtbereichHalten();
 }
 
 /**

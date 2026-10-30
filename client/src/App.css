@@ -326,6 +326,19 @@ body {
   grid-template-columns: var(--nav-w-icon) 1fr;
 }
 
+/* LAN-Browser (iPad): Das Dokument rollt nie, der Rahmen ist so hoch wie der
+   sichtbare Bereich über der Tastatur. Sonst schob iPadOS beim Tippen in den
+   Chat die ganze Seite hoch und holte sie nicht zurück (lib/sichtbereich.ts). */
+html.im-browser,
+html.im-browser body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+html.im-browser .shell {
+  height: var(--sicht-h, 100%);
+  min-height: 0;
+}
+
 /* Bugfix 2026-08-03 (Feldbefund Thomas K.): `.shell` ist ein 2-Spalten-
    Grid (Seitenleiste + Inhalt) — aber die Seitenleiste rendert NICHT im
    ausgeloggten Zustand oder während des Session-Checks (`showTabs` false

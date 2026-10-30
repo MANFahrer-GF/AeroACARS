@@ -39,6 +39,20 @@
         "1422"
       ],
       "port": 1422
+    },
+    {
+      "name": "chat-demo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "--prefix",
+        "client",
+        "vite",
+        "--config",
+        "client/vite.chat.config.mjs",
+        "--port",
+        "1423"
+      ],
+      "port": 1423
     }
   ]
 }
