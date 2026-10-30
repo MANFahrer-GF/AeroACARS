@@ -427,14 +427,60 @@ fn starten_einmal(app_daten: &Path) {
     tracing::info!(stand = %wirksam, ?herkunft, "Laufzeit-Paket geladen");
 }
 
+/// P-3.04: Zeitpunkt der letzten erfolgreichen Pruefung bei live (Datei in
+/// der Ablage, RFC 3339).
+const LETZTE_PRUEFUNG: &str = "letzte_pruefung";
+/// P-3.04: Nach so vielen Tagen ohne erfolgreiche Pruefung gibt es einen Hinweis.
+const PRUEFUNG_HINWEIS_TAGE: i64 = 30;
+
+fn pruefung_datei(app_daten: &Path) -> PathBuf {
+    app_daten.join("laufzeit-paket").join(LETZTE_PRUEFUNG)
+}
+
+/// P-3.04: Eine Pruefung war erfolgreich — live hat geantwortet und der Stand
+/// ist bekannt: neuer Stand installiert, schon aktuell (auch 404 „kein Stand
+/// auf live“) oder im Laden durch einen Flugbeginn abgebrochen.
+fn pruefung_vermerken(app_daten: &Path, jetzt: chrono::DateTime<chrono::Utc>) {
+    let datei = pruefung_datei(app_daten);
+    if let Some(ordner) = datei.parent() {
+        let _ = std::fs::create_dir_all(ordner);
+    }
+    if let Err(e) = std::fs::write(&datei, jetzt.to_rfc3339()) {
+        tracing::warn!(error = %e, "Laufzeit-Paket: Zeitpunkt der Pruefung nicht speicherbar");
+    }
+}
+
+/// P-3.04: Tage seit der letzten erfolgreichen Pruefung, wenn es mehr als 30
+/// sind (sonst `None`). Ohne Vermerk (erster Start, noch nie geprueft) beginnt
+/// die Zaehlung jetzt — der Vermerk wird angelegt.
+pub(crate) fn pruefung_ueberfaellig(app_daten: &Path, jetzt: chrono::DateTime<chrono::Utc>) -> Option<i64> {
+    let letzte = std::fs::read_to_string(pruefung_datei(app_daten))
+        .ok()
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t.trim()).ok())
+        .map(|t| t.with_timezone(&chrono::Utc));
+    let Some(letzte) = letzte else {
+        pruefung_vermerken(app_daten, jetzt);
+        return None;
+    };
+    let seit = jetzt - letzte;
+    (seit > chrono::Duration::days(PRUEFUNG_HINWEIS_TAGE)).then(|| seit.num_days())
+}
+
 /// Holt einen neueren Stand von live und installiert ihn; aktiv wird er erst
 /// beim naechsten Programmstart (P-3.20). Nicht bei offenem Flug, nicht ohne
 /// Pruefschluessel (dann bestuende ohnehin kein Stand die Pruefung).
-pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf) {
+///
+/// P-3.04: Danach — oder sofort, wenn im Flug nicht geprueft wird — ruft es
+/// `hinweis(tage)`, falls die letzte erfolgreiche Pruefung mehr als 30 Tage
+/// zurueckliegt. Der aktive Stand laeuft trotzdem weiter.
+pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf, hinweis: impl FnOnce(i64) + Send + 'static) {
     if PRUEFSCHLUESSEL.is_empty() {
         return;
     }
     if flug_offen(&app_daten) {
+        if let Some(tage) = pruefung_ueberfaellig(&app_daten, chrono::Utc::now()) {
+            hinweis(tage);
+        }
         // Kein Update im Flug — aber fehlte beim Start der Stand des offenen
         // Flugs, genau diesen nachholen (P-3.31).
         if let Some((_, pin)) = PIN.get().cloned() {
@@ -449,9 +495,15 @@ pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf) {
     }
     tauri::async_runtime::spawn(async move {
         match aktualisieren(&app_daten).await {
-            Ok(Some(id)) => tracing::info!(stand = %id, "Laufzeit-Paket: neuer Stand, aktiv ab naechstem Start"),
-            Ok(None) => {}
+            Ok(Some(id)) => {
+                pruefung_vermerken(&app_daten, chrono::Utc::now());
+                tracing::info!(stand = %id, "Laufzeit-Paket: neuer Stand, aktiv ab naechstem Start");
+            }
+            Ok(None) => pruefung_vermerken(&app_daten, chrono::Utc::now()),
             Err(e) => tracing::warn!(error = %e, "Laufzeit-Paket: Aktualisierung nicht moeglich"),
+        }
+        if let Some(tage) = pruefung_ueberfaellig(&app_daten, chrono::Utc::now()) {
+            hinweis(tage);
         }
     });
 }
@@ -833,6 +885,25 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         for d in crate::grenzwerte::DATEIEN {
             assert!(p.datei(d).is_ok(), "{d} fehlt im eingebauten Stand");
         }
+    }
+
+    /// P-3.04: Hinweis erst NACH 30 Tagen ohne erfolgreiche Pruefung: nie
+    /// geprueft beginnt die Zaehlung (kein Hinweis), 31 Tage → Hinweis,
+    /// Gegenprobe 29 Tage → keiner; eine erfolgreiche Pruefung setzt zurueck.
+    #[test]
+    fn hinweis_nach_dreissig_tagen_ohne_pruefung() {
+        let dir = std::env::temp_dir().join(format!("aeroacars-pruefung-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let jetzt = chrono::Utc::now();
+        let tag = chrono::Duration::days(1);
+        assert_eq!(pruefung_ueberfaellig(&dir, jetzt), None, "nie geprueft: Zaehlung beginnt");
+        assert_eq!(pruefung_ueberfaellig(&dir, jetzt + tag * 29), None, "29 Tage: noch kein Hinweis");
+        assert_eq!(pruefung_ueberfaellig(&dir, jetzt + tag * 31), Some(31), "nie erfolgreich, 31 Tage");
+        pruefung_vermerken(&dir, jetzt - tag * 31);
+        assert_eq!(pruefung_ueberfaellig(&dir, jetzt), Some(31), "letzter Erfolg vor 31 Tagen");
+        pruefung_vermerken(&dir, jetzt - tag * 29);
+        assert_eq!(pruefung_ueberfaellig(&dir, jetzt), None, "Gegenprobe: 29 Tage");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Fehlt der Stand eines offenen Flugs, laeuft das Programm mit dem

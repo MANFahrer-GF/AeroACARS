@@ -195,6 +195,9 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// sobald der Stand nachgeholt ist. Tests
 /// `bewertung::tests::ohne_pinstand_vorlaeufig_nachgeholt_endgueltig`,
 /// `sofortnote_abnehmer_tests::ohne_pinstand_vorlaeufig_und_neu_vor_der_abgabe`.
+/// — plus P-3.04: `aktualisieren_im_hintergrund` bekommt den Melder
+/// `paket_pruefung_hinweis` (Aktivitaetsprotokoll nach ueber 30 Tagen ohne
+/// erfolgreiche Pruefung). Test `laufzeit_paket::tests::hinweis_nach_dreissig_tagen_ohne_pruefung`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -205,4 +208,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "638d845905ba30ee47f026974f066950e09c7be261c1f57050fedd1251545d95";
+const HASH_VOR_DER_ZERLEGUNG: &str = "2eef8da83c20fa44d0e3702802a69f6d4533c602df4d092acb8ce7edcffd4374";

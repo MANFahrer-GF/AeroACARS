@@ -32543,6 +32543,27 @@ async fn flugprotokolle_senden(app: &AppHandle, daten: &std::path::Path) {
     }
 }
 
+/// v3 (P-3.04): Hinweis, wenn das Laufzeit-Paket seit mehr als 30 Tagen
+/// nicht erfolgreich bei live geprueft wurde — im Aktivitaetsprotokoll (mit
+/// Systemmeldung). Der aktive Stand laeuft weiter.
+fn paket_pruefung_hinweis(app: &AppHandle) -> impl FnOnce(i64) + Send + 'static {
+    let app = app.clone();
+    move |tage| {
+        tracing::warn!(tage, "Laufzeit-Paket seit ueber 30 Tagen nicht erfolgreich geprueft");
+        log_activity_handle(
+            &app,
+            ActivityLevel::Warn,
+            format!("Bewertungsregeln seit {tage} Tagen nicht geprüft"),
+            Some(
+                "AeroACARS konnte den Stand der Bewertungsregeln nicht beim Live-Server abfragen und \
+                 rechnet mit dem vorhandenen Stand weiter. Bitte Internetverbindung prüfen; \
+                 hält das an, beim GSG-Team melden."
+                    .to_string(),
+            ),
+        );
+    }
+}
+
 /// v3 (P-7.24): ausstehende Uploads des angemeldeten Kontos — je Flug Art,
 /// „seit“, Zahl der Fehlversuche und Grund des letzten Fehlschlags. Fremde
 /// Konten bleiben verborgen.
@@ -55497,7 +55518,7 @@ pub fn run() {
         })
         .setup(|app| {
             // v3 (Etappe 1a): Laufzeit-Paket zuerst — legt OurAirports fest, bevor jemand Bahnen liest.
-            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten.clone()); spawn_upload_arbeiter(app.handle()); }
+            if let Ok(daten) = app.path().app_data_dir() { laufzeit_paket::starten(&daten); laufzeit_paket::aktualisieren_im_hintergrund(daten.clone(), paket_pruefung_hinweis(app.handle())); spawn_upload_arbeiter(app.handle()); }
             // v3 (Etappe 5): CI-Messlauf P-8.03 (nur Fenster `ui`), sonst Einstellungen der Huelle anwenden.
             if ui_lader::selbsttest_starten(app) { return Ok(()); } else { huelle::beim_start_anwenden(app.handle()); }
             // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
