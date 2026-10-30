@@ -1890,7 +1890,10 @@ function MainBidCard({
         </div>
       )}
 
-      {ofpMismatch && plan && (
+      {/* Laufender Flug (nurAnsicht): SimBrief liefert den ZULETZT erstellten
+          OFP — ist das schon der nächste Flug, wäre „neuen OFP erstellen“
+          hier falsch. Die Planwerte des laufenden Flugs stehen im Cockpit. */}
+      {!nurAnsicht && ofpMismatch && plan && (
         <div className="bid-card__ofp-mismatch">
           <div className="bid-card__ofp-mismatch-text">
             <strong>{t("bids.ofp_mismatch_title")}</strong>

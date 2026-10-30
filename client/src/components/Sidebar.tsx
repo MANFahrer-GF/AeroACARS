@@ -20,28 +20,14 @@ import { type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { isTauri } from "../lib/ipc";
 
-export type Tab =
-  | "flug"
-  | "map"
-  | "cpdlc"
-  | "chat"
-  | "logbook"
-  | "landing"
-  | "bordbuch"
-  | "telemetrie"
-  | "notizblock"
-  | "kabine"
-  | "news"
-  | "log"
-  | "settings"
-  | "hilfe"
-  | "about"
-  | "devpreview";
-
-const REITER: readonly Tab[] = [
+/** Alle Hauptreiter — eine Liste, aus der auch der Typ entsteht, damit
+ *  `reiterAusSeite` keinen neuen Reiter lautlos verwirft. */
+const REITER = [
   "flug", "map", "cpdlc", "chat", "logbook", "landing", "bordbuch", "telemetrie",
   "notizblock", "kabine", "news", "log", "settings", "hilfe", "about", "devpreview",
-];
+] as const;
+
+export type Tab = (typeof REITER)[number];
 
 /**
  * Seitenname von außen (StreamDeck-Ereignis `deck-seite`) → Reiter.
@@ -53,7 +39,7 @@ const REITER: readonly Tab[] = [
  */
 export function reiterAusSeite(seite: unknown): Tab | null {
   if (seite === "cockpit" || seite === "briefing") return "flug";
-  return REITER.includes(seite as Tab) ? (seite as Tab) : null;
+  return (REITER as readonly unknown[]).includes(seite) ? (seite as Tab) : null;
 }
 
 const STORAGE_KEY = "aeroacars.nav.collapsed";
