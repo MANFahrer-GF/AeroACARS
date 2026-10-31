@@ -11,6 +11,22 @@ function basis(): LandingRecord {
 }
 
 describe("Kopf der Landungsseite", () => {
+  it("Version und Paket-Generation im Kopf (Flug-Pin), wie die Webapp", () => {
+    const kopf = (extra: Partial<LandingRecord>) => {
+      const r = { ...basis(), client_version: "3.0.0-beta.2", ...extra } as LandingRecord;
+      const { container, unmount } = render(<LandingDetail record={r} allRecords={[r]} onBack={() => {}} />);
+      const t = container.querySelector(".landing-headline__version")?.textContent ?? null;
+      unmount();
+      return t;
+    };
+    expect(kopf({ runtime_bundle_id: "55-867b805a584d" })).toBe("AeroACARS 3.0.0-beta.2 · G55");
+    expect(kopf({ runtime_bundle_id: "0-8792671037a3" })).toBe("AeroACARS 3.0.0-beta.2 · G0 eingebaut");
+    // 2.x / Altbestand ohne Pin: nur die Version; Unsinn zeigt keine Generation.
+    expect(kopf({ runtime_bundle_id: null })).toBe("AeroACARS 3.0.0-beta.2");
+    expect(kopf({ runtime_bundle_id: undefined })).toBe("AeroACARS 3.0.0-beta.2");
+    expect(kopf({ runtime_bundle_id: "kaputt" })).toBe("AeroACARS 3.0.0-beta.2");
+  });
+
   it("Flugzeugzeile auch ohne Titel — Kennzeichen, Muster, Simulator", () => {
     const r = { ...basis(), aircraft_title: null, aircraft_registration: "TC-LGA", aircraft_icao: "A359", sim_kind: "msfs" } as LandingRecord;
     const { container } = render(<LandingDetail record={r} allRecords={[r]} onBack={() => {}} />);

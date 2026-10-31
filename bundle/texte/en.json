@@ -1693,7 +1693,9 @@
     },
     "kopf": {
       "ohne_pirep": "Flight report still pending — the score comes with the PIREP",
-      "version": "AeroACARS {{version}}"
+      "version": "AeroACARS {{version}}",
+      "generation": " · G{{n}}",
+      "generation_eingebaut": " · G0 built-in"
     },
     "bahn_vertrauen": {
       "icao_mismatch": "Wrong airport detected — geometry hidden",
@@ -1856,7 +1858,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "PDC/CPDLC: If the callsign you entered yourself differs from the flight's (e.g. SimBrief \"ATC Callsign\" THY4TK), the notice now has a button to use it – and the flight's callsign also arrives when you start the flight after opening the page."
+    "neu_text": "PDC/CPDLC: If the callsign you entered yourself differs from the flight's (e.g. SimBrief \"ATC Callsign\" THY4TK), the notice now has a button to use it – and the flight's callsign also arrives when you start the flight after opening the page. From AeroACARS 3.0.0-beta.2 on, the landing report shows the package generation (G…) your flight ran with, next to the version – for flights flown from then on. Handy when you report an issue."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

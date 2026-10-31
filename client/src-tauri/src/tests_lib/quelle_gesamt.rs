@@ -272,6 +272,12 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// (`lib_positions_streamer.rs`), beide aus `bewertung::zusatz_aus`
 /// (Modulausgabe, auf 16 KB begrenzt). Tests `bewertung::tests::zusatz_*`,
 /// `landing_scoring::zusatz::tests`, `aeroacars_mqtt::tests::zusatz_*`.
+/// — plus Paket-Generation 31.10. (Beta 2): je EINE Zeile `runtime_bundle_id:`
+/// (Flug-Pin) im `FlightMeta` des Positions-Ticks (`lib_positions_streamer.rs`)
+/// und im Landungsdatensatz (`lib_landungsdatensatz.rs`), dazu das PIREP-Feld
+/// „AeroACARS Paket“ (`lib_pirep_felder.rs`). Tests
+/// `aeroacars_mqtt::tests::positionsmeldung_traegt_den_flug_pin`,
+/// `paketstand_steht_als_eigenes_pirep_feld`, vitest `LandungsKopf.qs.test.tsx`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -282,4 +288,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "9da28dd2dd0f68c25669c6a77e2b0a1261ce01fffaec60234166518dcbdccfe8";
+const HASH_VOR_DER_ZERLEGUNG: &str = "03aa67bb9a50b9be62caa3a5458602720a7beb506c3cb688e8a70b81e6d8aca6";

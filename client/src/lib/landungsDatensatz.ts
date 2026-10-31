@@ -435,6 +435,8 @@ export interface LandingRecord {
   /** METAR am Zielflughafen (roh). */
   arr_metar?: string | null;
   client_version?: string | null;
+  /** v3: Paketstand des Flugs (Flug-Pin, `<Generation>-<sha12>`); fehlt bei 2.x. */
+  runtime_bundle_id?: string | null;
   /** Aufsetzpunkt in Grad (zur Nachprüfung der Bahnwerte). */
   landing_lat?: number | null;
   landing_lon?: number | null;

@@ -1293,6 +1293,7 @@ where
         landing_decel_mps2: stats.landing_decel_mps2,
         arr_metar: stats.arr_metar_raw.clone().filter(|m| !m.is_empty()),
         client_version: Some(aufzeichnende_client_version(stats)),
+        runtime_bundle_id: laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
         landing_lat: stats.landing_lat,
         landing_lon: stats.landing_lon,
         approach_runway_changed_late: Some(stats.approach_runway_changed_late),

@@ -5373,6 +5373,22 @@
         );
     }
 
+    /// Beta 2: Paketstand als eigenes PIREP-Feld; `source_name`/„Source" bleibt
+    /// reine Client-Version (IntegrityGate, Logbuecher und SkyOps lesen sie).
+    #[test]
+    fn paketstand_steht_als_eigenes_pirep_feld() {
+        assert_eq!(paket_feldtext(55, "55-867b805a584d"), "G55 (55-867b805a584d)");
+        assert_eq!(paket_feldtext(0, "0-8792671037a3"), "G0 eingebaut (0-8792671037a3)");
+        let flight = flight_fixture("EDDP");
+        let f = build_pirep_fields(&flight, &FlightStats::default(), "EDDP");
+        let pin = laufzeit_paket::flug_pin(&flight.pirep_id).unwrap();
+        assert_eq!(f.get("AeroACARS Paket"), Some(&paket_feldtext(pin.generation, &pin.to_string())));
+        assert_eq!(
+            f.get("Source").map(String::as_str),
+            Some(concat!("AeroACARS/", env!("CARGO_PKG_VERSION")))
+        );
+    }
+
     /// P1/8b: leichter Hopser als PIREP-Feld (GSG-Seite), nicht neben einem
     /// normalen Hopser; ohne beides kein Feld.
     #[test]

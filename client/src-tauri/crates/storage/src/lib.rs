@@ -973,6 +973,10 @@ pub struct LandingRecord {
     /// Client-Version, die die Landung aufgezeichnet hat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_version: Option<String>,
+    /// v3 (Beta 2): Paketstand des Flugs (Flug-Pin, `<Generation>-<sha12>`);
+    /// fehlt bei 2.x und in Altbestand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_bundle_id: Option<String>,
     /// Aufsetzpunkt (Grad), zur Nachprüfung der Bahnwerte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing_lat: Option<f64>,

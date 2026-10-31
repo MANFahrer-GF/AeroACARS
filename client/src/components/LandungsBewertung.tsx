@@ -1071,12 +1071,27 @@ export function LandungsKopf({
           {record.client_version && (
             <span className="landing-headline__version">
               {t("landing.kopf.version", { version: record.client_version })}
+              {/* v3: mit welcher Paket-Generation der Flug lief (Flug-Pin). */}
+              {kopfGeneration(t, record.runtime_bundle_id)}
             </span>
           )}
         </div>
       </div>
     </div>
   );
+}
+
+/** Generation aus einer Paket-Kennung ("N-<sha12>" oder "N"). */
+export function generationAusKennung(id: string | null | undefined): number | null {
+  const m = /^(\d{1,12})(?:-[0-9a-f]*)?$/.exec(typeof id === "string" ? id : "");
+  return m ? Number(m[1]) : null;
+}
+
+/** „ · G55“ bzw. „ · G0 eingebaut“ hinter der Version; leer ohne Paketstand (2.x). */
+function kopfGeneration(t: (k: string, o?: Record<string, unknown>) => string, id: string | null | undefined): string {
+  const n = generationAusKennung(id);
+  if (n == null) return "";
+  return n === 0 ? t("landing.kopf.generation_eingebaut") : t("landing.kopf.generation", { n });
 }
 
 // ---- Teilnoten ------------------------------------------------------------

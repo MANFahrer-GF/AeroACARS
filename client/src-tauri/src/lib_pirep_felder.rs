@@ -279,6 +279,15 @@ fn build_pirep_notes(
 /// Build the custom-fields map sent in `POST /api/pireps/{id}/file`. Field
 /// names follow the de-facto vmsACARS convention so VAs that already configured
 /// fields for vmsACARS see them populate without any work.
+/// „G55 (55-867b805a584d)“ bzw. „G0 eingebaut (0-…)“ fuer das PIREP-Feld.
+fn paket_feldtext(generation: u64, kennung: &str) -> String {
+    if generation == 0 {
+        format!("G0 eingebaut ({kennung})")
+    } else {
+        format!("G{generation} ({kennung})")
+    }
+}
+
 fn build_pirep_fields_mit(
     flight: &ActiveFlight,
     stats: &FlightStats,
@@ -311,6 +320,12 @@ fn build_pirep_fields_mit(
         "Source".into(),
         format!("AeroACARS/{}", env!("CARGO_PKG_VERSION")),
     );
+    // v3 (Beta 2): Paketstand des Flugs fuer Admins. Eigenes Feld statt
+    // `source_name` — den lesen IntegrityGate (Prefix „AeroACARS"),
+    // GsgLogbook/StratosLogbook („simulator") und SkyOps (exakter Filter).
+    if let Some(id) = laufzeit_paket::flug_pin(&flight.pirep_id) {
+        f.insert("AeroACARS Paket".into(), paket_feldtext(id.generation, &id.to_string()));
+    }
 
     // v0.7.19 GAF-707 Accident-Detection: strukturierte Felder fuer den
     // VA-Admin PIREP-Detail-View. Spec §PIREP-Payload.

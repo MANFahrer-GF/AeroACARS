@@ -212,6 +212,8 @@ impl MqttConfig {
 
 #[derive(Clone, Debug)]
 pub struct FlightMeta {
+    /// v3 (Beta 2): Flug-Pin (`<Generation>-<sha12>`), siehe PositionPayload.
+    pub runtime_bundle_id: Option<String>,
     pub callsign: String,
     pub aircraft_icao: String,
     pub dep_icao: String,
@@ -378,6 +380,116 @@ struct PositionPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     arr_gate: Option<String>,
     client_version: &'static str,
+    /// v3 (Beta 2): Paketstand des Flugs (Flug-Pin, `<Generation>-<sha12>`) —
+    /// die Live-Liste zeigt daraus „G55“. Fehlt bei 2.x und ohne Pin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_bundle_id: Option<String>,
+}
+
+/// Die Positionsmeldung eines Ticks (rein, damit testbar).
+fn position_payload(snap: &SimSnapshot, meta: &FlightMeta, phase: FlightPhase) -> PositionPayload {
+        PositionPayload {
+            ts: snap.timestamp.timestamp_millis(),
+            phase: phase_label(phase),
+            // v0.16.13: vom Streamer auf den Snapshot gestempelt (lib.rs,
+            // direkt nach der Schatten-Engine — Reihenfolge verifiziert).
+            shadow_phase: snap.shadow_phase.clone(),
+            shadow_segment: snap.shadow_segment.clone(),
+
+            // Position
+            lat: snap.lat,
+            lon: snap.lon,
+            // v0.16.15: Live-Map zeigt die Altimeter-Hoehe (FR24-Konvention,
+            // Piloten-Erwartung); geometrisches MSL nur als Fallback.
+            alt_ft: snap
+                .altitude_indicated_ft
+                .unwrap_or(snap.altitude_msl_ft)
+                .round() as i32,
+            agl_ft: snap.altitude_agl_ft.round() as i32,
+
+            // Attitude
+            pitch_deg: snap.pitch_deg,
+            bank_deg: snap.bank_deg,
+            hdg_true: snap.heading_deg_true.round() as i32,
+            hdg_mag: snap.heading_deg_magnetic.round() as i32,
+
+            // Speeds
+            ias_kt: snap.indicated_airspeed_kt.round() as i32,
+            tas_kt: snap.true_airspeed_kt.round() as i32,
+            gs_kt: snap.groundspeed_kt.round() as i32,
+            vs_fpm: snap.vertical_speed_fpm.round() as i32,
+            mach: snap.mach,
+
+            // Forces / state
+            g_force: snap.g_force,
+            on_ground: snap.on_ground,
+            parking_brake: snap.parking_brake,
+            stall_warning: snap.stall_warning,
+            overspeed_warning: snap.overspeed_warning,
+
+            // Config
+            gear_position: snap.gear_position,
+            flaps_position: snap.flaps_position,
+            spoilers_position: snap.spoilers_handle_position,
+            spoilers_armed: snap.spoilers_armed,
+            engines_running: snap.engines_running,
+
+            // Lights
+            light_beacon: snap.light_beacon,
+            light_strobe: snap.light_strobe,
+            light_landing: snap.light_landing,
+
+            // Fuel
+            fuel_total_kg: snap.fuel_total_kg,
+            fuel_used_kg: snap.fuel_used_kg,
+            fuel_flow_kg_h: snap.fuel_flow_kg_per_h,
+            total_weight_kg: snap.total_weight_kg,
+
+            // Environment
+            wind_dir_deg: snap.wind_direction_deg,
+            wind_speed_kt: snap.wind_speed_kt,
+            oat_c: snap.outside_air_temp_c,
+            qnh_hpa: snap.qnh_hpa,
+
+            // AP
+            ap_master: snap.autopilot_master,
+            ap_hdg: snap.autopilot_heading,
+            ap_alt: snap.autopilot_altitude,
+            ap_nav: snap.autopilot_nav,
+            ap_app: snap.autopilot_approach,
+
+            // Identity — alle non_empty(): leere Strings werden zu None und
+            // verschwinden aus dem JSON statt "" zu serialisieren. Server-
+            // seitige COALESCE-UPSERTs bleiben so frei von Empty-String-
+            // Vergiftung der flights-Tabelle.
+            callsign: non_empty(&meta.callsign),
+            aircraft_icao: non_empty(&meta.aircraft_icao),
+            // v0.5.19: prefer phpVMS-side registration (from the bid)
+            // over what the sim reports — payware addons often put
+            // a placeholder ("FFSTS") in the SimConnect ATC-ID.
+            // Falls back to the sim value if the bid had nothing.
+            aircraft_registration: if !meta.planned_registration.trim().is_empty() {
+                Some(meta.planned_registration.trim().to_string())
+            } else {
+                snap.aircraft_registration.as_deref().and_then(non_empty)
+            },
+            // v0.8.3 (#5 follow-up): Sim-Aircraft-Title fuer Recorder-
+            // Stats-Recompute. Quelle: SimVar TITLE (MSFS) /
+            // acf_descrip (XP12). non_empty() filtert leere Strings.
+            aircraft_title: snap.aircraft_title.as_deref().and_then(non_empty),
+            simulator: simulator_label(snap.simulator),
+            dep: non_empty(&meta.dep_icao),
+            arr: non_empty(&meta.arr_icao),
+            pirep_id: non_empty(&meta.pirep_id),
+            // v1.5.5 Stand-Erkennung (live): Recorder haengt sie per
+            // setFlightGates an den Live-Flug — Live-Map zeigt den
+            // Ankunftsstand damit schon beim Einparken, nicht erst
+            // nach dem PIREP-Filing.
+            dep_gate: meta.dep_gate.as_deref().and_then(non_empty),
+            arr_gate: meta.arr_gate.as_deref().and_then(non_empty),
+            client_version: env!("CARGO_PKG_VERSION"),
+            runtime_bundle_id: meta.runtime_bundle_id.as_deref().and_then(non_empty),
+        }
 }
 
 /// Convert empty/whitespace-only strings to None — used at the JSON-edge
@@ -2435,107 +2547,7 @@ impl Handle {
     }
 
     pub fn position(&self, snap: &SimSnapshot, meta: &FlightMeta, phase: FlightPhase) {
-        let payload = PositionPayload {
-            ts: snap.timestamp.timestamp_millis(),
-            phase: phase_label(phase),
-            // v0.16.13: vom Streamer auf den Snapshot gestempelt (lib.rs,
-            // direkt nach der Schatten-Engine — Reihenfolge verifiziert).
-            shadow_phase: snap.shadow_phase.clone(),
-            shadow_segment: snap.shadow_segment.clone(),
-
-            // Position
-            lat: snap.lat,
-            lon: snap.lon,
-            // v0.16.15: Live-Map zeigt die Altimeter-Hoehe (FR24-Konvention,
-            // Piloten-Erwartung); geometrisches MSL nur als Fallback.
-            alt_ft: snap
-                .altitude_indicated_ft
-                .unwrap_or(snap.altitude_msl_ft)
-                .round() as i32,
-            agl_ft: snap.altitude_agl_ft.round() as i32,
-
-            // Attitude
-            pitch_deg: snap.pitch_deg,
-            bank_deg: snap.bank_deg,
-            hdg_true: snap.heading_deg_true.round() as i32,
-            hdg_mag: snap.heading_deg_magnetic.round() as i32,
-
-            // Speeds
-            ias_kt: snap.indicated_airspeed_kt.round() as i32,
-            tas_kt: snap.true_airspeed_kt.round() as i32,
-            gs_kt: snap.groundspeed_kt.round() as i32,
-            vs_fpm: snap.vertical_speed_fpm.round() as i32,
-            mach: snap.mach,
-
-            // Forces / state
-            g_force: snap.g_force,
-            on_ground: snap.on_ground,
-            parking_brake: snap.parking_brake,
-            stall_warning: snap.stall_warning,
-            overspeed_warning: snap.overspeed_warning,
-
-            // Config
-            gear_position: snap.gear_position,
-            flaps_position: snap.flaps_position,
-            spoilers_position: snap.spoilers_handle_position,
-            spoilers_armed: snap.spoilers_armed,
-            engines_running: snap.engines_running,
-
-            // Lights
-            light_beacon: snap.light_beacon,
-            light_strobe: snap.light_strobe,
-            light_landing: snap.light_landing,
-
-            // Fuel
-            fuel_total_kg: snap.fuel_total_kg,
-            fuel_used_kg: snap.fuel_used_kg,
-            fuel_flow_kg_h: snap.fuel_flow_kg_per_h,
-            total_weight_kg: snap.total_weight_kg,
-
-            // Environment
-            wind_dir_deg: snap.wind_direction_deg,
-            wind_speed_kt: snap.wind_speed_kt,
-            oat_c: snap.outside_air_temp_c,
-            qnh_hpa: snap.qnh_hpa,
-
-            // AP
-            ap_master: snap.autopilot_master,
-            ap_hdg: snap.autopilot_heading,
-            ap_alt: snap.autopilot_altitude,
-            ap_nav: snap.autopilot_nav,
-            ap_app: snap.autopilot_approach,
-
-            // Identity — alle non_empty(): leere Strings werden zu None und
-            // verschwinden aus dem JSON statt "" zu serialisieren. Server-
-            // seitige COALESCE-UPSERTs bleiben so frei von Empty-String-
-            // Vergiftung der flights-Tabelle.
-            callsign: non_empty(&meta.callsign),
-            aircraft_icao: non_empty(&meta.aircraft_icao),
-            // v0.5.19: prefer phpVMS-side registration (from the bid)
-            // over what the sim reports — payware addons often put
-            // a placeholder ("FFSTS") in the SimConnect ATC-ID.
-            // Falls back to the sim value if the bid had nothing.
-            aircraft_registration: if !meta.planned_registration.trim().is_empty() {
-                Some(meta.planned_registration.trim().to_string())
-            } else {
-                snap.aircraft_registration.as_deref().and_then(non_empty)
-            },
-            // v0.8.3 (#5 follow-up): Sim-Aircraft-Title fuer Recorder-
-            // Stats-Recompute. Quelle: SimVar TITLE (MSFS) /
-            // acf_descrip (XP12). non_empty() filtert leere Strings.
-            aircraft_title: snap.aircraft_title.as_deref().and_then(non_empty),
-            simulator: simulator_label(snap.simulator),
-            dep: non_empty(&meta.dep_icao),
-            arr: non_empty(&meta.arr_icao),
-            pirep_id: non_empty(&meta.pirep_id),
-            // v1.5.5 Stand-Erkennung (live): Recorder haengt sie per
-            // setFlightGates an den Live-Flug — Live-Map zeigt den
-            // Ankunftsstand damit schon beim Einparken, nicht erst
-            // nach dem PIREP-Filing.
-            dep_gate: meta.dep_gate.as_deref().and_then(non_empty),
-            arr_gate: meta.arr_gate.as_deref().and_then(non_empty),
-            client_version: env!("CARGO_PKG_VERSION"),
-        };
+        let payload = position_payload(snap, meta, phase);
         // v1.5.7 (#mqtt-outage): kann NICHT fehlschlagen und NICHTS
         // blockieren — `send` auf einem `watch` überschreibt den vorigen
         // Wert. Ein Netzausfall staut hier nichts mehr auf; sobald die
@@ -3781,6 +3793,31 @@ mod herkunft_auf_der_leitung {
             Some(3666.0)
         );
         assert_eq!(obj.get("bahn_revision").and_then(|v| v.as_u64()), Some(7));
+    }
+
+    /// Beta 2: der Flug-Pin geht in jede Positionsmeldung (Live-Liste „G55“);
+    /// ohne Pin (2.x, kein Paket) fehlt das Feld ganz und der Rest bleibt gleich.
+    #[test]
+    fn positionsmeldung_traegt_den_flug_pin() {
+        let meta = |pin: Option<&str>| FlightMeta {
+            runtime_bundle_id: pin.map(String::from),
+            callsign: "GSG1".into(),
+            aircraft_icao: "A320".into(),
+            dep_icao: "EDDF".into(),
+            arr_icao: "EDDM".into(),
+            planned_registration: String::new(),
+            pirep_id: "P1".into(),
+            dep_gate: None,
+            arr_gate: None,
+        };
+        let snap = SimSnapshot::default();
+        let mit = serde_json::to_value(position_payload(&snap, &meta(Some("55-867b805a584d")), FlightPhase::Cruise)).unwrap();
+        assert_eq!(mit["runtime_bundle_id"].as_str(), Some("55-867b805a584d"));
+        for leer in [None, Some(""), Some("  ")] {
+            let ohne = serde_json::to_value(position_payload(&snap, &meta(leer), FlightPhase::Cruise)).unwrap();
+            assert!(ohne.get("runtime_bundle_id").is_none(), "{leer:?}: Feld fehlt ohne Pin");
+            assert_eq!(ohne["client_version"], mit["client_version"]);
+        }
     }
 
     /// v3 (P-5.10): die neuen Touchdown-Felder gehen auf die Leitung und kommen

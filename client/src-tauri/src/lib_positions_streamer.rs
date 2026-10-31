@@ -2512,6 +2512,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         pirep_id: flight.pirep_id.clone(),
                         dep_gate: tick_dep_gate,
                         arr_gate: tick_arr_gate,
+                        // v3 (Beta 2): Paketstand des Flugs → Live-Liste „G55“.
+                        runtime_bundle_id: laufzeit_paket::flug_pin(&flight.pirep_id).map(|id| id.to_string()),
                     };
                     // v0.5.14: pass current phase so it's inlined into
                     // the position payload — Monitor doesn't have to
