@@ -161,3 +161,20 @@ fn hilfe_tickets_ist_fachlich() {
     let liste = liste();
     assert_eq!(liste.get("hilfe_tickets").map(String::as_str), Some("fachlich"));
 }
+
+/// Thomas 31.10.2026: Einstellungen › Cockpit zeigt den hinterlegten
+/// Hoppie-Logon-Code im Klartext, damit der Pilot ihn nachpruefen kann.
+/// Lesen gibt der Oberflaeche nichts, was sie beim Eintippen nicht schon
+/// hatte (siehe oben) — Setzen und Loeschen bleiben „system“. Die
+/// LAN-Bruecke reicht den Befehl NICHT durch, sonst laege der Code bei jedem
+/// gekoppelten Geraet.
+#[test]
+fn hoppie_logon_code_lesen_nur_lokal() {
+    let liste = liste();
+    assert_eq!(liste.get("hoppie_get_logon_code").map(String::as_str), Some("fachlich"));
+    assert_eq!(liste.get("hoppie_set_logon_code").map(String::as_str), Some("system"));
+    assert_eq!(liste.get("hoppie_clear_logon_code").map(String::as_str), Some("system"));
+    let bruecke = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/remote/bridge.rs")).unwrap();
+    assert!(bruecke.contains("\"hoppie_has_logon_code\" =>"), "Bruecke nicht gelesen");
+    assert!(!bruecke.contains("\"hoppie_get_logon_code\" =>"), "LAN-Bruecke darf den Logon-Code nicht herausgeben");
+}

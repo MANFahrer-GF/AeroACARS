@@ -73,6 +73,7 @@
     "hoppie_connect": "fachlich",
     "hoppie_disconnect": "fachlich",
     "hoppie_get_flight_context": "lesen",
+    "hoppie_get_logon_code": "fachlich",
     "hoppie_get_settings": "lesen",
     "hoppie_get_thread": "lesen",
     "hoppie_has_logon_code": "lesen",

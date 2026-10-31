@@ -1,10 +1,10 @@
 // v1.3.0 (#Hoppie-PDC-CPDLC) — Settings-Panel-Section fuer den Hoppie-
 // ACARS-PDC/CPDLC-Client. Mirrort DiscordRpcPanel.tsx im Aufbau.
 //
-// Default = aus (Opt-In). Logon-Code ist write-only (wird nie zurueck-
-// geladen) mit einem "Code pruefen"-Button, der per side-effekt-freiem
-// Hoppie-`ping` den Code live gegen den echten Server testet, BEVOR der
-// Pilot ueberhaupt speichert/verbindet.
+// Default = aus (Opt-In). Seit 31.10.2026 (Thomas) steht der hinterlegte
+// Logon-Code im Klartext da, damit der Pilot ihn nachpruefen kann — ein
+// Programm ohne `hoppie_get_logon_code` (aelter, LAN-Fernbedienung) zeigt
+// weiter nur „hinterlegt“.
 
 import { useEffect, useState } from "react";
 import { invoke, formatIpcError } from "../lib/ipc";
@@ -22,6 +22,7 @@ export function HoppieSettingsPanel() {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<HoppieSettings | null>(null);
   const [hasCode, setHasCode] = useState(false);
+  const [storedCode, setStoredCode] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +30,7 @@ export function HoppieSettingsPanel() {
   useEffect(() => {
     void invoke<HoppieSettings>("hoppie_get_settings").then(setSettings);
     void invoke<boolean>("hoppie_has_logon_code").then(setHasCode);
+    loadStoredCode();
   }, []);
 
   if (!settings) {
@@ -56,6 +58,13 @@ export function HoppieSettingsPanel() {
 
 
 
+  function loadStoredCode() {
+    invoke<string | null>("hoppie_get_logon_code").then(
+      (code) => setStoredCode(code),
+      () => setStoredCode(null),
+    );
+  }
+
   const saveCode = async () => {
     if (busy || codeInput.trim() === "") return;
     setBusy(true);
@@ -64,6 +73,7 @@ export function HoppieSettingsPanel() {
       await invoke("hoppie_set_logon_code", { code: codeInput });
       setHasCode(true);
       setCodeInput("");
+      loadStoredCode();
     } catch (e) {
       setError(formatIpcError(e));
     } finally {
@@ -78,6 +88,7 @@ export function HoppieSettingsPanel() {
     try {
       await invoke("hoppie_clear_logon_code");
       setHasCode(false);
+      setStoredCode(null);
     } catch (e) {
       setError(formatIpcError(e));
     } finally {
@@ -109,12 +120,18 @@ export function HoppieSettingsPanel() {
 
           <div className="settings__field">
             <span className="settings__field-label">{t("hoppie_settings.logon_code_label")}</span>
-            {hasCode && (
+            {hasCode && storedCode && (
+              <p className="settings__row-hint">
+                {t("hoppie_settings.logon_code_current")}{" "}
+                <code data-testid="hoppie-stored-code">{storedCode}</code>
+              </p>
+            )}
+            {hasCode && !storedCode && (
               <p className="settings__row-hint">{t("hoppie_settings.logon_code_stored")}</p>
             )}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
-                type="password"
+                type="text"
                 value={codeInput}
                 onChange={(e) => {
                   setCodeInput(e.target.value);

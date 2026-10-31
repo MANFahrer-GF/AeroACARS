@@ -1663,6 +1663,9 @@ mod tests {
             // 30.10.2026: Den Client neu starten nur am Sim-PC — das Tablet
             // verloere dabei ohnehin die Verbindung.
             "paket_neu_starten",
+            // 31.10.2026: Den Hoppie-Logon-Code im Klartext zeigt nur der
+            // Sim-PC selbst — sonst laege er bei jedem gekoppelten Geraet.
+            "hoppie_get_logon_code",
         ];
 
         // v1.5.6: LEER — die frueher hier geparkten Luecken (Taxi-Karte,

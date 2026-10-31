@@ -1858,7 +1858,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Update without a second window: from AeroACARS 3.0.0-beta.2.2, \"Install\" in the update dialog installs directly, without the \"AeroACARS — Bestätigung\" window."
+    "neu_text": "Hoppie code visible: under Settings › Cockpit you now see your Hoppie logon code in plain text while typing it. From the next 3.0 update AeroACARS also shows the stored code there, so you can check that it is correct."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -3397,6 +3397,7 @@
     "callsign_placeholder": "defaults to the active flight's callsign",
     "logon_code_label": "Logon code",
     "logon_code_stored": "A logon code is stored.",
+    "logon_code_current": "Stored code:",
     "logon_code_placeholder": "your hoppie.nl logon code",
     "save_button": "Save",
     "clear_button": "Remove",

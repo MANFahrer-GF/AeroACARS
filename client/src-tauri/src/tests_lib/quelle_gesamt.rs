@@ -287,6 +287,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Flug weg ist. Tests
 /// `hoppie::rufzeichen_je_flug_tests::vor_dem_flugstart_gilt_der_ofp_aus_der_vorschau`,
 /// `alte_oder_fehlende_vorschau_gilt_nicht`.
+/// — plus Hoppie-Code im Klartext 31.10.: EINE Zeile im `generate_handler!`,
+/// `hoppie::hoppie_get_logon_code` (Stufe `fachlich`, nicht in der
+/// LAN-Bruecke). Sonst nichts an `lib.rs`. Tests
+/// `tests/befehlsliste.rs::hoppie_logon_code_lesen_nur_lokal`, vitest
+/// `HoppieSettingsPanel.test.tsx`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -297,4 +302,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "854804d53e70bba3e56dfb51c24c376f2bcb88968bb5073520521791b148b7e5";
+const HASH_VOR_DER_ZERLEGUNG: &str = "19925c0da743118ee2bc98ab8d95d10d36c55fdf26580a55af98a9e623bd2b3e";

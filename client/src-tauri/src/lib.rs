@@ -1236,6 +1236,7 @@ pub fn run() {
             hoppie::hoppie_set_settings,
             hoppie::hoppie_set_logon_code,
             hoppie::hoppie_has_logon_code,
+            hoppie::hoppie_get_logon_code,
             hoppie::hoppie_clear_logon_code,
             hoppie::hoppie_ping_station,
             hoppie::hoppie_connect,

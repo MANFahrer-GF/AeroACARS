@@ -498,6 +498,14 @@ pub fn hoppie_has_logon_code() -> Result<bool, UiError> {
         .is_some())
 }
 
+/// Der hinterlegte Code im Klartext fuer Einstellungen › Cockpit (Thomas
+/// 31.10.2026: nachsehen, ob er stimmt). Bewusst nicht in der LAN-Bruecke.
+#[tauri::command(async)]
+pub fn hoppie_get_logon_code() -> Result<Option<String>, UiError> {
+    secrets::load_api_key(HOPPIE_LOGON_CODE_ACCOUNT)
+        .map_err(|e| UiError::new("hoppie_secrets", e.to_string()))
+}
+
 #[tauri::command(async)]
 pub fn hoppie_clear_logon_code() -> Result<(), UiError> {
     secrets::delete_api_key(HOPPIE_LOGON_CODE_ACCOUNT)

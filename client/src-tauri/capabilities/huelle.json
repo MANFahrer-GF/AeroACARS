@@ -77,6 +77,7 @@
     "allow-hoppie-connect",
     "allow-hoppie-disconnect",
     "allow-hoppie-get-flight-context",
+    "allow-hoppie-get-logon-code",
     "allow-hoppie-get-settings",
     "allow-hoppie-get-thread",
     "allow-hoppie-has-logon-code",
