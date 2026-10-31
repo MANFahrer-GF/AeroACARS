@@ -230,6 +230,9 @@ pub fn spawn(
         // pause short (external review P3) — it would only fetch another
         // refusal.
         let mut paused = false;
+        // Neuaufbau nach Rufzeichenwechsel schon angestossen — dieser Poller
+        // wird gleich gestoppt, nicht noch einmal ausloesen.
+        let mut umgestellt = false;
         loop {
             tokio::select! {
                 res = stop_rx.changed() => {
@@ -252,6 +255,56 @@ pub fn spawn(
                 _ = tokio::time::sleep_until(deadline) => {
                     let code_rejected = poll_once(&app, &http, &session, &telex_log, &min_meta, &history_meta, &last_error, &from_callsign, &logon, notify_os && !first_poll).await;
                     first_poll = false;
+                    // 3.0 (Feldbefund Thomas 31.10.2026): Das Rufzeichen steht
+                    // seit dem Verbinden fest. Startet danach ein Flug mit anderem
+                    // (SimBrief „ATC Callsign“, Eintrag vom Vorflug verworfen), lief
+                    // der Empfang unter dem alten weiter. Dann einmal neu verbinden —
+                    // nie bei laufender CPDLC-Anmeldung: der Lotse kennt uns unter
+                    // dem alten Rufzeichen.
+                    if !umgestellt {
+                        let angemeldet = {
+                            let s = session.lock().expect("hoppie session mutex");
+                            s.is_logged_on() || s.is_logon_pending()
+                        };
+                        if let Some(neu) = rufzeichen_wechsel(
+                            &from_callsign,
+                            super::resolve_callsign(&app).as_deref(),
+                            angemeldet,
+                        ) {
+                            umgestellt = true;
+                            log_activity_handle(
+                                &app,
+                                ActivityLevel::Info,
+                                format!("Hoppie: Rufzeichen {from_callsign} → {neu}, Empfang wird neu aufgebaut"),
+                                None,
+                            );
+                            let app = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                use tauri::Manager;
+                                let _ = super::hoppie_disconnect(app.clone(), app.state()).await;
+                                // Scheitert das Verbinden (Netz weg im falschen
+                                // Moment), stuende der Empfang sonst still —
+                                // vorher lief er wenigstens unter dem alten
+                                // Rufzeichen. Darum nachfassen, dann melden.
+                                let mut fehler = String::new();
+                                for versuch in 0..3u64 {
+                                    if versuch > 0 {
+                                        tokio::time::sleep(Duration::from_secs(10 * versuch)).await;
+                                    }
+                                    match super::hoppie_connect(app.clone(), app.state()).await {
+                                        Ok(_) => return,
+                                        Err(e) => fehler = format!("{e:?}"),
+                                    }
+                                }
+                                log_activity_handle(
+                                    &app,
+                                    ActivityLevel::Warn,
+                                    "Hoppie: Neuaufbau unter neuem Rufzeichen fehlgeschlagen — bitte „Empfang starten“",
+                                    Some(fehler),
+                                );
+                            });
+                        }
+                    }
                     paused = code_rejected;
                     let wait = if code_rejected {
                         tracing::warn!("hoppie: logon code refused — polling paused for {LOGON_CODE_REJECTED_BACKOFF_SECS} s");
@@ -265,6 +318,14 @@ pub fn spawn(
         }
         tracing::debug!("hoppie: poller stopped");
     });
+}
+
+/// Rein (testbar): Unter welchem Rufzeichen muesste der Empfang jetzt laufen,
+/// falls er neu aufgebaut werden soll? `None` = so lassen (gleich, keins
+/// bekannt, oder eine CPDLC-Anmeldung laeuft bzw. ist angefragt).
+pub(crate) fn rufzeichen_wechsel(verbunden: &str, wirksam: Option<&str>, angemeldet: bool) -> Option<String> {
+    let wirksam = wirksam?.trim().to_uppercase();
+    (!angemeldet && !wirksam.is_empty() && wirksam != verbunden.trim().to_uppercase()).then_some(wirksam)
 }
 
 /// Fire an OS-native toast for a newly-arrived message — visible even
@@ -2611,3 +2672,27 @@ mod tests {
 #[cfg(test)]
 #[path = "replay_tests.rs"]
 mod replay_tests;
+
+/// 3.0: Empfang folgt dem Rufzeichen des Flugs — aber nie mitten in einer
+/// CPDLC-Anmeldung.
+#[cfg(test)]
+mod rufzeichen_wechsel_tests {
+    use super::rufzeichen_wechsel;
+
+    #[test]
+    fn neuer_flug_mit_anderem_rufzeichen_baut_neu_auf() {
+        assert_eq!(rufzeichen_wechsel("BTI4TK", Some("THY4TK"), false), Some("THY4TK".into()));
+    }
+
+    #[test]
+    fn bei_laufender_anmeldung_bleibt_alles() {
+        assert_eq!(rufzeichen_wechsel("BTI4TK", Some("THY4TK"), true), None);
+    }
+
+    #[test]
+    fn gleiches_oder_kein_rufzeichen_bleibt() {
+        assert_eq!(rufzeichen_wechsel("THY4TK", Some(" thy4tk "), false), None);
+        assert_eq!(rufzeichen_wechsel("THY4TK", None, false), None);
+        assert_eq!(rufzeichen_wechsel("THY4TK", Some(""), false), None);
+    }
+}

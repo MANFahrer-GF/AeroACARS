@@ -125,6 +125,10 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
   const [callsignDirty, setCallsignDirty] = useState(false);
   const [callsignEditing, setCallsignEditing] = useState(false);
   const [callsignReconnecting, setCallsignReconnecting] = useState(false);
+  const callsignEditingRef = useRef(false);
+  const callsignDirtyRef = useRef(false);
+  callsignEditingRef.current = callsignEditing;
+  callsignDirtyRef.current = callsignDirty;
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -169,10 +173,23 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
   // „ATC Callsign“) kamen nie an — Feld, Platzhalter und der Hinweis „Eingabe
   // weicht vom Flug ab“ blieben auf dem alten Stand. Deshalb im Status-Takt
   // nachlesen, unabhängig davon, ob Hoppie eingeschaltet ist.
+  //
+  // Danach auch die Einstellungen: Ein eigener Eintrag gilt nur für seinen Flug
+  // (Kern, `hoppie::resolve_callsign`) und wird beim nächsten Flug dort
+  // verworfen — die Anzeige soll das sehen, ohne die Seite neu zu öffnen. Nicht
+  // während der Pilot gerade tippt.
   useEffect(() => {
     const refreshFlightCallsign = () => {
       void invoke<FlightContext>("hoppie_get_flight_context")
-        .then((ctx) => setFlightCallsign(ctx.callsign))
+        .then((ctx) => {
+          setFlightCallsign(ctx.callsign);
+          return invoke<HoppieSettings>("hoppie_get_settings");
+        })
+        .then((s) => {
+          if (!s || callsignEditingRef.current || callsignDirtyRef.current) return;
+          setSettings(s);
+          setCallsignInput(s.callsign_override ?? "");
+        })
         .catch(() => undefined);
     };
     refreshFlightCallsign();
@@ -259,7 +276,11 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
   const persistCallsign = async (trimmed: string) => {
     try {
       const next = { ...settings, callsign_override: trimmed === "" ? null : trimmed };
-      await invoke<HoppieSettings>("hoppie_set_settings", { settings: next });
+      // `rufzeichen_eingegeben`: der Pilot hat es selbst gesetzt — der Kern
+      // nimmt dann auch ein gerade verworfenes Rufzeichen wieder an.
+      await invoke<HoppieSettings>("hoppie_set_settings", {
+        settings: { ...next, rufzeichen_eingegeben: true },
+      });
       setSettings(next);
       setCallsignInput(trimmed);
       setCallsignDirty(false);
@@ -297,7 +318,9 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
       const trimmed = callsignInput.trim().toUpperCase();
       if (callsignDirty) {
         const next = { ...settings, callsign_override: trimmed === "" ? null : trimmed };
-        await invoke<HoppieSettings>("hoppie_set_settings", { settings: next });
+        await invoke<HoppieSettings>("hoppie_set_settings", {
+          settings: { ...next, rufzeichen_eingegeben: true },
+        });
         setSettings(next);
         setCallsignInput(trimmed);
         setCallsignDirty(false);

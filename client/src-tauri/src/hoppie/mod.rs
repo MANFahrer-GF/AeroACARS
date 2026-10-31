@@ -430,9 +430,52 @@ pub fn hoppie_get_settings(app: AppHandle) -> HoppieSettings {
 }
 
 #[tauri::command]
-pub fn hoppie_set_settings(app: AppHandle, settings: HoppieSettings) -> HoppieSettings {
+pub fn hoppie_set_settings(app: AppHandle, mut settings: HoppieSettings) -> HoppieSettings {
+    let _sperre = rufzeichen_sperre();
+    let alt = normalisiertes_rufzeichen(settings::read_settings(&app).callsign_override.as_deref());
+    let mut neu = normalisiertes_rufzeichen(settings.callsign_override.as_deref());
+    let verworfen = settings::read_bindung(&app).filter(|b| b.verworfen).map(|b| b.rufzeichen);
+    if echo_eines_verworfenen(alt.as_deref(), neu.as_deref(), verworfen.as_deref(), settings.rufzeichen_eingegeben) {
+        settings.callsign_override = None;
+        neu = None;
+    }
+    let eingegeben = std::mem::take(&mut settings.rufzeichen_eingegeben);
     settings::write_settings(&app, &settings);
+    // Neues oder geaendertes eigenes Rufzeichen an den laufenden Flug binden
+    // (ohne Flug: an den naechsten); geloescht → Bindung weg. Unveraendert
+    // (z. B. nur der Ton umgeschaltet) bleibt die Bindung, wie sie ist.
+    // Bewusst eingegeben bindet immer neu — auch derselbe Wert, der noch an
+    // einem frueheren Flug haengt.
+    if alt != neu || eingegeben {
+        let bindung = neu.map(|rufzeichen| settings::RufzeichenBindung {
+            rufzeichen,
+            pirep_id: aktive_pirep_id(&app),
+            verworfen: false,
+        });
+        settings::write_bindung(&app, bindung.as_ref());
+    }
     settings
+}
+
+/// Rein (testbar): Schickt eine veraltete Ansicht das gerade verworfene
+/// Rufzeichen zurueck, ohne dass der Pilot es eingegeben hat? Dann nicht
+/// uebernehmen — sonst waere der Eintrag vom Vorflug nach dem naechsten
+/// Speichern (Ton, Ein/Aus, Tablet) wieder da.
+pub(crate) fn echo_eines_verworfenen(
+    gespeichert: Option<&str>,
+    ankommend: Option<&str>,
+    verworfen: Option<&str>,
+    eingegeben: bool,
+) -> bool {
+    !eingegeben && gespeichert.is_none() && ankommend.is_some() && ankommend == verworfen
+}
+
+/// Eine Sperre fuer alles, was Rufzeichen-Eintrag und Bindung liest und
+/// zurueckschreibt (Speichern aus der Oberflaeche, Binden, Verwerfen) —
+/// sonst ueberschreibt ein Verwerfen einen gleichzeitig gespeicherten Stand.
+fn rufzeichen_sperre() -> std::sync::MutexGuard<'static, ()> {
+    static SPERRE: StdMutex<()> = StdMutex::new(());
+    SPERRE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[tauri::command(async)]
@@ -943,7 +986,70 @@ fn flight_context(app: &AppHandle) -> FlightContext {
 
 #[tauri::command(async)]
 pub fn hoppie_get_flight_context(app: AppHandle) -> FlightContext {
+    // Die PDC-Ansicht fragt das im Takt ab: so wird ein Eintrag vom Vorflug
+    // auch verworfen, wenn weder Hoppie noch VDGS gerade nach dem
+    // Rufzeichen fragen, und die Ansicht zeigt danach den Stand des Flugs.
+    let _ = resolve_callsign(&app);
     flight_context(&app)
+}
+
+/// PIREP des laufenden Flugs, `None` ohne Flug (oder solange noch keiner
+/// vergeben ist).
+fn aktive_pirep_id(app: &AppHandle) -> Option<String> {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let guard = state.active_flight.lock().expect("active flight mutex");
+    guard
+        .as_ref()
+        .map(|f| f.pirep_id.trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
+fn normalisiertes_rufzeichen(raw: Option<&str>) -> Option<String> {
+    raw.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty())
+}
+
+/// Was mit dem selbst eingetragenen Rufzeichen geschieht.
+#[derive(Debug, PartialEq)]
+pub(crate) enum EigenesRufzeichen {
+    /// Kein Eintrag — es gilt das Rufzeichen des Flugs.
+    Keins,
+    Gilt(String),
+    /// Ohne Flug eingetragen, jetzt laeuft einer: an ihn binden, dann gilt es.
+    BindenUndGilt { rufzeichen: String, pirep_id: String },
+    /// Gehoert zu einem anderen Flug (oder ist ein Alteintrag ohne Bindung
+    /// aus der Zeit, als es fuer immer galt): loeschen, das des Flugs gilt.
+    Verwerfen,
+}
+
+/// Rein (testbar): Gilt der eigene Eintrag fuer diesen Flug?
+pub(crate) fn eigenes_rufzeichen(
+    eintrag: Option<&str>,
+    bindung: Option<&settings::RufzeichenBindung>,
+    aktiver_flug: Option<&str>,
+) -> EigenesRufzeichen {
+    let Some(rufzeichen) = normalisiertes_rufzeichen(eintrag) else {
+        return EigenesRufzeichen::Keins;
+    };
+    let bindung = bindung.filter(|b| !b.verworfen && b.rufzeichen == rufzeichen);
+    // Ohne Flug ueberlebt nur ein Eintrag, der fuer den naechsten Flug
+    // gemacht wurde (Vorabeingabe, „Code testen“). Einer von einem frueheren
+    // Flug oder ein Alteintrag ohne Bindung faellt sofort weg — sonst stand
+    // BTI4TK zwischen den Fluegen weiter oben (Thomas' Screenshot).
+    let Some(flug) = aktiver_flug else {
+        return match bindung {
+            Some(b) if b.pirep_id.is_none() => EigenesRufzeichen::Gilt(rufzeichen),
+            _ => EigenesRufzeichen::Verwerfen,
+        };
+    };
+    match bindung {
+        Some(b) if b.pirep_id.as_deref() == Some(flug) => EigenesRufzeichen::Gilt(rufzeichen),
+        Some(b) if b.pirep_id.is_none() => EigenesRufzeichen::BindenUndGilt {
+            rufzeichen,
+            pirep_id: flug.to_string(),
+        },
+        _ => EigenesRufzeichen::Verwerfen,
+    }
 }
 
 /// The callsign every request goes out under: an explicit override
@@ -952,17 +1058,75 @@ pub fn hoppie_get_flight_context(app: AppHandle) -> FlightContext {
 /// button used to receive the callsign FROM the UI, which passed an
 /// empty string whenever no override was set and made "Test code" fail
 /// with "no callsign" while a perfectly good one sat in the flight plan.
+///
+/// 3.0: Der eigene Eintrag gilt nur fuer den Flug, in dem er gemacht wurde
+/// (siehe [`eigenes_rufzeichen`]). Auch VDGS fragt hierueber — deshalb sitzt
+/// die Regel hier und nicht in der Oberflaeche.
 pub(crate) fn resolve_callsign(app: &AppHandle) -> Option<String> {
-    settings::read_settings(app)
-        .callsign_override
-        .filter(|c| !c.trim().is_empty())
-        .map(|c| c.trim().to_uppercase())
-        .or_else(|| {
-            flight_context(app)
-                .callsign
-                .map(|c| c.trim().to_uppercase())
-                .filter(|c| !c.is_empty())
-        })
+    let flug = aktive_pirep_id(app);
+    let des_flugs = || {
+        flight_context(app)
+            .callsign
+            .map(|c| c.trim().to_uppercase())
+            .filter(|c| !c.is_empty())
+    };
+    let entscheiden = || {
+        let einstellungen = settings::read_settings(app);
+        let bindung = settings::read_bindung(app);
+        let e = eigenes_rufzeichen(einstellungen.callsign_override.as_deref(), bindung.as_ref(), flug.as_deref());
+        (einstellungen, e)
+    };
+    // Erst ohne Sperre (der Normalfall schreibt nichts); muss geschrieben
+    // werden, unter der Sperre frisch lesen und neu entscheiden.
+    let (mut einstellungen, mut entscheidung) = entscheiden();
+    let _sperre = matches!(
+        entscheidung,
+        EigenesRufzeichen::BindenUndGilt { .. } | EigenesRufzeichen::Verwerfen
+    )
+    .then(|| {
+        let s = rufzeichen_sperre();
+        (einstellungen, entscheidung) = entscheiden();
+        s
+    });
+    match entscheidung {
+        EigenesRufzeichen::Keins => des_flugs(),
+        EigenesRufzeichen::Gilt(rufzeichen) => Some(rufzeichen),
+        EigenesRufzeichen::BindenUndGilt { rufzeichen, pirep_id } => {
+            settings::write_bindung(
+                app,
+                Some(&settings::RufzeichenBindung {
+                    rufzeichen: rufzeichen.clone(),
+                    pirep_id: Some(pirep_id),
+                    verworfen: false,
+                }),
+            );
+            Some(rufzeichen)
+        }
+        EigenesRufzeichen::Verwerfen => {
+            let alt = normalisiertes_rufzeichen(einstellungen.callsign_override.take().as_deref()).unwrap_or_default();
+            settings::write_settings(app, &einstellungen);
+            settings::write_bindung(
+                app,
+                Some(&settings::RufzeichenBindung {
+                    rufzeichen: alt.clone(),
+                    pirep_id: None,
+                    verworfen: true,
+                }),
+            );
+            let neu = des_flugs();
+            log_activity_handle(
+                app,
+                ActivityLevel::Info,
+                format!(
+                    "Hoppie: eigenes Rufzeichen {} gehörte zu einem früheren Flug — es gilt jetzt {}",
+                    alt.trim().to_uppercase(),
+                    neu.as_deref().unwrap_or("-")
+                ),
+                None,
+            );
+            neu
+        }
+    }
 }
 
 /// Load the stored logon code.
@@ -2099,5 +2263,101 @@ mod tests {
             hoppie_protocol::elements::ParsedElement::Recognized(resolved),
         );
         assert_ne!(before, s.persist_generation());
+    }
+}
+
+/// 3.0 (Feldbefund Thomas 31.10.2026): SimBrief plante THY509 mit „ATC
+/// Callsign“ THY4TK, gespeichert war BTI4TK vom Vorflug — PDC und VDGS liefen
+/// unter BTI4TK. Ein eigener Eintrag gilt jetzt nur fuer seinen Flug.
+#[cfg(test)]
+mod rufzeichen_je_flug_tests {
+    use super::settings::RufzeichenBindung;
+    use super::{echo_eines_verworfenen, eigenes_rufzeichen, EigenesRufzeichen};
+
+    fn bindung(rufzeichen: &str, pirep: Option<&str>) -> RufzeichenBindung {
+        RufzeichenBindung { rufzeichen: rufzeichen.into(), pirep_id: pirep.map(Into::into), verworfen: false }
+    }
+
+    #[test]
+    fn veraltete_ansicht_belebt_verworfenes_nicht_wieder() {
+        // Einstellungsseite seit dem Vorflug offen, Pilot schaltet den Ton um:
+        // sie schickt BTI4TK mit, das der Kern gerade verworfen hat.
+        assert!(echo_eines_verworfenen(None, Some("BTI4TK"), Some("BTI4TK"), false));
+    }
+
+    #[test]
+    fn bewusst_neu_eingegeben_gilt_auch_wenn_es_verworfen_war() {
+        // Wer im Netz jedes Mal dasselbe Rufzeichen fliegt, tippt es neu ein.
+        assert!(!echo_eines_verworfenen(None, Some("BTI4TK"), Some("BTI4TK"), true));
+        // Anderes Rufzeichen oder schon gespeichertes: kein Echo.
+        assert!(!echo_eines_verworfenen(None, Some("GSG123"), Some("BTI4TK"), false));
+        assert!(!echo_eines_verworfenen(Some("BTI4TK"), Some("BTI4TK"), Some("BTI4TK"), false));
+        assert!(!echo_eines_verworfenen(None, None, Some("BTI4TK"), false));
+    }
+
+    #[test]
+    fn merker_eines_verworfenen_bindet_nichts() {
+        let b = RufzeichenBindung { rufzeichen: "BTI4TK".into(), pirep_id: None, verworfen: true };
+        assert_eq!(eigenes_rufzeichen(Some("BTI4TK"), Some(&b), Some("pirepTHY509")), EigenesRufzeichen::Verwerfen);
+    }
+
+    #[test]
+    fn alteintrag_ohne_bindung_faellt_beim_flug_weg() {
+        // Genau Thomas' Fall: BTI4TK aus der Zeit, als ein Eintrag fuer immer galt.
+        assert_eq!(eigenes_rufzeichen(Some("BTI4TK"), None, Some("pirepTHY509")), EigenesRufzeichen::Verwerfen);
+    }
+
+    #[test]
+    fn eintrag_eines_anderen_flugs_faellt_weg() {
+        let b = bindung("BTI4TK", Some("pirepAIRBUS"));
+        assert_eq!(eigenes_rufzeichen(Some("BTI4TK"), Some(&b), Some("pirepTHY509")), EigenesRufzeichen::Verwerfen);
+    }
+
+    #[test]
+    fn eintrag_dieses_flugs_gilt() {
+        // Wer im Netz bewusst anders fliegt, behaelt es fuer diesen Flug.
+        let b = bindung("GSG123", Some("pirepTHY509"));
+        assert_eq!(
+            eigenes_rufzeichen(Some(" gsg123 "), Some(&b), Some("pirepTHY509")),
+            EigenesRufzeichen::Gilt("GSG123".into())
+        );
+    }
+
+    #[test]
+    fn vor_dem_flug_eingetragen_gilt_fuer_den_naechsten() {
+        let b = bindung("GSG123", None);
+        assert_eq!(
+            eigenes_rufzeichen(Some("GSG123"), Some(&b), Some("pirepTHY509")),
+            EigenesRufzeichen::BindenUndGilt { rufzeichen: "GSG123".into(), pirep_id: "pirepTHY509".into() }
+        );
+    }
+
+    #[test]
+    fn ohne_flug_faellt_ein_alteintrag_sofort_weg() {
+        // GEWOLLTE Umkehr (31.10.2026, Advisor): Bis dahin galt ein Eintrag ohne
+        // Flug immer — Thomas sah BTI4TK zwischen den Fluegen weiter oben.
+        assert_eq!(eigenes_rufzeichen(Some("BTI4TK"), None, None), EigenesRufzeichen::Verwerfen);
+        let vorflug = bindung("BTI4TK", Some("pirepAIRBUS"));
+        assert_eq!(eigenes_rufzeichen(Some("BTI4TK"), Some(&vorflug), None), EigenesRufzeichen::Verwerfen);
+    }
+
+    #[test]
+    fn ohne_flug_gilt_ein_eintrag_fuer_den_naechsten_flug() {
+        // Vorabeingabe und „Code testen“ ohne Flug bleiben moeglich.
+        let b = bindung("GSG123", None);
+        assert_eq!(eigenes_rufzeichen(Some("GSG123"), Some(&b), None), EigenesRufzeichen::Gilt("GSG123".into()));
+    }
+
+    #[test]
+    fn bindung_an_anderes_rufzeichen_zaehlt_nicht() {
+        // Eintrag geaendert, ohne dass die Bindung nachzog: nicht blind uebernehmen.
+        let b = bindung("GSG123", Some("pirepTHY509"));
+        assert_eq!(eigenes_rufzeichen(Some("BTI4TK"), Some(&b), Some("pirepTHY509")), EigenesRufzeichen::Verwerfen);
+    }
+
+    #[test]
+    fn kein_eintrag_heisst_flug_rufzeichen() {
+        assert_eq!(eigenes_rufzeichen(None, None, Some("p")), EigenesRufzeichen::Keins);
+        assert_eq!(eigenes_rufzeichen(Some("  "), None, Some("p")), EigenesRufzeichen::Keins);
     }
 }

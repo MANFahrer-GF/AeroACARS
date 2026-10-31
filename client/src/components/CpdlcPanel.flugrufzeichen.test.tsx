@@ -113,3 +113,27 @@ describe.each([
     expect(screen.queryByRole("button", { name: t("cpdlc.callsign_use_flight", { flight: "THY4TK" }) })).toBeNull();
   });
 });
+
+describe("PDC-Rufzeichen — Kern verwirft den Eintrag vom Vorflug", () => {
+  it("zeigt ohne Klick das Rufzeichen des Flugs, sobald der Kern den Eintrag gelöscht hat", async () => {
+    vi.useFakeTimers();
+    const be = backend(true);
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(be.impl);
+
+    render(<CpdlcPanel onOpenSettings={() => {}} mode="pdc" onModeChange={() => {}} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(document.querySelector("#datalink-callsign-input")?.textContent).toBe("BTI4TK");
+
+    // Flug startet; der Kern (`hoppie::resolve_callsign`) verwirft BTI4TK.
+    be.state.flight = "THY4TK";
+    be.state.stored = null;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+
+    expect(document.querySelector("#datalink-callsign-input")?.textContent).toBe("THY4TK");
+  });
+});

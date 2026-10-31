@@ -51,6 +51,13 @@ pub struct HoppieSettings {
     /// but mute the sound (or vice versa, platform permitting).
     #[serde(default = "default_true")]
     pub notify_sound: bool,
+    /// 3.0: Nur die Oberflaeche setzt das, wenn der Pilot das Rufzeichen
+    /// selbst eingegeben hat. Ohne die Angabe nimmt der Kern ein gerade
+    /// verworfenes Rufzeichen nicht wieder an — eine veraltete Ansicht
+    /// (Einstellungsseite, Tablet) schickt beim Umschalten des Tons sonst den
+    /// alten Eintrag mit und belebt ihn wieder. Wird nie gespeichert.
+    #[serde(default, skip_serializing)]
+    pub rufzeichen_eingegeben: bool,
 }
 
 fn default_station_id() -> String {
@@ -69,6 +76,7 @@ impl Default for HoppieSettings {
             station_id: default_station_id(),
             notify_os: true,
             notify_sound: true,
+            rufzeichen_eingegeben: false,
         }
     }
 }
@@ -140,6 +148,7 @@ mod tests {
             station_id: "EDDF".into(),
             notify_os: false,
             notify_sound: true,
+            rufzeichen_eingegeben: false,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(parse_settings(&json), s);
@@ -279,6 +288,71 @@ pub fn clear_open_session(app: &AppHandle) {
         if let Err(e) = std::fs::remove_file(&path) {
             tracing::warn!(error = %e, "hoppie: could not clear open session");
         }
+    }
+}
+
+/// 3.0 (Feldbefund Thomas 31.10.2026): Zu welchem Flug gehoert das selbst
+/// eingetragene Rufzeichen? Ein Eintrag gilt nur fuer den Flug, in dem er
+/// gemacht wurde (ohne laufenden Flug: fuer den naechsten). Sonst blieb BTI4TK
+/// vom Vorflug stehen, waehrend SimBrief THY4TK plante, und VDGS/PDC fragten
+/// unter dem falschen Rufzeichen.
+///
+/// Eigene Datei aus demselben Grund wie [`SESSION_FILE`]: Die Oberflaeche
+/// schickt [`HoppieSettings`] als Ganzes zurueck und wuerde ein Feld, das sie
+/// nicht kennt, still verwerfen.
+const BINDUNG_FILE: &str = "hoppie_rufzeichen_flug.json";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RufzeichenBindung {
+    /// Das gebundene Rufzeichen (getrimmt, gross). Passt es nicht mehr zum
+    /// gespeicherten Eintrag, gilt die Bindung nicht.
+    pub rufzeichen: String,
+    /// PIREP des Flugs; `None` = ohne laufenden Flug eingetragen, gilt fuer
+    /// den naechsten Flug.
+    pub pirep_id: Option<String>,
+    /// Merker: Dieses Rufzeichen wurde verworfen (gehoerte zu einem anderen
+    /// Flug). Bindet nichts, verhindert nur, dass eine veraltete Ansicht es
+    /// unbemerkt zurueckschreibt.
+    #[serde(default)]
+    pub verworfen: bool,
+}
+
+fn bindung_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|p| p.join(BINDUNG_FILE))
+}
+
+pub fn read_bindung(app: &AppHandle) -> Option<RufzeichenBindung> {
+    let text = std::fs::read_to_string(bindung_path(app)?).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// `None` loescht die Bindung. Atomar wie [`set_open_session`].
+pub fn write_bindung(app: &AppHandle, bindung: Option<&RufzeichenBindung>) {
+    let Some(path) = bindung_path(app) else {
+        return;
+    };
+    let Some(bindung) = bindung else {
+        if path.exists() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                tracing::warn!(error = %e, "hoppie: could not clear callsign binding");
+            }
+        }
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_vec(bindung) {
+        Ok(json) => {
+            let tmp = path.with_extension("json.tmp");
+            if let Err(e) = std::fs::write(&tmp, json).and_then(|()| std::fs::rename(&tmp, &path)) {
+                tracing::warn!(error = %e, "hoppie: could not record callsign binding");
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "hoppie: could not serialize callsign binding"),
     }
 }
 

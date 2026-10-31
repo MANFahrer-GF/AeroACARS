@@ -1858,7 +1858,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "PDC/CPDLC: Weicht dein selbst eingetragenes Callsign vom Flug ab (z. B. SimBrief „ATC Callsign“ THY4TK), steht im Hinweis jetzt ein Knopf zum Übernehmen – und das Callsign des Flugs kommt auch an, wenn du den Flug erst nach dem Öffnen startest. Ab AeroACARS 3.0.0-beta.2 steht im Landebericht neben der Version auch die Paket-Generation (G…), mit der der Flug lief – für Flüge, die du ab dann fliegst. Gut zu wissen, wenn du uns einen Fund meldest."
+    "neu_text": "PDC/CPDLC: Das Callsign oben aktualisiert sich jetzt von selbst, sobald sich dein Eintrag oder der Flug ändert – du musst die Seite nicht neu öffnen."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",

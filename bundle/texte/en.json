@@ -1858,7 +1858,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "PDC/CPDLC: If the callsign you entered yourself differs from the flight's (e.g. SimBrief \"ATC Callsign\" THY4TK), the notice now has a button to use it – and the flight's callsign also arrives when you start the flight after opening the page. From AeroACARS 3.0.0-beta.2 on, the landing report shows the package generation (G…) your flight ran with, next to the version – for flights flown from then on. Handy when you report an issue."
+    "neu_text": "PDC/CPDLC: The callsign at the top now updates by itself whenever your entry or the flight changes – no need to reopen the page."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
