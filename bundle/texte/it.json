@@ -1856,7 +1856,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Aiuto → Le mie richieste: ora vedi solo le tre richieste più recenti – una nuova risposta è sempre in cima. Quelle più vecchie si aprono con “Mostra tutte le richieste”. Non serve più scorrere per scrivere una nuova richiesta."
+    "neu_text": "PDC/CPDLC: Se il nominativo inserito da te è diverso da quello del volo (ad es. SimBrief \"ATC Callsign\" THY4TK), l'avviso ora ha un pulsante per usarlo – e il nominativo del volo arriva anche se avvii il volo dopo aver aperto la pagina."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -3366,6 +3366,7 @@
     "station_unknown_short": "non verificabile",
     "callsign_from_plan": "Verrà trasmesso {{flight}} dal piano di volo. Se voli in rete con un nominativo diverso, inseriscilo qui — è con quello che l'ATC ti cerca.",
     "callsign_override_active": "Stai trasmettendo come {{entered}} (piano di volo: {{flight}}).",
+    "callsign_use_flight": "Usa {{flight}}",
     "callsign_locked_logon": "Nominativo bloccato mentre è attivo un logon CPDLC — il controllore ti conosce come {{callsign}}. Disconnettiti prima.",
     "callsign_reconnecting": "Riconnessione con il nuovo nominativo …",
     "field_callsign_readonly": "Solo visualizzazione — cambia il nominativo sopra",

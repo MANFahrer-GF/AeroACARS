@@ -162,9 +162,22 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
       setSettings(s);
       setCallsignInput(s.callsign_override ?? "");
     });
-    void invoke<FlightContext>("hoppie_get_flight_context").then((ctx) =>
-      setFlightCallsign(ctx.callsign),
-    );
+  }, []);
+
+  // 3.0 (Feldbefund Thomas THY509/THY4TK, 31.10.2026): Das Flug-Rufzeichen wurde
+  // nur beim Öffnen gelesen. Flugstart oder neu geladener OFP danach (SimBrief
+  // „ATC Callsign“) kamen nie an — Feld, Platzhalter und der Hinweis „Eingabe
+  // weicht vom Flug ab“ blieben auf dem alten Stand. Deshalb im Status-Takt
+  // nachlesen, unabhängig davon, ob Hoppie eingeschaltet ist.
+  useEffect(() => {
+    const refreshFlightCallsign = () => {
+      void invoke<FlightContext>("hoppie_get_flight_context")
+        .then((ctx) => setFlightCallsign(ctx.callsign))
+        .catch(() => undefined);
+    };
+    refreshFlightCallsign();
+    const id = window.setInterval(refreshFlightCallsign, STATUS_POLL_MS);
+    return () => window.clearInterval(id);
   }, []);
 
   const refreshStatus = () => {
@@ -231,24 +244,19 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
 
   if (!settings) return null;
 
-  if (!settings.enabled) {
-    return (
-      <section className="cpdlc-panel cpdlc-panel--disabled">
-        <p>{t("cpdlc.disabled_hint")}</p>
-        <button type="button" className="button button--primary" onClick={onOpenSettings}>
-          {t("cpdlc.disabled_open_settings")}
-        </button>
-      </section>
-    );
-  }
-
   /// Blur-save. Deliberately does NOT touch `busy` — see the equivalent
   /// note that used to live here before the rebuild: flipping it meant
   /// the very click that caused the blur landed on a disabled button.
   const saveCallsign = async () => {
     setCallsignEditing(false);
     if (!callsignDirty) return;
-    const trimmed = callsignInput.trim().toUpperCase();
+    await persistCallsign(callsignInput.trim().toUpperCase());
+  };
+
+  /// Speichert das Rufzeichen ("" = keins, dann gilt das des Flugs) und baut
+  /// eine laufende Verbindung darunter neu auf. Geteilt von Feld und
+  /// „übernehmen“-Knopf im Abweichungs-Hinweis.
+  const persistCallsign = async (trimmed: string) => {
     try {
       const next = { ...settings, callsign_override: trimmed === "" ? null : trimmed };
       await invoke<HoppieSettings>("hoppie_set_settings", { settings: next });
@@ -405,6 +413,45 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
 
   const resolvedCallsign = callsignInput || flightCallsign;
 
+  const callsignNoticeEl = callsignNotice && (
+    <p className="cpdlc-link-bar__note">
+      {t(callsignNotice.key, callsignNotice.vars)}
+      {/* 3.0 (Feldbefund Thomas 31.10.2026): Ein eigener Eintrag gilt
+          für alle folgenden Flüge — BTI4TK vom Vorflug blieb stehen,
+          während SimBrief THY4TK plante. Ein Klick übernimmt das
+          Rufzeichen des Flugs; wer im Netz bewusst anders fliegt,
+          lässt den Hinweis einfach stehen. */}
+      {callsignNotice.key === "cpdlc.callsign_override_active" && (
+        <>
+          {" "}
+          <button
+            type="button"
+            className="button button--secondary"
+            disabled={busy || loggedOn || callsignReconnecting}
+            onClick={() => void persistCallsign("")}
+          >
+            {t("cpdlc.callsign_use_flight", { flight: callsignNotice.vars.flight })}
+          </button>
+        </>
+      )}
+    </p>
+  );
+
+  // Hoppie aus: Das gespeicherte Rufzeichen gilt trotzdem für die VDGS-Abfrage
+  // (`vdgs.rs`, `hoppie::resolve_callsign`), und die Einstellungsseite zeigt es
+  // nicht. Deshalb auch hier der Abweichungs-Hinweis mit „übernehmen“.
+  if (!settings.enabled) {
+    return (
+      <section className="cpdlc-panel cpdlc-panel--disabled">
+        <p>{t("cpdlc.disabled_hint")}</p>
+        <button type="button" className="button button--primary" onClick={onOpenSettings}>
+          {t("cpdlc.disabled_open_settings")}
+        </button>
+        {callsignNotice?.key === "cpdlc.callsign_override_active" && callsignNoticeEl}
+      </section>
+    );
+  }
+
   return (
     <section className="cpdlc-panel">
       <header className="datalink-status">
@@ -543,7 +590,7 @@ export function CpdlcPanel({ onOpenSettings, mode, onModeChange: setMode }: Prop
             <p className="cpdlc-link-bar__warn">{t("cpdlc.logon_no_answer", { station: stationInput })}</p>
           )}
           {callsignNotice && (
-            <p className="cpdlc-link-bar__note">{t(callsignNotice.key, callsignNotice.vars)}</p>
+            callsignNoticeEl
           )}
         </div>
       )}
