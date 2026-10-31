@@ -276,9 +276,6 @@ fn build_pirep_notes(
     build_pirep_notes_mit(flight, stats, effective_arr_icao, b.as_ref())
 }
 
-/// Build the custom-fields map sent in `POST /api/pireps/{id}/file`. Field
-/// names follow the de-facto vmsACARS convention so VAs that already configured
-/// fields for vmsACARS see them populate without any work.
 /// „G55 (55-867b805a584d)“ bzw. „G0 eingebaut (0-…)“ fuer das PIREP-Feld.
 fn paket_feldtext(generation: u64, kennung: &str) -> String {
     if generation == 0 {
@@ -288,6 +285,9 @@ fn paket_feldtext(generation: u64, kennung: &str) -> String {
     }
 }
 
+/// Build the custom-fields map sent in `POST /api/pireps/{id}/file`. Field
+/// names follow the de-facto vmsACARS convention so VAs that already configured
+/// fields for vmsACARS see them populate without any work.
 fn build_pirep_fields_mit(
     flight: &ActiveFlight,
     stats: &FlightStats,
