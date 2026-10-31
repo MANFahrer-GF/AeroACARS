@@ -24,6 +24,14 @@ type DownloadEvent =
   | { event: "Progress"; data: { chunkLength: number } }
   | { event: "Finished" };
 
+/** Text, solange das Bestätigungsfenster der Hülle offen ist. */
+export const BITTE_BESTAETIGEN = "Bitte im Fenster „AeroACARS — Bestätigung“ bestätigen …";
+
+/** Fehler der Hülle, wenn der Pilot abbricht oder ihr Fenster schließt. */
+export function istAbgelehnt(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "huelle_abgelehnt";
+}
+
 /**
  * v0.5.48 — Zentraler Update-Checker mit Eskalations-Stufen.
  *
@@ -285,7 +293,11 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
   const installAndRelaunch = useCallback(async () => {
     if (!update || installing) return;
     setInstalling(true);
-    setProgress("Lädt Update herunter…");
+    // 3.0.0-beta.2.1 (Thomas 31.10.): Erst bestätigt der Pilot im eigenen
+    // Fenster der Hülle; „Lädt…“ erst ab `Started`, „Installiere…“ erst ab
+    // `Finished`. Vorher stand hier schon „Installiere“, während die
+    // Bestätigung noch offen war.
+    setProgress(BITTE_BESTAETIGEN);
     try {
       // Erst NOCH EINMAL nachsehen, was gerade die neueste ist.
       //
@@ -312,7 +324,7 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
           const k = firstSeenKey(frisch.version);
           if (readNum(k) == null) writeNum(k, readNum(firstSeenKey(update.version)) ?? Date.now());
           pruneOldVersionKeys(frisch.version);
-          setProgress(`Neuere Fassung gefunden: ${frisch.version} — lädt…`);
+          setProgress(`Neuere Fassung gefunden: ${frisch.version} — ${BITTE_BESTAETIGEN}`);
         }
       } catch {
         // Keine Verbindung: mit dem bekannten Stand weitermachen.
@@ -350,6 +362,13 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
         aus();
       }
     } catch (err) {
+      // Abgebrochen in der Hülle: zurück zum Dialog, kein Fehler — sonst
+      // ginge der Pflicht-Riegel fälschlich in den Ausweg.
+      if (istAbgelehnt(err)) {
+        setProgress(null);
+        setInstalling(false);
+        return;
+      }
       setProgress(`Fehler: ${err}`);
       setInstalling(false);
       // Ab hier darf der Riegel einen Ausweg zeigen. Siehe

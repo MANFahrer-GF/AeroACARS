@@ -131,7 +131,7 @@ export const BEFEHLSTEXTE: Record<string, Eintrag> = {
 };
 
 /** Titel, Knöpfe und Hinweise des Dialogs — ebenfalls nie aus dem Paket. */
-export const RAHMEN: Record<Sprache, { titel: string; abbrechen: string; details: string; weitere: string; leer: string; unbekannt: string; ausfuehren: string }> = {
+export const RAHMEN: Record<Sprache, { titel: string; abbrechen: string; details: string; weitere: string; leer: string; unbekannt: string; ausfuehren: string; laeuft: string }> = {
   de: {
     titel: "Bitte bestätigen",
     abbrechen: "Abbrechen",
@@ -140,6 +140,7 @@ export const RAHMEN: Record<Sprache, { titel: string; abbrechen: string; details
     leer: "Keine offene Anfrage.",
     unbekannt: "Die Oberfläche möchte eine Aktion ausführen, die dieses Programm nicht kennt. Nur ausführen, wenn du sie gerade selbst angestoßen hast.",
     ausfuehren: "Ausführen",
+    laeuft: "Wird ausgeführt … dieses Fenster schließt sich danach von selbst.",
   },
   en: {
     titel: "Please confirm",
@@ -149,6 +150,7 @@ export const RAHMEN: Record<Sprache, { titel: string; abbrechen: string; details
     leer: "No open request.",
     unbekannt: "The interface wants to run an action this program does not know. Only run it if you just started it yourself.",
     ausfuehren: "Run",
+    laeuft: "Running … this window closes by itself afterwards.",
   },
   it: {
     titel: "Conferma",
@@ -158,6 +160,7 @@ export const RAHMEN: Record<Sprache, { titel: string; abbrechen: string; details
     leer: "Nessuna richiesta aperta.",
     unbekannt: "L'interfaccia vuole eseguire un'azione che questo programma non conosce. Eseguila solo se l'hai appena avviata tu.",
     ausfuehren: "Esegui",
+    laeuft: "In esecuzione … questa finestra si chiude da sola al termine.",
   },
 };
 

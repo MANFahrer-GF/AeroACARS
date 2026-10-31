@@ -229,6 +229,17 @@ pub async fn fenster_an_inhalt_anpassen(
     window: WebviewWindow,
     benoetigt_hoehe: f64,
 ) -> Result<bool, UiError> {
+    // 3.0.0-beta.2.1: Das Bestaetigungsfenster der Huelle bekommt genau die
+    // Hoehe seines Inhalts (auch kleiner) — es soll nichts verdecken.
+    if window.label() == crate::huelle::FENSTER && benoetigt_hoehe.is_finite() && benoetigt_hoehe > 0.0 {
+        let fehler = |e: tauri::Error| UiError::new("fenster", e.to_string());
+        let skala = window.scale_factor().map_err(fehler)?;
+        let breite = window.inner_size().map_err(fehler)?.to_logical::<f64>(skala).width;
+        window
+            .set_size(tauri::LogicalSize::new(breite, huelle_hoehe(benoetigt_hoehe)))
+            .map_err(fehler)?;
+        return Ok(true);
+    }
     if window.label() != HAUPTFENSTER || !benoetigt_hoehe.is_finite() || benoetigt_hoehe <= 0.0 {
         return Ok(false);
     }
@@ -280,9 +291,22 @@ pub async fn fenster_an_inhalt_anpassen(
     Ok(true)
 }
 
+/// Hoehe des Huelle-Fensters in CSS-Pixeln: Inhalt, aber nicht absurd klein
+/// oder hoeher als ein kleiner Bildschirm.
+fn huelle_hoehe(benoetigt: f64) -> f64 {
+    benoetigt.ceil().clamp(140.0, 640.0)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{neue_hoehe_und_lage, Schritt, Sicherung, SICHERN_NACH};
+    use super::{huelle_hoehe, neue_hoehe_und_lage, Schritt, Sicherung, SICHERN_NACH};
+
+    #[test]
+    fn huelle_fenster_folgt_dem_inhalt_in_grenzen() {
+        assert_eq!(huelle_hoehe(212.3), 213.0);
+        assert_eq!(huelle_hoehe(20.0), 140.0);
+        assert_eq!(huelle_hoehe(5000.0), 640.0);
+    }
     use std::time::{Duration, Instant};
 
     fn frei() -> Sicherung {

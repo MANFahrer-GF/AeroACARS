@@ -1858,7 +1858,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "PDC/CPDLC: Il nominativo in alto ora si aggiorna da solo quando cambia il tuo inserimento o il volo – non serve riaprire la pagina."
+    "neu_text": "PDC/CPDLC: Il nominativo in alto ora si aggiorna da solo quando cambia il tuo inserimento o il volo – non serve riaprire la pagina. Finestra di aggiornamento: dopo \"Installa\" attende la tua conferma nella finestra apposita; annullando torni indietro senza messaggio di errore."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

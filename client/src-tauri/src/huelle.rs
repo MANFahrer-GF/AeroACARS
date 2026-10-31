@@ -131,7 +131,10 @@ fn fenster_zeigen(app: &AppHandle) -> Result<(), UiError> {
     }
     let w = tauri::WebviewWindowBuilder::new(app, FENSTER, tauri::WebviewUrl::App("index.html?fenster=huelle".into()))
         .title("AeroACARS — Bestätigung")
-        .inner_size(560.0, 440.0)
+        // 3.0.0-beta.2.1: kompakt (Thomas 31.10.: 560×440 verdeckte die
+        // Release Notes, der Inhalt fuellte nur das obere Drittel). Die
+        // Hoehe passt HuelleFenster danach an den Inhalt an.
+        .inner_size(460.0, 240.0)
         .resizable(true)
         .always_on_top(true)
         .center()
@@ -261,7 +264,69 @@ pub(crate) async fn update_installieren(app: AppHandle) -> Result<(), UiError> {
         )
         .await
         .map_err(fehler)?;
+    neustart_helfer_starten(&app);
     app.restart()
+}
+
+/// 3.0.0-beta.2.1 (Thomas' Update beta.1→beta.2, 31.10.2026): Unter macOS kam
+/// die App nach dem Update nicht wieder. Das Log endet mitten im Beenden
+/// (nach der MQTT-Abschaltung, vor „block_on fertig“) — der alte Prozess
+/// starb nach dem Bundle-Tausch, bevor Tauri bei `RunEvent::Exit` neu startet.
+/// Derselbe `restart()` ohne Bundle-Tausch (`paket_neu_starten`, 30.10.
+/// 20:04) startete sauber neu. Deshalb wartet ein abgekoppelter Helfer in
+/// eigener Prozessgruppe, bis dieser Prozess weg ist, und oeffnet dann das
+/// App-Bundle. `open` ohne `-n` aktiviert nur, wenn Tauris Neustart doch
+/// geklappt hat — kein Doppelstart.
+fn neustart_helfer_starten(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::process::CommandExt;
+        let Some(buendel) = tauri::process::current_binary(&app.env()).ok().and_then(|p| app_buendel(&p)) else {
+            tracing::warn!("Huelle: App-Bundle fuer den Neustart nicht gefunden");
+            return;
+        };
+        let (programm, argumente) = neustart_befehl(std::process::id(), &buendel);
+        match std::process::Command::new(programm)
+            .args(argumente)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()
+        {
+            Ok(_) => tracing::info!(buendel = %buendel.display(), "Huelle: Neustart-Helfer gestartet"),
+            Err(e) => tracing::warn!(fehler = %e, "Huelle: Neustart-Helfer liess sich nicht starten"),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
+/// `/Applications/X.app/Contents/MacOS/x` → `/Applications/X.app`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn app_buendel(programm: &std::path::Path) -> Option<PathBuf> {
+    let macos = programm.parent()?;
+    let contents = macos.parent()?;
+    let buendel = contents.parent()?;
+    (macos.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && buendel.extension()? == "app")
+        .then(|| buendel.to_path_buf())
+}
+
+/// Wartet hoechstens 90 s auf das Ende von `pid` (Beenden kann mit
+/// Hoppie-Logoff und Protokollen lange dauern). Danach bis 5 s schauen, ob
+/// Tauris eigener Neustart schon laeuft — nur sonst `open` des Bundles, damit
+/// kein zweiter Prozess neben dem frisch gestarteten entsteht (QS 31.10.).
+/// Der Pfad geht als eigenes Argument hinein, nie in den Skripttext.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn neustart_befehl(pid: u32, buendel: &std::path::Path) -> (&'static str, Vec<std::ffi::OsString>) {
+    let skript = format!(
+        "i=0; while kill -0 {pid} 2>/dev/null && [ $i -lt 180 ]; do sleep 0.5; i=$((i+1)); done; \
+         i=0; while [ $i -lt 10 ]; do pgrep -f -- \"$1/Contents/MacOS/\" >/dev/null && exit 0; sleep 0.5; i=$((i+1)); done; \
+         exec /usr/bin/open \"$1\""
+    );
+    ("/bin/sh", vec!["-c".into(), skript.into(), "aeroacars-neustart".into(), buendel.as_os_str().to_owned()])
 }
 
 /// Einstellungen der Huelle (frueher localStorage der Oberflaeche).
@@ -383,6 +448,38 @@ mod tests {
     /// Die Auftraege sind ein gemeinsamer Zustand: Tests, die ihn leeren,
     /// laufen nicht neben anderen.
     static SPERRE: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn neustart_findet_das_app_buendel() {
+        use std::path::Path;
+        assert_eq!(
+            app_buendel(Path::new("/Applications/AeroACARS 3.app/Contents/MacOS/aeroacars-app")),
+            Some(PathBuf::from("/Applications/AeroACARS 3.app"))
+        );
+        // Dev-Build oder fremde Ablage: kein Bundle, kein Helfer.
+        assert_eq!(app_buendel(Path::new("/Users/x/target/debug/aeroacars-app")), None);
+        assert_eq!(app_buendel(Path::new("/Applications/X/Contents/MacOS/x")), None);
+    }
+
+    #[test]
+    fn neustart_helfer_wartet_auf_den_prozess_und_oeffnet_das_buendel() {
+        let buendel = std::path::Path::new("/Applications/AeroACARS 3\"; rm -rf ~.app");
+        let (programm, argumente) = neustart_befehl(4711, buendel);
+        assert_eq!(programm, "/bin/sh");
+        let skript = argumente[1].to_str().unwrap();
+        assert!(skript.contains("kill -0 4711"));
+        assert!(skript.contains("exec /usr/bin/open \"$1\""));
+        // Der Pfad steht nur als Argument da, nie im Skripttext.
+        assert!(!skript.contains("AeroACARS"));
+        assert_eq!(argumente[3], buendel.as_os_str());
+        assert!(skript.contains("pgrep -f -- \"$1/Contents/MacOS/\" >/dev/null && exit 0"));
+        // Das Skript ist gueltiges sh (Windows-CI hat kein /bin/sh).
+        #[cfg(unix)]
+        {
+            let pruefung = std::process::Command::new("/bin/sh").args(["-n", "-c", skript]).status().unwrap();
+            assert!(pruefung.success());
+        }
+    }
 
     #[test]
     fn nur_systembefehle_gehen_ueber_die_huelle() {

@@ -9,7 +9,7 @@
 // Der Knopf ruft den Befehl HIER auf und meldet sein Ergebnis zurück;
 // „Abbrechen“ oder Fenster schließen lehnt ab.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, listen } from "../../lib/ipc";
 import { Button } from "../ui";
@@ -27,6 +27,23 @@ export function HuelleFenster() {
   const r = RAHMEN[sprache(i18n?.resolvedLanguage ?? i18n?.language)];
   const [auftraege, setAuftraege] = useState<Auftrag[]>([]);
   const [laeuft, setLaeuft] = useState(false);
+  const flaeche = useRef<HTMLElement>(null);
+
+  // 3.0.0-beta.2.1 (Thomas 31.10.): Das Fenster bekommt die Höhe seines
+  // Inhalts — vorher 560×440, Inhalt nur im oberen Drittel, Release Notes
+  // dahinter verdeckt. Auch beim Aufklappen der Details.
+  useEffect(() => {
+    const el = flaeche.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const melden = () => {
+      const hoehe = Math.ceil(el.getBoundingClientRect().height);
+      if (hoehe > 0) invoke("fenster_an_inhalt_anpassen", { benoetigtHoehe: hoehe }).catch(() => {});
+    };
+    const beobachter = new ResizeObserver(melden);
+    beobachter.observe(el);
+    melden();
+    return () => beobachter.disconnect();
+  });
 
   const laden = useCallback(async () => {
     setAuftraege(await invoke<Auftrag[]>("shell_auftraege").catch(() => []));
@@ -66,11 +83,11 @@ export function HuelleFenster() {
   }
 
   const a = auftraege[0];
-  if (!a) return <main className="huelle">{r.leer}</main>;
+  if (!a) return <main ref={flaeche} className="huelle">{r.leer}</main>;
   const text = dialogText(a.befehl, a.werte, i18n?.resolvedLanguage ?? i18n?.language);
   const werte = werteAnzeige(a.werte);
   return (
-    <main className="huelle" role="dialog" aria-labelledby="huelle-titel" aria-describedby="huelle-satz">
+    <main ref={flaeche} className="huelle" role="dialog" aria-labelledby="huelle-titel" aria-describedby="huelle-satz">
       <h1 id="huelle-titel">{r.titel}</h1>
       <p id="huelle-satz" data-testid="huelle-satz" className="huelle__frage">
         {text ? text.frage : r.unbekannt}
@@ -81,14 +98,20 @@ export function HuelleFenster() {
         <code data-testid="huelle-befehl">{a.befehl}</code>
         {werte.length > 0 && <pre data-testid="huelle-werte">{werte.map(([k, v]) => `${k}: ${v}`).join("\n")}</pre>}
       </details>
-      <div className="huelle__knoepfe">
-        <Button variant="quiet" disabled={laeuft} onClick={() => void antworten(a, false)}>
-          {r.abbrechen}
-        </Button>
-        <Button variant="primary" disabled={laeuft} onClick={() => void antworten(a, true)}>
-          {text ? text.knopf : r.ausfuehren}
-        </Button>
-      </div>
+      {laeuft ? (
+        <p className="huelle__laeuft" role="status" data-testid="huelle-laeuft">
+          {r.laeuft}
+        </p>
+      ) : (
+        <div className="huelle__knoepfe">
+          <Button variant="quiet" onClick={() => void antworten(a, false)}>
+            {r.abbrechen}
+          </Button>
+          <Button variant="primary" onClick={() => void antworten(a, true)}>
+            {text ? text.knopf : r.ausfuehren}
+          </Button>
+        </div>
+      )}
     </main>
   );
 }
