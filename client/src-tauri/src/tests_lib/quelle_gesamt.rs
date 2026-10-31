@@ -278,10 +278,13 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// „AeroACARS Paket“ (`lib_pirep_felder.rs`, eigene Funktion `paket_feldtext` vor dem Doc-Block von `build_pirep_fields_mit`). Tests
 /// `aeroacars_mqtt::tests::positionsmeldung_traegt_den_flug_pin`,
 /// `paketstand_steht_als_eigenes_pirep_feld`, vitest `LandungsKopf.qs.test.tsx`.
-/// — plus PDC vor dem Flugstart 31.10. (Beta 2.1): EINE Zeile
-/// `hoppie::vorschau_merken(..)` in `bid_simbrief_preview` (`lib_simbrief_bids.rs`)
-/// vor dem `Ok(BidSimBriefPreview ..)` — merkt das Callsign des passenden OFP
-/// fuer PDC, solange noch kein Flug laeuft. Tests
+/// — plus PDC vor dem Flugstart 31.10. (Beta 2.2): EINE Zeile in
+/// `bid_simbrief_preview` (`lib_simbrief_bids.rs`) vor dem `Ok(BidSimBriefPreview ..)`
+/// — merkt das Callsign des passenden OFP fuer PDC, nur ohne laufenden Flug und
+/// nur eindeutig (OFP hat ein ATC-Rufzeichen oder seine Flugnummer passt zur
+/// Buchung) — und EINE Zeile `hoppie::vorschau_verwerfen()` am Anfang von
+/// `save_active_flight` (`lib_persistenz.rs`), damit die Vorschau nach jedem
+/// Flug weg ist. Tests
 /// `hoppie::rufzeichen_je_flug_tests::vor_dem_flugstart_gilt_der_ofp_aus_der_vorschau`,
 /// `alte_oder_fehlende_vorschau_gilt_nicht`.
 #[test]
@@ -294,4 +297,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "e8f62c90b4a22c2f88a1ed051264df4e4f8b4ed2aba861ee28cc3a12baa1139c";
+const HASH_VOR_DER_ZERLEGUNG: &str = "854804d53e70bba3e56dfb51c24c376f2bcb88968bb5073520521791b148b7e5";

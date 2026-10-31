@@ -34,7 +34,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "3.0.0-beta.2.1"
+version = "3.0.0-beta.2.2"
 edition = "2021"
 # Proprietaer seit 29.09.2026 — siehe LICENSE im Repo-Wurzelordner.
 license = "LicenseRef-AeroACARS-Proprietary"

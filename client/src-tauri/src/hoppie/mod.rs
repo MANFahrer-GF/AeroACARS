@@ -963,7 +963,7 @@ fn flight_context(app: &AppHandle) -> FlightContext {
     let guard = state.active_flight.lock().expect("active flight mutex");
     match guard.as_ref() {
         Some(flight) => {
-            *VORSCHAU.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            vorschau_verwerfen();
             FlightContext {
             // The OFP's ATC callsign first: PaxStudio/SimBrief may plan a callsign other
             // than airline + flight number (personal DLH4TK, real-world EWG9KC), and that
@@ -1018,6 +1018,13 @@ pub(crate) fn vorschau_merken(callsign: String, dep: &str, arr: &str, muster: &s
         muster: muster.to_string(),
         abgerufen: chrono::Utc::now(),
     });
+}
+
+/// Laeuft ein Flug, gilt er und nicht die Vorschau. `save_active_flight`
+/// ruft das bei jeder Sicherung des laufenden Flugs — so ist die Vorschau
+/// nach JEDEM Flug weg, auch wenn PDC waehrend des Flugs nie offen war.
+pub(crate) fn vorschau_verwerfen() {
+    *VORSCHAU.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Rein (testbar): Kontext aus der Vorschau, leer wenn keine oder zu alt.

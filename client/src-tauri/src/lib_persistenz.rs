@@ -497,6 +497,7 @@ fn schreiben_falls_aktiv<R>(
 }
 
 fn save_active_flight(app: &AppHandle, flight: &ActiveFlight) -> bool {
+    hoppie::vorschau_verwerfen();
     let state = app.state::<AppState>();
     schreiben_falls_aktiv(&state.persistence_lock, &flight.stop, || {
         // Snapshot stats inside a short-lived guard so we don't hold the
