@@ -1090,7 +1090,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 werte: Option<Value>,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::huelle::shell_request(app.clone(), a.befehl, a.werte).await),
+                Ok(a) => from_uierr(crate::huelle::bestaetigen_lassen(app.clone(), a.befehl, a.werte).await),
                 Err(e) => Err(e),
             }
         }

@@ -184,8 +184,35 @@ fn nach_dem_schliessen(selbst: bool, offen: bool) -> Nachher {
 
 /// Systembefehl aus der Oberflaeche anstossen (P-8.10): Bestaetigung in der
 /// Huelle, Ergebnis wie beim direkten Aufruf.
+///
+/// 3.0.0-beta.2.2 (Thomas 31.10.2026: „Fenster weg“): Das Update startet der
+/// Pilot schon im Update-Dialog; die zweite Rueckfrage entfaellt. Installiert
+/// wird nur das signierte Update aus dem eigenen Kanal. Gilt nur fuer den
+/// Aufruf aus dem Hauptfenster am Sim-PC — das Tablet (LAN-Bruecke) und
+/// andere Fenster gehen weiter ueber [`bestaetigen_lassen`]. Die Stufe in befehle.json bleibt „system“:
+/// sonst riefe ein neues Paket den Befehl direkt und aeltere Clients (deren
+/// Rechte im Programm stehen) verweigerten das Update ganz.
 #[tauri::command]
-pub(crate) async fn shell_request(app: AppHandle, befehl: String, werte: Option<Value>) -> Result<Value, UiError> {
+pub(crate) async fn shell_request(
+    app: AppHandle,
+    fenster: tauri::WebviewWindow,
+    befehl: String,
+    werte: Option<Value>,
+) -> Result<Value, UiError> {
+    if fenster.label() == crate::fenster::HAUPTFENSTER && ohne_rueckfrage(&befehl) {
+        tracing::info!(befehl = %befehl, "Huelle: ohne Rueckfrage ausgefuehrt");
+        return update_installieren(app).await.map(|()| Value::Null);
+    }
+    bestaetigen_lassen(app, befehl, werte).await
+}
+
+/// Systembefehle, die aus dem eigenen Fenster ohne Huelle-Fenster laufen.
+fn ohne_rueckfrage(befehl: &str) -> bool {
+    befehl == "update_installieren"
+}
+
+/// Auftrag ablegen und im Fenster der Huelle bestaetigen lassen.
+pub(crate) async fn bestaetigen_lassen(app: AppHandle, befehl: String, werte: Option<Value>) -> Result<Value, UiError> {
     let (id, rx) = ablegen(&befehl, werte.unwrap_or_else(|| Value::Object(Default::default())))?;
     tracing::info!(id, befehl = %befehl, "Huelle: Bestaetigung angefragt");
     if let Err(e) = fenster_zeigen(&app) {
@@ -448,6 +475,24 @@ mod tests {
     /// Die Auftraege sind ein gemeinsamer Zustand: Tests, die ihn leeren,
     /// laufen nicht neben anderen.
     static SPERRE: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn nur_das_update_laeuft_ohne_rueckfrage() {
+        assert!(ohne_rueckfrage("update_installieren"));
+        // Stufe bleibt „system“ — aeltere Clients brauchen den Weg ueber die Huelle.
+        assert_eq!(stufe("update_installieren"), Some("system"));
+        for (befehl, s) in [("flight_logs_delete_all", "system"), ("activity_log_clear", "system")] {
+            assert_eq!(stufe(befehl), Some(s));
+            assert!(!ohne_rueckfrage(befehl), "{befehl}");
+        }
+    }
+
+    #[test]
+    fn tablet_bestaetigt_weiter_am_sim_pc() {
+        let bruecke = include_str!("remote/bridge.rs");
+        assert!(bruecke.contains("crate::huelle::bestaetigen_lassen(app.clone(), a.befehl, a.werte)"));
+        assert!(!bruecke.contains("crate::huelle::shell_request("));
+    }
 
     #[test]
     fn neustart_findet_das_app_buendel() {

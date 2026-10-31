@@ -22,7 +22,7 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 use crate::UiError;
 
-const HAUPTFENSTER: &str = "main";
+pub(crate) const HAUPTFENSTER: &str = "main";
 
 fn gemerkte_eigenschaften() -> StateFlags {
     StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED

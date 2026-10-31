@@ -24,8 +24,9 @@ type DownloadEvent =
   | { event: "Progress"; data: { chunkLength: number } }
   | { event: "Finished" };
 
-/** Text, solange das Bestätigungsfenster der Hülle offen ist. */
-export const BITTE_BESTAETIGEN = "Bitte im Fenster „AeroACARS — Bestätigung“ bestätigen …";
+/** Text bis zum Download-Start. Ab 3.0.0-beta.2.2 fragt der Client nicht
+ *  mehr nach; ältere Clients zeigen noch das Fenster der Hülle. */
+export const BITTE_BESTAETIGEN = "Update startet … erscheint das Fenster „AeroACARS — Bestätigung“, dort bestätigen.";
 
 /** Fehler der Hülle, wenn der Pilot abbricht oder ihr Fenster schließt. */
 export function istAbgelehnt(err: unknown): boolean {

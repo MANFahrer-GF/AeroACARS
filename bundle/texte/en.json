@@ -1858,7 +1858,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "PDC/CPDLC: The callsign at the top now updates by itself whenever your entry or the flight changes – no need to reopen the page. Update dialog: after \"Install\" it waits for your confirmation in its own window; cancelling returns without an error message."
+    "neu_text": "Update without a second window: from AeroACARS 3.0.0-beta.2.2, \"Install\" in the update dialog installs directly, without the \"AeroACARS — Bestätigung\" window."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

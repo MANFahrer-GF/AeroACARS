@@ -1858,7 +1858,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "PDC/CPDLC: Il nominativo in alto ora si aggiorna da solo quando cambia il tuo inserimento o il volo – non serve riaprire la pagina. Finestra di aggiornamento: dopo \"Installa\" attende la tua conferma nella finestra apposita; annullando torni indietro senza messaggio di errore."
+    "neu_text": "Aggiornamento senza seconda finestra: da AeroACARS 3.0.0-beta.2.2 \"Installa\" nella finestra di aggiornamento installa direttamente, senza la finestra \"AeroACARS — Bestätigung\"."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
