@@ -946,8 +946,9 @@ pub async fn hoppie_status(state: tauri::State<'_, AppState>) -> Result<HoppieSt
 /// Best-effort prefill context for the PDC request form, read directly
 /// off `AppState::active_flight` (same direct-mutex-read pattern every
 /// other subsystem uses — no pub/sub "flight changed" mechanism exists
-/// or is warranted here). All fields `None` when no flight is active;
-/// the frontend disables the form in that case.
+/// or is warranted here). Without an active flight: the OFP last loaded in
+/// the booking preview, if any (see `vorschau_kontext`); otherwise all
+/// fields `None` and the frontend disables the form.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct FlightContext {
     pub callsign: Option<String>,
@@ -961,7 +962,9 @@ fn flight_context(app: &AppHandle) -> FlightContext {
     let state = app.state::<AppState>();
     let guard = state.active_flight.lock().expect("active flight mutex");
     match guard.as_ref() {
-        Some(flight) => FlightContext {
+        Some(flight) => {
+            *VORSCHAU.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            FlightContext {
             // The OFP's ATC callsign first: PaxStudio/SimBrief may plan a callsign other
             // than airline + flight number (personal DLH4TK, real-world EWG9KC), and that
             // is what the pilot files and flies under. Airline + flight number only when
@@ -979,8 +982,58 @@ fn flight_context(app: &AppHandle) -> FlightContext {
             aircraft_type: Some(flight.aircraft_icao.clone()),
             dep_icao: Some(flight.dpt_airport.clone()),
             dest_icao: Some(flight.arr_airport.clone()),
+            }
+        }
+        // 3.0 (Feldbefund Thomas, Beta 2.1, 31.10.2026): Flug gebucht, OFP in
+        // der Vorschau geladen, aber noch nicht gestartet — PDC zeigte kein
+        // Callsign. Bis zum Start gilt der zuletzt in der Vorschau geladene
+        // passende OFP.
+        None => vorschau_kontext(VORSCHAU.lock().unwrap_or_else(|e| e.into_inner()).as_ref(), chrono::Utc::now()),
+    }
+}
+
+/// Der zuletzt in der Buchungsvorschau (`bid_simbrief_preview`) geladene,
+/// zur Buchung passende OFP. Gilt nur bis zum Flugstart (dann ist der echte
+/// Flug die Quelle und die Vorschau wird verworfen), sonst haengt er in den
+/// naechsten Flug hinein.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct VorschauFlug {
+    pub(crate) callsign: String,
+    pub(crate) dep: String,
+    pub(crate) arr: String,
+    pub(crate) muster: String,
+    pub(crate) abgerufen: chrono::DateTime<chrono::Utc>,
+}
+
+static VORSCHAU: StdMutex<Option<VorschauFlug>> = StdMutex::new(None);
+
+/// So lange gilt eine Vorschau ohne Flugstart.
+const VORSCHAU_GILT_STUNDEN: i64 = 12;
+
+pub(crate) fn vorschau_merken(callsign: String, dep: &str, arr: &str, muster: &str) {
+    *VORSCHAU.lock().unwrap_or_else(|e| e.into_inner()) = Some(VorschauFlug {
+        callsign,
+        dep: dep.to_string(),
+        arr: arr.to_string(),
+        muster: muster.to_string(),
+        abgerufen: chrono::Utc::now(),
+    });
+}
+
+/// Rein (testbar): Kontext aus der Vorschau, leer wenn keine oder zu alt.
+pub(crate) fn vorschau_kontext(
+    vorschau: Option<&VorschauFlug>,
+    jetzt: chrono::DateTime<chrono::Utc>,
+) -> FlightContext {
+    let feld = |s: &str| Some(s.trim().to_uppercase()).filter(|s| !s.is_empty());
+    match vorschau {
+        Some(v) if jetzt - v.abgerufen < chrono::Duration::hours(VORSCHAU_GILT_STUNDEN) => FlightContext {
+            callsign: feld(&v.callsign),
+            aircraft_type: feld(&v.muster),
+            dep_icao: feld(&v.dep),
+            dest_icao: feld(&v.arr),
         },
-        None => FlightContext::default(),
+        _ => FlightContext::default(),
     }
 }
 
@@ -2353,6 +2406,39 @@ mod rufzeichen_je_flug_tests {
         // Eintrag geaendert, ohne dass die Bindung nachzog: nicht blind uebernehmen.
         let b = bindung("GSG123", Some("pirepTHY509"));
         assert_eq!(eigenes_rufzeichen(Some("BTI4TK"), Some(&b), Some("pirepTHY509")), EigenesRufzeichen::Verwerfen);
+    }
+
+    #[test]
+    fn vor_dem_flugstart_gilt_der_ofp_aus_der_vorschau() {
+        // Thomas, Beta 2.1: THY509 gebucht, OFP in der Vorschau, noch nicht
+        // gestartet — PDC zeigte nur den Platzhalter.
+        let jetzt = chrono::Utc::now();
+        let v = super::VorschauFlug {
+            callsign: "THY4TK".into(),
+            dep: "ltfm".into(),
+            arr: "LRCL".into(),
+            muster: "A319".into(),
+            abgerufen: jetzt - chrono::Duration::minutes(5),
+        };
+        let k = super::vorschau_kontext(Some(&v), jetzt);
+        assert_eq!(k.callsign.as_deref(), Some("THY4TK"));
+        assert_eq!(k.dep_icao.as_deref(), Some("LTFM"));
+        assert_eq!(k.dest_icao.as_deref(), Some("LRCL"));
+        assert_eq!(k.aircraft_type.as_deref(), Some("A319"));
+    }
+
+    #[test]
+    fn alte_oder_fehlende_vorschau_gilt_nicht() {
+        let jetzt = chrono::Utc::now();
+        let v = super::VorschauFlug {
+            callsign: "THY4TK".into(),
+            dep: "LTFM".into(),
+            arr: "LRCL".into(),
+            muster: "A319".into(),
+            abgerufen: jetzt - chrono::Duration::hours(13),
+        };
+        assert_eq!(super::vorschau_kontext(Some(&v), jetzt).callsign, None);
+        assert_eq!(super::vorschau_kontext(None, jetzt).callsign, None);
     }
 
     #[test]

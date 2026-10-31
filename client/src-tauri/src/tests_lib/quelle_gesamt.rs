@@ -278,6 +278,12 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// „AeroACARS Paket“ (`lib_pirep_felder.rs`, eigene Funktion `paket_feldtext` vor dem Doc-Block von `build_pirep_fields_mit`). Tests
 /// `aeroacars_mqtt::tests::positionsmeldung_traegt_den_flug_pin`,
 /// `paketstand_steht_als_eigenes_pirep_feld`, vitest `LandungsKopf.qs.test.tsx`.
+/// — plus PDC vor dem Flugstart 31.10. (Beta 2.1): EINE Zeile
+/// `hoppie::vorschau_merken(..)` in `bid_simbrief_preview` (`lib_simbrief_bids.rs`)
+/// vor dem `Ok(BidSimBriefPreview ..)` — merkt das Callsign des passenden OFP
+/// fuer PDC, solange noch kein Flug laeuft. Tests
+/// `hoppie::rufzeichen_je_flug_tests::vor_dem_flugstart_gilt_der_ofp_aus_der_vorschau`,
+/// `alte_oder_fehlende_vorschau_gilt_nicht`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -288,4 +294,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "4c7701529e8f3da71a2b92c4646ebd97b57feb0d61c9671d6f850a5573b40f07";
+const HASH_VOR_DER_ZERLEGUNG: &str = "e8f62c90b4a22c2f88a1ed051264df4e4f8b4ed2aba861ee28cc3a12baa1139c";

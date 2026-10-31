@@ -760,6 +760,7 @@ async fn bid_simbrief_preview(
         })
     };
 
+    hoppie::vorschau_merken(flight_atc_callsign(ofp_atc_callsign(&ofp.ofp_flight_number).as_deref(), &active_airline_icao, &active_flight_number), &active_dpt, &active_arr, ofp.aircraft_icao.as_deref().unwrap_or_default());
     Ok(BidSimBriefPreview {
         request_id: ofp.request_id.clone(),
         planned_block_fuel_kg: ofp.planned_block_fuel_kg,
