@@ -275,7 +275,7 @@ pub fn spawn(
                             log_activity_handle(
                                 &app,
                                 ActivityLevel::Info,
-                                format!("Hoppie: Rufzeichen {from_callsign} → {neu}, Empfang wird neu aufgebaut"),
+                                format!("Hoppie: Rufzeichen {from_callsign} wird zu {neu}, Empfang wird neu aufgebaut"),
                                 None,
                             );
                             let app = app.clone();
