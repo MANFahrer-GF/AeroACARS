@@ -6,7 +6,7 @@
   "pushback_haengt_s": {"wert": 15, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:497 (v2.1.24)"},
   "taxi_direction_fps": {"wert": 1.0, "einheit": "", "quelle": "client/src-tauri/src/lib.rs:550 (v2.1.24)"},
   "arrived_fallback_dwell_secs": {"wert": 9, "einheit": "s", "quelle": "client/src-tauri/src/lib.rs:1431 (v2.1.24)"},
-  "rollweg_halt_bestaetigt_secs": {"wert": 120, "einheit": "s", "quelle": "client/src-tauri/src/lib.rs:1435 (v2.1.24)"},
+  "rollweg_halt_bestaetigt_secs": {"wert": 900, "einheit": "s", "quelle": "Messung 02.11.2026 (1951 Flugprotokolle): laengster Bremshalt mit laufenden Triebwerken vor dem Weiterrollen 614 s; v2.1.24: 120"},
   "arrived_standstill_dwell_secs": {"wert": 300, "einheit": "s", "quelle": "client/src-tauri/src/lib.rs:1470 (v2.1.24)"},
   "final_landing_verbuchen_nach_secs": {"wert": 30, "einheit": "s", "quelle": "client/src-tauri/src/lib.rs:1498 (v2.1.24)"},
   "touch_and_go_agl_threshold_ft": {"wert": 100.0, "einheit": "ft", "quelle": "client/src-tauri/src/lib.rs:1501 (v2.1.24)"},

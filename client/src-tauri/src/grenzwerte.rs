@@ -787,7 +787,8 @@ mod tests {
         assert_eq!(g.pushback_haengt_s.wert, 15); // lib.rs:499
         assert_eq!(g.taxi_direction_fps.wert, 1.0); // lib.rs:552
         assert_eq!(g.arrived_fallback_dwell_secs.wert, 9); // lib.rs:987
-        assert_eq!(g.rollweg_halt_bestaetigt_secs.wert, 120); // lib.rs:991
+        // Seit 02.11.2026 900 statt 120 s (QPolQYyOJB4AQE32: Block-On nach 120 s Warten auf dem Rollweg).
+        assert_eq!(g.rollweg_halt_bestaetigt_secs.wert, 900); // lib.rs:991
         assert_eq!(g.arrived_standstill_dwell_secs.wert, 300); // lib.rs:1026
         assert_eq!(g.final_landing_verbuchen_nach_secs.wert, 30); // lib.rs:1054
         assert_eq!(g.touch_and_go_agl_threshold_ft.wert, 100.0); // lib.rs:1057

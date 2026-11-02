@@ -1858,7 +1858,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Codice Hoppie visibile: in Impostazioni › Cockpit ora vedi in chiaro il codice di accesso Hoppie mentre lo digiti. Dal prossimo aggiornamento 3.0 AeroACARS mostra lì anche il codice salvato, così puoi verificare che sia corretto."
+    "neu_text": "Block-on sulla via di rullaggio: se attendi su una via di rullaggio vicino alle piazzole con il freno di parcheggio inserito e i motori accesi, AeroACARS segnala il block-on solo dopo 15 minuti anziché dopo due. Se la tua piazzola si trova su una linea di rullaggio, la sosta conta non appena spegni i motori: l'orario di block-on è allora l'inizio della sosta."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

@@ -357,6 +357,11 @@
         const AUF_ROLLWEG_B: (f64, f64) = (50.0, 8.0051);
         const STAND_R1_ENDE: (f64, f64) = (50.0005, 8.005);
 
+        /// Die Frist aus dem geltenden Paket (`phasen_kern.json`).
+        fn rollweg_frist() -> chrono::Duration {
+            chrono::Duration::seconds(crate::grenzwerte::grenzwerte().phasen_kern.rollweg_halt_bestaetigt_secs.wert)
+        }
+
         fn rollweg_halt_flight() -> ActiveFlight {
             let flight = taxi_in_flight(Some(vec![crate::stands::ParkingStand {
                 name: Some("R1".into()),
@@ -448,6 +453,22 @@
             assert!(stats.block_on_at.is_none());
         }
 
+        /// Pilot 2, QPolQYyOJB4AQE32 RCTP (01.11.2026): 171 s Bremshalt mit
+        /// laufenden Triebwerken auf dem Rollweg, 613 m vor Stand C7 — mit
+        /// 120 s Frist ein falsches Block-On. Der längste Halt vor dem
+        /// Weiterrollen in 1951 Flugprotokollen dauerte 614 s
+        /// (yJMOJBnV7PlrO0YW); auch der zählt nicht.
+        #[test]
+        fn warten_auf_dem_rollweg_mit_laufenden_triebwerken_ist_kein_block_on() {
+            let flight = rollweg_halt_flight();
+            let t0 = Utc::now();
+            let snap = stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1);
+            for s in [0, 121, 171, 614] {
+                assert_eq!(step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(s)), None, "{s} s");
+            }
+            assert!(flight.stats.lock().unwrap().block_on_at.is_none());
+        }
+
         /// Hält die Bremse die volle Frist, zählt der Halt — mit der Zeit,
         /// zu der er begann, nicht der Zeit der Bestätigung.
         #[test]
@@ -456,7 +477,7 @@
             let t0 = Utc::now();
             let snap = stopped_at(AUF_ROLLWEG_B.0, AUF_ROLLWEG_B.1);
             step_flight_at(&flight, &snap, t0);
-            let change = step_flight_at(&flight, &snap, t0 + chrono::Duration::seconds(120));
+            let change = step_flight_at(&flight, &snap, t0 + rollweg_frist());
             assert_eq!(change, Some(FlightPhase::BlocksOn));
             let stats = flight.stats.lock().unwrap();
             assert_eq!(stats.block_on_at, Some(t0));
@@ -488,8 +509,9 @@
             step_flight_at(&flight, &halt, t0);
             step_flight_at(&flight, &rollt, t0 + chrono::Duration::seconds(30));
             step_flight_at(&flight, &halt, t0 + chrono::Duration::seconds(60));
-            assert_eq!(step_flight_at(&flight, &halt, t0 + chrono::Duration::seconds(150)), None);
-            let change = step_flight_at(&flight, &halt, t0 + chrono::Duration::seconds(180));
+            let ohne_losrollen = t0 + rollweg_frist() + chrono::Duration::seconds(30);
+            assert_eq!(step_flight_at(&flight, &halt, ohne_losrollen), None);
+            let change = step_flight_at(&flight, &halt, t0 + chrono::Duration::seconds(60) + rollweg_frist());
             assert_eq!(change, Some(FlightPhase::BlocksOn));
             assert_eq!(
                 flight.stats.lock().unwrap().block_on_at,
