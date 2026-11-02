@@ -1858,7 +1858,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Block-on sulla via di rullaggio: se attendi su una via di rullaggio vicino alle piazzole con il freno di parcheggio inserito e i motori accesi, AeroACARS segnala il block-on solo dopo 15 minuti anziché dopo due. Se la tua piazzola si trova su una linea di rullaggio, la sosta conta non appena spegni i motori: l'orario di block-on è allora l'inizio della sosta."
+    "neu_text": "Avviso di manutenzione leggibile per intero: un testo lungo nella fascia “Manutenzione programmata” poteva uscire dal riquadro sopra e sotto, a seconda della dimensione della finestra. Ora il riquadro cresce con il testo a qualsiasi larghezza."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

@@ -1858,7 +1858,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Block-on on the taxiway: if you wait on a taxiway near the stands with the parking brake set and engines running, AeroACARS only reports block-on there after 15 minutes instead of two. If your stand sits on a taxiway line, the stop counts as soon as you shut down the engines — the block-on time is then the start of the stop."
+    "neu_text": "Maintenance notice fully readable: a long text in the “Scheduled maintenance” band could spill out of the box at the top and bottom, depending on the window size. The box now grows with the text at any window width."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

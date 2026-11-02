@@ -372,6 +372,14 @@ html.im-browser .shell {
   overflow-y: auto;
   box-sizing: border-box;
 }
+/* Feldbefund Thomas (02.11.2026): „Wartungsfenster zu klein, mal passt es
+   mal nicht.“ `.app` hat durch das Grid eine feste Höhe; ist der Inhalt
+   länger, schrumpfen die Flex-Kinder. `.ui-notice` setzt `min-height: 34px`
+   und hebt damit die Inhalts-Untergrenze auf — das Band (Wartung, neue
+   Generation …) wurde bis auf 34 px gequetscht, der Text lief heraus. */
+.app > .ui-notice {
+  flex-shrink: 0;
+}
 
 /* ---------- Seitenleiste ---------- */
 .nav {
