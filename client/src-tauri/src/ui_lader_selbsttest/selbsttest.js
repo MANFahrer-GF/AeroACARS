@@ -74,11 +74,14 @@ async function messen() {
   erg.fachlich_discord_rpc_clear_flight = await aufruf("discord_rpc_clear_flight");
   erg.fachlich_erlaubt = !acl(erg.fachlich_discord_rpc_clear_flight);
 
-  // Fehlerseite bei fehlender Datei, danach eingebauter Stand (zuletzt!)
+  // Datei ausserhalb des Manifests: schlichtes 404, das Paket bleibt die
+  // Quelle (Health-Report 02.11.2026 — vorher schaltete eine fremde Anfrage
+  // die App auf den eingebauten Stand). Defekt macht nur eine unlesbare
+  // Manifest-Datei; das pruefen die Rust-Tests in ui_lader.rs.
   const f = await fetch("/gibt-es-nicht.js");
   erg.fehlerseite = { status: f.status, text: (await f.text()).includes("Paket defekt, eingebauter Stand aktiv") };
   const danach = await (await fetch("/index.html")).text();
-  erg.danach_eingebaut = !danach.includes("aa-selbsttest-seite");
+  erg.danach_paket = danach.includes("aa-selbsttest-seite");
 
   await warte(200);
   erg.csp_verstoesse = verstoesse;

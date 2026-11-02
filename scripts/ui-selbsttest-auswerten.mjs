@@ -29,8 +29,8 @@ export function faelle(l1, l2) {
     ],
     ["lesen erlaubt (app_info)", a.lesen_erlaubt === true, JSON.stringify(a.lesen_app_info)],
     ["fachlich erlaubt (discord_rpc_clear_flight)", a.fachlich_erlaubt === true, JSON.stringify(a.fachlich_discord_rpc_clear_flight)],
-    ["Fehlerseite bei fehlender Datei", a.fehlerseite?.status === 404 && a.fehlerseite?.text === true, JSON.stringify(a.fehlerseite)],
-    ["danach eingebauter Stand", a.danach_eingebaut === true, a.danach_eingebaut],
+    ["Datei ausserhalb des Manifests: 404 ohne Fehlerseite", a.fehlerseite?.status === 404 && a.fehlerseite?.text === false, JSON.stringify(a.fehlerseite)],
+    ["danach weiter das Paket", a.danach_paket === true, a.danach_paket],
     ["Ursprung gleich ueber zwei Starts", !!a.ursprung && a.ursprung === b.ursprung, `${a.ursprung} / ${b.ursprung}`],
     [
       "localStorage ueber zwei Starts",
@@ -55,14 +55,15 @@ if (process.argv[2] === "--selbsttest") {
     inline_script_blockiert: true, eval_blockiert: true, fremder_host_blockiert: true, live_fetch: "ok",
     schrift_mime: "font/woff2", schrift: "loaded", wasm_mime: "application/wasm", wasm_kompilieren: "ok",
     wasm_streaming: "ok", ipc_vorhanden: true, system_zahl: 37, system_nicht_abgewiesen: [],
-    lesen_erlaubt: true, fachlich_erlaubt: true, fehlerseite: { status: 404, text: true },
-    danach_eingebaut: true, ursprung: "aeroui://localhost", speicher_neu: "1",
+    lesen_erlaubt: true, fachlich_erlaubt: true, fehlerseite: { status: 404, text: false },
+    danach_paket: true, ursprung: "aeroui://localhost", speicher_neu: "1",
   };
   const zwei = { ...gut, speicher_vorher: "1" };
   if (!faelle(gut, zwei).every(([, ok]) => ok)) throw new Error("Selbsttest: guter Lauf faellt durch");
   const verdorben = [
     { system_nicht_abgewiesen: [{ befehl: "phpvms_login" }] }, { inline_script_blockiert: false },
-    { live_fetch: "fehler" }, { wasm_mime: "text/html" }, { danach_eingebaut: false },
+    { live_fetch: "fehler" }, { wasm_mime: "text/html" }, { danach_paket: false },
+    { fehlerseite: { status: 404, text: true } },
   ];
   for (const v of verdorben) {
     if (faelle({ ...gut, ...v }, zwei).every(([, ok]) => ok)) throw new Error(`Selbsttest: ${JSON.stringify(v)} nicht erkannt`);
