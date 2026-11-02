@@ -4,9 +4,10 @@
 //! Quelle ist genau EINE je Programmlauf: `ui/` der aktiven Generation
 //! (`laufzeit_paket::ui_paket`) oder, wenn dieser Lauf keine hat, das
 //! eingebaute Frontend (`asset_resolver`, wie `remote/router.rs`). Fehlt eine
-//! Datei im Paket oder passt ihr Hash nicht, kommt die Fehlerseite „Paket
+//! Datei des Manifests oder passt ihr Hash nicht, kommt die Fehlerseite „Paket
 //! defekt, eingebauter Stand aktiv“ — und ab dann gilt fuer diesen Lauf das
-//! eingebaute Frontend (nie gemischt innerhalb einer Seite, P-3.02).
+//! eingebaute Frontend (nie gemischt innerhalb einer Seite, P-3.02). Eine
+//! Datei, die gar nicht im Manifest steht, ist nur ein 404.
 //!
 //! Jede Antwort traegt die CSP aus `tauri.conf.json` als Header (ohne
 //! `unsafe-eval`, nur die feste Hostliste). Ein eigenes Protokoll gilt in
@@ -136,13 +137,15 @@ pub(crate) fn datei<R: Runtime>(app: &AppHandle<R>, pfad: &str) -> Result<Datei,
     })
 }
 
-/// Defekt ist das Paket, wenn eine Datei aus seinem Manifest nicht lesbar ist
-/// (Hash, Platte) oder wenn Inhalt der Oberflaeche fehlt, auf den eine Seite
-/// verweist (HTML, Skript, Stil, WASM). Nicht: Anfragen, die der Browser von
-/// sich aus stellt (`favicon.ico` bei WebView2, Messung P-8.03 29.10.2026).
+/// Defekt ist das Paket nur, wenn eine Datei aus seinem Manifest nicht lesbar
+/// ist (Hash, Platte). Nicht: Anfragen nach Dateien, die das Paket gar nicht
+/// hat — der Browser fragt von sich aus (`favicon.ico` bei WebView2, Messung
+/// P-8.03 29.10.2026), und eine Seite aus einem fremden Stand (Cache) verlangt
+/// Skripte, die es in keiner Generation gibt (Pilot 2, 31.10. und 01.11.2026:
+/// `datumsgrenze-z5iYr5Jw.js`). Die Generation baut `ui/` als Ganzes aus
+/// `dist` (bundle.yml), ihre eigenen Seiten verweisen nur auf Manifest-Dateien.
 fn macht_defekt(p: &Paket, im_paket: &str) -> bool {
     p.manifest.datei(im_paket).is_some()
-        || matches!(im_paket.rsplit_once('.').map(|(_, e)| e), Some("html" | "js" | "mjs" | "css" | "wasm"))
 }
 
 /// Fehlerseite (P-8.01): ohne Skript, damit sie unter der CSP immer zeichnet.
@@ -170,10 +173,11 @@ fn antwort(status: StatusCode, mime: &str, csp: Option<String>, bytes: Vec<u8>) 
 /// Handler fuer `aeroui://` (in `lib.rs` am Builder angemeldet).
 pub(crate) fn anfrage<R: Runtime>(ctx: UriSchemeContext<'_, R>, req: Request<Vec<u8>>, antworter: UriSchemeResponder) {
     let app = ctx.app_handle().clone();
-    std::thread::spawn(move || antworter.respond(beantworten(&app, &req)));
+    let fenster = ctx.webview_label().to_string();
+    std::thread::spawn(move || antworter.respond(beantworten(&app, &req, &fenster)));
 }
 
-fn beantworten<R: Runtime>(app: &AppHandle<R>, req: &Request<Vec<u8>>) -> Response<Vec<u8>> {
+fn beantworten<R: Runtime>(app: &AppHandle<R>, req: &Request<Vec<u8>>, fenster: &str) -> Response<Vec<u8>> {
     let pfad = req.uri().path().to_string();
     if pfad == "/__selbsttest/ergebnis" {
         if let Some((ziel, _)) = SELBSTTEST.get() {
@@ -193,6 +197,16 @@ fn beantworten<R: Runtime>(app: &AppHandle<R>, req: &Request<Vec<u8>>) -> Respon
     }
     match datei(app, &pfad) {
         Ok(d) => antwort(StatusCode::OK, &d.mime, d.csp, d.bytes),
+        // Die Fehlerseite sagt „eingebauter Stand aktiv“ — nur dann zeigen.
+        Err(grund) if !DEFEKT.load(Ordering::SeqCst) => {
+            // Nur Seiteninhalt melden, nicht `favicon.ico` & Co. (WebView2 fragt
+            // bei jedem Seitenaufbau von sich aus).
+            if matches!(pfad.rsplit_once('.').map(|(_, e)| e), Some("html" | "js" | "mjs" | "css" | "wasm")) {
+                let referer = req.headers().get(header::REFERER).and_then(|v| v.to_str().ok()).unwrap_or("-");
+                tracing::warn!(%fenster, %referer, %grund, "Oberflaeche: Datei nicht vorhanden (404)");
+            }
+            antwort(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", None, b"nicht gefunden".to_vec())
+        }
         Err(grund) => antwort(
             StatusCode::NOT_FOUND,
             "text/html; charset=utf-8",
@@ -296,13 +310,17 @@ mod tests {
         assert!(p.datei("ui/fehlt.js").is_err());
     }
 
-    /// Fehlt ein Skript, ist das Paket defekt; fragt WebView2 von sich aus
-    /// nach `favicon.ico`, nicht (Windows-Messung 29.10.2026).
+    /// Nur eine Datei des Manifests kann das Paket defekt machen. Ein Skript
+    /// oder Stil, den es in keiner Generation gibt (Pilot 2, 31.10./01.11.2026,
+    /// Seite aus fremdem Stand), ist ein 404 — vorher schaltete eine einzige
+    /// solche Anfrage die App bis zum Neustart auf den eingebauten Stand.
     #[test]
-    fn nur_fehlender_inhalt_macht_defekt() {
-        let p = paket_aus(&[("ui/index.html", b"<p>x</p>")]);
-        assert!(macht_defekt(&p, "ui/assets/index-abc.js"));
+    fn nur_manifest_dateien_machen_defekt() {
+        let p = paket_aus(&[("ui/index.html", b"<p>x</p>"), ("ui/assets/index-abc.js", b"1")]);
         assert!(macht_defekt(&p, "ui/index.html"));
+        assert!(macht_defekt(&p, "ui/assets/index-abc.js"));
+        assert!(!macht_defekt(&p, "ui/assets/datumsgrenze-z5iYr5Jw.js"));
+        assert!(!macht_defekt(&p, "ui/assets/datumsgrenze-DNVN2dqC.css"));
         assert!(!macht_defekt(&p, "ui/favicon.ico"));
         assert!(!macht_defekt(&p, "ui/robots.txt"));
     }
@@ -339,6 +357,10 @@ mod tests {
             crate::panel_server::hud_dateien(app).unwrap(),
             ("/* G-Test */".to_string(), "/* G-Test css */".to_string())
         );
+        // Ein Skript aus fremdem Stand: 404, das Paket bleibt die Quelle.
+        assert!(datei(app, "/assets/datumsgrenze-z5iYr5Jw.js").is_err());
+        assert!(!DEFEKT.load(Ordering::SeqCst));
+        assert_eq!(datei(app, "/index.html").unwrap().bytes, b"<p>G-Test</p>");
     }
 
     #[test]
