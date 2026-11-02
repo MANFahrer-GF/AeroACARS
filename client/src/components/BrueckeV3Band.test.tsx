@@ -122,6 +122,16 @@ describe("BrueckeV3Band", () => {
     expect(invoke).toHaveBeenCalledTimes(2);
     expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(false);
   });
+
+  it("fragt im Flug nicht im Minutentakt ab", async () => {
+    vi.useFakeTimers();
+    invoke.mockResolvedValue({ version: "3.0.0", sperre: "flug" });
+    await zeigen("cruise" as FlightPhase);
+    await act(async () => {
+      vi.advanceTimersByTime(30 * 60 * 1000);
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("BrueckeV3Knopf", () => {

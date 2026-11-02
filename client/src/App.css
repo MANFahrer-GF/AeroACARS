@@ -728,7 +728,6 @@ body {
   border-color: var(--sem-info);
   animation: update-button-glow 2s ease-in-out infinite;
 }
-.update-button--escalated:hover,
 .update-button--escalated:hover:not(:disabled) {
   background: color-mix(in srgb, var(--sem-info) 85%, var(--text));
   border-color: color-mix(in srgb, var(--sem-info) 85%, var(--text));

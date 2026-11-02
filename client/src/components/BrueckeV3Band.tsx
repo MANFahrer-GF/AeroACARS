@@ -19,8 +19,8 @@ import { ACTIVE_FLIGHT_PHASES } from "./UpdateBanner";
  * nicht im LAN-Browser (der Kern leitet die Befehle dort ohnehin nicht
  * weiter). Solange ein Flug offen ist oder Flüge noch auf das Senden warten,
  * sperrt der Kern den Umstieg (`sperre`). Die Sperre wird bei jedem
- * Phasenwechsel und jede Minute neu abgefragt — sonst bliebe der Knopf nach
- * dem Flug bis zum Neustart gesperrt.
+ * Phasenwechsel und ohne Flug jede Minute neu abgefragt — sonst bliebe der
+ * Knopf nach dem Flug bis zum Neustart gesperrt.
  */
 
 interface BrueckeV3Info {
@@ -35,7 +35,7 @@ export interface BrueckeV3 {
   umsteigen: () => void;
 }
 
-/** Neu abfragen: jede Minute bei Sperre, alle zehn Minuten ohne Antwort. */
+/** Neu abfragen (nur ohne Flug): jede Minute bei Sperre, alle zehn Minuten ohne Antwort. */
 const TAKT_GESPERRT_MS = 60 * 1000;
 const TAKT_OHNE_ANTWORT_MS = 10 * 60 * 1000;
 
@@ -59,12 +59,14 @@ export function useBrueckeV3(activePhase: FlightPhase | null): BrueckeV3 {
     };
   }, [activePhase, abfrage]);
 
+  // Takt nur ohne Flug: Im Flug ist das Band weg und der Kern sperrt ohnehin;
+  // das Flugende fängt die Abfrage beim Phasenwechsel ab.
   const gesperrt = info?.sperre != null;
   useEffect(() => {
-    if (!isTauri || (info && !gesperrt)) return;
+    if (!isTauri || activePhase != null || (info && !gesperrt)) return;
     const id = setInterval(() => setAbfrage((n) => n + 1), info ? TAKT_GESPERRT_MS : TAKT_OHNE_ANTWORT_MS);
     return () => clearInterval(id);
-  }, [info, gesperrt]);
+  }, [info, gesperrt, activePhase]);
 
   const umsteigen = useCallback(() => {
     setLaeuft(true);
