@@ -1,7 +1,9 @@
-// v2.1.25 — Band „AeroACARS 3 ist da“: nur mit Version aus dem 3.x-Kanal,
-// nie im Flug, „Später“ hält 24 Stunden, Fehler bleiben sichtbar.
+// v2.1.25/26 — Band „AeroACARS 3 ist da“ und fester Knopf: nur mit Version
+// aus dem 3.x-Kanal, Band nie im Flug, nicht wegklickbar, Sperre wird nach
+// dem Flug neu abgefragt, Fehler bleiben sichtbar.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { FlightPhase } from "../types";
 
 const invoke = vi.fn();
 vi.mock("../lib/ipc", () => ({
@@ -10,9 +12,16 @@ vi.mock("../lib/ipc", () => ({
   formatIpcError: (e: unknown) => String(e),
 }));
 
-import { BrueckeV3Band } from "./BrueckeV3Band";
+import { BrueckeV3Band, BrueckeV3Knopf, useBrueckeV3 } from "./BrueckeV3Band";
 
 const V3 = { version: "3.0.0", sperre: null };
+
+function Band({ phase }: { phase: FlightPhase | null }) {
+  return <BrueckeV3Band bruecke={useBrueckeV3(phase)} activePhase={phase} />;
+}
+function Knopf({ phase }: { phase: FlightPhase | null }) {
+  return <BrueckeV3Knopf bruecke={useBrueckeV3(phase)} />;
+}
 
 beforeEach(() => {
   invoke.mockReset();
@@ -20,8 +29,8 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-async function zeigen(phase: Parameters<typeof BrueckeV3Band>[0]["activePhase"] = null) {
-  const r = render(<BrueckeV3Band activePhase={phase} />);
+async function zeigen(phase: FlightPhase | null = null) {
+  const r = render(<Band phase={phase} />);
   await act(async () => {});
   return r;
 }
@@ -42,9 +51,21 @@ describe("BrueckeV3Band", () => {
 
   it("zeigt nichts im Flug, aber am Stand", async () => {
     invoke.mockResolvedValue(V3);
-    const { container, rerender } = await zeigen("cruise");
+    const { container, rerender } = await zeigen("cruise" as FlightPhase);
     expect(container.innerHTML).toBe("");
-    rerender(<BrueckeV3Band activePhase={"preflight" as never} />);
+    await act(async () => rerender(<Band phase={"preflight" as FlightPhase} />));
+    expect(screen.getByRole("status")).toBeTruthy();
+  });
+
+  it("lässt sich nicht wegklicken: nur der Umstiegsknopf, auch nach Neustart", async () => {
+    invoke.mockResolvedValue(V3);
+    const { unmount } = await zeigen();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button").textContent).toBe("Jetzt umsteigen");
+    // Ein „Später“ aus 2.1.25 im Speicher blendet nichts mehr aus.
+    localStorage.setItem("aa-bruecke-v3-spaeter", String(Date.now()));
+    unmount();
+    await zeigen();
     expect(screen.getByRole("status")).toBeTruthy();
   });
 
@@ -52,7 +73,7 @@ describe("BrueckeV3Band", () => {
     invoke.mockResolvedValueOnce(V3).mockRejectedValueOnce("kein Netz");
     await zeigen();
     await act(async () => {
-      fireEvent.click(screen.getAllByRole("button")[0]);
+      fireEvent.click(screen.getByRole("button"));
     });
     expect(invoke).toHaveBeenLastCalledWith("bruecke_v3_installieren");
     expect(screen.getByRole("status").textContent).toContain("kein Netz");
@@ -61,7 +82,7 @@ describe("BrueckeV3Band", () => {
   it("sperrt den Umstieg bei wartenden Flügen und sagt warum", async () => {
     invoke.mockResolvedValueOnce({ version: "3.0.0", sperre: "warteschlange" });
     await zeigen();
-    expect((screen.getAllByRole("button")[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole("status").textContent).toContain("Es warten noch Flüge");
   });
 
@@ -69,29 +90,65 @@ describe("BrueckeV3Band", () => {
     invoke.mockResolvedValueOnce(V3).mockRejectedValueOnce("gesperrt:flug");
     await zeigen();
     await act(async () => {
-      fireEvent.click(screen.getAllByRole("button")[0]);
+      fireEvent.click(screen.getByRole("button"));
     });
-    expect((screen.getAllByRole("button")[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByRole("status").textContent).toContain("Erst den offenen Flug beenden");
   });
 
-  it("sperrt die Knöpfe, solange der Umstieg läuft", async () => {
+  it("sperrt den Knopf, solange der Umstieg läuft", async () => {
     invoke.mockResolvedValueOnce(V3).mockReturnValueOnce(new Promise(() => {}));
     await zeigen();
-    fireEvent.click(screen.getAllByRole("button")[0]);
-    for (const b of screen.getAllByRole("button")) expect((b as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button"));
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("„Später“ blendet aus und gilt 24 Stunden", async () => {
-    invoke.mockResolvedValue(V3);
-    const { container, unmount } = await zeigen();
-    fireEvent.click(screen.getAllByRole("button")[1]);
-    expect(container.innerHTML).toBe("");
-    unmount();
-    expect((await zeigen()).container.innerHTML).toBe("");
-    // Nach 24 Stunden wieder da.
-    localStorage.setItem("aa-bruecke-v3-spaeter", String(Date.now() - 24 * 3600 * 1000 - 1));
+  it("gibt den Knopf nach dem Flug frei (neue Abfrage beim Phasenwechsel)", async () => {
+    invoke.mockResolvedValueOnce({ version: "3.0.0", sperre: "flug" }).mockResolvedValue(V3);
+    const { rerender } = await zeigen("preflight" as FlightPhase);
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => rerender(<Band phase={null} />));
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("fragt eine Sperre jede Minute neu ab", async () => {
+    vi.useFakeTimers();
+    invoke.mockResolvedValueOnce({ version: "3.0.0", sperre: "warteschlange" }).mockResolvedValue(V3);
     await zeigen();
-    expect(screen.getByRole("status")).toBeTruthy();
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(60 * 1000);
+    });
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("BrueckeV3Knopf", () => {
+  it("steht in der Seitenleiste und startet den Umstieg", async () => {
+    invoke.mockResolvedValueOnce(V3).mockReturnValueOnce(new Promise(() => {}));
+    render(<Knopf phase={null} />);
+    await act(async () => {});
+    const knopf = screen.getByRole("button") as HTMLButtonElement;
+    expect(knopf.textContent).toContain("AeroACARS 3");
+    expect(knopf.title).toContain("3.0.0");
+    fireEvent.click(knopf);
+    expect(invoke).toHaveBeenLastCalledWith("bruecke_v3_installieren");
+  });
+
+  it("bleibt im Flug sichtbar, aber gesperrt mit Grund", async () => {
+    invoke.mockResolvedValue({ version: "3.0.0", sperre: "flug" });
+    render(<Knopf phase={"cruise" as FlightPhase} />);
+    await act(async () => {});
+    const knopf = screen.getByRole("button") as HTMLButtonElement;
+    expect(knopf.disabled).toBe(true);
+    expect(knopf.title).toContain("Erst den offenen Flug beenden");
+  });
+
+  it("fehlt ohne Version", async () => {
+    invoke.mockResolvedValue(null);
+    const { container } = render(<Knopf phase={null} />);
+    await act(async () => {});
+    expect(container.innerHTML).toBe("");
   });
 });

@@ -104,7 +104,7 @@ const ReleaseNotesModal = lazy(loadReleaseNotesModal);
 const CpdlcPanel = lazy(loadCpdlcPanel);
 import { UpdateButton } from "./components/UpdateButton";
 import { UpdateBanner } from "./components/UpdateBanner";
-import { BrueckeV3Band } from "./components/BrueckeV3Band";
+import { BrueckeV3Band, BrueckeV3Knopf, useBrueckeV3 } from "./components/BrueckeV3Band";
 import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
@@ -493,6 +493,8 @@ function App() {
   // Header-Button und das große Banner — konsumieren denselben State,
   // damit nicht doppelt gegen GitHub gepollt wird.
   const updateChecker = useUpdateChecker();
+  // v2.1.26 — Umstieg auf AeroACARS 3: ein Zustand für Band und festen Knopf.
+  const bruecke = useBrueckeV3(activeFlight?.phase ?? null);
 
   // Einmal geoeffnet, bleibt die Karte eingehaengt (siehe Kommentar am
   // Render-Ort). Vorher als Zustand statt als Ableitung aus `tab`, weil sie
@@ -917,7 +919,12 @@ function App() {
           simConnected={simConnected}
           simConnecting={simConnecting}
           simLabel={simKindLabel(simStatus?.kind)}
-          updateButton={<UpdateButton checker={updateChecker} />}
+          updateButton={
+            <>
+              <BrueckeV3Knopf bruecke={bruecke} />
+              <UpdateButton checker={updateChecker} />
+            </>
+          }
           recording={
             activeFlight ? (
               <LiveRecordingIndicator
@@ -948,7 +955,7 @@ function App() {
         activePhase={activeFlight?.phase ?? null}
       />
       {/* v2.1.25 — Umstieg auf AeroACARS 3 anbieten (BrueckeV3Band.tsx). */}
-      <BrueckeV3Band activePhase={activeFlight?.phase ?? null} />
+      <BrueckeV3Band bruecke={bruecke} activePhase={activeFlight?.phase ?? null} />
       {/* v1.7.6 — Pflicht-Riegel. Sperrt die Oberfläche, wenn beim Start
           eine neuere Version vorlag: erst aktualisieren, dann fliegen.
           Hält sich selbst zurück bei fehlendem Netz, bei einem Update,

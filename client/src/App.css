@@ -733,6 +733,13 @@ body {
   background: color-mix(in srgb, var(--sem-info) 85%, var(--text));
   border-color: color-mix(in srgb, var(--sem-info) 85%, var(--text));
 }
+/* v2.1.26 — Der Umstiegsknopf auf AeroACARS 3 (BrueckeV3Knopf) ist bei
+   offenem Flug oder wartenden Flügen gesperrt: dann nicht leuchten. */
+.update-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  animation: none;
+}
 
 /* v0.5.48 — Großes Update-Banner über dem Header. Vollbreit, cyan
    akzentuiert, drei klare Aktionen. Pilot sieht das nur wenn das

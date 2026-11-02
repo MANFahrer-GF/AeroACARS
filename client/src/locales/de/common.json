@@ -1892,6 +1892,8 @@
     "gate_hint": "Warum verpflichtend: AeroACARS bewertet Landungen und reicht Flüge ein. Ein alter Stand liefert Werte, die sich später nicht mehr zuordnen lassen."
   },
   "bruecke_v3": {
+    "knopf": "AeroACARS 3",
+    "knopf_titel": "Auf AeroACARS 3 (v{{version}}) umsteigen",
     "titel": "AeroACARS 3 ist da (v{{version}})",
     "text": "Steig jetzt um: AeroACARS lädt AeroACARS 3, schließt sich und startet die neue Version (etwa eine Minute; unter Windows erst über den Installer). Anmeldung, Einstellungen, Bordbuch und Landungen übernimmt AeroACARS 3 beim ersten Start. Danach bitte nur noch AeroACARS 3 öffnen — unter Windows kannst du AeroACARS 2 anschließend in den Windows-Einstellungen entfernen.",
     "sperre_flug": "Erst den offenen Flug beenden, dann umsteigen.",
