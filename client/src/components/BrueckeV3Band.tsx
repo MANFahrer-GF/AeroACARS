@@ -12,8 +12,15 @@ import { ACTIVE_FLIGHT_PHASES } from "./UpdateBanner";
  *
  * Nicht im Flug (dieselben Phasen wie das Update-Band), nicht im
  * LAN-Browser (der Kern leitet die Befehle dort ohnehin nicht weiter).
- * „Später“ blendet es für 24 Stunden aus.
+ * „Später“ blendet es für 24 Stunden aus. Solange ein Flug offen ist oder
+ * Flüge noch auf das Senden warten, sperrt der Kern den Umstieg (`sperre`),
+ * das Band sagt dann, warum.
  */
+
+interface BrueckeV3 {
+  version: string;
+  sperre: "flug" | "warteschlange" | null;
+}
 
 const SPAETER_KEY = "aa-bruecke-v3-spaeter";
 const SPAETER_MS = 24 * 3600 * 1000;
@@ -29,7 +36,7 @@ function spaeterAktiv(): boolean {
 
 export function BrueckeV3Band({ activePhase }: { activePhase: FlightPhase | null }) {
   const { t } = useTranslation();
-  const [version, setVersion] = useState<string | null>(null);
+  const [info, setInfo] = useState<BrueckeV3 | null>(null);
   const [spaeter, setSpaeter] = useState(spaeterAktiv);
   const [laeuft, setLaeuft] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
@@ -37,9 +44,9 @@ export function BrueckeV3Band({ activePhase }: { activePhase: FlightPhase | null
   useEffect(() => {
     if (!isTauri) return;
     let aktiv = true;
-    invoke<string | null>("bruecke_v3_pruefen")
+    invoke<BrueckeV3 | null>("bruecke_v3_pruefen")
       .then((v) => {
-        if (aktiv) setVersion(v ?? null);
+        if (aktiv) setInfo(v ?? null);
       })
       .catch(() => undefined);
     return () => {
@@ -47,14 +54,17 @@ export function BrueckeV3Band({ activePhase }: { activePhase: FlightPhase | null
     };
   }, []);
 
-  if (!version || spaeter) return null;
+  if (!info || spaeter) return null;
   if (activePhase != null && ACTIVE_FLIGHT_PHASES.has(activePhase)) return null;
 
   const umsteigen = () => {
     setLaeuft(true);
     setFehler(null);
     invoke("bruecke_v3_installieren").catch((e) => {
-      setFehler(formatIpcError(e));
+      const text = formatIpcError(e);
+      const grund = /^gesperrt:(flug|warteschlange)$/.exec(text)?.[1];
+      if (grund) setInfo({ ...info, sperre: grund as BrueckeV3["sperre"] });
+      else setFehler(text);
       setLaeuft(false);
     });
   };
@@ -73,13 +83,14 @@ export function BrueckeV3Band({ activePhase }: { activePhase: FlightPhase | null
         ⬆
       </div>
       <div className="update-banner__text">
-        <div className="update-banner__title">{t("bruecke_v3.titel", { version })}</div>
+        <div className="update-banner__title">{t("bruecke_v3.titel", { version: info.version })}</div>
         <div className="update-banner__subtitle">{t("bruecke_v3.text")}</div>
+        {info.sperre && <div className="update-banner__progress">{t(`bruecke_v3.sperre_${info.sperre}`)}</div>}
         {laeuft && <div className="update-banner__progress">{t("bruecke_v3.laeuft")}</div>}
         {fehler && <div className="update-banner__progress">{t("bruecke_v3.fehler", { fehler })}</div>}
       </div>
       <div className="update-banner__actions">
-        <button type="button" className="button button--primary" onClick={umsteigen} disabled={laeuft}>
+        <button type="button" className="button button--primary" onClick={umsteigen} disabled={laeuft || info.sperre != null}>
           {laeuft ? "…" : t("bruecke_v3.umsteigen")}
         </button>
         <button type="button" className="button button--ghost" onClick={spaeterKlick} disabled={laeuft}>

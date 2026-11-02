@@ -19,7 +19,10 @@
 //! Beide Befehle stehen bewusst NICHT in der LAN-Brücke (`remote/bridge.rs`):
 //! vom Tablet aus darf niemand installieren und beenden.
 
-use tauri::AppHandle;
+use std::path::Path;
+
+use serde::Serialize;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
 /// Der Beta-Kanal von 3.x wechselt mit dem fertigen 3.0 mit
@@ -39,12 +42,51 @@ async fn update_v3(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Updat
         .map_err(|e| e.to_string())
 }
 
+/// Was 3 beim ersten Start nicht sauber übernimmt (`datenuebernahme.rs` auf
+/// v3): die PIREP-Warteschlange und den offenen Flug lässt es liegen — auf
+/// macOS ist 2.x nach dem Bundle-Tausch weg, ein ungesendeter Flug bliebe
+/// für immer liegen. Die Bahn-Nachträge (`bahn_nachtraege/<va>/<pilot>/`)
+/// kopiert es dagegen mit, unter Windows sendeten sie dann beide Apps.
+/// Deshalb erst umsteigen, wenn alles leer ist.
+fn sperre(daten: Option<&Path>, konfig: Option<&Path>) -> Option<&'static str> {
+    if konfig.is_some_and(|k| k.join("active_flight.json").exists()) {
+        return Some("flug");
+    }
+    let wartet = daten.is_some_and(|d| {
+        enthaelt_datei(&d.join("pending_pireps")) || enthaelt_datei(&d.join("bahn_nachtraege"))
+    });
+    wartet.then_some("warteschlange")
+}
+
+/// Liegt irgendwo darunter eine Datei? Leere Unterordner zählen nicht.
+fn enthaelt_datei(ordner: &Path) -> bool {
+    std::fs::read_dir(ordner).is_ok_and(|eintraege| {
+        eintraege.flatten().any(|e| {
+            let p = e.path();
+            if p.is_dir() { enthaelt_datei(&p) } else { true }
+        })
+    })
+}
+
+fn sperre_app(app: &AppHandle) -> Option<&'static str> {
+    let daten = app.path().app_data_dir().ok();
+    let konfig = app.path().app_config_dir().ok();
+    sperre(daten.as_deref(), konfig.as_deref())
+}
+
+#[derive(Serialize)]
+pub struct BrueckeV3 {
+    version: String,
+    /// "flug" | "warteschlange", solange der Umstieg Daten verlieren würde.
+    sperre: Option<&'static str>,
+}
+
 /// Version von AeroACARS 3, wenn eine für dieses System bereitliegt.
 /// Fehler (kein Netz, Intel-Mac ohne Datei im Kanal …) ergeben `None`.
 #[tauri::command]
-pub async fn bruecke_v3_pruefen(app: AppHandle) -> Option<String> {
+pub async fn bruecke_v3_pruefen(app: AppHandle) -> Option<BrueckeV3> {
     match update_v3(&app).await {
-        Ok(u) => u.map(|u| u.version),
+        Ok(u) => u.map(|u| BrueckeV3 { version: u.version, sperre: sperre_app(&app) }),
         Err(e) => {
             tracing::info!(fehler = %e, "Brücke v3: keine Version für dieses System");
             None
@@ -55,6 +97,9 @@ pub async fn bruecke_v3_pruefen(app: AppHandle) -> Option<String> {
 /// Lädt AeroACARS 3, startet die Installation und beendet 2.x.
 #[tauri::command]
 pub async fn bruecke_v3_installieren(app: AppHandle) -> Result<(), String> {
+    if let Some(grund) = sperre_app(&app) {
+        return Err(format!("gesperrt:{grund}"));
+    }
     let update = update_v3(&app)
         .await?
         .ok_or_else(|| "Keine Version von AeroACARS 3 gefunden.".to_string())?;
@@ -71,7 +116,8 @@ pub async fn bruecke_v3_installieren(app: AppHandle) -> Result<(), String> {
 #[cfg(target_os = "windows")]
 fn starten(app: &AppHandle, _update: &tauri_plugin_updater::Update, bytes: &[u8]) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let pfad = std::env::temp_dir().join("AeroACARS-3-setup.exe");
+    // Eigener Name je Lauf: ein noch offener älterer Installer sperrt seine Datei.
+    let pfad = std::env::temp_dir().join(format!("AeroACARS-3-setup-{}.exe", std::process::id()));
     std::fs::write(&pfad, bytes).map_err(|e| e.to_string())?;
     app.opener()
         .open_path(pfad.to_string_lossy().to_string(), None::<&str>)
@@ -83,19 +129,25 @@ fn starten(app: &AppHandle, _update: &tauri_plugin_updater::Update, bytes: &[u8]
 #[cfg(target_os = "macos")]
 fn starten(_app: &AppHandle, update: &tauri_plugin_updater::Update, bytes: &[u8]) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
-    update.install(bytes).map_err(|e| e.to_string())?;
+    // Erst das Bundle finden, dann tauschen: ohne `.app` (Dev-Build) würde der
+    // Updater sonst das Verzeichnis der Programmdatei ersetzen.
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let bundle = bundle_aus_exe(&exe).ok_or_else(|| format!("kein .app-Bundle über {}", exe.display()))?;
-    std::process::Command::new("/bin/sh")
+    update.install(bytes).map_err(|e| e.to_string())?;
+    // Ab hier ist 3 installiert: ein Fehler beim Helfer darf nicht als
+    // „fehlgeschlagen“ erscheinen, AeroACARS muss nur von Hand geöffnet werden.
+    let helfer = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(r#"while kill -0 "$1" 2>/dev/null; do sleep 0.5; done; open "$2""#)
         .arg("bruecke-v3")
         .arg(std::process::id().to_string())
         .arg(&bundle)
         .process_group(0)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    tracing::info!(bundle = %bundle.display(), "Brücke v3: Bundle getauscht, Öffnen nach dem Beenden");
+        .spawn();
+    match helfer {
+        Ok(_) => tracing::info!(bundle = %bundle.display(), "Brücke v3: Bundle getauscht, Öffnen nach dem Beenden"),
+        Err(e) => tracing::warn!(fehler = %e, "Brücke v3: Bundle getauscht, Helfer nicht gestartet — von Hand öffnen"),
+    }
     Ok(())
 }
 
@@ -128,6 +180,35 @@ mod tests {
     fn bundle_aus_exe_ohne_app_ist_none() {
         // Dev-Build aus target/: dort gibt es kein Bundle zu öffnen.
         assert_eq!(bundle_aus_exe(Path::new("/x/target/debug/deps/aeroacars")), None);
+    }
+
+    fn ordner(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("bruecke-v3-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn sperre_bei_aktivem_flug_und_wartenden_pireps() {
+        let daten = ordner("daten");
+        let konfig = ordner("konfig");
+        assert_eq!(sperre(Some(&daten), Some(&konfig)), None);
+        // Leerer Warteschlangen-Ordner sperrt nicht (der Worker legt ihn an).
+        std::fs::create_dir_all(daten.join("pending_pireps")).unwrap();
+        assert_eq!(sperre(Some(&daten), Some(&konfig)), None);
+        std::fs::write(daten.join("pending_pireps/1.json"), "{}").unwrap();
+        assert_eq!(sperre(Some(&daten), Some(&konfig)), Some("warteschlange"));
+        std::fs::remove_file(daten.join("pending_pireps/1.json")).unwrap();
+        // Bahn-Nachträge liegen eine Ebene tiefer je VA/Pilot.
+        std::fs::create_dir_all(daten.join("bahn_nachtraege/gsg/1")).unwrap();
+        assert_eq!(sperre(Some(&daten), Some(&konfig)), None);
+        std::fs::write(daten.join("bahn_nachtraege/gsg/1/n.json"), "{}").unwrap();
+        assert_eq!(sperre(Some(&daten), Some(&konfig)), Some("warteschlange"));
+        std::fs::write(konfig.join("active_flight.json"), "{}").unwrap();
+        assert_eq!(sperre(Some(&daten), Some(&konfig)), Some("flug"));
+        let _ = std::fs::remove_dir_all(&daten);
+        let _ = std::fs::remove_dir_all(&konfig);
     }
 
     #[test]

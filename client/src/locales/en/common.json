@@ -1893,7 +1893,9 @@
   },
   "bruecke_v3": {
     "titel": "AeroACARS 3 is here (v{{version}})",
-    "text": "Switch now: AeroACARS downloads AeroACARS 3, closes itself and starts the installation (about one minute). AeroACARS 3 takes over your data on its first start. On Windows, AeroACARS 2 stays installed; you can remove it afterwards in the Windows settings. From then on, please only open AeroACARS 3.",
+    "text": "Switch now: AeroACARS downloads AeroACARS 3, closes itself and starts the new version (about one minute; on Windows via the installer first). AeroACARS 3 takes over your login, settings, logbook and landings on its first start. From then on, please only open AeroACARS 3 — on Windows you can then remove AeroACARS 2 in the Windows settings.",
+    "sperre_flug": "Finish the open flight first, then switch.",
+    "sperre_warteschlange": "Some flights are still waiting to be sent. As soon as they are transmitted, you can switch.",
     "umsteigen": "Switch now",
     "laeuft": "Downloading AeroACARS 3 …",
     "fehler": "Switch failed: {{fehler}}"

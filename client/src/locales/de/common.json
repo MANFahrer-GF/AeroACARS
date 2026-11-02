@@ -1893,7 +1893,9 @@
   },
   "bruecke_v3": {
     "titel": "AeroACARS 3 ist da (v{{version}})",
-    "text": "Steig jetzt um: AeroACARS lädt AeroACARS 3, schließt sich und startet die Installation (etwa eine Minute). Deine Daten übernimmt AeroACARS 3 beim ersten Start. Unter Windows bleibt AeroACARS 2 installiert, du kannst es danach in den Windows-Einstellungen entfernen. Bitte danach nur noch AeroACARS 3 öffnen.",
+    "text": "Steig jetzt um: AeroACARS lädt AeroACARS 3, schließt sich und startet die neue Version (etwa eine Minute; unter Windows erst über den Installer). Anmeldung, Einstellungen, Bordbuch und Landungen übernimmt AeroACARS 3 beim ersten Start. Danach bitte nur noch AeroACARS 3 öffnen — unter Windows kannst du AeroACARS 2 anschließend in den Windows-Einstellungen entfernen.",
+    "sperre_flug": "Erst den offenen Flug beenden, dann umsteigen.",
+    "sperre_warteschlange": "Es warten noch Flüge auf das Senden. Sobald sie übertragen sind, kannst du umsteigen.",
     "umsteigen": "Jetzt umsteigen",
     "laeuft": "AeroACARS 3 wird geladen …",
     "fehler": "Umstieg fehlgeschlagen: {{fehler}}"

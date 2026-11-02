@@ -1893,7 +1893,9 @@
   },
   "bruecke_v3": {
     "titel": "AeroACARS 3 è disponibile (v{{version}})",
-    "text": "Passa ora: AeroACARS scarica AeroACARS 3, si chiude e avvia l'installazione (circa un minuto). AeroACARS 3 riprende i tuoi dati al primo avvio. Su Windows AeroACARS 2 resta installato; puoi rimuoverlo dopo nelle impostazioni di Windows. Da quel momento apri solo AeroACARS 3.",
+    "text": "Passa ora: AeroACARS scarica AeroACARS 3, si chiude e avvia la nuova versione (circa un minuto; su Windows prima tramite l'installer). AeroACARS 3 riprende accesso, impostazioni, giornale di bordo e atterraggi al primo avvio. Da quel momento apri solo AeroACARS 3 — su Windows puoi poi rimuovere AeroACARS 2 nelle impostazioni di Windows.",
+    "sperre_flug": "Prima termina il volo aperto, poi passa ad AeroACARS 3.",
+    "sperre_warteschlange": "Alcuni voli attendono ancora l'invio. Appena sono stati trasmessi, puoi passare ad AeroACARS 3.",
     "umsteigen": "Passa ora",
     "laeuft": "Download di AeroACARS 3 …",
     "fehler": "Passaggio non riuscito: {{fehler}}"
