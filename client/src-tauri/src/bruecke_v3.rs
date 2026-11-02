@@ -16,8 +16,9 @@
 //!     einem kleinen Helfer, sobald dieser Prozess weg ist (`app.restart()`
 //!     nach dem Bundle-Tausch ist in 3.0 unzuverlässig, Befund 31.10.2026).
 //!
-//! Beide Befehle stehen bewusst NICHT in der LAN-Brücke (`remote/bridge.rs`):
-//! vom Tablet aus darf niemand installieren und beenden.
+//! Beide Befehle stehen in der LAN-Brücke auf der Verbotsliste (`DENY_SET` in
+//! `remote/bridge.rs`, dort von einem Test erzwungen): vom Tablet aus darf
+//! niemand installieren und beenden.
 
 use std::path::Path;
 
@@ -211,11 +212,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&konfig);
     }
 
-    #[test]
-    fn nicht_ueber_die_lan_bruecke_erreichbar() {
-        let bridge = include_str!("remote/bridge.rs");
-        // Gegenprobe: so sieht ein weitergeleiteter Befehl dort aus.
-        assert!(bridge.contains("\"app_info\" =>"), "Muster der LAN-Brücke geändert — Test anpassen");
-        assert!(!bridge.contains("\"bruecke_v3_"), "Installieren vom Tablet aus ist verboten");
-    }
 }

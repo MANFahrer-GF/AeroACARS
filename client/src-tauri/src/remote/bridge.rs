@@ -1541,6 +1541,10 @@ mod tests {
             // unten, eigener Ereigniskanal).
             "telemetrie_csv_speichern",
             "telemetrie_fenster_oeffnen",
+            // v2.1.25: Umstieg auf AeroACARS 3 laedt, installiert und beendet
+            // die App — nur am Sim-PC, nie vom Tablet (bruecke_v3.rs).
+            "bruecke_v3_pruefen",
+            "bruecke_v3_installieren",
         ];
 
         // v1.5.6: LEER — die frueher hier geparkten Luecken (Taxi-Karte,
