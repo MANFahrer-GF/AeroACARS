@@ -104,6 +104,7 @@ const ReleaseNotesModal = lazy(loadReleaseNotesModal);
 const CpdlcPanel = lazy(loadCpdlcPanel);
 import { UpdateButton } from "./components/UpdateButton";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { BrueckeV3Band } from "./components/BrueckeV3Band";
 import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
@@ -946,6 +947,8 @@ function App() {
         checker={updateChecker}
         activePhase={activeFlight?.phase ?? null}
       />
+      {/* v2.1.25 — Umstieg auf AeroACARS 3 anbieten (BrueckeV3Band.tsx). */}
+      <BrueckeV3Band activePhase={activeFlight?.phase ?? null} />
       {/* v1.7.6 — Pflicht-Riegel. Sperrt die Oberfläche, wenn beim Start
           eine neuere Version vorlag: erst aktualisieren, dann fliegen.
           Hält sich selbst zurück bei fehlendem Netz, bei einem Update,

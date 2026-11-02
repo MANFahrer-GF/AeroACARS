@@ -105,6 +105,8 @@ mod panel_server;
 // `hoppie-protocol` crate; this module is the thin Tauri wiring layer.
 // Spec: docs/spec/v1.3.0-hoppie-pdc-cpdlc.md
 mod hoppie;
+// v2.1.25: Umstieg auf AeroACARS 3 (Band in der App, nicht über LAN).
+mod bruecke_v3;
 /// Telemetrie-Monitor (v1.8): Kanalkatalog, Verlauf, Strom.
 mod telemetrie;
 /// v1.7.44: VDGS-Band — eigene Abflugfolge (TOBT/TSAT/CTOT) aus dem
@@ -65473,6 +65475,8 @@ pub fn run() {
             hoppie::hoppie_clear_logon_code,
             hoppie::hoppie_ping_station,
             hoppie::hoppie_connect,
+            bruecke_v3::bruecke_v3_pruefen,
+            bruecke_v3::bruecke_v3_installieren,
             hoppie::hoppie_disconnect,
             hoppie::hoppie_status,
             hoppie::hoppie_get_flight_context,
@@ -83687,6 +83691,17 @@ mod v0_16_23_route_only_refresh_tests {
             src.contains("\n            hoppie::hoppie_connect,\n"),
             "hoppie::hoppie_connect muss in generate_handler! registriert sein"
         );
+    }
+
+    #[test]
+    fn bruecke_v3_ist_registriert() {
+        let src = include_str!("lib.rs");
+        for befehl in ["bruecke_v3::bruecke_v3_pruefen", "bruecke_v3::bruecke_v3_installieren"] {
+            assert!(
+                src.contains(&format!("\n            {befehl},\n")),
+                "{befehl} muss in generate_handler! registriert sein"
+            );
+        }
     }
 
     /// Der geteilte Waypoint-Builder muss order 0-based hochzaehlen und

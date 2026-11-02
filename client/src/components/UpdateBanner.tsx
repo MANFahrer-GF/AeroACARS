@@ -26,7 +26,7 @@ import type { UseUpdateCheckerResult } from "../hooks/useUpdateChecker";
 /** Phasen in denen wir den Pilot NICHT mit einem Banner stören. Pilot
  *  ist gerade aktiv am Fliegen / Rollen / Boarding-Endphase. Update-
  *  Hinweis bleibt dann nur am Header-Button (passive Variante). */
-const ACTIVE_FLIGHT_PHASES: ReadonlySet<FlightPhase> = new Set([
+export const ACTIVE_FLIGHT_PHASES: ReadonlySet<FlightPhase> = new Set([
   "pushback",
   "taxi_out",
   "takeoff_roll",

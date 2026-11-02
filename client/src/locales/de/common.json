@@ -1891,6 +1891,13 @@
     "gate_continue": "Trotzdem fortfahren",
     "gate_hint": "Warum verpflichtend: AeroACARS bewertet Landungen und reicht Flüge ein. Ein alter Stand liefert Werte, die sich später nicht mehr zuordnen lassen."
   },
+  "bruecke_v3": {
+    "titel": "AeroACARS 3 ist da (v{{version}})",
+    "text": "Steig jetzt um: AeroACARS lädt AeroACARS 3, schließt sich und startet die Installation (etwa eine Minute). Deine Daten übernimmt AeroACARS 3 beim ersten Start. Unter Windows bleibt AeroACARS 2 installiert, du kannst es danach in den Windows-Einstellungen entfernen. Bitte danach nur noch AeroACARS 3 öffnen.",
+    "umsteigen": "Jetzt umsteigen",
+    "laeuft": "AeroACARS 3 wird geladen …",
+    "fehler": "Umstieg fehlgeschlagen: {{fehler}}"
+  },
   "recording": {
     "status": {
       "live": "LIVE",

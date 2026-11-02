@@ -1891,6 +1891,13 @@
     "gate_continue": "Continue anyway",
     "gate_hint": "Why this is mandatory: AeroACARS scores landings and files flights. An outdated build produces figures that cannot be attributed later."
   },
+  "bruecke_v3": {
+    "titel": "AeroACARS 3 is here (v{{version}})",
+    "text": "Switch now: AeroACARS downloads AeroACARS 3, closes itself and starts the installation (about one minute). AeroACARS 3 takes over your data on its first start. On Windows, AeroACARS 2 stays installed; you can remove it afterwards in the Windows settings. From then on, please only open AeroACARS 3.",
+    "umsteigen": "Switch now",
+    "laeuft": "Downloading AeroACARS 3 …",
+    "fehler": "Switch failed: {{fehler}}"
+  },
   "recording": {
     "status": {
       "live": "LIVE",

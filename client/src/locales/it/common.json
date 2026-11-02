@@ -1891,6 +1891,13 @@
     "gate_continue": "Continua comunque",
     "gate_hint": "Perché è obbligatorio: AeroACARS valuta gli atterraggi e registra i voli. Una versione datata produce valori che in seguito non sono più attribuibili."
   },
+  "bruecke_v3": {
+    "titel": "AeroACARS 3 è disponibile (v{{version}})",
+    "text": "Passa ora: AeroACARS scarica AeroACARS 3, si chiude e avvia l'installazione (circa un minuto). AeroACARS 3 riprende i tuoi dati al primo avvio. Su Windows AeroACARS 2 resta installato; puoi rimuoverlo dopo nelle impostazioni di Windows. Da quel momento apri solo AeroACARS 3.",
+    "umsteigen": "Passa ora",
+    "laeuft": "Download di AeroACARS 3 …",
+    "fehler": "Passaggio non riuscito: {{fehler}}"
+  },
   "recording": {
     "status": {
       "live": "LIVE",
