@@ -1858,7 +1858,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Avviso di manutenzione leggibile per intero: un testo lungo nella fascia “Manutenzione programmata” poteva uscire dal riquadro sopra e sotto, a seconda della dimensione della finestra. Ora il riquadro cresce con il testo a qualsiasi larghezza."
+    "neu_text": "Annunci di cabina negli aeroporti in quota: il segnale dei 10.000 piedi e la fase di silenzio sottostante ora si contano dall'altitudine dell'aeroporto e non più dal livello del mare. In partenza da Bogotá o Città del Messico il segnale suonava subito dopo il decollo e in avvicinamento solo dopo “posti per l'atterraggio”. In salita vale subito, in avvicinamento dal client 3.0.0-beta.2.4. Gli aeroporti sotto i 1.000 piedi restano invariati."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

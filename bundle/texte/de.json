@@ -1858,7 +1858,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Wartungshinweis vollständig lesbar: Ein langer Text im Band „Wartung geplant“ lief je nach Fenstergröße oben und unten aus dem Kasten. Der Kasten wächst jetzt bei jeder Fensterbreite mit dem Text."
+    "neu_text": "Kabinenansagen an hoch gelegenen Flughäfen: Der Gong bei 10.000 Fuß und die ruhige Phase darunter zählen jetzt ab der Höhe des Flughafens, nicht mehr ab Meereshöhe. Ab Bogotá oder Mexiko-Stadt kam der Gong bisher schon kurz nach dem Abheben und im Anflug erst nach „Plätze für die Landung“. Im Steigflug gilt das sofort, im Anflug ab Client 3.0.0-beta.2.4. Flughäfen unter 1.000 Fuß bleiben unverändert."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",

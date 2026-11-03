@@ -2499,9 +2499,12 @@ fn takt_schritt(
 
     // ---- Abspielen ----
     // Kapitänsbegrüßung nach dem Start erst über 10.000 ft bzw. im Reiseflug
-    // (auch bei Flügen ohne Ruhephase, Advisor beta.7).
+    // (auch bei Flügen ohne Ruhephase, Advisor beta.7) — über dem Startplatz
+    // ab 1.000 ft Platzhöhe (CFG 473 SKBO).
     let tief_nach_start = !snap.on_ground
-        && snap.altitude_msl_ft < 10_000.0
+        && snap.altitude_msl_ft
+            - cabin_announcements::planer::platzbezug_ft(stats.kabinen_startplatz_ft.or(stats.kabinen_start_hoehe_ft))
+            < 10_000.0
         && cabin_announcements::planer::rang(phase) < cabin_announcements::planer::rang(FlightPhase::Cruise);
     let (gespielt, neu) = abspielen_schritt(&mut stats, jetzt, phase, ruhephase, tief_nach_start);
     verlauf_neu |= neu;

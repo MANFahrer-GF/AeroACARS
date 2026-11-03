@@ -466,6 +466,9 @@ fn kabinen_schritt(
     }
     let durchgestartet = stats.go_around_count > stats.kabinen_durchstarts;
     stats.kabinen_durchstarts = stats.go_around_count;
+    if snap.on_ground && cabin_announcements::planer::rang(stats.phase) <= cabin_announcements::planer::rang(FlightPhase::TakeoffRoll) {
+        stats.kabinen_startplatz_ft = Some(snap.altitude_msl_ft);
+    }
     let tick = cabin_announcements::Tick {
         jetzt,
         phase: stats.phase,
@@ -534,6 +537,9 @@ fn kabinen_lage(stats: &FlightStats, snap: &SimSnapshot, ziel: &str, planzeit_mi
         "phase": stats.phase,
         "flug": {
             "ziel_plan_icao": ziel,
+            // Platzhoehen fuer „10.000 ft ueber dem Platz“ (CFG 473 SKBO).
+            "start_hoehe_ft": stats.kabinen_start_hoehe_ft,
+            "ziel_hoehe_ft": stats.kabinen_ziel_hoehe_ft,
             "muster": muster,
             "planzeit_min": planzeit_min,
             "umleitung_ziel": stats.umleitung_ziel,

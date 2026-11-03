@@ -1858,7 +1858,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Maintenance notice fully readable: a long text in the “Scheduled maintenance” band could spill out of the box at the top and bottom, depending on the window size. The box now grows with the text at any window width."
+    "neu_text": "Cabin announcements at high-elevation airports: the 10,000 ft chime and the quiet phase below it now count from the airport's elevation instead of sea level. Departing Bogotá or Mexico City, the chime used to sound right after lift-off, and on approach only after “seats for landing”. This applies to the climb right away and to the approach from client 3.0.0-beta.2.4. Airports below 1,000 ft are unchanged."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

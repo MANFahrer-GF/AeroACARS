@@ -585,4 +585,10 @@ impl NavdataCache {
         }
         Some((a.latitude, a.longitude))
     }
+
+    /// Platzhoehe (ft) aus dem aktiven AIRAC-Zyklus — fuer die Kabine
+    /// („10.000 ft ueber dem Platz“, CFG 473 SKBO).
+    fn elevation_ft(&self, icao: &str) -> Option<f64> {
+        self.get(icao)?.elevation_ft.map(f64::from)
+    }
 }

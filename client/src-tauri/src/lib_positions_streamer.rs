@@ -883,6 +883,29 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     }
                 }
 
+                // Kabine (CFG 473 SKBO, 03.11.2026): Platzhoehen von Start und
+                // aktuellem Ziel (Umleitung zaehlt) fuer „10.000 ft ueber dem
+                // Platz“ — Navigraph zuerst, dann phpVMS. Locks einzeln.
+                {
+                    let ziel = {
+                        let stats_g = flight.stats.lock().expect("flight stats");
+                        stats_g.umleitung_ziel.clone().filter(|z| !z.trim().is_empty())
+                    }
+                    .unwrap_or_else(|| flight.arr_airport.clone());
+                    let hoehe = |icao: &str| {
+                        let nav = flight.navdata.lock().expect("navdata lock").elevation_ft(icao);
+                        nav.or_else(|| {
+                            let app_state = app.state::<AppState>();
+                            let airports = app_state.airports.lock().expect("airports lock");
+                            airports.get(&icao.trim().to_uppercase()).and_then(|a| a.elevation)
+                        })
+                    };
+                    let (start, ziel) = (hoehe(&flight.dpt_airport), hoehe(&ziel));
+                    let mut stats_g = flight.stats.lock().expect("flight stats");
+                    stats_g.kabinen_start_hoehe_ft = start;
+                    stats_g.kabinen_ziel_hoehe_ft = ziel;
+                }
+
                 // v0.19.3: WHERE IS THE ARRIVAL AIRPORT — the question the whole
                 // divert geometry rests on. Asked of all three sources, best
                 // first (see `airport_reference_pos`): Navigraph's active AIRAC

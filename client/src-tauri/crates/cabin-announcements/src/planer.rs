@@ -38,6 +38,25 @@ pub fn rang(p: FlightPhase) -> u8 {
     }
 }
 
+/// Ab dieser Platzhöhe zählen die 10.000 ft (Gong, Ruhephase) über dem
+/// Platz statt über dem Meer — darunter bleibt alles wie bisher. CFG 473
+/// (03.11.2026): ab SKBO (8.355 ft) kam der Gong 45 s nach dem Abheben bei
+/// 1.684 ft über Grund, im Anflug nach „Plätze für die Landung“. Reale
+/// Betreiber nehmen an Hochplätzen 10.000 ft über dem Platz (Skybrary).
+pub const PLATZ_AB_FT: f64 = 1_000.0;
+
+/// Bezugshöhe eines Platzes für die 10.000-ft-Regeln: die Platzhöhe ab
+/// [`PLATZ_AB_FT`], sonst 0 (Meereshöhe wie bisher).
+pub fn platzbezug_ft(platz_ft: Option<f64>) -> f64 {
+    platz_ft.filter(|h| h.is_finite() && *h >= PLATZ_AB_FT).unwrap_or(0.0)
+}
+
+/// Platzhöhe aus dem Flugbild ([`Tick::lage`], `flug.<feld>`): Der Host
+/// liefert sie aus Navigraph bzw. phpVMS; ältere Clients ohne das Feld → `None`.
+fn lage_hoehe_ft(t: &Tick, feld: &str) -> Option<f64> {
+    t.lage.get("flug").and_then(|f| f.get(feld)).and_then(serde_json::Value::as_f64).filter(|h| h.is_finite())
+}
+
 /// Der Flugzustand eines Ticks. Der Host füllt ihn aus dem SimSnapshot und
 /// dem aktiven Flug.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -304,6 +323,14 @@ pub struct Planer {
     tod_aktuell: Option<i64>,
     /// Höchste Höhe in der Luft (ft), für den nachgeholten Gong.
     hoechste_hoehe_ft: Option<f64>,
+    /// Startplatzhöhe (ft) für die 10.000-ft-Regeln im Steigflug: am Boden
+    /// bis zum Startlauf gemessen, sonst vom Host (`lage.flug.start_hoehe_ft`).
+    startplatz_ft: Option<f64>,
+    /// Zuletzt vom Host gemeldete Zielplatzhöhe (`lage.flug.ziel_hoehe_ft`).
+    zielplatz_ft: Option<f64>,
+    /// Zielbezug des letzten Takts: Springt er mit einer Umleitung, zählt die
+    /// Flanke des Sinkflug-Gongs gegen den alten Bezug (einmal, sofort).
+    letzter_zielbezug_ft: Option<f64>,
     /// Die Kabine folgt dem Kapitän erst später (`werte.kabine_nach_kapitaen_min_s`).
     kapitaen_sinkflug: KapitaenSinkflug,
     /// Lief der Service? Daran hängt „Ende des Service“.
@@ -539,15 +566,17 @@ impl Planer {
     /// Ruhephase (Sterile Cockpit): nur Kommandos und Chimes. Start- und
     /// Landelauf immer; unter 10.000 ft im Steig- und Sinkflug nur, wenn
     /// der Reiseflug überhaupt darüber liegt (sonst wäre ein Flug in
-    /// FL090 komplett stumm).
+    /// FL090 komplett stumm). Alle Höhen über dem Platz ([`PLATZ_AB_FT`]):
+    /// im Steigflug über dem Start-, danach über dem Zielplatz.
     pub fn ruhephase(&self, t: &Tick) -> bool {
         use FlightPhase::*;
         if matches!(t.phase, TakeoffRoll | Takeoff | Final | Landing) {
             return true;
         }
-        let hoch = self.flug.reiseflughoehe_ft.is_none_or(|h| h >= 12_000);
+        let b = self.bezug(t);
+        let hoch = self.flug.reiseflughoehe_ft.is_none_or(|h| f64::from(h) - b >= 12_000.0);
         hoch && !t.am_boden
-            && t.hoehe_ft < 10_000.0
+            && t.hoehe_ft - b < 10_000.0
             && matches!(t.phase, Climb | Descent | Approach)
     }
 
@@ -555,12 +584,33 @@ impl Planer {
     /// höchstens `werte.pause_nach_ansage_s` darunter — nur
     /// bei Flügen mit Ruhephase (Reiseflug ab 12.000 ft, wie [`Self::ruhephase`]).
     fn kurz_vor_ruhephase(&self, t: &Tick) -> bool {
-        let hoch = self.flug.reiseflughoehe_ft.is_none_or(|h| h >= 12_000);
+        let b = self.bezug_ziel(Some(t));
+        let hoch = self.flug.reiseflughoehe_ft.is_none_or(|h| f64::from(h) - b >= 12_000.0);
         hoch && !t.am_boden
             && rang(t.phase) >= rang(FlightPhase::Descent)
-            && t.hoehe_ft >= 10_000.0
+            && t.hoehe_ft - b >= 10_000.0
             && t.vs_fpm < 0.0
-            && (t.hoehe_ft - 10_000.0) / -t.vs_fpm * 60.0 <= crate::tabelle().werte.pause_nach_ansage_s.wert as f64
+            && (t.hoehe_ft - b - 10_000.0) / -t.vs_fpm * 60.0 <= crate::tabelle().werte.pause_nach_ansage_s.wert as f64
+    }
+
+    /// Bezug der 10.000-ft-Regeln am Startplatz ([`platzbezug_ft`]).
+    fn bezug_start(&self) -> f64 {
+        platzbezug_ft(self.startplatz_ft)
+    }
+
+    /// Bezug am aktuellen Zielplatz (bei Umleitung das neue Ziel) laut Host,
+    /// sonst der zuletzt gemeldete; unbekannt → Meereshöhe wie bisher.
+    fn bezug_ziel(&self, t: Option<&Tick>) -> f64 {
+        platzbezug_ft(t.and_then(|t| lage_hoehe_ft(t, "ziel_hoehe_ft")).or(self.zielplatz_ft))
+    }
+
+    /// Steigflug: Startplatz; ab Ende des Steigflugs bzw. Sinkflug: Zielplatz.
+    fn bezug(&self, t: &Tick) -> f64 {
+        if self.steigflug_vorbei || rang(t.phase) >= rang(FlightPhase::Descent) {
+            self.bezug_ziel(Some(t))
+        } else {
+            self.bezug_start()
+        }
     }
 
     fn melde(&mut self, aus: &mut Vec<Faellig>, slot: Slot, verfall: Verfall) {
@@ -621,9 +671,13 @@ impl Planer {
             && !self.abgewaehlt.contains(&slot)
             && !self.schon(slot)
             && (!reiseflug || self.reiseflug_passt(slot))
-            // Reiseflug unter 10.000 ft: Der Gong kommt nie.
-            && !(matches!(slot, Slot::Chime10000Steigflug | Slot::Chime10000Sinkflug)
-                && self.flug.reiseflughoehe_ft.is_some_and(|h| h < 10_000))
+            // Reiseflug unter 10.000 ft über dem Platz: Der Gong kommt nie.
+            && !(match slot {
+                Slot::Chime10000Steigflug => Some(self.bezug_start()),
+                Slot::Chime10000Sinkflug => Some(self.bezug_ziel(None)),
+                _ => None,
+            }
+            .is_some_and(|b| self.flug.reiseflughoehe_ft.is_some_and(|h| f64::from(h) - b < 10_000.0)))
             && spaetestens_vor(slot).is_none_or(|grenze| rang(phase) < rang(grenze))
             // Ende des Service: nicht mehr, wenn der Service ausgefallen ist (Codex).
             && !(slot == Slot::EndeService && self.service_ausgefallen())
@@ -862,6 +916,17 @@ impl Planer {
             self.melde(&mut aus, Slot::KommandoStart, Verfall::AbPhase(Climb));
         }
 
+        // Platzhöhen: Start gemessen an den Boden-Takten bis zum Startlauf,
+        // sonst (Wiedereinstieg in der Luft) vom Host; Ziel vom Host.
+        if t.am_boden && !self.steigflug_vorbei && r <= rang(TakeoffRoll) && t.hoehe_ft.is_finite() {
+            self.startplatz_ft = Some(t.hoehe_ft);
+        } else if self.startplatz_ft.is_none() {
+            self.startplatz_ft = lage_hoehe_ft(t, "start_hoehe_ft");
+        }
+        if let Some(z) = lage_hoehe_ft(t, "ziel_hoehe_ft") {
+            self.zielplatz_ft = Some(z);
+        }
+
         // ---- Steigflug / Reiseflug ----
         if in_luft && self.abheben_epoch.is_none() && r >= rang(Takeoff) {
             self.abheben_epoch = Some(t.jetzt);
@@ -874,27 +939,32 @@ impl Planer {
         }
         // Aus dem Steigflug direkt weiter (Sinkflug, auch gleich Anflug oder
         // Warteschleife): Der Steigflug ist vorbei.
+        // Gong-Höhen über dem Platz ([`PLATZ_AB_FT`]): Steigflug über dem
+        // Start-, Sinkflug über dem Zielplatz.
+        let start_b = self.bezug_start();
+        let ziel_b = self.bezug_ziel(Some(t));
         if in_luft && !self.steigflug_vorbei && vorher == Some(Climb) && r > rang(Climb) && r < rang(Landing) {
             self.steigflug_vorbei = true;
             // Erkennt phase_v2 den Sinkflug erst unter 10.000 ft, ist die
             // Flanke für den Gong schon vorbei: einmal nachholen.
-            if r >= rang(Descent) && t.vs_fpm < 0.0 && t.hoehe_ft < 10_000.0 && self.hoechste_hoehe_ft.is_some_and(|h| h >= 10_000.0) {
+            if r >= rang(Descent) && t.vs_fpm < 0.0 && t.hoehe_ft - ziel_b < 10_000.0 && self.hoechste_hoehe_ft.is_some_and(|h| h - ziel_b >= 10_000.0) {
                 self.melde(&mut aus, Slot::Chime10000Sinkflug, Verfall::Um(t.jetzt + 30));
             }
         }
         if let Some(h0) = self.letzte_hoehe_ft {
-            if in_luft && h0 < 10_000.0 && t.hoehe_ft >= 10_000.0 && t.vs_fpm > 0.0 {
+            if in_luft && h0 - start_b < 10_000.0 && t.hoehe_ft - start_b >= 10_000.0 && t.vs_fpm > 0.0 {
                 self.melde(&mut aus, Slot::Chime10000Steigflug, Verfall::Um(t.jetzt + 30));
             }
             if in_luft
                 && self.steigflug_vorbei
-                && h0 >= 10_000.0
-                && t.hoehe_ft < 10_000.0
+                && h0 - self.letzter_zielbezug_ft.unwrap_or(ziel_b) >= 10_000.0
+                && t.hoehe_ft - ziel_b < 10_000.0
                 && t.vs_fpm < 0.0
             {
                 self.melde(&mut aus, Slot::Chime10000Sinkflug, Verfall::Um(t.jetzt + 30));
             }
         }
+        self.letzter_zielbezug_ft = Some(ziel_b);
         let zeichen_aus = t.anschnallzeichen == Some(0);
         let luecke = self.zeichen_aus_zuletzt.is_none_or(|z| t.jetzt - z > crate::tabelle().werte.anschnall_aus_stabil_s.wert);
         self.zeichen_aus_seit = zeichen_aus.then(|| if luecke { t.jetzt } else { self.zeichen_aus_seit.unwrap_or(t.jetzt) });
@@ -903,8 +973,10 @@ impl Planer {
             let aus_signal = match t.anschnallzeichen {
                 Some(0) => self.zeichen_aus_seit.is_some_and(|s| t.jetzt - s >= crate::tabelle().werte.anschnall_aus_stabil_s.wert),
                 // AUTO wechselt nie auf 0: über 10.000 ft im Steigflug gilt
-                // es als erloschen (⚠️ je Profil prüfen).
-                Some(1) | None => t.hoehe_ft >= 10_000.0,
+                // es als erloschen (⚠️ je Profil prüfen) — über dem Startplatz;
+                // im Reiseflug reicht FL100 (Kurzflug ab Hochplatz: SKBO in
+                // FL180 läge nie 10.000 ft über dem Platz).
+                Some(1) | None => t.hoehe_ft - start_b >= 10_000.0 || (t.phase == Cruise && t.hoehe_ft >= 10_000.0),
                 _ => false,
             };
             if aus_signal {
@@ -1082,7 +1154,7 @@ impl Planer {
         // Kabine mit — außer im Anflug. Kommt keine Kapitänsansage (stumm,
         // Fehler, Wiedereinstieg im Sinkflug), zählen Anflug bzw. Höhe allein.
         if in_luft && self.steigflug_vorbei && r < rang(Final) && !self.schon(Slot::KabineSinkflug) {
-            let tief = t.phase == Approach || (r >= rang(Descent) && t.hoehe_ft < crate::tabelle().werte.kabine_sinkflug_unter_ft.wert && t.vs_fpm < 0.0);
+            let tief = t.phase == Approach || (r >= rang(Descent) && t.hoehe_ft - ziel_b < crate::tabelle().werte.kabine_sinkflug_unter_ft.wert && t.vs_fpm < 0.0);
             let reif = match self.kapitaen_sinkflug {
                 // Im Anflug sofort, sonst ginge sie bei einem kurzen Sinkflug
                 // verloren; die Pause der Warteschlange trennt sie trotzdem.
@@ -1113,7 +1185,7 @@ impl Planer {
         if in_luft
             && (kabine_vorbei || t.phase == Approach)
             && (t.phase == Approach
-                || (r >= rang(Descent) && t.hoehe_ft < 20_000.0 && t.vs_fpm < -300.0))
+                || (r >= rang(Descent) && t.hoehe_ft - ziel_b < 20_000.0 && t.vs_fpm < -300.0))
         {
             self.melde(&mut aus, Slot::KommandoLandungVorbereiten, Verfall::AbPhase(Landing));
         }
@@ -3230,5 +3302,147 @@ mod tests {
         // Keine Quelle: keine Prognose.
         let n = Planer::fortsetzen(flug(120), Cruise);
         assert_eq!(n.kapitaen_sinkflug_prognose(None), None);
+    }
+
+    /// Ein Flug vom Boden auf `start_ft` über `reise_ft` nach `ziel_ft`,
+    /// Zielhöhe im Flugbild nur mit `ziel_im_bild` (Clients vor 3.0.0-beta.3
+    /// liefern sie nicht). Je Ansage die Meereshöhe, bei der sie kam.
+    fn platzflug(start_ft: f64, reise_ft: u32, ziel_ft: f64, ziel_im_bild: bool, zeichen: u8) -> Vec<(Slot, f64)> {
+        let mut g = flug(240);
+        g.reiseflughoehe_ft = Some(reise_ft);
+        let mut p = Planer::neu(g);
+        let lage = if ziel_im_bild { serde_json::json!({ "flug": { "ziel_hoehe_ft": ziel_ft } }) } else { serde_json::Value::Null };
+        let reise = f64::from(reise_ft);
+        let mut schritte: Vec<(FlightPhase, f64, f64)> = [Boarding, Pushback, TaxiOut, TakeoffRoll].iter().map(|&ph| (ph, start_ft, 0.0)).collect();
+        schritte.push((Takeoff, start_ft + 30.0, 1_500.0));
+        let mut h = start_ft + 100.0;
+        while h < reise {
+            schritte.push((Climb, h, 1_500.0));
+            h += 250.0;
+        }
+        schritte.extend(std::iter::repeat_n((Cruise, reise, 0.0), 40));
+        let mut h = reise;
+        while h > ziel_ft + 3_000.0 {
+            schritte.push((Descent, h, -1_500.0));
+            h -= 250.0;
+        }
+        while h > ziel_ft + 300.0 {
+            schritte.push((Approach, h, -800.0));
+            h -= 100.0;
+        }
+        schritte.push((Final, ziel_ft + 100.0, -700.0));
+        schritte.push((Landing, ziel_ft, 0.0));
+        let mut aus = Vec::new();
+        for (i, (ph, h, vs)) in schritte.into_iter().enumerate() {
+            let platz = if rang(ph) >= rang(Descent) { ziel_ft } else { start_ft };
+            let t = Tick {
+                anschnallzeichen: Some(zeichen),
+                hoehe_agl_ft: Some(h - platz),
+                platznah: Some(true),
+                fahrwerk_unten: Some(rang(ph) >= rang(Final)),
+                lage: lage.clone(),
+                ..tick(i as i64 * 10, ph, h, vs)
+            };
+            aus.extend(p.tick(&t).into_iter().map(|f| (f.slot, h)));
+        }
+        aus
+    }
+
+    fn bei_hoehe(a: &[(Slot, f64)], s: Slot) -> Option<f64> {
+        a.iter().find(|(x, _)| *x == s).map(|(_, h)| *h)
+    }
+
+    /// CFG 473 SKBO→TBPB (03.11.2026): Gong kam bei 10.026 ft MSL = 1.684 ft
+    /// über Grund. Jetzt 10.000 ft über dem Startplatz, am Ziel (169 ft)
+    /// weiter bei FL100.
+    #[test]
+    fn hochplatz_start_gong_ueber_dem_platz() {
+        let a = platzflug(8_373.0, 34_500, 169.0, true, 2);
+        let steig = bei_hoehe(&a, Slot::Chime10000Steigflug).expect("Steig-Gong");
+        assert!((18_373.0..18_623.0).contains(&steig), "Steig-Gong bei {steig} ft");
+        let sink = bei_hoehe(&a, Slot::Chime10000Sinkflug).expect("Sink-Gong");
+        assert!((9_750.0..10_000.0).contains(&sink), "Sink-Gong bei {sink} ft");
+        // Ruhephase im Steigflug bis 10.000 ft über SKBO, nicht nur bis FL100.
+        let mut p = Planer::neu(flug(240));
+        p.tick(&tick(0, TaxiOut, 8_373.0, 0.0));
+        assert!(p.ruhephase(&tick(10, Climb, 12_000.0, 1_500.0)));
+        assert!(!p.ruhephase(&tick(20, Climb, 18_600.0, 1_500.0)));
+    }
+
+    /// CFG 472 MSLP→SKBO: Der Sink-Gong kam bei 1.649 ft über Grund, nach
+    /// „Plätze für die Landung“. Jetzt 10.000 ft über SKBO und davor.
+    #[test]
+    fn hochplatz_ziel_gong_vor_plaetzen_fuer_die_landung() {
+        let a = platzflug(94.0, 34_400, 8_373.0, true, 2);
+        let sink = bei_hoehe(&a, Slot::Chime10000Sinkflug).expect("Sink-Gong");
+        assert!((18_123.0..18_373.0).contains(&sink), "Sink-Gong bei {sink} ft");
+        let idx = |s| a.iter().position(|(x, _)| *x == s).unwrap_or_else(|| panic!("{s:?} fehlt: {a:?}"));
+        assert!(idx(Slot::Chime10000Sinkflug) < idx(Slot::KommandoPlaetzeLandung));
+        // Gegenprobe: Ein Client ohne Zielhöhe im Flugbild bleibt bei FL100.
+        let alt = platzflug(94.0, 34_400, 8_373.0, false, 2);
+        let sink = bei_hoehe(&alt, Slot::Chime10000Sinkflug).expect("Sink-Gong");
+        assert!((9_750.0..10_000.0).contains(&sink), "ohne Zielhöhe: {sink} ft");
+    }
+
+    /// Plätze unter 1.000 ft (EDDF 364 ft → LIRF 105 ft): alles wie bisher.
+    #[test]
+    fn flachland_gong_bleibt_bei_fl100() {
+        let a = platzflug(364.0, 37_000, 105.0, true, 2);
+        let steig = bei_hoehe(&a, Slot::Chime10000Steigflug).expect("Steig-Gong");
+        assert!((10_000.0..10_250.0).contains(&steig), "Steig-Gong bei {steig} ft");
+        let sink = bei_hoehe(&a, Slot::Chime10000Sinkflug).expect("Sink-Gong");
+        assert!((9_750.0..10_000.0).contains(&sink), "Sink-Gong bei {sink} ft");
+    }
+
+    /// Kurzflug ab SKBO in FL180 (9.627 ft über dem Platz): kein Steig-Gong,
+    /// keine Ruhephase im Steigflug — und mit AUTO-Schalter kommt
+    /// „Anschnallzeichen aus“ trotzdem, im Reiseflug.
+    #[test]
+    fn kurzflug_ab_hochplatz_sagt_anschnallzeichen_im_reiseflug_an() {
+        let a = platzflug(8_373.0, 18_000, 169.0, true, 1);
+        assert_eq!(bei_hoehe(&a, Slot::Chime10000Steigflug), None, "{a:?}");
+        assert_eq!(bei_hoehe(&a, Slot::AnschnallzeichenAus), Some(18_000.0), "{a:?}");
+        let mut g = flug(60);
+        g.reiseflughoehe_ft = Some(18_000);
+        let mut p = Planer::neu(g);
+        p.tick(&tick(0, TaxiOut, 8_373.0, 0.0));
+        assert!(!p.ruhephase(&tick(10, Climb, 12_000.0, 1_500.0)));
+        assert!(!p.kommt_noch(Slot::Chime10000Steigflug, Climb));
+    }
+
+    /// Umleitung im Sinkflug auf einen Hochplatz: Liegt das Flugzeug schon
+    /// unter 10.000 ft über dem neuen Ziel, kommt der Gong sofort — einmal.
+    #[test]
+    fn umleitung_auf_hochplatz_gongt_einmal() {
+        let lage = |z: f64| serde_json::json!({ "flug": { "ziel_hoehe_ft": z } });
+        let mut p = Planer::neu(flug(240));
+        p.tick(&tick(0, TaxiOut, 100.0, 0.0));
+        p.tick(&Tick { lage: lage(169.0), ..tick(10, Cruise, 37_000.0, 0.0) });
+        let gongs = |f: Vec<Faellig>| f.iter().filter(|x| x.slot == Slot::Chime10000Sinkflug).count();
+        assert_eq!(gongs(p.tick(&Tick { lage: lage(169.0), ..tick(20, Descent, 12_000.0, -1_500.0) })), 0);
+        let um = Tick { lage: lage(8_373.0), ziel_icao: Some("SKBO".into()), ..tick(30, Descent, 11_900.0, -1_500.0) };
+        assert_eq!(gongs(p.tick(&um)), 1);
+        assert_eq!(gongs(p.tick(&Tick { jetzt: 40, hoehe_ft: 11_800.0, ..um.clone() })), 0);
+    }
+
+    /// Wiedereinstieg im Steigflug: Die Startplatzhöhe kommt aus dem Flugbild.
+    #[test]
+    fn wiedereinstieg_im_steigflug_nimmt_die_startplatzhoehe_vom_host() {
+        let lage = serde_json::json!({ "flug": { "start_hoehe_ft": 8_355.0 } });
+        let mut p = Planer::fortsetzen(flug(240), Climb);
+        let gong = |f: Vec<Faellig>| f.iter().any(|x| x.slot == Slot::Chime10000Steigflug);
+        assert!(!gong(p.tick(&Tick { lage: lage.clone(), ..tick(0, Climb, 9_900.0, 1_500.0) })));
+        assert!(!gong(p.tick(&Tick { lage: lage.clone(), ..tick(10, Climb, 10_100.0, 1_500.0) })));
+        assert!(gong(p.tick(&Tick { lage, ..tick(20, Climb, 18_400.0, 1_500.0) })));
+    }
+
+    /// Ein gesicherter Stand ohne die neuen Felder (älteres Modul) lädt.
+    #[test]
+    fn alter_stand_ohne_platzhoehen_laedt() {
+        let mut v = serde_json::to_value(Planer::neu(flug(120))).unwrap();
+        for k in ["startplatz_ft", "zielplatz_ft", "letzter_zielbezug_ft"] {
+            assert!(v.as_object_mut().unwrap().remove(k).is_some(), "{k}");
+        }
+        serde_json::from_value::<Planer>(v).expect("alter Stand lädt");
     }
 }

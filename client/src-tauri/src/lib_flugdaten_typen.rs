@@ -1034,6 +1034,13 @@ struct FlightStats {
     /// Zuletzt gesehener `go_around_count`: Der Planer will eine Flanke,
     /// keinen Zaehler.
     kabinen_durchstarts: u32,
+    /// Meereshoehe am Boden bis zum Startlauf: Bezug der Kapitaensbegruessung
+    /// „erst ueber 10.000 ft“ ab Hochplaetzen (CFG 473 SKBO, 03.11.2026).
+    kabinen_startplatz_ft: Option<f64>,
+    /// Platzhoehen von Start und aktuellem Ziel (bei Umleitung das neue) aus
+    /// Navigraph, sonst phpVMS — fuer die Kabine (`lage.flug`).
+    kabinen_start_hoehe_ft: Option<f64>,
+    kabinen_ziel_hoehe_ft: Option<f64>,
     /// Kabinenansagen (Beta): Texte, Ton und Warteschlange dieses Fluges.
     /// Nicht gespeichert — siehe `kabinenansagen::Lauf`.
     kabinen_lauf: kabinenansagen::Lauf,
