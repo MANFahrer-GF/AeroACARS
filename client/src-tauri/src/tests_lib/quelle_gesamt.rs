@@ -292,6 +292,15 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// LAN-Bruecke). Sonst nichts an `lib.rs`. Tests
 /// `tests/befehlsliste.rs::hoppie_logon_code_lesen_nur_lokal`, vitest
 /// `HoppieSettingsPanel.test.tsx`.
+/// — plus Platzbezug Kabine 03.11. (CFG 473 SKBO): EIN Block in
+/// `lib_positions_streamer.rs` nach der Arr-Elevation (Platzhoehen von Start
+/// und aktuellem Ziel, Navigraph vor phpVMS, Locks einzeln), drei Felder
+/// `kabinen_startplatz_ft`/`kabinen_start_hoehe_ft`/`kabinen_ziel_hoehe_ft` in
+/// `lib_flugdaten_typen.rs`, Startplatz-Messung und `lage.flug.start_hoehe_ft`/
+/// `ziel_hoehe_ft` in `lib_anflug_forensik_kabine.rs`, `NavdataCache::elevation_ft`
+/// in `lib_zustand.rs`; ausserhalb die Begruessungsbedingung in
+/// `kabinenansagen.rs`. Tests `cabin_announcements::planer::tests::hochplatz_*`,
+/// `kurzflug_ab_hochplatz_*`, `umleitung_*`, `level_off_*`, `wiedereinstieg_im_steigflug_*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
