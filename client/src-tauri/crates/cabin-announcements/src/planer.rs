@@ -52,9 +52,10 @@ pub fn platzbezug_ft(platz_ft: Option<f64>) -> f64 {
 }
 
 /// Platzhöhe aus dem Flugbild ([`Tick::lage`], `flug.<feld>`): Der Host
-/// liefert sie aus Navigraph bzw. phpVMS; ältere Clients ohne das Feld → `None`.
-fn lage_hoehe_ft(t: &Tick, feld: &str) -> Option<f64> {
-    t.lage.get("flug").and_then(|f| f.get(feld)).and_then(serde_json::Value::as_f64).filter(|h| h.is_finite())
+/// liefert sie aus Navigraph bzw. phpVMS. Äußeres `None`: Feld fehlt (Client
+/// vor 3.0.0-beta.2.4); `Some(None)`: der Host kennt die Höhe nicht.
+fn lage_hoehe_ft(t: &Tick, feld: &str) -> Option<Option<f64>> {
+    Some(t.lage.get("flug")?.get(feld)?.as_f64().filter(|h| h.is_finite()))
 }
 
 /// Der Flugzustand eines Ticks. Der Host füllt ihn aus dem SimSnapshot und
@@ -328,6 +329,9 @@ pub struct Planer {
     startplatz_ft: Option<f64>,
     /// Zuletzt vom Host gemeldete Zielplatzhöhe (`lage.flug.ziel_hoehe_ft`).
     zielplatz_ft: Option<f64>,
+    /// In der Luft war schon eine Phase ab Descent: Bezug ist der Zielplatz.
+    #[serde(default)]
+    sinkflug_gesehen: bool,
     /// Zielbezug des letzten Takts: Springt er mit einer Umleitung, zählt die
     /// Flanke des Sinkflug-Gongs gegen den alten Bezug (einmal, sofort).
     letzter_zielbezug_ft: Option<f64>,
@@ -601,12 +605,16 @@ impl Planer {
     /// Bezug am aktuellen Zielplatz (bei Umleitung das neue Ziel) laut Host,
     /// sonst der zuletzt gemeldete; unbekannt → Meereshöhe wie bisher.
     fn bezug_ziel(&self, t: Option<&Tick>) -> f64 {
-        platzbezug_ft(t.and_then(|t| lage_hoehe_ft(t, "ziel_hoehe_ft")).or(self.zielplatz_ft))
+        // Meldet der Host die Höhe als unbekannt (Umleitung auf einen Platz
+        // ohne Höhe), gilt nicht mehr die alte Zielhöhe (QS 03.11.).
+        platzbezug_ft(t.and_then(|t| lage_hoehe_ft(t, "ziel_hoehe_ft")).unwrap_or(self.zielplatz_ft))
     }
 
-    /// Steigflug: Startplatz; ab Ende des Steigflugs bzw. Sinkflug: Zielplatz.
+    /// Bis zum ersten Sinkflug: Startplatz; danach (auch Durchstarten): Zielplatz.
+    /// Nicht `steigflug_vorbei`: Ein kurzes Level-off (Phase Cruise) im
+    /// Steigflug ab SKBO hätte die Ruhephase sonst bei FL100 beendet (QS 03.11.).
     fn bezug(&self, t: &Tick) -> f64 {
-        if self.steigflug_vorbei || rang(t.phase) >= rang(FlightPhase::Descent) {
+        if self.sinkflug_gesehen || rang(t.phase) >= rang(FlightPhase::Descent) {
             self.bezug_ziel(Some(t))
         } else {
             self.bezug_start()
@@ -921,10 +929,13 @@ impl Planer {
         if t.am_boden && !self.steigflug_vorbei && r <= rang(TakeoffRoll) && t.hoehe_ft.is_finite() {
             self.startplatz_ft = Some(t.hoehe_ft);
         } else if self.startplatz_ft.is_none() {
-            self.startplatz_ft = lage_hoehe_ft(t, "start_hoehe_ft");
+            self.startplatz_ft = lage_hoehe_ft(t, "start_hoehe_ft").flatten();
         }
         if let Some(z) = lage_hoehe_ft(t, "ziel_hoehe_ft") {
-            self.zielplatz_ft = Some(z);
+            self.zielplatz_ft = z;
+        }
+        if in_luft && r >= rang(Descent) {
+            self.sinkflug_gesehen = true;
         }
 
         // ---- Steigflug / Reiseflug ----
@@ -3436,11 +3447,39 @@ mod tests {
         assert!(gong(p.tick(&Tick { lage, ..tick(20, Climb, 18_400.0, 1_500.0) })));
     }
 
+    /// Umleitung von SKBO auf einen Platz, dessen Höhe der Host nicht kennt
+    /// (`null`): Es gilt wieder FL100, nicht die alte Zielhöhe (QS 03.11.).
+    #[test]
+    fn umleitung_auf_platz_ohne_hoehe_vergisst_die_alte_zielhoehe() {
+        let lage = |z: serde_json::Value| serde_json::json!({ "flug": { "ziel_hoehe_ft": z } });
+        let mut p = Planer::neu(flug(240));
+        p.tick(&tick(0, TaxiOut, 100.0, 0.0));
+        p.tick(&Tick { lage: lage(8_373.0.into()), ..tick(10, Cruise, 37_000.0, 0.0) });
+        let gong = |f: Vec<Faellig>| f.iter().any(|x| x.slot == Slot::Chime10000Sinkflug);
+        let um = |jetzt, h| Tick { lage: lage(serde_json::Value::Null), ziel_icao: Some("TBPB".into()), ..tick(jetzt, Descent, h, -1_500.0) };
+        assert!(!gong(p.tick(&um(20, 18_000.0))), "nicht mehr gegen SKBO");
+        assert!(!gong(p.tick(&um(30, 10_100.0))));
+        assert!(gong(p.tick(&um(40, 9_900.0))));
+    }
+
+    /// Kurzes Level-off im Steigflug ab SKBO (Phase Cruise bei 12.000 ft):
+    /// Die Ruhephase gilt danach weiter bis 10.000 ft über dem Startplatz.
+    #[test]
+    fn level_off_im_steigflug_haelt_den_startbezug() {
+        let mut p = Planer::neu(flug(240));
+        p.tick(&tick(0, TaxiOut, 8_373.0, 0.0));
+        p.tick(&tick(10, Climb, 11_000.0, 1_500.0));
+        p.tick(&tick(20, Cruise, 12_000.0, 0.0));
+        let t = tick(30, Climb, 13_000.0, 1_500.0);
+        p.tick(&t);
+        assert!(p.ruhephase(&t), "13.000 ft = 4.627 ft über SKBO");
+    }
+
     /// Ein gesicherter Stand ohne die neuen Felder (älteres Modul) lädt.
     #[test]
     fn alter_stand_ohne_platzhoehen_laedt() {
         let mut v = serde_json::to_value(Planer::neu(flug(120))).unwrap();
-        for k in ["startplatz_ft", "zielplatz_ft", "letzter_zielbezug_ft"] {
+        for k in ["startplatz_ft", "zielplatz_ft", "letzter_zielbezug_ft", "sinkflug_gesehen"] {
             assert!(v.as_object_mut().unwrap().remove(k).is_some(), "{k}");
         }
         serde_json::from_value::<Planer>(v).expect("alter Stand lädt");
