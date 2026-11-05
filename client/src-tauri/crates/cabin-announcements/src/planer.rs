@@ -586,6 +586,8 @@ impl Planer {
         self.unter_10000(t) && !self.sinkflug_ansage_offen(t)
     }
 
+    /// Unter 10.000 ft über dem Bezugsplatz auf einem Flug mit Ruhephase,
+    /// noch ohne die Freigabe für ausstehende Sinkflug-Ansagen.
     fn unter_10000(&self, t: &Tick) -> bool {
         use FlightPhase::*;
         let b = self.bezug(t);
