@@ -332,6 +332,10 @@ pub struct Planer {
     /// In der Luft war schon eine Phase ab Descent: Bezug ist der Zielplatz.
     #[serde(default)]
     sinkflug_gesehen: bool,
+    /// Die Kabine wurde erst unter oder kurz vor der 10.000-ft-Grenze
+    /// gemeldet: Die Ruhephase hält sie nicht auf ([`Planer::ruhephase`]).
+    #[serde(default)]
+    kabine_trotz_ruhephase: bool,
     /// Zielbezug des letzten Takts: Springt er mit einer Umleitung, zählt die
     /// Flanke des Sinkflug-Gongs gegen den alten Bezug (einmal, sofort).
     letzter_zielbezug_ft: Option<f64>,
@@ -571,12 +575,19 @@ impl Planer {
     /// Landelauf immer; unter 10.000 ft im Steig- und Sinkflug nur, wenn
     /// der Reiseflug überhaupt darüber liegt (sonst wäre ein Flug in
     /// FL090 komplett stumm). Alle Höhen über dem Platz ([`PLATZ_AB_FT`]):
-    /// im Steigflug über dem Start-, danach über dem Zielplatz.
+    /// im Steigflug über dem Start-, danach über dem Zielplatz. Stehen die
+    /// Sinkflug-Ansagen noch aus, gibt sie den Weg frei
+    /// ([`Self::sinkflug_ansage_offen`]).
     pub fn ruhephase(&self, t: &Tick) -> bool {
         use FlightPhase::*;
         if matches!(t.phase, TakeoffRoll | Takeoff | Final | Landing) {
             return true;
         }
+        self.unter_10000(t) && !self.sinkflug_ansage_offen(t)
+    }
+
+    fn unter_10000(&self, t: &Tick) -> bool {
+        use FlightPhase::*;
         let b = self.bezug(t);
         let hoch = self.flug.reiseflughoehe_ft.is_none_or(|h| f64::from(h) - b >= 12_000.0);
         hoch && !t.am_boden
@@ -584,17 +595,40 @@ impl Planer {
             && matches!(t.phase, Climb | Descent | Approach)
     }
 
+    /// Stehen Kapitän oder Kabine im Sinkflug noch aus? Dann hält die
+    /// Ruhephase sie nicht auf, längstens bis „Plätze für die Landung“.
+    /// Ein Reiseflug auf 12.000–15.000 ft wird oft erst bei 9.000–10.000 ft
+    /// als Sinkflug erkannt, dann lag alles in der Ruhephase und verfiel beim
+    /// Final (SAS 1647, 05.11.2026: bis dahin blieben noch 15 min). Der Planer
+    /// erfährt nicht, wann die Kabine fertig ist; wurde sie erst an der Grenze
+    /// gemeldet, gilt die Freigabe deshalb bis zu den Plätzen. Mit frei werden
+    /// nur Turbulenz und Warteschleife, alles andere verfällt ab Descent; beide
+    /// sind auch unter 10.000 ft richtig.
+    fn sinkflug_ansage_offen(&self, t: &Tick) -> bool {
+        matches!(t.phase, FlightPhase::Descent | FlightPhase::Approach)
+            && !self.schon(Slot::KommandoPlaetzeLandung)
+            && (self.kabine_trotz_ruhephase
+                || self.kapitaen_sinkflug == KapitaenSinkflug::Gemeldet
+                || self.kommt_noch(Slot::KabineSinkflug, t.phase))
+    }
+
     /// Im Sinkflug noch über 10.000 ft, aber mit der aktuellen Sinkrate in
-    /// höchstens `werte.pause_nach_ansage_s` darunter — nur
-    /// bei Flügen mit Ruhephase (Reiseflug ab 12.000 ft, wie [`Self::ruhephase`]).
+    /// höchstens `werte.pause_nach_ansage_s` darunter.
     fn kurz_vor_ruhephase(&self, t: &Tick) -> bool {
+        self.in_ruhephase_binnen(t, crate::tabelle().werte.pause_nach_ansage_s.wert)
+    }
+
+    /// Im Sinkflug noch über 10.000 ft, mit der aktuellen Sinkrate aber in
+    /// höchstens `sekunden` darunter — nur bei Flügen mit Ruhephase
+    /// (Reiseflug ab 12.000 ft, wie [`Self::ruhephase`]).
+    fn in_ruhephase_binnen(&self, t: &Tick, sekunden: i64) -> bool {
         let b = self.bezug_ziel(Some(t));
         let hoch = self.flug.reiseflughoehe_ft.is_none_or(|h| f64::from(h) - b >= 12_000.0);
         hoch && !t.am_boden
             && rang(t.phase) >= rang(FlightPhase::Descent)
             && t.hoehe_ft - b >= 10_000.0
             && t.vs_fpm < 0.0
-            && (t.hoehe_ft - b - 10_000.0) / -t.vs_fpm * 60.0 <= crate::tabelle().werte.pause_nach_ansage_s.wert as f64
+            && (t.hoehe_ft - b - 10_000.0) / -t.vs_fpm * 60.0 <= sekunden as f64
     }
 
     /// Bezug der 10.000-ft-Regeln am Startplatz ([`platzbezug_ft`]).
@@ -1144,6 +1178,10 @@ impl Planer {
         }
 
         // ---- Sinkflug und Landung ----
+        // Sonst gälte die Freigabe nach dem Durchstarten im zweiten Anflug weiter.
+        if self.schon(Slot::KommandoPlaetzeLandung) {
+            self.kabine_trotz_ruhephase = false;
+        }
         if in_luft && self.steigflug_vorbei && r < rang(Final) {
             let nach_rest = !self.umgeleitet && t.rest_min.is_some_and(|m| m <= crate::tabelle().werte.kapitaen_vor_landung_min.wert);
             let nach_tod = self.tod().is_some_and(|tod| t.jetzt >= tod - crate::tabelle().werte.kapitaen_vor_tod_s.wert);
@@ -1184,6 +1222,10 @@ impl Planer {
             // bei Final. Das schlägt die 2-min-Frist nach dem Kapitän und gilt
             // auch, wenn der Kapitän selbst noch wartet.
             if reif || self.kurz_vor_ruhephase(t) {
+                // Reserve, keine Messung: Vor ihr können noch Kapitän und „Ende
+                // des Service“ mit ihren Pausen liegen.
+                self.kabine_trotz_ruhephase = self.kommt_noch(Slot::KabineSinkflug, t.phase)
+                    && (self.unter_10000(t) || self.in_ruhephase_binnen(t, 3 * crate::tabelle().werte.pause_nach_ansage_s.wert));
                 self.melde(&mut aus, Slot::KabineSinkflug, Verfall::AbPhase(Final));
             }
         }
@@ -3176,6 +3218,9 @@ mod tests {
                     if s == Slot::Reiseflug25 {
                         p.service_ende(true);
                     }
+                    if s == Slot::KapitaenSinkflug {
+                        p.kapitaen_sinkflug_ende(true, bis);
+                    }
                     laeuft = None;
                 }
             }
@@ -3479,9 +3524,127 @@ mod tests {
     #[test]
     fn alter_stand_ohne_platzhoehen_laedt() {
         let mut v = serde_json::to_value(Planer::neu(flug(120))).unwrap();
-        for k in ["startplatz_ft", "zielplatz_ft", "letzter_zielbezug_ft", "sinkflug_gesehen"] {
+        for k in ["startplatz_ft", "zielplatz_ft", "letzter_zielbezug_ft", "sinkflug_gesehen", "kabine_trotz_ruhephase"] {
             assert!(v.as_object_mut().unwrap().remove(k).is_some(), "{k}");
         }
         serde_json::from_value::<Planer>(v).expect("alter Stand lädt");
+    }
+
+    /// Sinkflug in 5-s-Takten: Sinkbeginn bei `von` ft, Anflug ab 5.000 ft,
+    /// „Plätze für die Landung“ unter 2.000 ft, Ende im Final.
+    fn sinkflug(von: f64, vs: f64) -> Vec<Tick> {
+        let mut aus = Vec::new();
+        let (mut h, mut jetzt) = (von, 10_000);
+        while h > 800.0 {
+            let phase = if h > 5_000.0 { Descent } else { Approach };
+            aus.push(Tick { hoehe_agl_ft: Some(h), rest_min: Some(15.0), ..tick(jetzt, phase, h, vs) });
+            h += vs / 12.0;
+            jetzt += 5;
+        }
+        aus.push(Tick { hoehe_agl_ft: Some(h), rest_min: Some(1.0), ..tick(jetzt, Final, h, vs) });
+        aus
+    }
+
+    fn reihenfolge(gespielt: &[(i64, Slot)]) -> Vec<Slot> {
+        let wichtig = [Slot::KapitaenSinkflug, Slot::KabineSinkflug, Slot::KommandoLandungVorbereiten, Slot::KommandoPlaetzeLandung];
+        gespielt.iter().map(|(_, s)| *s).filter(|s| wichtig.contains(s)).collect()
+    }
+
+    /// SAS 1647 und SAS 1667 (Reiseflug 12.000 ft, Sinkbeginn bei 9.100–10.200 ft)
+    /// und PVG 22 (geplant hoch, geflogen 8.000 ft, Sinkbeginn bei 5.000 ft):
+    /// Beide Sinkflug-Ansagen warteten in der Ruhephase und verfielen beim Final.
+    #[test]
+    fn sinkbeginn_in_der_ruhephase_spielt_beide_ansagen_vor_den_plaetzen() {
+        use Slot::*;
+        for (reise, von) in [(12_500, 10_172.0), (12_000, 9_137.0), (37_000, 5_048.0)] {
+            let mut f = flug(55);
+            f.reiseflughoehe_ft = Some(reise);
+            let mut p = Planer::fortsetzen(f, Cruise);
+            let gespielt = abspielen(&mut p, sinkflug(von, -700.0));
+            assert_eq!(
+                reihenfolge(&gespielt),
+                vec![KapitaenSinkflug, KabineSinkflug, KommandoLandungVorbereiten, KommandoPlaetzeLandung],
+                "Reiseflug {reise}, Sinkbeginn {von}: {gespielt:?}"
+            );
+        }
+    }
+
+    /// DTR 802: Der Kapitän sprach im Reiseflug, die Kabine wurde erst unter
+    /// 10.000 ft fällig und verfiel allein.
+    #[test]
+    fn kabine_nach_gespieltem_kapitaen_spielt_in_der_ruhephase() {
+        let mut f = flug(55);
+        f.reiseflughoehe_ft = Some(12_500);
+        let mut p = Planer::fortsetzen(f, Cruise);
+        p.gemeldet.insert(Slot::KapitaenSinkflug);
+        p.kapitaen_sinkflug = KapitaenSinkflug::Gespielt(9_500);
+        let gespielt = abspielen(&mut p, sinkflug(9_833.0, -700.0));
+        assert_eq!(
+            reihenfolge(&gespielt),
+            vec![Slot::KabineSinkflug, Slot::KommandoLandungVorbereiten, Slot::KommandoPlaetzeLandung],
+            "{gespielt:?}"
+        );
+    }
+
+    /// Nach „Plätze für die Landung“ kommt keine Sinkflug-Ansage mehr: Die
+    /// Ruhephase greift wieder, die wartende Ansage verfällt wie bisher.
+    #[test]
+    fn ruhephase_greift_wieder_ab_plaetze_fuer_die_landung() {
+        let mut f = flug(55);
+        f.reiseflughoehe_ft = Some(12_500);
+        let mut p = Planer::fortsetzen(f, Cruise);
+        let vorher = Tick { hoehe_agl_ft: Some(3_000.0), ..tick(10_000, Approach, 3_000.0, -800.0) };
+        p.tick(&vorher);
+        assert!(!p.ruhephase(&vorher), "Kapitän gemeldet, wartet noch");
+        let tief = Tick { hoehe_agl_ft: Some(1_900.0), ..tick(10_005, Approach, 1_900.0, -800.0) };
+        assert!(p.tick(&tief).iter().any(|x| x.slot == Slot::KommandoPlaetzeLandung));
+        assert!(p.ruhephase(&tief), "ab hier wieder Ruhe");
+    }
+
+    /// Codex: Ist die Kabine abgewählt, gibt es nichts, wofür die Ruhephase
+    /// den Weg freigeben müsste, sobald der Kapitän durch ist.
+    #[test]
+    fn abgewaehlte_kabine_gibt_die_ruhephase_nicht_frei() {
+        let mut f = flug(55);
+        f.reiseflughoehe_ft = Some(12_500);
+        let mut p = Planer::fortsetzen(f, Cruise);
+        p.abwaehlen([Slot::KabineSinkflug]);
+        p.gemeldet.insert(Slot::KapitaenSinkflug);
+        p.kapitaen_sinkflug = KapitaenSinkflug::Gespielt(9_500);
+        let t = tick(10_000, Descent, 9_000.0, -700.0);
+        p.tick(&t);
+        assert!(p.ruhephase(&t));
+    }
+
+    /// Codex: Nach dem Durchstarten ist „Plätze für die Landung“ wieder offen,
+    /// die Freigabe aus dem ersten Anflug gilt aber nicht weiter.
+    #[test]
+    fn durchstarten_beendet_die_freigabe() {
+        let mut f = flug(55);
+        f.reiseflughoehe_ft = Some(12_500);
+        let mut p = Planer::fortsetzen(f, Cruise);
+        p.gemeldet.insert(Slot::KapitaenSinkflug);
+        p.kapitaen_sinkflug = KapitaenSinkflug::Gespielt(9_500);
+        let erster = Tick { hoehe_agl_ft: Some(4_000.0), ..tick(10_000, Approach, 4_000.0, -800.0) };
+        p.tick(&erster);
+        assert!(!p.ruhephase(&erster), "Kabine eben gemeldet");
+        let tief = Tick { hoehe_agl_ft: Some(1_900.0), ..tick(10_300, Approach, 1_900.0, -800.0) };
+        p.tick(&tief);
+        p.tick(&Tick { hoehe_agl_ft: Some(600.0), ..tick(10_400, Final, 600.0, -700.0) });
+        p.tick(&Tick { hoehe_agl_ft: Some(1_500.0), ..tick(10_460, Climb, 1_500.0, 1_500.0) });
+        let zweiter = Tick { hoehe_agl_ft: Some(3_000.0), ..tick(10_800, Approach, 3_000.0, -800.0) };
+        p.tick(&zweiter);
+        assert!(p.ruhephase(&zweiter), "zweiter Anflug: Ruhephase wie bisher");
+    }
+
+    /// Langstrecke: Die Kabine wurde hoch gemeldet und ist durch, die
+    /// Ruhephase bleibt unter 10.000 ft wie bisher.
+    #[test]
+    fn langstrecke_behaelt_die_ruhephase_nach_den_sinkflug_ansagen() {
+        let mut p = Planer::fortsetzen(flug(420), Cruise);
+        p.gemeldet.insert(Slot::KapitaenSinkflug);
+        p.kapitaen_sinkflug = KapitaenSinkflug::Gespielt(9_000);
+        assert!(p.tick(&tick(10_000, Descent, 19_000.0, -1_800.0)).iter().any(|x| x.slot == Slot::KabineSinkflug));
+        assert!(p.ruhephase(&tick(10_600, Descent, 9_000.0, -1_800.0)));
     }
 }

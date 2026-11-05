@@ -1858,7 +1858,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Cabin announcements at high-elevation airports: the 10,000 ft chime and the quiet phase below it now count from the airport's elevation instead of sea level. Departing Bogotá or Mexico City, the chime used to sound right after lift-off, and on approach only after “seats for landing”. This applies to the climb right away and to the approach from client 3.0.0-beta.2.4. Airports below 1,000 ft are unchanged."
+    "neu_text": "Cabin announcements on short flights: the captain's descent announcement and the cabin's landing preparation were often lost on flights with a low cruise altitude (below about 16,000 ft), because the descent was only detected near 10,000 ft and the quiet phase held them back until final approach. Both now play below that too, in the right order and before \"seats for landing\"."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

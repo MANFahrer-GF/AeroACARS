@@ -1858,7 +1858,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Annunci di cabina negli aeroporti in quota: il segnale dei 10.000 piedi e la fase di silenzio sottostante ora si contano dall'altitudine dell'aeroporto e non più dal livello del mare. In partenza da Bogotá o Città del Messico il segnale suonava subito dopo il decollo e in avvicinamento solo dopo “posti per l'atterraggio”. In salita vale subito, in avvicinamento dal client 3.0.0-beta.2.4. Gli aeroporti sotto i 1.000 piedi restano invariati."
+    "neu_text": "Annunci di cabina sui voli brevi: l'annuncio di discesa del comandante e la preparazione all'atterraggio della cabina andavano spesso persi sui voli a bassa quota di crociera (sotto circa 16.000 piedi), perché la discesa veniva riconosciuta solo vicino ai 10.000 piedi e la fase di silenzio li tratteneva fino all'avvicinamento finale. Ora vengono riprodotti anche al di sotto, nell'ordine giusto e prima di \"posti per l'atterraggio\"."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
