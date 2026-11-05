@@ -18,7 +18,10 @@ name: CI
 # dafuer entsteht kein neuer Client. Deshalb bauen Windows/macOS/UI-Selbsttest
 # nur noch, wenn sich der Kern aendert (client/src-tauri, Modul-Skripte, diese
 # Datei); Linux-Rust zusaetzlich bei bundle/ (der Kern liest Texte und Tabellen
-# per include_str! ein). Die Oberflaechen-Tests laufen immer. Welcher Stand
+# per include_str! ein). Die Quellen des Kabinenmoduls (cabin-announcements,
+# kabine-wasm) zaehlen nicht zum Kern, sie kommen als kabine.wasm mit dem
+# Paket (Thomas 05.11.2026): Linux prueft Crate, Host und Modul, Windows und
+# macOS entfallen. Die Oberflaechen-Tests laufen immer. Welcher Stand
 # schon geprueft ist, steht als Cache-Marke am Fingerabdruck der Baeume — ein
 # abgebrochener Lauf verschluckt so keine Kernaenderung.
 
@@ -57,8 +60,8 @@ jobs:
       - name: Fingerabdruck von Kern und Paket
         id: marke
         run: |
-          kern=$(git ls-tree HEAD client/src-tauri scripts/bundle .github/workflows/ci.yml $(git ls-files 'scripts/ui-selbsttest*') | sha256sum | cut -c1-20)
-          linux=$( (echo "$kern"; git ls-tree HEAD bundle) | sha256sum | cut -c1-20)
+          kern=$( (git ls-tree -r HEAD client/src-tauri | grep -vE 'client/src-tauri/crates/(cabin-announcements|kabine-wasm)/'; git ls-tree HEAD scripts/bundle .github/workflows/ci.yml $(git ls-files 'scripts/ui-selbsttest*')) | sha256sum | cut -c1-20)
+          linux=$( (echo "$kern"; git ls-tree HEAD bundle client/src-tauri/crates/cabin-announcements client/src-tauri/crates/kabine-wasm) | sha256sum | cut -c1-20)
           echo "kern=$kern" >> "$GITHUB_OUTPUT"
           echo "linux=$linux" >> "$GITHUB_OUTPUT"
       - name: Kern schon geprueft?
@@ -288,6 +291,12 @@ jobs:
       - name: cargo test (Crates, die bundle/ einlesen)
         working-directory: client/src-tauri
         run: cargo test -p landing-scoring -p cabin-announcements -p hoppie-protocol -p paket-endpunkte
+      # Entfallen Windows und macOS, prueft Linux den Planer im Host (auch
+      # eingebautes Modul gegen nativ).
+      - name: cargo test (Kabine im Host, nur ohne Windows/macOS)
+        if: needs.aenderungen.outputs.kern != 'true'
+        working-directory: client/src-tauri
+        run: cargo test -p aeroacars-app --lib kabin
       - name: cargo check (ganzer Workspace)
         working-directory: client/src-tauri
         run: cargo check --all-targets
