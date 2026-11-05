@@ -2,7 +2,7 @@
 
 **Spec:** v0.13.0  
 **Repos:**
-- VPS Recorder: `aeroacars-live` (Hetzner, live.kant.ovh)
+- VPS Recorder: `aeroacars-live` (Netcup, live.kant.ovh)
 - Gate-Modul: `aeroacars-integrity-gate` (private, MANFahrer-GF)
 - phpVMS-Host: `german-sky-group.eu`
 

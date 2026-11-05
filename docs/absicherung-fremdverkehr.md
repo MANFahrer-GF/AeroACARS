@@ -86,7 +86,7 @@ GitHub-Token nötig.
 
 | Ebene | Wer | Stand |
 |---|---|---|
-| Netz (Bandbreite, SYN-, UDP-, Reflexions-Fluten, ungültige Pakete) | Hetzner, kostenlos | Belegt: https://www.hetzner.com/unternehmen/ddos-schutz/ (Stand 29.09.2026) |
+| Netz (Bandbreite, Paket-Fluten bis Layer 4) | Netcup, kostenlos (live.kant.ovh liegt seit 20.10.2026 auf einem Netcup VPS 1000) | Belegt: Die vServer-Seite https://www.netcup.com/de/server/vps nennt „DDoS-Schutz“ für die VPS-Tarife; die Schutz-Seite https://www.netcup.com/de/ueber-netcup/ddos-schutz beschreibt den Filter (Anexia DDoS Guard, schaltet sich bei Angriff automatisch ein, bis Layer 4). Die Zahl 2 Tbit/s nennt sie nur für Root- und Managed-Server (Stand 05.11.2026). |
 | HTTP-Anfragen, die echt aussehen | Recorder | Bremse je Adresse / je echtem Token; große Pakete nur mit Zugang; Anmelde-Budget für die GSG-Webseite |
 | Langsame/hängende Verbindungen, riesige Pakete | Caddy | `read_header 20s`, `idle 2m`, Körper max. 210 MB |
 | Viele gleichzeitige Verbindungen einer Adresse (443, `/mqtt`) | **offen** | Kein Programm-Schutz. Kandidaten: Verbindungslimit je Adresse in der Firewall des Servers (nftables — Syntax vorher auf einem Testserver prüfen), oder Cloudflare (Free) vor die Domain. |
