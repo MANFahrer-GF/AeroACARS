@@ -293,6 +293,7 @@
       "zu_wenig_zeit": "too little time before descent",
       "uebersprungen": "cruise detected late, a later announcement came first",
       "ton_nicht_fertig": "audio not ready in time",
+      "text_fehlt": "text missing (server sent none)",
       "zu_spaet": "too late (sterile phase or another announcement)",
       "keine_stimme": "no voice for these languages",
       "kein_kurztext": "GSG server does not provide the captain's short version yet",

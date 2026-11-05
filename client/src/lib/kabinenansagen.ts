@@ -37,7 +37,7 @@ export interface Gespielt {
   ergebnis: string | null;
   /** Die Wiedergabe hat begonnen (erst dann „läuft“). */
   gestartet?: boolean;
-  /** Warum sie entfiel (zu_wenig_zeit, uebersprungen, ton_nicht_fertig, zu_spaet,
+  /** Warum sie entfiel (zu_wenig_zeit, uebersprungen, ton_nicht_fertig, text_fehlt, zu_spaet,
    *  keine_stimme, kein_kurztext, flug_beendet). */
   grund?: string | null;
 }
