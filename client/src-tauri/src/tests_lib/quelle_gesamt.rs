@@ -301,6 +301,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// in `lib_zustand.rs`; ausserhalb die Begruessungsbedingung in
 /// `kabinenansagen.rs`. Tests `cabin_announcements::planer::tests::hochplatz_*`,
 /// `kurzflug_ab_hochplatz_*`, `umleitung_*`, `level_off_*`, `wiedereinstieg_im_steigflug_*`.
+/// — plus Abfang-Messung 06.11. (Ticket GSG-2026-00017): begrenzte Boden-Korrektur
+/// in `abfangen_messen` (`lib_anflug_forensik_kabine.rs`). Tests
+/// `abfangen_verdrahtung_tests::steigende_bahn_*`, `fallende_bahn_*`,
+/// `boden_korrektur_ist_begrenzt`, `korrektur_macht_aus_*`, `echtes_durchstarten_*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -311,4 +315,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "1664011b34f11f45b62d87e46bf8c11aeb5830afbe5c75efb95f46b591e272d7";
+const HASH_VOR_DER_ZERLEGUNG: &str = "81a4a23b5d12ca1b93aec3a4ae5749cdcbc42ad75ab3e5928270ddb65ecd92c8";

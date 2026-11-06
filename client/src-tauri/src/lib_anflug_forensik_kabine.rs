@@ -147,9 +147,21 @@ fn abfangen_in_analyse(
 /// Aufsetzen ~16 ft über Grund). Ohne wahre Höhe im Fenster gilt die Höhe
 /// über Grund, ebenfalls gegen den Wert am ersten Bodenkontakt.
 ///
+/// Dazu die Neigung bis zum Aufsetzpunkt ([`ABFANG_BODEN_KORREKTUR_MAX_FT`]):
+/// 50 ft zählen über dem Boden unter dem Flugzeug, nicht über der Höhe des
+/// Aufsetzpunkts. Sonst verlängert eine steigende Bahn die Dauer und eine
+/// fallende verkürzt sie (Ticket GSG-2026-00017, TAPA 25: 15,1 statt 14,0 s).
+///
 /// Proben nur aus dem laufenden Anflug: ab dem Schnitt eines Durchstartens
 /// (`anflug_forensik_ab`), höchstens `ABFANG_FENSTER_S` geflogene Sekunden
 /// (ohne Sim-Pausen) vor dem Aufsetzen.
+/// Obergrenze der Boden-Korrektur in `abfangen_messen`. Vor der Bahn sagt die
+/// Höhe über Grund nichts über die Bahnneigung: Hügel und Täler verschoben
+/// den 50-ft-Durchgang ohne Grenze um bis zu 9 s (YMML 16: 10,7 → 20,1 s).
+/// Korpus 06.11.2026, 1128 Landungen: mit 12 ft höchstens 5,3 s, TAPA 25
+/// voll korrigiert, 6 Bandwechsel auf flachen Bahnen wie ohne Grenze.
+const ABFANG_BODEN_KORREKTUR_MAX_FT: f32 = 12.0;
+
 fn abfangen_messen(
     stats: &FlightStats,
     fenster: &[TouchdownWindowSample],
@@ -157,14 +169,14 @@ fn abfangen_messen(
     vs_aufsetzen_fpm: Option<f32>,
 ) -> landing_scoring::abfangen::Abfangen {
     let boden = fenster.iter().find(|s| s.on_ground && s.at >= edge_at);
-    let bezug: Option<(bool, f32)> = match boden {
+    let bezug: Option<(Option<f32>, f32)> = match boden {
         Some(b) => match b.msl_ft.filter(|m| m.is_finite()) {
-            Some(m) => Some((true, m)),
-            None => Some((false, b.agl_ft)),
+            Some(m) => Some((Some(m - b.agl_ft), m)),
+            None => Some((None, b.agl_ft)),
         },
         None => None,
     };
-    let Some((mit_msl, bezug_ft)) = bezug else {
+    let Some((boden_am_aufsetzpunkt_ft, bezug_ft)) = bezug else {
         return landing_scoring::abfangen::Abfangen {
             vs_aufsetzen_fpm,
             grund_ohne_werte: Some("kein_bodenbezug".to_string()),
@@ -181,7 +193,22 @@ fn abfangen_messen(
             // Pausen im Sim zählen nicht als Abfangzeit (QS 06.10.2026).
             t_ms: (s.at - edge_at).num_milliseconds()
                 + pausen_ms_zwischen(&stats.pause_segments, s.at, edge_at),
-            hoehe_ft: if mit_msl { s.msl_ft } else { s.agl_ft } - bezug_ft,
+            hoehe_ft: match boden_am_aufsetzpunkt_ft {
+                Some(boden_ft) => {
+                    let neigung_ft = (boden_ft - (s.msl_ft - s.agl_ft))
+                        .clamp(-ABFANG_BODEN_KORREKTUR_MAX_FT, ABFANG_BODEN_KORREKTUR_MAX_FT);
+                    let hoehe_ft = s.msl_ft - bezug_ft;
+                    // Die Durchstart-Grenze misst weiter die wahre Höhe: Die
+                    // Korrektur darf ein Wieder-Steigen nicht darüber heben
+                    // und einen neuen Anflug nicht darunter drücken.
+                    if hoehe_ft > landing_scoring::abfangen::DURCHSTART_HOEHE_FT {
+                        hoehe_ft
+                    } else {
+                        (hoehe_ft + neigung_ft).min(landing_scoring::abfangen::DURCHSTART_HOEHE_FT)
+                    }
+                }
+                None => s.agl_ft - bezug_ft,
+            },
             vs_fpm: s.vs_fpm,
             gs_kt: s.gs_kt,
         })

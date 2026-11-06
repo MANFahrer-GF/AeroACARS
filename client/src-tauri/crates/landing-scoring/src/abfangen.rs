@@ -33,6 +33,8 @@
 //! Versatz des Bezugspunkts weg (B772: der Sim meldet am Aufsetzen ~16 ft
 //! über Grund) — und es ist dieselbe Rechnung wie im Korpus, aus dem die
 //! Bänder stammen (Server: `alt_ft` minus `alt_ft` am ersten Bodenpunkt).
+//! Die Bahnneigung rechnet `abfangen_messen` im Kern begrenzt heraus; auf
+//! flachen Bahnen ändert das nichts, die Bänder gelten weiter.
 
 use serde::{Deserialize, Serialize};
 

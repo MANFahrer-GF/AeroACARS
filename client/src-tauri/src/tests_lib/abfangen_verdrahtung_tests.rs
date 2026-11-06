@@ -90,6 +90,102 @@
             .any(|s| s.key == "abfangen"));
     }
 
+    /// Probe über Boden auf `boden_ft`, wahre Höhe `hoehe_ft` über dem
+    /// Aufsetzbezug von [`boden`] (Bahn dort auf 300 ft).
+    fn probe_ueber_boden(t_ms: i64, hoehe_ft: f32, boden_ft: f32) -> ApproachBufferSample {
+        let msl_ft = 316.0 + hoehe_ft;
+        ApproachBufferSample {
+            agl_ft: msl_ft - boden_ft,
+            msl_ft,
+            ..probe(t_ms, hoehe_ft, -600.0)
+        }
+    }
+
+    /// Sinken 10 ft/s von 200 ft; auf flacher Bahn 5 s ab 50 ft.
+    fn dauer_ueber_boden(boden_vor_der_bahn_ft: f32) -> Option<f32> {
+        let mut stats = FlightStats::default();
+        for s in 0..=20 {
+            let t = -20_000 + s * 1000;
+            let hoehe = -(t as f32) / 100.0;
+            // Boden wie TAPA 25: läuft erst auf der Bahn in die Aufsetzhöhe.
+            let boden = if hoehe > 15.0 { boden_vor_der_bahn_ft } else { 300.0 };
+            stats
+                .anflug_forensik_puffer
+                .push_back(probe_ueber_boden(t, hoehe, boden));
+        }
+        abfangen_messen(&stats, &[boden()], td(), Some(-60.0)).dauer_ab_50ft_s
+    }
+
+    /// Ticket GSG-2026-00017: 10 ft Anstieg bis zum Aufsetzpunkt. Der Durchgang
+    /// durch 50 ft über Grund liegt 10 ft tiefer in der wahren Höhe → 1 s kürzer.
+    #[test]
+    fn steigende_bahn_verlaengert_die_abfangzeit_nicht() {
+        assert_eq!(dauer_ueber_boden(300.0), Some(5.0), "flach, Gegenprobe");
+        assert_eq!(dauer_ueber_boden(290.0), Some(4.0));
+    }
+
+    #[test]
+    fn fallende_bahn_verkuerzt_die_abfangzeit_nicht() {
+        assert_eq!(dauer_ueber_boden(310.0), Some(6.0));
+    }
+
+    /// YMML 16: Gelände vor der Bahn darf die Dauer nicht frei verschieben.
+    #[test]
+    fn boden_korrektur_ist_begrenzt() {
+        assert_eq!(
+            dauer_ueber_boden(300.0 - 40.0),
+            Some(5.0 - ABFANG_BODEN_KORREKTUR_MAX_FT / 10.0)
+        );
+        assert_eq!(
+            dauer_ueber_boden(300.0 + 40.0),
+            Some(5.0 + ABFANG_BODEN_KORREKTUR_MAX_FT / 10.0)
+        );
+    }
+
+    /// Codex-Prüfung 06.11.2026: Wieder-Steigen auf 90 ft wahre Höhe über
+    /// 12 ft tieferem Boden ergäbe korrigiert 102 ft — das darf kein neuer
+    /// Anflug sein, die Uhr läuft vom ersten Durchgang an weiter.
+    #[test]
+    fn korrektur_macht_aus_wieder_steigen_kein_durchstarten() {
+        let mut stats = FlightStats::default();
+        for (t, h, b) in [
+            (-30_000, 80.0, 300.0),
+            (-28_000, 60.0, 300.0),
+            (-26_000, 40.0, 300.0),
+            (-22_000, 90.0, 288.0),
+            (-18_000, 60.0, 300.0),
+            (-16_000, 40.0, 300.0),
+            (-8_000, 20.0, 300.0),
+            (-4_000, 10.0, 300.0),
+            (-1_000, 2.0, 300.0),
+        ] {
+            stats.anflug_forensik_puffer.push_back(probe_ueber_boden(t, h, b));
+        }
+        let a = abfangen_messen(&stats, &[boden()], td(), Some(-60.0));
+        assert_eq!(a.dauer_ab_50ft_s, Some(27.0), "{a:?}");
+    }
+
+    /// Gegenprobe: über 100 ft wahrer Höhe bleibt es ein neuer Anflug, auch
+    /// wenn die Korrektur die Probe rechnerisch darunter drücken würde.
+    #[test]
+    fn echtes_durchstarten_bleibt_trotz_korrektur_erkannt() {
+        let mut stats = FlightStats::default();
+        for (t, h, b) in [
+            (-30_000, 60.0, 300.0),
+            (-28_000, 40.0, 300.0),
+            (-22_000, 105.0, 312.0),
+            (-18_000, 60.0, 300.0),
+            (-16_000, 40.0, 300.0),
+            (-8_000, 20.0, 300.0),
+            (-4_000, 10.0, 300.0),
+            (-1_000, 2.0, 300.0),
+        ] {
+            stats.anflug_forensik_puffer.push_back(probe_ueber_boden(t, h, b));
+        }
+        let a = abfangen_messen(&stats, &[boden()], td(), Some(-60.0));
+        assert_eq!(a.dauer_ab_50ft_s, Some(17.0), "{a:?}");
+    }
+
     #[test]
     fn ohne_bodenkontakt_keine_werte() {
         let stats = FlightStats::default();
