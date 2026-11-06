@@ -174,7 +174,7 @@ Bahn-Auslastung
 Touchdown-Zone
 ✓ erstes Drittel
 Aim-Point
-400 m · Δ +420 m · long landing
+400 m · Δ +420 m · hinter dem Zielpunkt
 Anflug-Profil (TCH)
 78 ft (Δ +23) · Räder ca. 53 ft · über FAA-Maximum
 Navdata-Quelle

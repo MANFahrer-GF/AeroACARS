@@ -779,7 +779,7 @@
       "flare_normal": "From crossing 50 ft to touchdown within the usual range (airliner up to 10 s, light aircraft or business jet up to 16 s).",
       "flare_lang": "A rather long flare (airliner 10–12 s, light aircraft or business jet 16–20 s from 50 ft). Do not prolong the flare: Airbus and Boeing fly the aircraft onto the runway in the touchdown zone — a smooth touchdown is not the goal.",
       "flare_sehr_lang": "A very long flare (airliner 12–15 s, light aircraft or business jet 20–24 s from 50 ft). More than half of such flights touch down beyond the touchdown zone. Start the flare later (Airbus: 30–40 ft) and bring thrust to idle in time.",
-      "flare_zu_lang": "Floated above the runway (airliner over 15 s, light aircraft or business jet over 24 s from 50 ft). Airbus recommends a go-around in this case instead of trying to save the landing.",
+      "flare_zu_lang": "Far too long a flare (airliner over 15 s, light aircraft or business jet over 24 s from 50 ft). Start the flare later and bring thrust to idle in time; the duration counts even if the touchdown is still inside the touchdown zone.",
       "ballooning": "The aircraft climbed again by more than 50 fpm during the flare (ballooning) — usually too much back pressure or thrust not at idle. Relax the pull instead of pulling more; go around if needed."
     },
     "forensics": {
@@ -1858,7 +1858,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Cabin announcements on short flights: the captain's descent announcement and the cabin's landing preparation were often lost on flights with a low cruise altitude (below about 16,000 ft), because the descent was only detected near 10,000 ft and the quiet phase held them back until final approach. Both now play below that too, in the right order and before \"seats for landing\"."
+    "neu_text": "Landing report: the “long landing” label now only appears outside the touchdown zone. If you touch down inside the zone, it now reads “past the aim point” or “well before the aim point”. Scores do not change. The hint about a very long flare has also been reworded."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -3077,6 +3077,8 @@
     "aim_short": "too early",
     "aim_past": "slightly late",
     "aim_long_landing": "long landing",
+    "aim_hinter_ziel": "past the aim point",
+    "aim_vor_ziel": "well before the aim point",
     "aim_severe": "critical",
     "tch_on_profile": "on profile",
     "tch_slightly_low": "slightly low",

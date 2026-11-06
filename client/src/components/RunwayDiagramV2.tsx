@@ -246,7 +246,7 @@ function tdColor(p: RunwayDiagramV2Props, tokens: { tdSevere: string; tdPerfect:
     case "long_landing":
       return tokens.tdWarn;
     case "severe":
-      return tokens.tdSevere;
+      return p.td_in_tdz === true ? tokens.tdWarn : tokens.tdSevere;
     default:
       return tokens.tdAcceptable;
   }
@@ -1938,8 +1938,8 @@ export function RunwayDiagramV2(props: RunwayDiagramV2Props) {
         {props.aim_class && props.aim_delta_m != null && props.aim_point_m != null && (
           <Pill
             label={t("runway_v2.pill_aim_point")}
-            value={`${props.aim_point_m.toFixed(0)} m · Δ ${fmtSigned(props.aim_delta_m, 0, "m")} · ${t(aimClassLabelKey(props.aim_class))}`}
-            tone={aimTone(props.aim_class)}
+            value={`${props.aim_point_m.toFixed(0)} m · Δ ${fmtSigned(props.aim_delta_m, 0, "m")} · ${t(aimClassLabelKey(props.aim_class, props.td_in_tdz))}`}
+            tone={aimTone(props.aim_class, props.td_in_tdz)}
           />
         )}
         {props.tch_actual_ft != null && props.tch_class && (
@@ -2276,7 +2276,12 @@ function thirdLabelKey(n: 1 | 2 | 3): string {
   return n === 1 ? "runway_v2.third_1" : n === 2 ? "runway_v2.third_2" : "runway_v2.third_3";
 }
 
-function aimClassLabelKey(c: AimClass): string {
+// Die Klasse misst den Abstand zum Zielpunkt, nicht die Aufsetzzone: In der
+// Zone darf die Beschriftung nicht wie ein Vorwurf klingen (Ticket
+// GSG-2026-00017, 36 % aller Landungen waren „long landing“).
+function aimClassLabelKey(c: AimClass, inTdz?: boolean | null): string {
+  if (inTdz === true && c === "long_landing") return "runway_v2.aim_hinter_ziel";
+  if (inTdz === true && c === "severe") return "runway_v2.aim_vor_ziel";
   switch (c) {
     case "perfect":
       return "runway_v2.aim_perfect";
@@ -2291,9 +2296,9 @@ function aimClassLabelKey(c: AimClass): string {
   }
 }
 
-function aimTone(c: AimClass): "good" | "warn" | "bad" {
+function aimTone(c: AimClass, inTdz?: boolean | null): "good" | "warn" | "bad" {
   if (c === "perfect" || c === "past_aim" || c === "short_of_aim") return "good";
-  if (c === "long_landing") return "warn";
+  if (c === "long_landing" || inTdz === true) return "warn";
   return "bad";
 }
 

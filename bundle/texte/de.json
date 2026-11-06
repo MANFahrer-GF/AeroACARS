@@ -779,7 +779,7 @@
       "flare_normal": "Vom 50-ft-Durchgang bis zum Aufsetzen im üblichen Rahmen (Linienflugzeug bis 10 s, Kleinflugzeug oder Bizjet bis 16 s).",
       "flare_lang": "Etwas lang abgefangen (Linienflugzeug 10–12 s, Kleinflugzeug oder Bizjet 16–20 s ab 50 ft). Den Flare nicht strecken: Airbus und Boeing fliegen das Flugzeug in der Aufsetzzone auf die Bahn — ein weiches Aufsetzen ist nicht das Ziel.",
       "flare_sehr_lang": "Sehr lang abgefangen (Linienflugzeug 12–15 s, Kleinflugzeug oder Bizjet 20–24 s ab 50 ft). Dabei setzt über die Hälfte der Flüge hinter der Aufsetzzone auf. Flare später beginnen (Airbus: 30–40 ft), Schub rechtzeitig auf Leerlauf.",
-      "flare_zu_lang": "Über der Bahn geschwebt (Linienflugzeug über 15 s, Kleinflugzeug oder Bizjet über 24 s ab 50 ft). Airbus empfiehlt in diesem Fall ein Durchstarten statt eines Rettungsversuchs.",
+      "flare_zu_lang": "Viel zu lang abgefangen (Linienflugzeug über 15 s, Kleinflugzeug oder Bizjet über 24 s ab 50 ft). Flare später beginnen und Schub rechtzeitig auf Leerlauf; die Dauer zählt auch dann, wenn der Aufsetzpunkt noch in der Aufsetzzone liegt.",
       "ballooning": "Das Flugzeug ist im Abfangen um mehr als 50 fpm wieder gestiegen (Ballooning) — meist zu starkes Ziehen oder Schub nicht im Leerlauf. Nachgeben statt weiter ziehen, notfalls durchstarten."
     },
     "forensics": {
@@ -1858,7 +1858,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Kabinenansagen auf kurzen Flügen: Die Sinkflug-Ansage des Kapitäns und die Landevorbereitung der Kabine fielen auf Flügen mit niedriger Reiseflughöhe (unter etwa 16.000 Fuß) oft aus, weil der Sinkflug erst nahe 10.000 Fuß erkannt wurde und die ruhige Phase sie bis zum Endanflug zurückhielt. Jetzt kommen beide auch darunter, in der richtigen Reihenfolge und spätestens vor „Plätze für die Landung“."
+    "neu_text": "Landebericht: Die Anzeige „long landing“ erscheint nur noch außerhalb der Aufsetzzone. Liegt dein Aufsetzpunkt in der Zone, steht dort jetzt „hinter dem Zielpunkt“ oder „deutlich vor dem Zielpunkt“. Die Noten ändern sich dadurch nicht. Auch der Hinweis zu sehr langem Abfangen ist klarer formuliert."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
@@ -3077,6 +3077,8 @@
     "aim_short": "zu früh",
     "aim_past": "etwas spät",
     "aim_long_landing": "long landing",
+    "aim_hinter_ziel": "hinter dem Zielpunkt",
+    "aim_vor_ziel": "deutlich vor dem Zielpunkt",
     "aim_severe": "kritisch",
     "tch_on_profile": "auf Profil",
     "tch_slightly_low": "leicht niedrig",

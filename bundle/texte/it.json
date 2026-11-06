@@ -779,7 +779,7 @@
       "flare_normal": "Dal passaggio a 50 ft al contatto nella norma (aereo di linea fino a 10 s, aereo leggero o business jet fino a 16 s).",
       "flare_lang": "Richiamata piuttosto lunga (aereo di linea 10–12 s, aereo leggero o business jet 16–20 s da 50 ft). Non prolungare la richiamata: Airbus e Boeing portano l’aereo sulla pista nella zona di contatto — un atterraggio morbido non è l’obiettivo.",
       "flare_sehr_lang": "Richiamata molto lunga (aereo di linea 12–15 s, aereo leggero o business jet 20–24 s da 50 ft). Più della metà di questi voli tocca oltre la zona di contatto. Iniziare la richiamata più tardi (Airbus: 30–40 ft) e portare la spinta al minimo in tempo.",
-      "flare_zu_lang": "Galleggiamento sopra la pista (aereo di linea oltre 15 s, aereo leggero o business jet oltre 24 s da 50 ft). In questo caso Airbus raccomanda una riattaccata invece di cercare di salvare l’atterraggio.",
+      "flare_zu_lang": "Richiamata decisamente troppo lunga (aereo di linea oltre 15 s, aereo leggero o business jet oltre 24 s da 50 ft). Iniziare la richiamata più tardi e portare la spinta al minimo in tempo; la durata conta anche se il contatto resta nella zona di contatto.",
       "ballooning": "Durante la richiamata l’aereo è risalito di oltre 50 fpm (ballooning) — di solito troppa pressione a cabrare o spinta non al minimo. Allentare invece di tirare di più; se necessario riattaccare."
     },
     "forensics": {
@@ -1858,7 +1858,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Annunci di cabina sui voli brevi: l'annuncio di discesa del comandante e la preparazione all'atterraggio della cabina andavano spesso persi sui voli a bassa quota di crociera (sotto circa 16.000 piedi), perché la discesa veniva riconosciuta solo vicino ai 10.000 piedi e la fase di silenzio li tratteneva fino all'avvicinamento finale. Ora vengono riprodotti anche al di sotto, nell'ordine giusto e prima di \"posti per l'atterraggio\"."
+    "neu_text": "Rapporto di atterraggio: la dicitura “long landing” compare ora solo fuori dalla zona di contatto. Se tocchi all’interno della zona, ora leggi “oltre il punto di mira” o “ben prima del punto di mira”. I voti non cambiano. Anche il suggerimento sulla richiamata molto lunga è stato riformulato."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -3063,6 +3063,8 @@
     "aim_short": "troppo presto",
     "aim_past": "leggermente tardi",
     "aim_long_landing": "long landing",
+    "aim_hinter_ziel": "oltre il punto di mira",
+    "aim_vor_ziel": "ben prima del punto di mira",
     "aim_severe": "critico",
     "tch_on_profile": "su profilo",
     "tch_slightly_low": "leggermente basso",

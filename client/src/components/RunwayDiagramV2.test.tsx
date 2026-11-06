@@ -407,3 +407,40 @@ describe("RunwayDiagramV2 — kurze Bahnen werden gezeichnet wie sie sind", () =
     }
   });
 });
+
+// Ticket GSG-2026-00017: 651 m auf einer 3-km-Bahn liegt in der Aufsetzzone
+// und trotzdem 251 m hinter dem Ziel — „long landing“ klang wie ein Vorwurf.
+describe("RunwayDiagramV2 — Zielpunkt-Beschriftung und Aufsetzzone", () => {
+  const zeile = (extra: Partial<RunwayDiagramV2Props>) =>
+    render(
+      <RunwayDiagramV2
+        {...props()}
+        td_third={1}
+        aim_point_m={400}
+        aim_delta_m={251}
+        {...extra}
+      />,
+    ).container.textContent ?? "";
+
+  it("in der Zone: hinter dem Zielpunkt statt long landing", () => {
+    const text = zeile({ aim_class: "long_landing", td_in_tdz: true });
+    expect(text).toContain("hinter dem Zielpunkt");
+    expect(text).not.toContain("long landing");
+  });
+
+  it("außerhalb der Zone bleibt long landing", () => {
+    const text = zeile({ aim_class: "long_landing", td_in_tdz: false });
+    expect(text).toContain("long landing");
+    expect(text).not.toContain("hinter dem Zielpunkt");
+  });
+
+  it("in der Zone: deutlich vor dem Zielpunkt statt kritisch", () => {
+    const text = zeile({ aim_class: "severe", aim_delta_m: -200, td_in_tdz: true });
+    expect(text).toContain("deutlich vor dem Zielpunkt");
+    expect(text).not.toContain("kritisch");
+  });
+
+  it("außerhalb der Zone bleibt kritisch", () => {
+    expect(zeile({ aim_class: "severe", aim_delta_m: 600, td_in_tdz: false })).toContain("kritisch");
+  });
+});
