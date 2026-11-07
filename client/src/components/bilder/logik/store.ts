@@ -7,7 +7,7 @@ import { GRENZEN, TABELLE } from "./grenzen";
 import { zipBauen } from "./zip";
 import { fehlerCode, fehlerText } from "./normalisieren";
 import {
-  antwortEinarbeiten, aufrufFehler, auswahlNachSenden, offeneIds, sendeStart, sendungIdWaehlen, type Sendestand,
+  antwortEinarbeiten, aufrufFehler, auswahlNachSenden, offeneIds, sendeStart, sendungIdWaehlen, standNachLaden, type Sendestand,
 } from "./sendezustand";
 import { erzeugeUebernehmer, leereZaehlung, type Kodierer, type Zaehlung } from "./uebernehmer";
 import type { BilderListe, Eintrag, Fundort, GeoStufe, Kontingent, Quelle, SendeAntwort, SendeVermerk, Sidecar } from "./typen";
@@ -78,7 +78,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   async function laden(mitAlt = z.altbestandGeladen): Promise<void> {
     try {
       const liste = await api.liste(mitAlt);
-      setzen({ liste, geladen: true, fehler: null });
+      setzen({ liste, geladen: true, fehler: null, sendestand: standNachLaden(z.sendestand, liste.eintraege) });
     } catch (e) {
       setzen({ fehler: fehlerText(e), geladen: true });
     }

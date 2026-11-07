@@ -173,6 +173,9 @@ describe("Store: Einwilligung, Fortsetzen, Sidecar", () => {
     await neu.store.laden();
     await neu.store.fortsetzen();
     expect(statusAufrufe).toBe(0);
+    expect(neu.store.lesen().sendestand.a).toMatchObject({ phase: "fehlgeschlagen", sendungId: "S1", code: "discord_unklar" });
+    await neu.store.senden(["a"], "Hallo", "verdeckt");
+    expect(neu.aufrufe[0]).toMatchObject({ sendungId: "S1" });
   });
   it("Text, Favorit und Flug aendern schreiben das ganze Sidecar", async () => {
     const t = aufbau();

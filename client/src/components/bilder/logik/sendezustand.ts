@@ -127,3 +127,20 @@ export function standAusVermerk(v: { sendung_id: string; status: "angenommen" | 
   if (v.status === "angenommen") return { phase: "angenommen", sendungId: v.sendung_id };
   return { phase: "fehlgeschlagen", sendungId: v.sendung_id, code: fehlerCodeNormal(v.code) };
 }
+
+/**
+ * Nach dem Laden: Bilder ohne Stand dieser Sitzung, deren letzter Vermerk fehlgeschlagen oder unklar ist,
+ * bekommen ihn zurueck. So nutzt „Erneut senden“ nach einem Neustart dieselbe `sendung_id` (keine zweite
+ * Nachricht bei unklarer Zustellung). Gesendete und angenommene Vermerke bleiben reine Anzeige.
+ */
+export function standNachLaden(stand: Sendestand, eintraege: ReadonlyArray<{ id: string; sidecar: { sendungen?: Array<{ sendung_id: string; status: "angenommen" | "gesendet" | "abgelehnt"; code?: string }> } | null }>): Sendestand {
+  let n: Record<string, KachelStand> | null = null;
+  for (const e of eintraege) {
+    if (stand[e.id]) continue;
+    const v = [...(e.sidecar?.sendungen ?? [])].reverse()[0];
+    if (v?.status !== "abgelehnt") continue;
+    n ??= { ...stand };
+    n[e.id] = standAusVermerk(v)!;
+  }
+  return n ?? stand;
+}
