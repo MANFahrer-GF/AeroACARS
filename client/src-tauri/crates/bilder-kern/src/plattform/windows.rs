@@ -9,9 +9,10 @@ use std::sync::{Arc, Mutex};
 
 use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HWND, LPARAM, RECT};
+use windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute;
 use windows_sys::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO,
-    BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, SRCCOPY,
+    BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, SRCCOPY,
 };
 use windows_sys::Win32::Storage::Xps::PrintWindow;
 use windows_sys::Win32::System::Com::CoTaskMemFree;
@@ -20,13 +21,15 @@ use windows_sys::Win32::System::Threading::{GetCurrentThreadId, OpenProcess, Que
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::Shell::{FOLDERID_Pictures, SHGetKnownFolderPath};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetAncestor, GetForegroundWindow, GetMessageW, GetWindow, GetWindowRect, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, PeekMessageW, PostThreadMessageW, WindowFromPoint, GA_ROOT, GW_OWNER, MSG, PM_NOREMOVE, WM_APP, WM_HOTKEY,
+    EnumWindows, GetForegroundWindow, GetLayeredWindowAttributes, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, PeekMessageW, PostThreadMessageW, GWL_EXSTYLE, GW_HWNDPREV, GW_OWNER, LWA_ALPHA,
+    MSG, PM_NOREMOVE, WM_APP, WM_HOTKEY, WS_EX_LAYERED,
 };
 
 use super::Aufnahme;
 use crate::suche::{self, Fundort};
 use crate::tastenkuerzel::Taste;
+use crate::verdeckung::{verdeckt, Rechteck};
 use crate::Fehler;
 
 pub const AUFNAHME_VERFUEGBAR: bool = true;
@@ -197,33 +200,120 @@ fn ganz_schwarz(bgra: &[u8]) -> bool {
     bgra.chunks_exact(4).step_by(997).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0)
 }
 
-/// Nimmt das Simulatorfenster gezielt auf (nicht das Vordergrundfenster):
-/// zuerst `PrintWindow` mit `PW_RENDERFULLCONTENT`; liefert das nur Schwarz
-/// (manche DirectX-Fenster), eine Bildschirmkopie des Fensterbereichs — nur,
-/// wenn das Simulatorfenster dort oben liegt, sonst Fehler statt fremder Inhalt.
-pub fn fenster_aufnehmen() -> Result<Aufnahme, Fehler> {
-    let (hwnd, r) = sim_fenster().ok_or_else(|| Fehler::NichtGefunden("Kein Simulatorfenster gefunden (FlightSimulator, X-Plane)".into()))?;
-    let (b, h) = ((r.right - r.left) as i32, (r.bottom - r.top) as i32);
-    // SAFETY: GDI-Objekte werden in jedem Fall wieder freigegeben.
+/// DWM-Attribut „weggeblendet“ (`DWMWA_CLOAKED`): Fenster auf einem anderen
+/// virtuellen Desktop oder eine ruhende Store-App; in der Z-Reihenfolge, aber unsichtbar.
+const DWMWA_CLOAKED: u32 = 14;
+
+/// Zaehlt ein Fenster ueber dem Simulator als „verdeckend“? Nein, wenn es
+/// unsichtbar, minimiert, weggeblendet, vollstaendig durchsichtig oder leer ist
+/// oder zum Simulator selbst gehoert (dessen eigene Menues und Overlays).
+fn verdeckt_moeglich(w: HWND, sim_pid: u32) -> Option<Rechteck> {
+    // SAFETY: reine Abfragen auf ein von GetWindow geliefertes Handle.
     unsafe {
-        let schirm = GetDC(null_mut());
-        if schirm.is_null() {
-            return Err(Fehler::Io("Bildschirmkontext nicht verfuegbar".into()));
+        if IsWindowVisible(w) == 0 || IsIconic(w) != 0 {
+            return None;
         }
-        let mem = CreateCompatibleDC(schirm);
-        let bmp = CreateCompatibleBitmap(schirm, b, h);
-        if mem.is_null() || bmp.is_null() {
-            if !bmp.is_null() {
-                DeleteObject(bmp);
-            }
-            if !mem.is_null() {
-                DeleteDC(mem);
-            }
-            ReleaseDC(null_mut(), schirm);
-            return Err(Fehler::Io("Aufnahmepuffer nicht anlegbar".into()));
+        let mut weg: u32 = 0;
+        if DwmGetWindowAttribute(w, DWMWA_CLOAKED, &mut weg as *mut u32 as *mut c_void, std::mem::size_of::<u32>() as u32) == 0 && weg != 0 {
+            return None;
         }
-        let alt = SelectObject(mem, bmp);
-        let mut kopf: BITMAPINFO = std::mem::zeroed();
+        if GetWindowLongW(w, GWL_EXSTYLE) as u32 & WS_EX_LAYERED != 0 {
+            let (mut farbe, mut alpha, mut flags) = (0u32, 0u8, 0u32);
+            if GetLayeredWindowAttributes(w, &mut farbe, &mut alpha, &mut flags) != 0 && flags & LWA_ALPHA != 0 && alpha == 0 {
+                return None;
+            }
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(w, &mut pid);
+        if pid != 0 && pid == sim_pid {
+            return None;
+        }
+        let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if GetWindowRect(w, &mut r) == 0 {
+            return None;
+        }
+        let rr = Rechteck::neu(r.left, r.top, r.right, r.bottom);
+        (!rr.leer()).then_some(rr)
+    }
+}
+
+/// Alle Fenster, die in der Z-Reihenfolge ueber `hwnd` liegen und etwas verdecken koennten.
+fn fenster_darueber(hwnd: HWND) -> Vec<Rechteck> {
+    let mut sim_pid = 0u32;
+    // SAFETY: Abfrage auf das Fenster des Simulators; schlaegt bei ungueltigem Handle fehl.
+    unsafe { GetWindowThreadProcessId(hwnd, &mut sim_pid) };
+    let mut v = Vec::new();
+    // SAFETY: GW_HWNDPREV laeuft die Kette von hwnd nach oben (zum obersten Fenster).
+    let mut w = unsafe { GetWindow(hwnd, GW_HWNDPREV) };
+    let mut schritte = 0;
+    while !w.is_null() && schritte < 10_000 {
+        if let Some(r) = verdeckt_moeglich(w, sim_pid) {
+            v.push(r);
+        }
+        // SAFETY: wie oben.
+        w = unsafe { GetWindow(w, GW_HWNDPREV) };
+        schritte += 1;
+    }
+    v
+}
+
+/// Die GDI-Objekte einer Aufnahme; `Drop` gibt in jedem Fall alles frei, und
+/// zwar in der Reihenfolge, die GDI verlangt (Bitmap erst aus dem DC loesen).
+struct Gdi {
+    schirm: HDC,
+    mem: HDC,
+    bmp: HBITMAP,
+    /// Das Objekt, das vor dem Auswaehlen unseres Bitmaps im DC war.
+    alt: HGDIOBJ,
+    gewaehlt: bool,
+}
+
+impl Gdi {
+    fn neu(b: i32, h: i32) -> Result<Self, Fehler> {
+        // SAFETY: jedes angelegte Objekt gehoert sofort `Gdi` bzw. wird hier freigegeben.
+        unsafe {
+            let schirm = GetDC(null_mut());
+            if schirm.is_null() {
+                return Err(Fehler::Io("Bildschirmkontext nicht verfuegbar".into()));
+            }
+            let mem = CreateCompatibleDC(schirm);
+            let bmp = CreateCompatibleBitmap(schirm, b, h);
+            if mem.is_null() || bmp.is_null() {
+                if !bmp.is_null() {
+                    DeleteObject(bmp);
+                }
+                if !mem.is_null() {
+                    DeleteDC(mem);
+                }
+                ReleaseDC(null_mut(), schirm);
+                return Err(Fehler::Io("Aufnahmepuffer nicht anlegbar".into()));
+            }
+            Ok(Self { schirm, mem, bmp, alt: null_mut(), gewaehlt: false })
+        }
+    }
+
+    /// Bitmap in den Speicher-DC waehlen (zum Zeichnen: PrintWindow, BitBlt).
+    fn waehlen(&mut self) {
+        if !self.gewaehlt {
+            // SAFETY: gueltige Handles aus `neu`.
+            self.alt = unsafe { SelectObject(self.mem, self.bmp) };
+            self.gewaehlt = true;
+        }
+    }
+
+    /// Bitmap wieder aus dem DC loesen: Voraussetzung fuer `GetDIBits` und `DeleteObject`.
+    fn loesen(&mut self) {
+        if self.gewaehlt {
+            // SAFETY: das gemerkte alte Objekt gehoert in diesen DC.
+            unsafe { SelectObject(self.mem, self.alt) };
+            self.gewaehlt = false;
+        }
+    }
+
+    /// Pixel auslesen. Das Bitmap darf nicht in einem DC gewaehlt sein.
+    fn auslesen(&mut self, b: i32, h: i32, bgra: &mut [u8]) -> bool {
+        self.loesen();
+        let mut kopf: BITMAPINFO = unsafe { std::mem::zeroed() };
         kopf.bmiHeader = BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
             biWidth: b,
@@ -237,51 +327,78 @@ pub fn fenster_aufnehmen() -> Result<Aufnahme, Fehler> {
             biClrUsed: 0,
             biClrImportant: 0,
         };
-        let mut bgra = vec![0u8; (b as usize) * (h as usize) * 4];
-        let mut methode = "printwindow";
-        let mut ok = PrintWindow(hwnd, mem, PW_RENDERFULLCONTENT) != 0
-            && GetDIBits(mem, bmp, 0, h as u32, bgra.as_mut_ptr() as *mut c_void, &mut kopf, DIB_RGB_COLORS) != 0
-            && !ganz_schwarz(&bgra);
-        let mut grund = String::new();
-        if !ok {
-            let mitte = windows_sys::Win32::Foundation::POINT { x: r.left + b / 2, y: r.top + h / 2 };
-            let oben = WindowFromPoint(mitte);
-            if !oben.is_null() && GetAncestor(oben, GA_ROOT) == hwnd {
-                methode = "bitblt";
-                ok = BitBlt(mem, 0, 0, b, h, schirm, r.left, r.top, SRCCOPY | CAPTUREBLT) != 0
-                    && GetDIBits(mem, bmp, 0, h as u32, bgra.as_mut_ptr() as *mut c_void, &mut kopf, DIB_RGB_COLORS) != 0;
-                if !ok {
-                    grund = format!("Bildschirmkopie fehlgeschlagen (Fehler {})", GetLastError());
-                }
-            } else {
-                grund = "Der Simulator liefert nur Schwarz und ist verdeckt; bitte nach vorn holen".into();
-            }
-        }
-        SelectObject(mem, alt);
-        DeleteObject(bmp);
-        DeleteDC(mem);
-        ReleaseDC(null_mut(), schirm);
-        if !ok {
-            return Err(Fehler::Io(if grund.is_empty() { "Aufnahme fehlgeschlagen".into() } else { grund }));
-        }
-        if ganz_schwarz(&bgra) {
-            return Err(Fehler::Io("Die Aufnahme ist schwarz (Vollbild-Ausgabe des Simulators nicht abgreifbar)".into()));
-        }
-        Ok(Aufnahme { breite: b as u32, hoehe: h as u32, bgra, methode })
+        // SAFETY: `bgra` ist b*h*4 Bytes gross, das Bitmap ist nicht gewaehlt.
+        unsafe { GetDIBits(self.mem, self.bmp, 0, h as u32, bgra.as_mut_ptr() as *mut c_void, &mut kopf, DIB_RGB_COLORS) == h }
     }
 }
+
+impl Drop for Gdi {
+    fn drop(&mut self) {
+        self.loesen();
+        // SAFETY: Handles aus `neu`, Bitmap ist nicht mehr gewaehlt.
+        unsafe {
+            DeleteObject(self.bmp);
+            DeleteDC(self.mem);
+            ReleaseDC(null_mut(), self.schirm);
+        }
+    }
+}
+
+/// Nimmt das Simulatorfenster gezielt auf (nicht das Vordergrundfenster):
+/// zuerst `PrintWindow` mit `PW_RENDERFULLCONTENT`; liefert das nur Schwarz
+/// (manche DirectX-Fenster), eine Bildschirmkopie des Fensterbereichs — nur,
+/// wenn **kein sichtbares Fenster in der Z-Reihenfolge ueber dem Simulator
+/// dessen Rechteck schneidet** (Fehler `verdeckt`), denn die Kopie nimmt alles
+/// mit, was dort auf dem Bildschirm liegt.
+pub fn fenster_aufnehmen() -> Result<Aufnahme, Fehler> {
+    let (hwnd, r) = sim_fenster().ok_or_else(|| Fehler::NichtGefunden("Kein Simulatorfenster gefunden (FlightSimulator, X-Plane)".into()))?;
+    let (b, h) = (r.right - r.left, r.bottom - r.top);
+    let mut gdi = Gdi::neu(b, h)?;
+    let mut bgra = vec![0u8; (b as usize) * (h as usize) * 4];
+    let mut methode = "printwindow";
+    gdi.waehlen();
+    // SAFETY: gueltiges Fenster- und DC-Handle; das Bitmap ist gewaehlt.
+    let gezeichnet = unsafe { PrintWindow(hwnd, gdi.mem, PW_RENDERFULLCONTENT) } != 0;
+    // GetDIBits verlangt ein Bitmap, das in keinem DC gewaehlt ist: `auslesen` loest es zuerst.
+    let mut ok = gezeichnet && gdi.auslesen(b, h, &mut bgra) && !ganz_schwarz(&bgra);
+    if !ok {
+        let sim = Rechteck::neu(r.left, r.top, r.right, r.bottom);
+        if verdeckt(&sim, &fenster_darueber(hwnd)) {
+            return Err(Fehler::Verdeckt("Der Simulator liefert nur Schwarz und ein anderes Fenster liegt darueber; bitte den Simulator nach vorn holen".into()));
+        }
+        methode = "bitblt";
+        gdi.waehlen();
+        // SAFETY: Quell-DC ist der Bildschirm, Ziel der Speicher-DC mit gewaehltem Bitmap.
+        let kopiert = unsafe { BitBlt(gdi.mem, 0, 0, b, h, gdi.schirm, r.left, r.top, SRCCOPY | CAPTUREBLT) } != 0;
+        let fehler_nr = if kopiert { 0 } else { unsafe { GetLastError() } };
+        ok = kopiert && gdi.auslesen(b, h, &mut bgra);
+        if !ok {
+            return Err(Fehler::Io(format!("Bildschirmkopie fehlgeschlagen (Fehler {fehler_nr})")));
+        }
+    }
+    if !ok {
+        return Err(Fehler::Io("Aufnahme fehlgeschlagen".into()));
+    }
+    if ganz_schwarz(&bgra) {
+        return Err(Fehler::Io("Die Aufnahme ist schwarz (Vollbild-Ausgabe des Simulators nicht abgreifbar)".into()));
+    }
+    Ok(Aufnahme { breite: b as u32, hoehe: h as u32, bgra, methode })
+}
+
+/// Offener Auftrag an den Hotkey-Faden: neue Taste (oder `None` = freigeben) und Antwortkanal.
+type Auftrag = Mutex<Option<(Option<(u32, u32)>, mpsc::Sender<Result<(), String>>)>>;
 
 /// Eigener Faden mit Nachrichtenschleife fuer `RegisterHotKey`.
 pub struct Hotkey {
     faden: u32,
-    auftrag: Arc<Mutex<Option<(Option<(u32, u32)>, mpsc::Sender<Result<(), String>>)>>>,
+    auftrag: Arc<Auftrag>,
 }
 
 const HOTKEY_ID: i32 = 0x4141;
 const MOD_NOREPEAT: u32 = 0x4000;
 
 pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, Fehler> {
-    let auftrag: Arc<Mutex<Option<(Option<(u32, u32)>, mpsc::Sender<Result<(), String>>)>>> = Arc::new(Mutex::new(None));
+    let auftrag: Arc<Auftrag> = Arc::new(Mutex::new(None));
     let a2 = Arc::clone(&auftrag);
     let (bereit_tx, bereit_rx) = mpsc::channel::<u32>();
     std::thread::Builder::new()

@@ -23,6 +23,10 @@ pub enum Fehler {
     Eingabe(String),
     /// Auf diesem System nicht moeglich.
     NichtVerfuegbar(String),
+    /// Kein AeroACARS-Flug aktiv: keine Uebernahme, keine Aufnahme.
+    KeinFlug(String),
+    /// Ein anderes Fenster liegt ueber dem Simulator: keine Bildschirmkopie.
+    Verdeckt(String),
     Io(String),
 }
 
@@ -39,6 +43,8 @@ impl Fehler {
             Fehler::Gross(_) => "bild_zu_gross",
             Fehler::Eingabe(_) => "bild_eingabe",
             Fehler::NichtVerfuegbar(_) => "bild_nicht_verfuegbar",
+            Fehler::KeinFlug(_) => "kein_flug",
+            Fehler::Verdeckt(_) => "verdeckt",
             Fehler::Io(_) => "bild_io",
         }
     }
@@ -55,6 +61,8 @@ impl Fehler {
             | Fehler::Gross(s)
             | Fehler::Eingabe(s)
             | Fehler::NichtVerfuegbar(s)
+            | Fehler::KeinFlug(s)
+            | Fehler::Verdeckt(s)
             | Fehler::Io(s) => s,
         }
     }

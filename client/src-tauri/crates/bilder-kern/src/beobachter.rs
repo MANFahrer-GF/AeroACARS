@@ -9,6 +9,18 @@
 //! * Eine Datei zaehlt erst, wenn sie ueber zwei Takte unveraendert bleibt **und**
 //!   ihr Inhalt abgeschlossen ist (PNG-Endchunk, JPEG-EOI). „Vollstaendig
 //!   geschrieben“ braucht diese Wartezeit ohnehin.
+//! * **Nur gemeldete Dateien gelten als bekannt** (mit Groesse und Aenderungszeit,
+//!   nicht nur dem Pfad). Unfertige, voruebergehend unlesbare oder zwischen
+//!   Pruefung und Lesen veraenderte Dateien bleiben unter Beobachtung (mit
+//!   wachsendem Abstand der Pruefungen, hoechstens 30 s); eine feste Frist, nach
+//!   der man sie fallen laesst, gibt es nicht. Die Grenze gegen Dauerlast ist
+//!   `MAX_WARTEND`. Verschwindet ein Pfad, wird er freigegeben: ein
+//!   wiederverwendeter Name gilt als neue Datei. Der Altbestand bleibt
+//!   ausgenommen, solange sein Pfad besteht.
+//! * Jede Quelle hat ihren eigenen Stand mit eigener Sperre. Ein haengender
+//!   Ordner (Netzlaufwerk ohne Verbindung) haelt nur seine eigene Abfrage auf:
+//!   Anzeige, Einstellungen und die uebrigen Quellen warten nie darauf, und die
+//!   Grundlage einer neuen Quelle laeuft getrennt vom Speichern.
 //!
 //! Kosten: Ein Ordner wird nur dann neu gelesen, wenn sich seine Aenderungszeit
 //! geaendert hat oder frisch ist (< 6 s, wegen grober Zeitaufloesung mancher
@@ -19,15 +31,18 @@
 //! selbst gemeldet oder angefasst, nur als Liste angeboten.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::quellen::{abmessungen, datei_vollstaendig, BildFormat, Quelle};
+use crate::quellen::{abmessungen, handle_vollstaendig, BildFormat, Quelle};
+use crate::sicher;
 use crate::speicher::{ms_seit_1970, MAX_DATEI};
 use crate::Fehler;
 
@@ -35,8 +50,12 @@ use crate::Fehler;
 const MAX_TIEFE: usize = 4;
 const MAX_ALTBESTAND: usize = 5000;
 const FRISCH: Duration = Duration::from_secs(6);
-/// Eine Datei, die so lange nicht abgeschlossen wird, gilt als Fehlschrift und wird fallen gelassen.
-const AUFGEBEN_NACH_MS: u64 = 60_000;
+/// Abstand der Pruefungen einer unfertigen Datei wachst von einem Takt bis hierher.
+const MAX_ABSTAND_MS: u64 = 30_000;
+const TAKT_MS: u64 = 1500;
+/// Obergrenze gegen Dauerlast: so viele Dateien warten hoechstens gleichzeitig.
+/// Weitere werden erst aufgenommen, wenn Platz ist (der Ordner wird dann neu gelesen).
+const MAX_WARTEND: usize = 512;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Fund {
@@ -76,6 +95,8 @@ pub struct QuellenStatus {
     pub art: Option<String>,
     /// Ordner wird gerade abgefragt (aktiv und erreichbar).
     pub beobachtet: bool,
+    /// Die Grundlage (Altbestand) wird noch erhoben; solange ist `beobachtet` falsch.
+    pub wird_geprueft: bool,
     /// `nicht_vorhanden` oder `zugriff_verweigert`.
     pub fehler: Option<String>,
     pub altbestand: usize,
@@ -100,18 +121,51 @@ struct Wartend {
     gleich: u32,
     /// Im selben Takt entdeckt: erst der naechste Takt vergleicht.
     gerade_entdeckt: bool,
-    seit_ms: u64,
     vordergrund: Option<bool>,
     format: BildFormat,
+    /// Fehlversuche bei unveraendertem Stand (bestimmt den Abstand).
+    versuche: u32,
+    /// Fruehestens dann wieder pruefen (`u64::MAX`: erst nach einer Aenderung).
+    naechster_ms: u64,
 }
 
+/// Eine gemeldete Datei (Groesse und Zeit) oder eine des Altbestands (nur der Pfad zaehlt).
+#[derive(Clone)]
+struct Bekannt {
+    groesse: u64,
+    zeit: Option<SystemTime>,
+    alt: bool,
+}
+
+/// Der Stand einer Quelle, der beim Abfragen des Ordners gebraucht wird.
 struct Stand {
     quelle: Quelle,
     verz: HashMap<PathBuf, VerzStand>,
-    bekannt: HashSet<PathBuf>,
+    bekannt: HashMap<PathBuf, Bekannt>,
     wartend: HashMap<PathBuf, Wartend>,
     alt: Vec<AltEintrag>,
     fehler: Option<String>,
+}
+
+/// Was die Anzeige braucht; wird nach jeder Abfrage erneuert und nie waehrend
+/// Ordner-Zugriffen gehalten.
+#[derive(Default, Clone)]
+struct Kurz {
+    fehler: Option<String>,
+    alt: Vec<AltEintrag>,
+}
+
+/// Eine bestaetigte Quelle: Einstellung, Anzeige und Abfragestand getrennt gesperrt.
+pub struct Slot {
+    pfad: String,
+    konf: Mutex<Quelle>,
+    kurz: Mutex<Kurz>,
+    bereit: AtomicBool,
+    inner: Mutex<Stand>,
+}
+
+fn sperre<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn bild_endung(p: &Path) -> Option<BildFormat> {
@@ -129,19 +183,31 @@ fn fehlertext(e: &std::io::Error) -> String {
     }
 }
 
+struct Lauf {
+    baseline: bool,
+    jetzt: SystemTime,
+    vg: Option<bool>,
+    alt: Vec<AltEintrag>,
+    /// Bild-Dateien, die in einem neu gelesenen Ordner standen.
+    gelistet: HashSet<PathBuf>,
+    gelesen: HashSet<PathBuf>,
+    besucht: HashSet<PathBuf>,
+}
+
 impl Stand {
     fn neu(quelle: Quelle) -> Self {
-        Self { quelle, verz: HashMap::new(), bekannt: HashSet::new(), wartend: HashMap::new(), alt: Vec::new(), fehler: None }
+        Self { quelle, verz: HashMap::new(), bekannt: HashMap::new(), wartend: HashMap::new(), alt: Vec::new(), fehler: None }
     }
 
     fn wurzel(&self) -> PathBuf {
         PathBuf::from(&self.quelle.pfad)
     }
 
-    fn scannen(&mut self, baseline: bool, jetzt: SystemTime, jetzt_ms: u64, vordergrund: Option<bool>) {
+    fn scannen(&mut self, baseline: bool, jetzt: SystemTime, vordergrund: Option<bool>) {
         let wurzel = self.wurzel();
         match fs::metadata(&wurzel) {
             Err(e) => {
+                // Ordner fehlt oder Laufwerk offline: nichts vergessen, nur melden.
                 self.fehler = Some(fehlertext(&e));
                 self.verz.clear();
                 return;
@@ -152,25 +218,43 @@ impl Stand {
             }
             Ok(_) => self.fehler = None,
         }
-        let mut alt: Vec<AltEintrag> = Vec::new();
-        self.scanne_dir(&wurzel, 0, baseline, jetzt, jetzt_ms, vordergrund, &mut alt);
+        let mut lauf = Lauf {
+            baseline,
+            jetzt,
+            vg: vordergrund,
+            alt: Vec::new(),
+            gelistet: HashSet::new(),
+            gelesen: HashSet::new(),
+            besucht: HashSet::new(),
+        };
+        self.scanne_dir(&wurzel, 0, &mut lauf);
+        // Verschwundene Pfade freigeben: in neu gelesenen Ordnern, was nicht mehr
+        // dasteht; in Ordnern, die es nicht mehr gibt, alles.
+        if self.fehler.is_none() {
+            self.bekannt.retain(|p, _| match p.parent() {
+                Some(d) if lauf.gelesen.contains(d) => lauf.gelistet.contains(p),
+                Some(d) => lauf.besucht.contains(d),
+                None => false,
+            });
+        }
         if baseline {
+            let mut alt = lauf.alt;
             alt.sort_by(|a, b| b.dateizeit_ms.cmp(&a.dateizeit_ms).then_with(|| a.pfad.cmp(&b.pfad)));
             alt.truncate(MAX_ALTBESTAND);
             self.alt = alt;
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn scanne_dir(&mut self, dir: &Path, tiefe: usize, baseline: bool, jetzt: SystemTime, jetzt_ms: u64, vg: Option<bool>, alt: &mut Vec<AltEintrag>) {
+    fn scanne_dir(&mut self, dir: &Path, tiefe: usize, lauf: &mut Lauf) {
+        lauf.besucht.insert(dir.to_path_buf());
         let mtime = fs::metadata(dir).and_then(|m| m.modified()).ok();
-        let frisch = mtime.is_none_or(|t| jetzt.duration_since(t).map_or(true, |d| d < FRISCH));
-        if !baseline && !frisch {
+        let frisch = mtime.is_none_or(|t| lauf.jetzt.duration_since(t).map_or(true, |d| d < FRISCH));
+        if !lauf.baseline && !frisch {
             if let Some(v) = self.verz.get(dir) {
                 if v.mtime == mtime {
                     for k in v.unterordner.clone() {
                         if tiefe < MAX_TIEFE {
-                            self.scanne_dir(&k, tiefe + 1, baseline, jetzt, jetzt_ms, vg, alt);
+                            self.scanne_dir(&k, tiefe + 1, lauf);
                         }
                     }
                     return;
@@ -186,7 +270,9 @@ impl Stand {
                 return;
             }
         };
+        lauf.gelesen.insert(dir.to_path_buf());
         let mut unter: Vec<PathBuf> = Vec::new();
+        let mut voll = false;
         for e in rd.flatten() {
             let Ok(ft) = e.file_type() else { continue };
             let p = e.path();
@@ -194,32 +280,55 @@ impl Stand {
                 unter.push(p);
             } else if ft.is_file() {
                 let Some(format) = bild_endung(&p) else { continue };
-                if self.bekannt.contains(&p) || self.wartend.contains_key(&p) {
+                lauf.gelistet.insert(p.clone());
+                if self.wartend.contains_key(&p) {
                     continue;
                 }
                 let Ok(md) = e.metadata() else { continue };
-                if baseline {
-                    self.bekannt.insert(p.clone());
-                    alt.push(AltEintrag {
+                if let Some(b) = self.bekannt.get(&p) {
+                    if b.alt || (b.groesse == md.len() && b.zeit == md.modified().ok()) {
+                        continue;
+                    }
+                    // gleicher Name, anderer Inhalt: eine neue Datei
+                    self.bekannt.remove(&p);
+                }
+                if lauf.baseline {
+                    self.bekannt.insert(p.clone(), Bekannt { groesse: md.len(), zeit: md.modified().ok(), alt: true });
+                    lauf.alt.push(AltEintrag {
                         pfad: p.to_string_lossy().into_owned(),
                         dateizeit_ms: md.modified().ok().and_then(ms_seit_1970),
                         groesse: md.len(),
                         format,
                         quelle: self.quelle.pfad.clone(),
                     });
+                } else if self.wartend.len() >= MAX_WARTEND {
+                    voll = true; // spaeter noch einmal lesen, wenn Platz ist
                 } else {
                     self.wartend.insert(
                         p,
-                        Wartend { groesse: md.len(), zeit: md.modified().ok(), gleich: 0, gerade_entdeckt: true, seit_ms: jetzt_ms, vordergrund: vg, format },
+                        Wartend {
+                            groesse: md.len(),
+                            zeit: md.modified().ok(),
+                            gleich: 0,
+                            gerade_entdeckt: true,
+                            vordergrund: lauf.vg,
+                            format,
+                            versuche: 0,
+                            naechster_ms: 0,
+                        },
                     );
                 }
             }
         }
         unter.sort();
-        self.verz.insert(dir.to_path_buf(), VerzStand { mtime, unterordner: unter.clone() });
+        if voll {
+            self.verz.remove(dir);
+        } else {
+            self.verz.insert(dir.to_path_buf(), VerzStand { mtime, unterordner: unter.clone() });
+        }
         if tiefe < MAX_TIEFE {
             for k in unter {
-                self.scanne_dir(&k, tiefe + 1, baseline, jetzt, jetzt_ms, vg, alt);
+                self.scanne_dir(&k, tiefe + 1, lauf);
             }
         }
     }
@@ -229,7 +338,7 @@ impl Stand {
         for p in pfade {
             let Some(w) = self.wartend.get_mut(&p) else { continue };
             let Ok(md) = fs::metadata(&p) else {
-                self.wartend.remove(&p); // weg, bevor sie fertig war
+                self.wartend.remove(&p); // weg, bevor sie fertig war: Pfad ist frei
                 continue;
             };
             if std::mem::take(&mut w.gerade_entdeckt) {
@@ -241,15 +350,16 @@ impl Stand {
                 w.groesse = md.len();
                 w.zeit = md.modified().ok();
                 w.gleich = 0;
+                w.versuche = 0;
+                w.naechster_ms = 0;
             }
-            if w.gleich < 1 {
+            if w.gleich < 1 || jetzt_ms < w.naechster_ms {
                 continue;
             }
-            let format = w.format;
-            let vg = w.vordergrund;
-            let seit = w.seit_ms;
-            let fund = match format {
-                BildFormat::Jxr => Some(Fund {
+            let (format, vg) = (w.format, w.vordergrund);
+            let _ = w;
+            let ergebnis = match format {
+                BildFormat::Jxr => Ok(Fund {
                     pfad: p.to_string_lossy().into_owned(),
                     dateizeit_ms: md.modified().ok().and_then(ms_seit_1970),
                     erstellt_ms: md.created().ok().and_then(ms_seit_1970),
@@ -262,31 +372,51 @@ impl Stand {
                     quelle: self.quelle.pfad.clone(),
                     sim_vordergrund: vg,
                 }),
-                _ => match datei_vollstaendig(&p) {
-                    Ok((_, groesse)) => Self::fund_lesen(&p, format, groesse, &md, &self.quelle.pfad, vg),
-                    Err(Fehler::Unfertig(_)) if jetzt_ms.saturating_sub(seit) < AUFGEBEN_NACH_MS => continue,
-                    Err(_) => None, // kein gueltiges Bild: nicht melden
-                },
+                _ => Self::fund_lesen(&p, format, &self.quelle.pfad, vg),
             };
-            self.wartend.remove(&p);
-            self.bekannt.insert(p);
-            if let Some(f) = fund {
-                funde.push(f);
+            match ergebnis {
+                Ok(fund) => {
+                    self.wartend.remove(&p);
+                    self.bekannt.insert(p, Bekannt { groesse: fund.groesse, zeit: md.modified().ok(), alt: false });
+                    funde.push(fund);
+                }
+                Err(Fehler::Format(_) | Fehler::Gross(_)) => {
+                    // Kein (brauchbares) Bild in dieser Fassung: nicht melden, nicht bekannt
+                    // machen, erst nach einer Aenderung der Datei wieder ansehen.
+                    if let Some(w) = self.wartend.get_mut(&p) {
+                        w.naechster_ms = u64::MAX;
+                    }
+                }
+                Err(_) => {
+                    // unfertig, gesperrt, zwischendurch veraendert: weiter beobachten
+                    if let Some(w) = self.wartend.get_mut(&p) {
+                        w.versuche = w.versuche.saturating_add(1);
+                        let abstand = (TAKT_MS << w.versuche.min(5)).min(MAX_ABSTAND_MS);
+                        w.naechster_ms = jetzt_ms.saturating_add(abstand);
+                    }
+                }
             }
         }
     }
 
-    fn fund_lesen(p: &Path, format: BildFormat, groesse: u64, md: &fs::Metadata, quelle: &str, vg: Option<bool>) -> Option<Fund> {
-        if groesse > MAX_DATEI {
-            return None;
-        }
+    /// Oeffnet die Datei einmal (ohne Linkfolgen), prueft am Handle, dass sie
+    /// vollstaendig ist, und liest sie von dort; Hash und Masse kommen aus
+    /// denselben Bytes. Jede Abweichung ist ein Fehler, nie ein stilles „nichts“.
+    fn fund_lesen(p: &Path, format: BildFormat, quelle: &str, vg: Option<bool>) -> Result<Fund, Fehler> {
+        let mut f = sicher::lesend_ohne_folgen(p).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Fehler::NichtGefunden(e.to_string()),
+            _ => Fehler::Unfertig(format!("Datei nicht lesbar (noch in Benutzung?): {e}")),
+        })?;
+        let groesse = handle_vollstaendig(&mut f, format)?;
+        f.seek(SeekFrom::Start(0))?;
         let mut bytes = Vec::with_capacity(groesse as usize);
-        fs::File::open(p).ok()?.take(MAX_DATEI).read_to_end(&mut bytes).ok()?;
-        if bytes.len() as u64 != groesse {
-            return None; // zwischen Pruefung und Lesen veraendert: naechste Runde gibt es nicht, lieber nichts melden
+        (&mut f).take(MAX_DATEI).read_to_end(&mut bytes)?;
+        let md = f.metadata()?;
+        if bytes.len() as u64 != groesse || md.len() != groesse {
+            return Err(Fehler::Unfertig("Datei hat sich waehrend des Lesens veraendert".into()));
         }
         let (b, h) = abmessungen(&bytes[..bytes.len().min(256 * 1024)]).unzip();
-        Some(Fund {
+        Ok(Fund {
             pfad: p.to_string_lossy().into_owned(),
             dateizeit_ms: md.modified().ok().and_then(ms_seit_1970),
             erstellt_ms: md.created().ok().and_then(ms_seit_1970),
@@ -302,9 +432,70 @@ impl Stand {
     }
 }
 
+impl Slot {
+    fn neu(q: Quelle) -> Self {
+        Self {
+            pfad: q.pfad.clone(),
+            konf: Mutex::new(q.clone()),
+            kurz: Mutex::new(Kurz::default()),
+            bereit: AtomicBool::new(false),
+            inner: Mutex::new(Stand::neu(q)),
+        }
+    }
+
+    fn kurz_erneuern(&self, st: &Stand, mit_alt: bool) {
+        let mut k = sperre(&self.kurz);
+        k.fehler = st.fehler.clone();
+        if mit_alt {
+            k.alt = st.alt.clone();
+        }
+    }
+
+    /// Die Grundlage einer neuen oder wieder eingeschalteten Quelle: alles, was
+    /// jetzt schon im Ordner liegt, ist Altbestand. Kann bei einem haengenden
+    /// Laufwerk lange dauern und blockiert deshalb nur diese Quelle.
+    pub fn grundlage(&self, vordergrund: Option<bool>) {
+        let mut st = sperre(&self.inner);
+        let k = sperre(&self.konf).clone();
+        st.quelle = k.clone();
+        if k.aktiv {
+            st.scannen(true, SystemTime::now(), vordergrund);
+        }
+        self.kurz_erneuern(&st, true);
+        self.bereit.store(true, Ordering::SeqCst);
+    }
+
+    fn takt(&self, jetzt_ms: u64, vg: Option<bool>, funde: &mut Vec<Fund>) {
+        let k = sperre(&self.konf).clone();
+        if !k.aktiv || !self.bereit.load(Ordering::SeqCst) {
+            return;
+        }
+        // Gerade belegt (Grundlage laeuft): in diesem Takt auslassen, nie warten.
+        let Ok(mut st) = self.inner.try_lock() else { return };
+        st.quelle = k;
+        st.scannen(false, SystemTime::now(), vg);
+        st.wartende_pruefen(jetzt_ms, funde);
+        self.kurz_erneuern(&st, false);
+    }
+
+    pub fn ist_bereit(&self) -> bool {
+        self.bereit.load(Ordering::SeqCst)
+    }
+}
+
+/// Ein Takt ueber die gegebenen Quellen. Haelt keine Sperre des Beobachters:
+/// ein haengender Ordner stoppt nur diesen Faden.
+pub fn takt_ausfuehren(slots: &[Arc<Slot>], jetzt_ms: u64, vordergrund: Option<bool>) -> Vec<Fund> {
+    let mut funde = Vec::new();
+    for s in slots {
+        s.takt(jetzt_ms, vordergrund, &mut funde);
+    }
+    funde
+}
+
 #[derive(Default)]
 pub struct Beobachter {
-    staende: Vec<Stand>,
+    slots: Vec<Arc<Slot>>,
     vorher_vordergrund: Option<bool>,
 }
 
@@ -313,62 +504,82 @@ impl Beobachter {
         Self::default()
     }
 
-    /// Setzt die Beobachtung auf die bestaetigte Liste. Unveraenderte, aktive
-    /// Quellen behalten ihren Stand; neue oder wieder eingeschaltete Quellen
-    /// bekommen eine frische Grundlage (alles, was dann schon liegt, ist Altbestand).
-    pub fn aufsetzen(&mut self, quellen: &[Quelle], vordergrund: Option<bool>) {
-        let mut alte: HashMap<String, Stand> = std::mem::take(&mut self.staende).into_iter().map(|s| (s.quelle.pfad.clone(), s)).collect();
-        let jetzt = SystemTime::now();
+    /// Schnell und ohne Ordner-Zugriff: setzt die Liste der Quellen. Unveraenderte,
+    /// aktive Quellen behalten ihren Stand (nur die Einstellung wird erneuert);
+    /// neue oder wieder eingeschaltete Quellen bekommen einen frischen Stand,
+    /// dessen Grundlage der Aufrufer **ausserhalb** der Sperre mit
+    /// [`Slot::grundlage`] erhebt. Gibt genau diese Quellen zurueck.
+    pub fn einsetzen(&mut self, quellen: &[Quelle]) -> Vec<Arc<Slot>> {
+        let mut alte: HashMap<String, Arc<Slot>> = std::mem::take(&mut self.slots).into_iter().map(|s| (s.pfad.clone(), s)).collect();
+        let mut neue = Vec::new();
         for q in quellen {
-            let behalten = alte.remove(&q.pfad).filter(|s| s.quelle.aktiv && q.aktiv);
-            let stand = match behalten {
-                Some(mut s) => {
-                    s.quelle = q.clone();
+            let behalten = alte.remove(&q.pfad).filter(|s| sperre(&s.konf).aktiv && q.aktiv);
+            let slot = match behalten {
+                Some(s) => {
+                    *sperre(&s.konf) = q.clone();
                     s
                 }
                 None => {
-                    let mut s = Stand::neu(q.clone());
-                    if q.aktiv {
-                        s.scannen(true, jetzt, 0, vordergrund);
-                    }
+                    let s = Arc::new(Slot::neu(q.clone()));
+                    neue.push(Arc::clone(&s));
                     s
                 }
             };
-            self.staende.push(stand);
+            self.slots.push(slot);
         }
+        neue
+    }
+
+    /// Wie [`Self::einsetzen`], erhebt die Grundlagen aber gleich (Tests, einfache Aufrufer).
+    pub fn aufsetzen(&mut self, quellen: &[Quelle], vordergrund: Option<bool>) {
+        for s in self.einsetzen(quellen) {
+            s.grundlage(vordergrund);
+        }
+    }
+
+    /// Fuer einen Takt ausserhalb der Sperre: die Quellen und der Vordergrund
+    /// „jetzt oder im Takt davor“.
+    pub fn takt_vorbereiten(&mut self, vordergrund: Option<bool>) -> (Vec<Arc<Slot>>, Option<bool>) {
+        let vg_neu = oder(self.vorher_vordergrund, vordergrund);
+        self.vorher_vordergrund = vordergrund;
+        (self.slots.clone(), vg_neu)
     }
 
     /// Ein Takt: neue Dateien finden, wartende pruefen, fertige melden.
     /// `jetzt_ms` ist eine monotone Uhr des Aufrufers.
     pub fn takt(&mut self, jetzt_ms: u64, vordergrund: Option<bool>) -> Vec<Fund> {
-        let jetzt = SystemTime::now();
-        let vg_neu = oder(self.vorher_vordergrund, vordergrund);
-        let mut funde = Vec::new();
-        for s in self.staende.iter_mut().filter(|s| s.quelle.aktiv) {
-            s.scannen(false, jetzt, jetzt_ms, vg_neu);
-            s.wartende_pruefen(jetzt_ms, &mut funde);
-        }
-        self.vorher_vordergrund = vordergrund;
-        funde
+        let (slots, vg) = self.takt_vorbereiten(vordergrund);
+        takt_ausfuehren(&slots, jetzt_ms, vg)
     }
 
     pub fn status(&self) -> Vec<QuellenStatus> {
-        self.staende
+        self.slots
             .iter()
-            .map(|s| QuellenStatus {
-                pfad: s.quelle.pfad.clone(),
-                aktiv: s.quelle.aktiv,
-                original_entfernen: s.quelle.original_entfernen,
-                art: s.quelle.art.clone(),
-                beobachtet: s.quelle.aktiv && s.fehler.is_none(),
-                fehler: if s.quelle.aktiv { s.fehler.clone() } else { None },
-                altbestand: s.alt.len(),
+            .map(|s| {
+                let k = sperre(&s.konf).clone();
+                let ku = sperre(&s.kurz).clone();
+                let bereit = s.ist_bereit();
+                QuellenStatus {
+                    pfad: s.pfad.clone(),
+                    aktiv: k.aktiv,
+                    original_entfernen: k.original_entfernen,
+                    art: k.art,
+                    beobachtet: k.aktiv && bereit && ku.fehler.is_none(),
+                    wird_geprueft: k.aktiv && !bereit,
+                    fehler: if k.aktiv { ku.fehler } else { None },
+                    altbestand: ku.alt.len(),
+                }
             })
             .collect()
     }
 
     pub fn altbestand(&self) -> Vec<AltEintrag> {
-        let mut v: Vec<AltEintrag> = self.staende.iter().filter(|s| s.quelle.aktiv).flat_map(|s| s.alt.iter().cloned()).collect();
+        let mut v: Vec<AltEintrag> = self
+            .slots
+            .iter()
+            .filter(|s| sperre(&s.konf).aktiv)
+            .flat_map(|s| sperre(&s.kurz).alt.clone())
+            .collect();
         v.sort_by(|a, b| b.dateizeit_ms.cmp(&a.dateizeit_ms).then_with(|| a.pfad.cmp(&b.pfad)));
         v.truncate(MAX_ALTBESTAND);
         v
@@ -426,17 +637,173 @@ mod tests {
         assert_eq!(b.takt(6000, None).len(), 1);
     }
 
+    fn wartende(b: &Beobachter) -> usize {
+        sperre(&b.slots[0].inner).wartend.len()
+    }
+
     #[test]
-    fn dauerhaft_kaputte_datei_wird_nach_einer_minute_fallengelassen() {
+    fn unfertige_datei_bleibt_beobachtet_auch_nach_minuten_und_wird_spaeter_gemeldet() {
         let t = tempfile::tempdir().unwrap();
         let mut b = Beobachter::neu();
         b.aufsetzen(&[q(t.path())], None);
-        fs::write(t.path().join("k.jpg"), &jpeg_bytes(10, 10)[..20]).unwrap();
+        let p = t.path().join("k.jpg");
+        let voll = jpeg_bytes(10, 10);
+        fs::write(&p, &voll[..20]).unwrap();
         assert!(b.takt(0, None).is_empty());
         assert!(b.takt(1500, None).is_empty());
         assert!(b.takt(61_000, None).is_empty());
         assert!(b.takt(62_500, None).is_empty());
-        assert!(b.staende[0].wartend.is_empty(), "nicht mehr beobachtet");
+        assert!(b.takt(600_000, None).is_empty());
+        assert_eq!(wartende(&b), 1, "nach 10 Minuten immer noch unter Beobachtung (keine 60-s-Frist)");
+        fs::write(&p, &voll).unwrap(); // jetzt fertig
+        let mut f = Vec::new();
+        for i in 1..=3 {
+            f.extend(b.takt(600_000 + i * 1500, None));
+        }
+        assert_eq!(f.len(), 1, "die spaet fertige Datei erscheint");
+        assert_eq!(wartende(&b), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn voruebergehend_unlesbare_datei_wird_nach_dem_freigeben_gemeldet() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let mut b = Beobachter::neu();
+        b.aufsetzen(&[q(t.path())], None);
+        let p = t.path().join("gesperrt.png");
+        fs::write(&p, png_bytes(40, 30)).unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::File::open(&p).is_ok() {
+            return; // Benutzer ohne Zugriffsschutz (root): die Lage laesst sich nicht nachstellen
+        }
+        assert!(b.takt(0, None).is_empty());
+        assert!(b.takt(1500, None).is_empty());
+        assert!(b.takt(3000, None).is_empty());
+        assert_eq!(wartende(&b), 1, "unlesbar = weiter beobachten, nicht verworfen");
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap(); // aendert die Groesse/Zeit nicht
+        let f: Vec<Fund> = (0..30).flat_map(|i| b.takt(10_000 + i * 1500, None)).collect();
+        assert_eq!(f.len(), 1, "nach dem freigeben gemeldet");
+    }
+
+    #[test]
+    fn nur_gemeldete_dateien_gelten_als_bekannt_ein_wiederverwendeter_name_ist_neu() {
+        let t = tempfile::tempdir().unwrap();
+        let mut b = Beobachter::neu();
+        b.aufsetzen(&[q(t.path())], None);
+        let p = t.path().join("shot.png");
+        fs::write(&p, png_bytes(10, 10)).unwrap();
+        assert_eq!(takte(&mut b, 3, None).len(), 1);
+        assert!(b.takt(10_000, None).is_empty(), "nicht doppelt");
+        // Name wird frei (Verschieben/Loeschen) und fuer ein neues Bild benutzt
+        fs::remove_file(&p).unwrap();
+        b.takt(11_500, None);
+        fs::write(&p, png_bytes(77, 55)).unwrap();
+        let f: Vec<Fund> = (0..4).flat_map(|i| b.takt(13_000 + i * 1500, None)).collect();
+        assert_eq!(f.len(), 1, "gleicher Name, neues Bild: wird gemeldet");
+        assert_eq!((f[0].breite, f[0].hoehe), (Some(77), Some(55)));
+    }
+
+    #[test]
+    fn auch_der_name_einer_altbestand_datei_wird_frei_wenn_sie_verschwindet() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("alt.png");
+        fs::write(&p, png_bytes(10, 10)).unwrap();
+        let mut b = Beobachter::neu();
+        b.aufsetzen(&[q(t.path())], None);
+        assert!(takte(&mut b, 3, None).is_empty());
+        fs::remove_file(&p).unwrap();
+        b.takt(10_000, None);
+        fs::write(&p, png_bytes(20, 20)).unwrap();
+        let f: Vec<Fund> = (0..4).flat_map(|i| b.takt(11_500 + i * 1500, None)).collect();
+        assert_eq!(f.len(), 1);
+    }
+
+    #[test]
+    fn kein_bild_unter_dem_namen_wird_nicht_gemeldet_aber_nach_einer_aenderung_neu_angesehen() {
+        let t = tempfile::tempdir().unwrap();
+        let mut b = Beobachter::neu();
+        b.aufsetzen(&[q(t.path())], None);
+        let p = t.path().join("falsch.png");
+        fs::write(&p, jpeg_bytes(10, 10)).unwrap(); // JPEG unter .png
+        assert!(takte(&mut b, 4, None).is_empty());
+        assert_eq!(wartende(&b), 1);
+        fs::write(&p, png_bytes(31, 21)).unwrap();
+        let f: Vec<Fund> = (0..4).flat_map(|i| b.takt(10_000 + i * 1500, None)).collect();
+        assert_eq!(f.len(), 1);
+    }
+
+    #[test]
+    fn die_obergrenze_gegen_dauerlast_haelt_und_nichts_geht_verloren() {
+        let t = tempfile::tempdir().unwrap();
+        let mut b = Beobachter::neu();
+        b.aufsetzen(&[q(t.path())], None);
+        let n = MAX_WARTEND + 20;
+        for i in 0..n {
+            fs::write(t.path().join(format!("u{i}.png")), &png_bytes(5, 5)[..30]).unwrap(); // alle unfertig
+        }
+        takte(&mut b, 2, None);
+        assert!(wartende(&b) <= MAX_WARTEND, "Obergrenze");
+        // Alle werden fertig: erst die wartenden, dann die zurueckgestellten
+        for i in 0..n {
+            fs::write(t.path().join(format!("u{i}.png")), png_bytes(5 + i as u32 % 3, 6)).unwrap();
+        }
+        let mut gemeldet = 0;
+        for i in 0..400u64 {
+            gemeldet += b.takt(100_000 + i * 1500, None).len();
+        }
+        assert_eq!(gemeldet, n, "jede Datei genau einmal");
+    }
+
+    #[test]
+    fn ein_haengender_ordner_blockiert_weder_die_anzeige_noch_die_anderen_quellen() {
+        // Eine belegte Quelle (z. B. Laufwerk haengt in read_dir) darf weder Takt noch Status aufhalten.
+        let t = tempfile::tempdir().unwrap();
+        let (a, c) = (t.path().join("a"), t.path().join("c"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&c).unwrap();
+        let mut b = Beobachter::neu();
+        b.aufsetzen(&[q(&a), q(&c)], None);
+        let haelt = Arc::clone(&b.slots[0]);
+        let _sperre = sperre(&haelt.inner); // „haengt“
+        fs::write(c.join("x.png"), png_bytes(9, 9)).unwrap();
+        let f: Vec<Fund> = (0..4).flat_map(|i| b.takt(i * 1500, None)).collect();
+        assert_eq!(f.len(), 1, "die andere Quelle meldet weiter");
+        assert_eq!(b.status().len(), 2, "Status wartet nicht");
+        let _ = b.altbestand();
+    }
+
+    #[test]
+    fn neue_quelle_von_hand_meldet_ihren_altbestand_nicht_und_blockiert_nicht() {
+        let t = tempfile::tempdir().unwrap();
+        let hand = t.path().join("meine_screens");
+        fs::create_dir_all(&hand).unwrap();
+        fs::write(hand.join("schon_da.png"), png_bytes(10, 10)).unwrap();
+        let fehlt = t.path().join("netz_offline"); // Laufwerk gerade nicht da
+        let mut b = Beobachter::neu();
+        let mut neu_q = q(&hand);
+        neu_q.art = Some("hand".into());
+        let neue = b.einsetzen(&[neu_q, q(&fehlt)]);
+        assert_eq!(neue.len(), 2);
+        assert!(b.status()[0].wird_geprueft && !b.status()[0].beobachtet, "Grundlage laeuft noch");
+        assert!(b.takt(0, None).is_empty(), "vor der Grundlage nichts");
+        for s in &neue {
+            s.grundlage(None);
+        }
+        let st = b.status();
+        assert!(st[0].beobachtet && !st[0].wird_geprueft && st[0].art.as_deref() == Some("hand"));
+        assert_eq!(st[0].altbestand, 1);
+        assert_eq!(st[1].fehler.as_deref(), Some("nicht_vorhanden"), "fehlender Ordner = Status, kein Absturz");
+        assert!(takte(&mut b, 4, None).is_empty(), "Altbestand der neuen Quelle wird nie gemeldet");
+        fs::write(hand.join("neu.png"), png_bytes(11, 11)).unwrap();
+        let f: Vec<Fund> = (0..4).flat_map(|i| b.takt(10_000 + i * 1500, None)).collect();
+        assert_eq!(f.len(), 1);
+        assert!(f[0].pfad.ends_with("neu.png"));
+        // der Ordner erscheint spaeter: ab dann beobachtet (Altbestand nur, was beim Aufsetzen da war)
+        fs::create_dir_all(&fehlt).unwrap();
+        fs::write(fehlt.join("spaet.png"), png_bytes(12, 12)).unwrap();
+        let f: Vec<Fund> = (0..4).flat_map(|i| b.takt(30_000 + i * 1500, None)).collect();
+        assert_eq!(f.len(), 1, "Laufwerk kommt wieder: neue Dateien werden gemeldet");
     }
 
     #[test]

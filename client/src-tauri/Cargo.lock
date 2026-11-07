@@ -547,6 +547,7 @@ dependencies = [
 name = "bilder-kern"
 version = "3.0.0-beta.2.4"
 dependencies = [
+ "libc",
  "png 0.17.16",
  "serde",
  "serde_json",

@@ -11,6 +11,8 @@
 //! * [`quellen`]     bestaetigte Quellordner, Uebernahme, „vollstaendig geschrieben“
 //! * [`beobachter`]  Ordnerbeobachtung (Abfrage im Takt), Ereignis `bild_quelle_neu`
 //! * [`live`]        Multipart-Aufbau fuer `POST /api/bilder` (P-7.25 „Vertrag“)
+//! * [`sicher`]      Dateien ohne Linkfolgen oeffnen (Symlink-/Wettlauf-Schutz)
+//! * [`verdeckung`]  liegt ein fremdes Fenster ueber dem Simulator? (reine Rechteckpruefung)
 //! * [`suche`]       reine Teile des Aufspuerens von Bildquellen
 //! * [`png`]         PNG-Kodierung der Fensteraufnahme
 //! * [`tastenkuerzel`] Tastenkuerzel-Text lesen
@@ -24,8 +26,10 @@ pub mod namen;
 pub mod plattform;
 pub mod png;
 pub mod quellen;
+pub mod sicher;
 pub mod speicher;
 pub mod suche;
 pub mod tastenkuerzel;
+pub mod verdeckung;
 
 pub use fehler::Fehler;

@@ -9,7 +9,16 @@
 //! * es ist eine JPG/PNG-Datei, deren Inhalt zur Endung passt und die
 //!   **vollstaendig geschrieben** ist (Kopf-/Endkennung und stabile Groesse);
 //! * **Verschieben** nur aus einer Quelle, die der Pilot dafuer freigegeben hat
-//!   (`original_entfernen`); sonst bleibt das Original unangetastet.
+//!   (`original_entfernen`); sonst bleibt das Original unangetastet;
+//! * es laeuft ein **AeroACARS-Flug** (`Lage::flug_aktiv`), sonst Fehler
+//!   `kein_flug` (P-11.30: ausserhalb eines Flugs bleibt alles unangetastet);
+//! * Der Pfad wird genau **einmal** aufgeloest. Danach zaehlt nur noch dieses
+//!   Ergebnis: jeder Teil ab der Quellwurzel darf kein Link sein, die Datei wird
+//!   ohne Linkfolgen geoeffnet und **vom Handle** geprueft und gelesen
+//!   ([`crate::sicher`]). „Verschieben“ ist Kopieren vom Handle und danach
+//!   Entfernen, falls der Pfad noch dieselbe Datei ist.
+//! * [`hinzufuegen`] ist der Weg fuer vom Piloten gewaehlte Dateien ausserhalb
+//!   der Quellen und ausserhalb eines Flugs: nur kopieren, nie verschieben.
 
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -19,11 +28,19 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::namen::{name_pruefen, QuellFormat, Teil};
+use crate::sicher;
 use crate::speicher::{ms_seit_1970, MAX_DATEI};
 use crate::Fehler;
 
 pub const VORGABE_TASTENKUERZEL: &str = "Ctrl+Shift+S";
 const MAX_QUELLEN: usize = 32;
+
+/// Standard-Ablage eines Simulators (X-Plane `Output/screenshots`).
+pub const ART_STANDARD: &str = "standard";
+/// Aus `bild_quellen_finden` uebernommen.
+pub const ART_AUFGESPUERT: &str = "aufgespuert";
+/// Vom Piloten selbst gewaehlter Ordner (externes Screenshot-Werkzeug).
+pub const ART_HAND: &str = "hand";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Quelle {
@@ -34,7 +51,10 @@ pub struct Quelle {
     /// Nur wenn der Pilot es fuer diese Quelle erlaubt hat, darf `verschieben` das Original entfernen.
     #[serde(default)]
     pub original_entfernen: bool,
-    /// Freie Bezeichnung des Pakets (z. B. `xplane_standard`), unveraendert durchgereicht.
+    /// `standard`, `aufgespuert` oder `hand` (siehe `ART_*`); gespeichert und
+    /// unveraendert durchgereicht, das Paket macht daran seine Regeln fest
+    /// (bei `hand` entfaellt die Vordergrund-Regel). Andere Bezeichnungen des
+    /// Pakets (z. B. `xplane_standard`) bleiben erlaubt.
     #[serde(default)]
     pub art: Option<String>,
 }
@@ -102,6 +122,56 @@ fn aufloesen(p: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Ein vom Piloten gewaehlter Ordner: aktiv, **nur kopieren** (`original_entfernen`
+/// aus; je Quelle spaeter einschaltbar), Art `hand`.
+pub fn quelle_von_hand(pfad: &Path) -> Quelle {
+    Quelle { pfad: pfad.to_string_lossy().into_owned(), aktiv: true, original_entfernen: false, art: Some(ART_HAND.to_string()) }
+}
+
+/// Haengt `neu` an die Liste. Steht der Ordner (aufgeloest) schon darin, bleibt
+/// die Liste unveraendert (`false`). Prueft die Gesamtliste wie
+/// [`einstellungen_pruefen`], damit nichts Unzulaessiges gespeichert wird.
+pub fn quelle_anhaengen(e: &Einstellungen, neu: Quelle, bilder_wurzel: &Path, home: Option<&Path>) -> Result<(Einstellungen, bool), Fehler> {
+    if let Some(k) = aufloesen(Path::new(&neu.pfad)) {
+        if e.quellen.iter().any(|q| aufloesen(Path::new(&q.pfad)).as_deref() == Some(k.as_path())) {
+            return Ok((e.clone(), false));
+        }
+    }
+    let mut n = e.clone();
+    n.quellen.push(neu);
+    einstellungen_pruefen(&n, bilder_wurzel, home)?;
+    Ok((n, true))
+}
+
+/// Die neue Einstellung aus dem Aufruf von `bild_quellen_setzen`: `quellen`
+/// ersetzt die Liste (fehlt es, bleibt die bisherige), `taste` das Tastenkuerzel,
+/// `ordner` (ein vom Piloten im Systemdialog gewaehlter Ordner) wird als Quelle
+/// von Hand angehaengt. Gibt die geprueften Einstellungen zurueck.
+pub fn einstellungen_neu(
+    bisher: &Einstellungen,
+    quellen: Option<Vec<Quelle>>,
+    taste: Option<&str>,
+    ordner: Option<&Path>,
+    bilder_wurzel: &Path,
+    home: Option<&Path>,
+) -> Result<Einstellungen, Fehler> {
+    let mut neu = Einstellungen {
+        quellen: quellen.unwrap_or_else(|| bisher.quellen.clone()),
+        tastenkuerzel: match taste {
+            Some(t) => crate::tastenkuerzel::lesen(t)?.text,
+            None => bisher.tastenkuerzel.clone(),
+        },
+    };
+    match ordner {
+        Some(o) => {
+            let (mit, _) = quelle_anhaengen(&neu, quelle_von_hand(o), bilder_wurzel, home)?;
+            neu = mit;
+        }
+        None => einstellungen_pruefen(&neu, bilder_wurzel, home)?,
+    }
+    Ok(neu)
+}
+
 /// Prueft eine neue Einstellung, bevor sie gespeichert wird.
 pub fn einstellungen_pruefen(e: &Einstellungen, bilder_wurzel: &Path, home: Option<&Path>) -> Result<(), Fehler> {
     crate::tastenkuerzel::lesen(&e.tastenkuerzel)?;
@@ -144,13 +214,13 @@ pub fn einstellungen_pruefen(e: &Einstellungen, bilder_wurzel: &Path, home: Opti
     Ok(())
 }
 
-/// Die aktive Quelle, in der `datei` wirklich liegt.
-pub fn quelle_zu_datei<'a>(datei: &Path, quellen: &'a [Quelle]) -> Result<&'a Quelle, Fehler> {
-    let k = fs::canonicalize(datei).map_err(|_| Fehler::NichtGefunden(format!("Datei nicht gefunden: {}", datei.display())))?;
+/// Die aktive Quelle, in der der **bereits aufgeloeste** Pfad `echt` liegt, samt
+/// deren aufgeloester Wurzel. Der Aufrufer loest den Pfad genau einmal auf.
+pub fn quelle_zu_pfad<'a>(echt: &Path, quellen: &'a [Quelle]) -> Result<(&'a Quelle, PathBuf), Fehler> {
     for q in quellen.iter().filter(|q| q.aktiv) {
         if let Ok(qk) = fs::canonicalize(&q.pfad) {
-            if k.starts_with(&qk) && k != qk {
-                return Ok(q);
+            if echt.starts_with(&qk) && echt != qk {
+                return Ok((q, qk));
             }
         }
     }
@@ -227,33 +297,49 @@ pub fn inhalt_vollstaendig(format: BildFormat, kopf: &[u8], ende: &[u8]) -> Resu
     Ok(())
 }
 
-/// Liest Kopf und Ende einer Datei und prueft, ob sie vollstaendig ist.
-/// Eine Datei, die ein anderer Prozess noch exklusiv haelt, lässt sich nicht
-/// oeffnen und zaehlt als unfertig.
-pub fn datei_vollstaendig(pfad: &Path) -> Result<(BildFormat, u64), Fehler> {
-    let format = BildFormat::aus_endung(pfad).ok_or_else(|| Fehler::Format("Nur PNG- und JPEG-Dateien".into()))?;
+/// Wie [`datei_vollstaendig`], aber an einem **schon geoeffneten** Handle (Kopf
+/// und Ende werden von dort gelesen, nicht ueber den Pfad). Der Lesezeiger steht
+/// danach irgendwo; wer weiterliest, setzt ihn zurueck.
+pub fn handle_vollstaendig(f: &mut fs::File, format: BildFormat) -> Result<u64, Fehler> {
     if format == BildFormat::Jxr {
         return Err(Fehler::Format("HDR-Aufnahme (JXR) wird nicht uebernommen".into()));
     }
-    let mut f = fs::File::open(pfad).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => Fehler::NichtGefunden(e.to_string()),
-        _ => Fehler::Unfertig(format!("Datei nicht lesbar (noch in Benutzung?): {e}")),
-    })?;
-    let len = f.metadata()?.len();
+    let md = f.metadata()?;
+    if !md.is_file() {
+        return Err(Fehler::Format("Keine Datei".into()));
+    }
+    let len = md.len();
     if len < 24 {
         return Err(Fehler::Unfertig("Datei ist (noch) zu klein".into()));
     }
     if len > MAX_DATEI {
         return Err(Fehler::Gross("Datei ist zu gross".into()));
     }
+    let io = |e: std::io::Error| Fehler::Unfertig(format!("Datei nicht lesbar (noch in Benutzung?): {e}"));
+    f.seek(SeekFrom::Start(0)).map_err(io)?;
     let mut kopf = [0u8; 16];
-    f.read_exact(&mut kopf)?;
+    f.read_exact(&mut kopf).map_err(io)?;
     let ende_len = len.min(64);
-    f.seek(SeekFrom::Start(len - ende_len))?;
+    f.seek(SeekFrom::Start(len - ende_len)).map_err(io)?;
     let mut ende = vec![0u8; ende_len as usize];
-    f.read_exact(&mut ende)?;
+    f.read_exact(&mut ende).map_err(io)?;
     inhalt_vollstaendig(format, &kopf, &ende)?;
-    Ok((format, len))
+    Ok(len)
+}
+
+/// Oeffnet (ohne Linkfolgen) und prueft, ob die Datei vollstaendig ist. Eine
+/// Datei, die ein anderer Prozess noch exklusiv haelt, laesst sich nicht
+/// oeffnen und zaehlt als unfertig.
+pub fn datei_vollstaendig(pfad: &Path) -> Result<(BildFormat, u64), Fehler> {
+    let format = BildFormat::aus_endung(pfad).ok_or_else(|| Fehler::Format("Nur PNG- und JPEG-Dateien".into()))?;
+    if format == BildFormat::Jxr {
+        return Err(Fehler::Format("HDR-Aufnahme (JXR) wird nicht uebernommen".into()));
+    }
+    let mut f = sicher::lesend_ohne_folgen(pfad).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => Fehler::NichtGefunden(e.to_string()),
+        _ => Fehler::Unfertig(format!("Datei nicht lesbar (noch in Benutzung?): {e}")),
+    })?;
+    Ok((format, handle_vollstaendig(&mut f, format)?))
 }
 
 /// Groesse und Aenderungszeit bleiben ueber `pause` gleich.
@@ -261,6 +347,17 @@ pub fn groesse_stabil(pfad: &Path, pause: Duration) -> Result<(), Fehler> {
     let a = fs::metadata(pfad)?;
     std::thread::sleep(pause);
     let b = fs::metadata(pfad)?;
+    if a.len() != b.len() || a.modified().ok() != b.modified().ok() {
+        return Err(Fehler::Unfertig("Datei wird noch geschrieben".into()));
+    }
+    Ok(())
+}
+
+/// Groesse und Aenderungszeit des **geoeffneten** Handles bleiben ueber `pause` gleich.
+pub fn handle_stabil(f: &fs::File, pause: Duration) -> Result<(), Fehler> {
+    let a = f.metadata()?;
+    std::thread::sleep(pause);
+    let b = f.metadata()?;
     if a.len() != b.len() || a.modified().ok() != b.modified().ok() {
         return Err(Fehler::Unfertig("Datei wird noch geschrieben".into()));
     }
@@ -318,13 +415,14 @@ pub struct Uebernahme {
     pub original_entfernt: bool,
 }
 
-fn kopieren_atomar(von: &Path, dir: &Path, ziel: &Path, erwartet: u64) -> Result<(), Fehler> {
-    fs::create_dir_all(dir)?;
+/// Kopiert die Bytes des geoeffneten Handles `src` in eine neue Datei `ziel`
+/// (zuerst Temp, dann Umbenennen).
+fn kopieren_atomar(src: &mut fs::File, dir: &Path, ziel: &Path, erwartet: u64) -> Result<(), Fehler> {
     let tmp = dir.join(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
     let r = (|| -> Result<(), Fehler> {
-        let mut src = fs::File::open(von)?;
-        let mut dst = fs::File::create(&tmp)?;
-        let n = std::io::copy(&mut src, &mut dst)?;
+        src.seek(SeekFrom::Start(0))?;
+        let mut dst = sicher::neu_anlegen(&tmp)?;
+        let n = std::io::copy(&mut src.take(MAX_DATEI + 1), &mut dst)?;
         dst.sync_all()?;
         if n != erwartet {
             return Err(Fehler::Unfertig("Datei hat sich waehrend des Kopierens veraendert".into()));
@@ -338,70 +436,73 @@ fn kopieren_atomar(von: &Path, dir: &Path, ziel: &Path, erwartet: u64) -> Result
     r
 }
 
-/// Nimmt eine Datei aus einer bestaetigten Quelle in den Bilderordner. Das
-/// Paket liest sie von dort (`bild_lesen`), macht das JPEG und schreibt es mit
-/// `bild_schreiben` (`quelle_entfernen`); bis dahin ist nichts verloren, auch
-/// wenn das Programm abbricht.
-pub fn uebernehmen(
+/// Lage, in der eine Uebernahme stattfindet.
+#[derive(Debug, Clone, Copy)]
+pub struct Lage {
+    /// Laeuft ein AeroACARS-Flug? Sonst wird nichts uebernommen.
+    pub flug_aktiv: bool,
+    /// Wartezeit der Groessenpruefung („wird noch geschrieben?“).
+    pub stabil_pause: Duration,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-Haken: laeuft zwischen Pfadpruefung und Oeffnen (Pfad austauschen).
+    pub(crate) static ZWISCHEN: std::cell::RefCell<Option<Box<dyn Fn()>>> = const { std::cell::RefCell::new(None) };
+}
+
+fn zwischen_haken() {
+    #[cfg(test)]
+    ZWISCHEN.with(|z| {
+        if let Some(f) = &*z.borrow() {
+            f();
+        }
+    });
+}
+
+/// Der gemeinsame Teil von [`uebernehmen`] und [`hinzufuegen`]: `basis/rel` ist
+/// aufgeloest und gehoert in die Quelle bzw. ist die gewaehlte Datei.
+fn datei_uebernehmen(
     wurzel: &Path,
-    quellen: &[Quelle],
-    pfad: &str,
+    basis: &Path,
+    rel: &Path,
     modus: Modus,
     gruppe: &str,
-    id: Option<&str>,
+    id: &str,
     stabil_pause: Duration,
 ) -> Result<Uebernahme, Fehler> {
-    name_pruefen("Gruppe", gruppe)?;
-    let id = match id {
-        Some(i) => {
-            name_pruefen("Bild-id", i)?;
-            i.to_string()
-        }
-        None => uuid::Uuid::new_v4().to_string(),
-    };
-    let p = Path::new(pfad);
-    if !p.is_absolute() {
-        return Err(Fehler::Quelle("Absoluter Dateipfad erwartet".into()));
-    }
-    let quelle = quelle_zu_datei(p, quellen)?;
-    if modus == Modus::Verschieben && !quelle.original_entfernen {
-        return Err(Fehler::Verboten("Aus dieser Quelle darf nicht verschoben werden, nur kopiert".into()));
-    }
-    let echt = fs::canonicalize(p)?;
-    let (format, groesse) = datei_vollstaendig(&echt)?;
-    groesse_stabil(&echt, stabil_pause)?;
-    let md = fs::metadata(&echt)?;
+    let echt = basis.join(rel);
+    let format = BildFormat::aus_endung(&echt).ok_or_else(|| Fehler::Format("Nur PNG- und JPEG-Dateien".into()))?;
+    let (mut f, md0) = sicher::datei_oeffnen_mit(basis, rel, &zwischen_haken)?;
+    let groesse = handle_vollstaendig(&mut f, format)?;
+    handle_stabil(&f, stabil_pause)?;
+    let md = f.metadata()?;
     if md.len() != groesse {
         return Err(Fehler::Unfertig("Datei wird noch geschrieben".into()));
     }
     let dateizeit_ms = md.modified().ok().and_then(ms_seit_1970);
     let qf = format.quell_format().ok_or_else(|| Fehler::Format("HDR-Aufnahme (JXR) wird nicht uebernommen".into()))?;
     let dir = wurzel.join(gruppe);
-    let ziel = dir.join(Teil::Quelle(qf).dateiname(&id));
+    crate::speicher::ordner_vorbereiten(wurzel, &dir)?;
+    let ziel = dir.join(Teil::Quelle(qf).dateiname(id));
     if ziel.exists() {
         return Err(Fehler::Name(format!("Bild-id {id} hat in {gruppe} schon eine Eingangskopie")));
     }
+    kopieren_atomar(&mut f, &dir, &ziel, groesse)?;
     let mut original_entfernt = false;
-    match modus {
-        Modus::Kopieren => kopieren_atomar(&echt, &dir, &ziel, groesse)?,
-        Modus::Verschieben => {
-            fs::create_dir_all(&dir)?;
-            if fs::rename(&echt, &ziel).is_ok() {
-                original_entfernt = true;
-            } else {
-                // anderes Laufwerk oder gesperrt: kopieren, pruefen, erst dann entfernen
-                kopieren_atomar(&echt, &dir, &ziel, groesse)?;
-                if let Err(e) = fs::remove_file(&echt) {
-                    let _ = fs::remove_file(&ziel);
-                    return Err(Fehler::Io(format!("Original konnte nicht entfernt werden, nichts uebernommen: {e}")));
-                }
-                original_entfernt = true;
-            }
+    if modus == Modus::Verschieben {
+        // Nur entfernen, wenn der Pfad noch genau die kopierte Datei ist.
+        let gleich = fs::symlink_metadata(&echt).is_ok_and(|m| !m.file_type().is_symlink() && sicher::gleiche_datei(&md0, &m));
+        let r = if gleich { fs::remove_file(&echt).map_err(|e| e.to_string()) } else { Err("Die Datei wurde ausgetauscht".to_string()) };
+        if let Err(e) = r {
+            let _ = fs::remove_file(&ziel);
+            return Err(Fehler::Io(format!("Original konnte nicht entfernt werden, nichts uebernommen: {e}")));
         }
+        original_entfernt = true;
     }
     Ok(Uebernahme {
-        quelle_pfad: crate::namen::rel_pfad(gruppe, &Teil::Quelle(qf).dateiname(&id)),
-        id,
+        quelle_pfad: crate::namen::rel_pfad(gruppe, &Teil::Quelle(qf).dateiname(id)),
+        id: id.to_string(),
         gruppe: gruppe.to_string(),
         format,
         groesse,
@@ -409,6 +510,83 @@ pub fn uebernehmen(
         modus,
         original_entfernt,
     })
+}
+
+/// Hoechstens so viele Dateien je Aufruf von `bild_hinzufuegen`.
+pub const MAX_HINZUFUEGEN: usize = 500;
+
+/// [`hinzufuegen`] fuer mehrere Dateien; jede ergibt ihr eigenes Ergebnis, ein
+/// Fehler stoppt die anderen nicht.
+pub fn hinzufuegen_mehrere(wurzel: &Path, pfade: &[String], gruppe: &str, stabil_pause: Duration) -> Result<Vec<(String, Result<Uebernahme, Fehler>)>, Fehler> {
+    name_pruefen("Gruppe", gruppe)?;
+    if pfade.len() > MAX_HINZUFUEGEN {
+        return Err(Fehler::Eingabe(format!("Hoechstens {MAX_HINZUFUEGEN} Dateien auf einmal")));
+    }
+    Ok(pfade.iter().map(|p| (p.clone(), hinzufuegen(wurzel, p, gruppe, None, stabil_pause))).collect())
+}
+
+fn id_waehlen(gruppe: &str, id: Option<&str>) -> Result<String, Fehler> {
+    name_pruefen("Gruppe", gruppe)?;
+    Ok(match id {
+        Some(i) => {
+            name_pruefen("Bild-id", i)?;
+            i.to_string()
+        }
+        None => uuid::Uuid::new_v4().to_string(),
+    })
+}
+
+/// Nimmt eine Datei aus einer bestaetigten Quelle in den Bilderordner. Das
+/// Paket liest sie von dort (`bild_lesen`), macht das JPEG und schreibt es mit
+/// `bild_schreiben` (`quelle_entfernen`); bis dahin ist nichts verloren, auch
+/// wenn das Programm abbricht. Ohne aktiven Flug: `kein_flug`.
+pub fn uebernehmen(
+    wurzel: &Path,
+    quellen: &[Quelle],
+    pfad: &str,
+    modus: Modus,
+    gruppe: &str,
+    id: Option<&str>,
+    lage: Lage,
+) -> Result<Uebernahme, Fehler> {
+    if !lage.flug_aktiv {
+        return Err(Fehler::KeinFlug("Ohne AeroACARS-Flug wird nichts uebernommen".into()));
+    }
+    let id = id_waehlen(gruppe, id)?;
+    let p = Path::new(pfad);
+    if !p.is_absolute() {
+        return Err(Fehler::Quelle("Absoluter Dateipfad erwartet".into()));
+    }
+    // Genau eine Aufloesung; ab hier zaehlt nur `echt`.
+    let echt = fs::canonicalize(p).map_err(|_| Fehler::NichtGefunden(format!("Datei nicht gefunden: {}", p.display())))?;
+    let (quelle, qk) = quelle_zu_pfad(&echt, quellen)?;
+    if modus == Modus::Verschieben && !quelle.original_entfernen {
+        return Err(Fehler::Verboten("Aus dieser Quelle darf nicht verschoben werden, nur kopiert".into()));
+    }
+    let rel = echt.strip_prefix(&qk).map_err(|_| Fehler::Quelle("Pfad liegt nicht in der Quelle".into()))?;
+    datei_uebernehmen(wurzel, &qk, rel, modus, gruppe, &id, lage.stabil_pause)
+}
+
+/// Eine vom Piloten gewaehlte oder hineingezogene Datei (auch ausserhalb der
+/// Quellen und ausserhalb eines Flugs, z. B. fuer die Gruppe „Ohne Flug“).
+/// Nur **kopieren**, nie verschieben. Nur JPG/PNG, vollstaendig und stabil.
+/// Dateien im Bilderordner selbst sind keine Quelle.
+pub fn hinzufuegen(wurzel: &Path, pfad: &str, gruppe: &str, id: Option<&str>, stabil_pause: Duration) -> Result<Uebernahme, Fehler> {
+    let id = id_waehlen(gruppe, id)?;
+    let p = Path::new(pfad);
+    if !p.is_absolute() {
+        return Err(Fehler::Quelle("Absoluter Dateipfad erwartet".into()));
+    }
+    let echt = fs::canonicalize(p).map_err(|_| Fehler::NichtGefunden(format!("Datei nicht gefunden: {}", p.display())))?;
+    if let Some(w) = aufloesen(wurzel) {
+        if echt.starts_with(&w) {
+            return Err(Fehler::Quelle("Dateien aus dem Bilderordner von AeroACARS lassen sich nicht noch einmal hinzufuegen".into()));
+        }
+    }
+    let (Some(eltern), Some(name)) = (echt.parent(), echt.file_name()) else {
+        return Err(Fehler::Quelle("Dateipfad ungueltig".into()));
+    };
+    datei_uebernehmen(wurzel, eltern, Path::new(name), Modus::Kopieren, gruppe, &id, stabil_pause)
 }
 
 #[cfg(test)]
@@ -443,6 +621,7 @@ pub(crate) mod tests {
     }
 
     const PAUSE: Duration = Duration::from_millis(20);
+    const LAGE: Lage = Lage { flug_aktiv: true, stabil_pause: PAUSE };
 
     fn aufbau(entfernen: bool) -> (tempfile::TempDir, PathBuf, PathBuf, Vec<Quelle>) {
         let t = tempfile::tempdir().unwrap();
@@ -458,7 +637,7 @@ pub(crate) mod tests {
         let (_t, wurzel, src, q) = aufbau(true);
         let a = src.join("a.png");
         fs::write(&a, png_bytes(100, 50)).unwrap();
-        let r = uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Kopieren, "g", Some("b1"), PAUSE).unwrap();
+        let r = uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Kopieren, "g", Some("b1"), LAGE).unwrap();
         assert!(a.exists(), "Kopieren laesst das Original");
         assert!(!r.original_entfernt);
         assert_eq!(r.quelle_pfad, "g/b1.quelle.png");
@@ -466,7 +645,7 @@ pub(crate) mod tests {
 
         let b = src.join("unter").join("b.jpg");
         fs::write(&b, jpeg_bytes(640, 480)).unwrap();
-        let r = uebernehmen(&wurzel, &q, b.to_str().unwrap(), Modus::Verschieben, "g", Some("b2"), PAUSE).unwrap();
+        let r = uebernehmen(&wurzel, &q, b.to_str().unwrap(), Modus::Verschieben, "g", Some("b2"), LAGE).unwrap();
         assert!(!b.exists(), "Verschieben entfernt das Original");
         assert!(r.original_entfernt);
         assert_eq!(r.format, BildFormat::Jpeg);
@@ -478,7 +657,7 @@ pub(crate) mod tests {
         let (_t, wurzel, src, q) = aufbau(false);
         let a = src.join("a.png");
         fs::write(&a, png_bytes(10, 10)).unwrap();
-        let e = uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Verschieben, "g", None, PAUSE).unwrap_err();
+        let e = uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Verschieben, "g", None, LAGE).unwrap_err();
         assert!(matches!(e, Fehler::Verboten(_)));
         assert!(a.exists());
         assert!(!wurzel.exists() || crate::speicher::liste(&wurzel).eintraege.is_empty());
@@ -489,19 +668,19 @@ pub(crate) mod tests {
         let (t, wurzel, src, q) = aufbau(true);
         let fremd = t.path().join("fremd.png");
         fs::write(&fremd, png_bytes(10, 10)).unwrap();
-        let e = uebernehmen(&wurzel, &q, fremd.to_str().unwrap(), Modus::Kopieren, "g", None, PAUSE).unwrap_err();
+        let e = uebernehmen(&wurzel, &q, fremd.to_str().unwrap(), Modus::Kopieren, "g", None, LAGE).unwrap_err();
         assert!(matches!(e, Fehler::Quelle(_)));
         // „..“ aus der Quelle heraus
         let ausbruch = format!("{}/../fremd.png", src.display());
-        assert!(matches!(uebernehmen(&wurzel, &q, &ausbruch, Modus::Kopieren, "g", None, PAUSE), Err(Fehler::Quelle(_))));
+        assert!(matches!(uebernehmen(&wurzel, &q, &ausbruch, Modus::Kopieren, "g", None, LAGE), Err(Fehler::Quelle(_))));
         // Ordner mit aehnlichem Namensanfang ist keine Unterordner-Beziehung
         let nachbar = t.path().join("screens-privat");
         fs::create_dir_all(&nachbar).unwrap();
         fs::write(nachbar.join("x.png"), png_bytes(10, 10)).unwrap();
         let p = nachbar.join("x.png");
-        assert!(matches!(uebernehmen(&wurzel, &q, p.to_str().unwrap(), Modus::Kopieren, "g", None, PAUSE), Err(Fehler::Quelle(_))));
+        assert!(matches!(uebernehmen(&wurzel, &q, p.to_str().unwrap(), Modus::Kopieren, "g", None, LAGE), Err(Fehler::Quelle(_))));
         // relativ
-        assert!(matches!(uebernehmen(&wurzel, &q, "a.png", Modus::Kopieren, "g", None, PAUSE), Err(Fehler::Quelle(_))));
+        assert!(matches!(uebernehmen(&wurzel, &q, "a.png", Modus::Kopieren, "g", None, LAGE), Err(Fehler::Quelle(_))));
     }
 
     #[cfg(unix)]
@@ -512,7 +691,7 @@ pub(crate) mod tests {
         fs::write(&fremd, png_bytes(10, 10)).unwrap();
         std::os::unix::fs::symlink(&fremd, src.join("link.png")).unwrap();
         let p = src.join("link.png");
-        assert!(matches!(uebernehmen(&wurzel, &q, p.to_str().unwrap(), Modus::Verschieben, "g", None, PAUSE), Err(Fehler::Quelle(_))));
+        assert!(matches!(uebernehmen(&wurzel, &q, p.to_str().unwrap(), Modus::Verschieben, "g", None, LAGE), Err(Fehler::Quelle(_))));
         assert!(fremd.exists());
     }
 
@@ -522,7 +701,7 @@ pub(crate) mod tests {
         q[0].aktiv = false;
         let a = src.join("a.png");
         fs::write(&a, png_bytes(10, 10)).unwrap();
-        assert!(matches!(uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Kopieren, "g", None, PAUSE), Err(Fehler::Quelle(_))));
+        assert!(matches!(uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Kopieren, "g", None, LAGE), Err(Fehler::Quelle(_))));
     }
 
     #[test]
@@ -532,30 +711,30 @@ pub(crate) mod tests {
         let abgeschnitten = src.join("halb.png");
         fs::write(&abgeschnitten, &voll[..voll.len() - 6]).unwrap();
         let p = abgeschnitten.to_str().unwrap();
-        assert!(matches!(uebernehmen(&wurzel, &q, p, Modus::Kopieren, "g", None, PAUSE), Err(Fehler::Unfertig(_))));
+        assert!(matches!(uebernehmen(&wurzel, &q, p, Modus::Kopieren, "g", None, LAGE), Err(Fehler::Unfertig(_))));
         let jpg = jpeg_bytes(10, 10);
         let halb_jpg = src.join("halb.jpg");
         fs::write(&halb_jpg, &jpg[..jpg.len() - 5]).unwrap();
-        assert!(matches!(uebernehmen(&wurzel, &q, halb_jpg.to_str().unwrap(), Modus::Kopieren, "g", None, PAUSE), Err(Fehler::Unfertig(_))));
+        assert!(matches!(uebernehmen(&wurzel, &q, halb_jpg.to_str().unwrap(), Modus::Kopieren, "g", None, LAGE), Err(Fehler::Unfertig(_))));
         // Nullbytes am Ende eines fertigen JPEG sind erlaubt
         let mit_nullen = src.join("null.jpg");
         let mut j = jpg.clone();
         j.extend_from_slice(&[0; 8]);
         fs::write(&mit_nullen, &j).unwrap();
-        assert!(uebernehmen(&wurzel, &q, mit_nullen.to_str().unwrap(), Modus::Kopieren, "g", None, PAUSE).is_ok());
+        assert!(uebernehmen(&wurzel, &q, mit_nullen.to_str().unwrap(), Modus::Kopieren, "g", None, LAGE).is_ok());
         // Endung luegt
         let falsch = src.join("falsch.png");
         fs::write(&falsch, jpeg_bytes(10, 10)).unwrap();
-        assert!(matches!(uebernehmen(&wurzel, &q, falsch.to_str().unwrap(), Modus::Kopieren, "g", None, PAUSE), Err(Fehler::Format(_))));
+        assert!(matches!(uebernehmen(&wurzel, &q, falsch.to_str().unwrap(), Modus::Kopieren, "g", None, LAGE), Err(Fehler::Format(_))));
         // fremde Formate, HDR, zu klein
         for name in ["x.gif", "x.jxr", "x.txt", "x"] {
             let f = src.join(name);
             fs::write(&f, png_bytes(10, 10)).unwrap();
-            assert!(matches!(uebernehmen(&wurzel, &q, f.to_str().unwrap(), Modus::Kopieren, "g", None, PAUSE), Err(Fehler::Format(_))), "{name}");
+            assert!(matches!(uebernehmen(&wurzel, &q, f.to_str().unwrap(), Modus::Kopieren, "g", None, LAGE), Err(Fehler::Format(_))), "{name}");
         }
         let klein = src.join("klein.png");
         fs::write(&klein, b"\x89PNG").unwrap();
-        assert!(matches!(uebernehmen(&wurzel, &q, klein.to_str().unwrap(), Modus::Kopieren, "g", None, PAUSE), Err(Fehler::Unfertig(_))));
+        assert!(matches!(uebernehmen(&wurzel, &q, klein.to_str().unwrap(), Modus::Kopieren, "g", None, LAGE), Err(Fehler::Unfertig(_))));
         assert!(abgeschnitten.exists() && halb_jpg.exists(), "abgelehnte Dateien bleiben unangetastet");
     }
 
@@ -628,5 +807,164 @@ pub(crate) mod tests {
         fs::write(&d, b"{kaputt").unwrap();
         assert_eq!(einstellungen_lesen(&d), Einstellungen::default());
         assert_eq!(Einstellungen::default().tastenkuerzel, "Ctrl+Shift+S");
+    }
+
+    #[test]
+    fn ohne_aktiven_flug_wird_nichts_uebernommen() {
+        let (_t, wurzel, src, q) = aufbau(true);
+        let a = src.join("a.png");
+        fs::write(&a, png_bytes(100, 50)).unwrap();
+        let kein_flug = Lage { flug_aktiv: false, stabil_pause: PAUSE };
+        for modus in [Modus::Kopieren, Modus::Verschieben] {
+            let e = uebernehmen(&wurzel, &q, a.to_str().unwrap(), modus, "g", Some("b1"), kein_flug).unwrap_err();
+            assert!(matches!(e, Fehler::KeinFlug(_)), "{e:?}");
+            assert_eq!(e.code(), "kein_flug");
+        }
+        assert!(a.exists(), "das Original bleibt unangetastet");
+        assert!(!wurzel.exists(), "nichts im Bilderordner angelegt");
+        assert!(uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Kopieren, "g", Some("b1"), LAGE).is_ok(), "Gegenprobe: mit Flug geht es");
+    }
+
+    #[test]
+    fn ein_zwischen_pruefung_und_oeffnen_ausgetauschter_pfad_wird_nicht_uebernommen() {
+        let (t, wurzel, src, q) = aufbau(true);
+        let privat = t.path().join("privat.png");
+        fs::write(&privat, png_bytes(7, 7)).unwrap();
+        let a = src.join("a.png");
+        fs::write(&a, png_bytes(100, 50)).unwrap();
+        let (a2, privat2) = (a.clone(), privat.clone());
+        ZWISCHEN.with(|z| {
+            *z.borrow_mut() = Some(Box::new(move || {
+                fs::remove_file(&a2).unwrap();
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&privat2, &a2).unwrap();
+                #[cfg(not(unix))]
+                {
+                    let _ = &privat2;
+                }
+            }));
+        });
+        let r = uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Verschieben, "g", Some("b1"), LAGE);
+        ZWISCHEN.with(|z| *z.borrow_mut() = None);
+        #[cfg(unix)]
+        {
+            assert!(r.is_err(), "{r:?}");
+            assert!(privat.exists(), "die fremde Datei bleibt");
+            assert!(!wurzel.join("g/b1.quelle.png").exists(), "nichts uebernommen");
+        }
+        #[cfg(not(unix))]
+        let _ = r;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn eine_quelle_die_selbst_ein_link_ist_funktioniert_der_pfad_wird_einmal_aufgeloest() {
+        let (t, wurzel, src, _q) = aufbau(true);
+        let link = t.path().join("link_zur_quelle");
+        std::os::unix::fs::symlink(&src, &link).unwrap();
+        let q = vec![quelle(&link, false)];
+        let a = src.join("a.png");
+        fs::write(&a, png_bytes(100, 50)).unwrap();
+        let ueber_link = link.join("a.png");
+        let r = uebernehmen(&wurzel, &q, ueber_link.to_str().unwrap(), Modus::Kopieren, "g", Some("b1"), LAGE).unwrap();
+        assert_eq!(r.format, BildFormat::Png);
+        assert!(a.exists());
+    }
+
+    #[test]
+    fn hinzufuegen_geht_ausserhalb_der_quellen_und_ohne_flug_und_kopiert_immer() {
+        let t = tempfile::tempdir().unwrap();
+        let wurzel = t.path().join("bilder");
+        let fremd = t.path().join("Desktop");
+        fs::create_dir_all(&fremd).unwrap();
+        let a = fremd.join("urlaub.jpg");
+        fs::write(&a, jpeg_bytes(640, 480)).unwrap();
+        let r = hinzufuegen(&wurzel, a.to_str().unwrap(), "ohne-flug", Some("h1"), PAUSE).unwrap();
+        assert_eq!(r.quelle_pfad, "ohne-flug/h1.quelle.jpg");
+        assert_eq!(r.modus, Modus::Kopieren);
+        assert!(!r.original_entfernt && a.exists(), "das Original bleibt immer");
+        assert_eq!(fs::read(wurzel.join("ohne-flug/h1.quelle.jpg")).unwrap(), jpeg_bytes(640, 480));
+        // nur JPG/PNG, vollstaendig
+        let txt = fremd.join("x.txt");
+        fs::write(&txt, png_bytes(5, 5)).unwrap();
+        assert!(matches!(hinzufuegen(&wurzel, txt.to_str().unwrap(), "g", None, PAUSE), Err(Fehler::Format(_))));
+        let halb = fremd.join("halb.png");
+        let voll = png_bytes(5, 5);
+        fs::write(&halb, &voll[..voll.len() - 6]).unwrap();
+        assert!(matches!(hinzufuegen(&wurzel, halb.to_str().unwrap(), "g", None, PAUSE), Err(Fehler::Unfertig(_))));
+        assert!(matches!(hinzufuegen(&wurzel, "relativ.png", "g", None, PAUSE), Err(Fehler::Quelle(_))));
+        assert!(matches!(hinzufuegen(&wurzel, a.to_str().unwrap(), "g/..", None, PAUSE), Err(Fehler::Name(_))));
+        // Datei aus dem Bilderordner selbst: nein
+        let innen = wurzel.join("ohne-flug/h1.quelle.jpg");
+        assert!(matches!(hinzufuegen(&wurzel, innen.to_str().unwrap(), "g", None, PAUSE), Err(Fehler::Quelle(_))));
+        // gleiche id nicht ueberschreiben
+        assert!(matches!(hinzufuegen(&wurzel, a.to_str().unwrap(), "ohne-flug", Some("h1"), PAUSE), Err(Fehler::Name(_))));
+    }
+
+    #[test]
+    fn quelle_von_hand_kopiert_nur_und_laesst_sich_anhaengen_ohne_doppelte() {
+        let t = tempfile::tempdir().unwrap();
+        let wurzel = t.path().join("bilder");
+        let home = t.path().join("home");
+        let ordner = home.join("MeineScreens");
+        fs::create_dir_all(&ordner).unwrap();
+        let hand = quelle_von_hand(&ordner);
+        assert_eq!(hand.art.as_deref(), Some(ART_HAND));
+        assert!(hand.aktiv && !hand.original_entfernen, "Vorgabe: nur kopieren");
+        let leer = Einstellungen::default();
+        let (mit, neu) = quelle_anhaengen(&leer, hand.clone(), &wurzel, Some(&home)).unwrap();
+        assert!(neu && mit.quellen == vec![hand.clone()]);
+        let (noch, neu) = quelle_anhaengen(&mit, hand.clone(), &wurzel, Some(&home)).unwrap();
+        assert!(!neu && noch == mit, "derselbe Ordner noch einmal aendert nichts");
+        // unzulaessige Wahl bleibt unzulaessig
+        assert!(quelle_anhaengen(&leer, quelle_von_hand(&home), &wurzel, Some(&home)).is_err(), "persoenlicher Ordner");
+        assert!(quelle_anhaengen(&leer, quelle_von_hand(&wurzel), &wurzel, Some(&home)).is_err(), "Bilderordner selbst");
+        // Uebernahme aus einer Quelle von Hand: wie jede bestaetigte Quelle, Flug bleibt Pflicht
+        let a = ordner.join("s.png");
+        fs::write(&a, png_bytes(50, 50)).unwrap();
+        let kein = Lage { flug_aktiv: false, stabil_pause: PAUSE };
+        assert!(matches!(uebernehmen(&wurzel, &mit.quellen, a.to_str().unwrap(), Modus::Kopieren, "g", None, kein), Err(Fehler::KeinFlug(_))));
+        assert!(uebernehmen(&wurzel, &mit.quellen, a.to_str().unwrap(), Modus::Kopieren, "g", None, LAGE).is_ok());
+        assert!(matches!(uebernehmen(&wurzel, &mit.quellen, a.to_str().unwrap(), Modus::Verschieben, "g", None, LAGE), Err(Fehler::Verboten(_))), "Verschieben nur nach Freigabe");
+    }
+
+    #[test]
+    fn einstellungen_neu_haengt_den_gewaehlten_ordner_an_und_aendert_sonst_nichts() {
+        let t = tempfile::tempdir().unwrap();
+        let wurzel = t.path().join("bilder");
+        let home = t.path().join("home");
+        let (a, b) = (home.join("A"), home.join("B"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        let bisher = Einstellungen { quellen: vec![quelle(&a, true)], tastenkuerzel: "Alt+F9".into() };
+        let neu = einstellungen_neu(&bisher, None, None, Some(&b), &wurzel, Some(&home)).unwrap();
+        assert_eq!(neu.quellen.len(), 2);
+        assert_eq!(neu.quellen[0], bisher.quellen[0], "die bisherige Quelle bleibt unveraendert");
+        assert_eq!(neu.quellen[1].art.as_deref(), Some(ART_HAND));
+        assert!(!neu.quellen[1].original_entfernen);
+        assert_eq!(neu.tastenkuerzel, "Alt+F9");
+        // ohne alles: unveraendert; Taste allein; Liste ersetzt plus Ordner
+        assert_eq!(einstellungen_neu(&bisher, None, None, None, &wurzel, Some(&home)).unwrap(), bisher);
+        assert_eq!(einstellungen_neu(&bisher, None, Some("Ctrl+F5"), None, &wurzel, Some(&home)).unwrap().tastenkuerzel, "Ctrl+F5");
+        let ersetzt = einstellungen_neu(&bisher, Some(vec![]), None, Some(&b), &wurzel, Some(&home)).unwrap();
+        assert_eq!(ersetzt.quellen.len(), 1);
+        assert!(einstellungen_neu(&bisher, None, None, Some(&home), &wurzel, Some(&home)).is_err());
+        assert!(einstellungen_neu(&bisher, None, Some("S"), None, &wurzel, Some(&home)).is_err());
+    }
+
+    #[test]
+    fn hinzufuegen_mehrere_meldet_jede_datei_einzeln() {
+        let t = tempfile::tempdir().unwrap();
+        let wurzel = t.path().join("bilder");
+        let gut = t.path().join("gut.png");
+        fs::write(&gut, png_bytes(9, 9)).unwrap();
+        let schlecht = t.path().join("schlecht.txt");
+        fs::write(&schlecht, b"x").unwrap();
+        let pfade = vec![gut.to_string_lossy().into_owned(), schlecht.to_string_lossy().into_owned()];
+        let r = hinzufuegen_mehrere(&wurzel, &pfade, "ohne-flug", PAUSE).unwrap();
+        assert!(r[0].1.is_ok() && matches!(r[1].1, Err(Fehler::Format(_))));
+        let viele = vec!["/x.png".to_string(); MAX_HINZUFUEGEN + 1];
+        assert!(matches!(hinzufuegen_mehrere(&wurzel, &viele, "g", PAUSE), Err(Fehler::Eingabe(_))));
+        assert!(matches!(hinzufuegen_mehrere(&wurzel, &pfade, "..", PAUSE), Err(Fehler::Name(_))));
     }
 }
