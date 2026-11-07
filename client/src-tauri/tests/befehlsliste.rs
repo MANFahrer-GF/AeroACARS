@@ -179,7 +179,7 @@ fn hoppie_logon_code_lesen_nur_lokal() {
     assert!(!bruecke.contains("\"hoppie_get_logon_code\" =>"), "LAN-Bruecke darf den Logon-Code nicht herausgeben");
 }
 
-/// Bilder-Tab (N-13, Faehigkeit `bilder-1`, P-11.33): genau zwoelf Befehle.
+/// Bilder-Tab (N-13, Faehigkeit `bilder-1`, P-11.33): genau vierzehn Befehle.
 /// Rust liefert nur Bausteine; was Dateien des Piloten loescht oder dauerhaft
 /// beobachtet (Papierkorb, Bildquellen samt Tastenkuerzel und Ordnerdialog,
 /// Export), Bilder nach aussen sendet (`bild_senden`, nicht rueckholbar) oder
@@ -194,6 +194,8 @@ fn bilder_befehle_der_faehigkeit_bilder_1() {
         ("bild_lesen", "lesen"),
         ("bild_quellen_finden", "lesen"),
         ("bild_status", "lesen"),
+        ("bild_kontext", "lesen"),
+        ("bild_ordner_zeigen", "fachlich"),
         ("bild_uebernehmen", "fachlich"),
         ("bild_schreiben", "fachlich"),
         ("bild_aufnehmen", "fachlich"),
@@ -207,7 +209,7 @@ fn bilder_befehle_der_faehigkeit_bilder_1() {
         assert_eq!(liste.get(b).map(String::as_str), Some(stufe), "{b}");
     }
     let bilder: Vec<_> = liste.keys().filter(|b| b.starts_with("bild")).collect();
-    assert_eq!(bilder.len(), soll.len(), "genau zwoelf Bilder-Befehle: {bilder:?}");
+    assert_eq!(bilder.len(), soll.len(), "genau vierzehn Bilder-Befehle: {bilder:?}");
     assert!(!liste.contains_key("bild_live"), "bild_live gibt es nicht mehr: Senden ist system, der Stand lesen");
     let reg = registriert();
     for (b, _) in soll {

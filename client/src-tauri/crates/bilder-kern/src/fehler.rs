@@ -25,6 +25,8 @@ pub enum Fehler {
     NichtVerfuegbar(String),
     /// Kein AeroACARS-Flug aktiv: keine Uebernahme, keine Aufnahme.
     KeinFlug(String),
+    /// Ein Bild mit demselben kanonischen Hash liegt schon im Bilderordner.
+    Duplikat(String),
     /// Ein anderes Fenster liegt ueber dem Simulator: keine Bildschirmkopie.
     Verdeckt(String),
     Io(String),
@@ -45,6 +47,7 @@ impl Fehler {
             Fehler::NichtVerfuegbar(_) => "bild_nicht_verfuegbar",
             Fehler::KeinFlug(_) => "kein_flug",
             Fehler::Verdeckt(_) => "verdeckt",
+            Fehler::Duplikat(_) => "duplikat",
             Fehler::Io(_) => "bild_io",
         }
     }
@@ -63,6 +66,7 @@ impl Fehler {
             | Fehler::NichtVerfuegbar(s)
             | Fehler::KeinFlug(s)
             | Fehler::Verdeckt(s)
+            | Fehler::Duplikat(s)
             | Fehler::Io(s) => s,
         }
     }

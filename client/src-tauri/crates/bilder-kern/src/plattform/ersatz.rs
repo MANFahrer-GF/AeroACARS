@@ -16,6 +16,11 @@ pub fn sim_vordergrund() -> Option<bool> {
     None
 }
 
+/// Masse des Simulatorfensters: hier nicht ermittelbar.
+pub fn sim_fenstermasse() -> Option<(u32, u32)> {
+    None
+}
+
 pub fn fenster_aufnehmen() -> Result<Aufnahme, Fehler> {
     Err(Fehler::NichtVerfuegbar("Die Fensteraufnahme gibt es nur unter Windows".into()))
 }

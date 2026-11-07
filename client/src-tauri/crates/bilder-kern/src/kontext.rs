@@ -1,0 +1,348 @@
+//! Stand zu einer Zeit: aus dem lokalen Flugprotokoll `flight_logs/<pirep>.jsonl`
+//! (Quelle `protokoll`), sonst aus den Block-Zeiten des PIREP in phpVMS (Quelle
+//! `logbuch`, nur was dort steht, nie geraten), sonst `keine`. Dazu die
+//! ausgeduennte Spur eines Flugs. Reine Dateiarbeit ohne Tauri; der naechste
+//! Flugplatz und der Abruf bei phpVMS kommen vom Aufrufer.
+//!
+//! Feldnamen des Stands (gleich im Eingang und in `bild_kontext`): `zeit_utc`,
+//! `breite`, `laenge`, `hoehe_ft`, `gs_kt`, `kurs`, `flugzeug_titel`,
+//! `flugzeug_icao`, `simulator`, `phase`, `pirep_id`, `rufzeichen`, `abflug`, `ziel`.
+
+use std::fs;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use serde_json::{json, Map, Value};
+
+use crate::namen::name_pruefen;
+use crate::speicher::ms_seit_1970;
+use crate::Fehler;
+
+/// So weit darf ein Protokollstand von der gefragten Zeit entfernt sein.
+pub const TOLERANZ_MS: i64 = 120_000;
+/// Hoechstens so viele Punkte hat eine ausgeduennte Spur.
+pub const MAX_SPUR: usize = 600;
+
+pub type Stand = Map<String, Value>;
+
+/// `2026-11-07T14:58:16.123Z` (oder mit Versatz) -> ms seit 1970.
+pub fn zeit_ms(iso: &str) -> Option<i64> {
+    let t = iso.trim();
+    chrono::DateTime::parse_from_rfc3339(t)
+        .ok()
+        .map(|d| d.timestamp_millis())
+        // phpVMS/Carbon zeigt Zeiten manchmal ohne Versatz („2026-11-07 10:00:00“); das ist UTC.
+        .or_else(|| chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").ok().map(|n| n.and_utc().timestamp_millis()))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Treffer {
+    pub stand: Stand,
+    pub abstand_ms: i64,
+}
+
+#[derive(Debug, Default)]
+pub struct Auswertung {
+    pub treffer: Vec<Option<Treffer>>,
+    pub spur: Vec<[f64; 2]>,
+}
+
+/// Zeitstempel einer Zeile, ohne sie ganz zu zerlegen.
+fn zeile_zeit(zeile: &str) -> Option<i64> {
+    let k = "\"timestamp\":\"";
+    let a = zeile.find(k)? + k.len();
+    let e = a + zeile[a..].find('"')?;
+    zeit_ms(&zeile[a..e])
+}
+
+fn zahl(v: &Value, k: &str) -> Value {
+    v.get(k).filter(|x| x.is_number()).cloned().unwrap_or(Value::Null)
+}
+
+fn text(v: &Value, k: &str) -> Value {
+    v.get(k).and_then(Value::as_str).filter(|s| !s.is_empty()).map_or(Value::Null, |s| Value::String(s.to_string()))
+}
+
+#[derive(Default, Clone)]
+struct Kopf {
+    pirep_id: String,
+    rufzeichen: Option<String>,
+    abflug: Option<String>,
+    ziel: Option<String>,
+}
+
+/// Wertet ein Flugprotokoll (eine JSON-Zeile je Ereignis) fuer die gefragten
+/// Zeiten aus: je Zeit der zeitlich naechste `position`-Stand innerhalb von
+/// [`TOLERANZ_MS`], mit der Phase und den Flugdaten, die zu diesem Zeitpunkt galten.
+pub fn protokoll_auswerten<R: BufRead>(leser: R, pirep_id: &str, zeiten: &[i64], mit_spur: bool) -> Auswertung {
+    let mut aus = Auswertung { treffer: vec![None; zeiten.len()], spur: Vec::new() };
+    let mut kopf = Kopf { pirep_id: pirep_id.to_string(), ..Default::default() };
+    let mut phase: Option<String> = None;
+    for zeile in leser.lines().map_while(Result::ok) {
+        if zeile.starts_with(r#"{"type":"position""#) {
+            let ts = zeile_zeit(&zeile);
+            let gefragt = ts.map(|t| zeiten.iter().any(|z| (t - z).abs() <= TOLERANZ_MS)).unwrap_or(false);
+            if !gefragt && !mit_spur {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(&zeile) else { continue };
+            let s = &v["snapshot"];
+            if mit_spur {
+                if let (Some(la), Some(lo)) = (s["lat"].as_f64(), s["lon"].as_f64()) {
+                    aus.spur.push([la, lo]);
+                }
+            }
+            let Some(t) = ts else { continue };
+            for (i, z) in zeiten.iter().enumerate() {
+                let d = (t - z).abs();
+                if d > TOLERANZ_MS || aus.treffer[i].as_ref().is_some_and(|b| b.abstand_ms <= d) {
+                    continue;
+                }
+                let mut m = Stand::new();
+                m.insert("zeit_utc".into(), v["timestamp"].clone());
+                m.insert("breite".into(), zahl(s, "lat"));
+                m.insert("laenge".into(), zahl(s, "lon"));
+                m.insert("hoehe_ft".into(), zahl(s, "altitude_msl_ft"));
+                m.insert("gs_kt".into(), zahl(s, "groundspeed_kt"));
+                m.insert("kurs".into(), zahl(s, "heading_deg_true"));
+                m.insert("flugzeug_titel".into(), text(s, "aircraft_title"));
+                m.insert("flugzeug_icao".into(), text(s, "aircraft_icao"));
+                m.insert("simulator".into(), text(s, "simulator"));
+                m.insert("phase".into(), phase.clone().map_or(Value::Null, Value::String));
+                m.insert("pirep_id".into(), json!(kopf.pirep_id));
+                m.insert("rufzeichen".into(), kopf.rufzeichen.clone().map_or(Value::Null, Value::String));
+                m.insert("abflug".into(), kopf.abflug.clone().map_or(Value::Null, Value::String));
+                m.insert("ziel".into(), kopf.ziel.clone().map_or(Value::Null, Value::String));
+                aus.treffer[i] = Some(Treffer { stand: m, abstand_ms: d });
+            }
+        } else if zeile.starts_with(r#"{"type":"phase_changed""#) {
+            if let Ok(v) = serde_json::from_str::<Value>(&zeile) {
+                phase = v["to"].as_str().map(str::to_string);
+            }
+        } else if zeile.starts_with(r#"{"type":"flight_started""#) {
+            if let Ok(v) = serde_json::from_str::<Value>(&zeile) {
+                let airline = v["airline_icao"].as_str().unwrap_or("").trim();
+                let nr = v["flight_number"].as_str().unwrap_or("").trim();
+                kopf.rufzeichen = (!nr.is_empty()).then(|| format!("{airline}{nr}"));
+                kopf.abflug = v["dpt_airport"].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+                kopf.ziel = v["arr_airport"].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+            }
+        }
+    }
+    aus
+}
+
+/// Gleichmaessig auf hoechstens `max` Punkte ausduennen; erster und letzter Punkt bleiben.
+pub fn ausduennen(spur: Vec<[f64; 2]>, max: usize) -> Vec<[f64; 2]> {
+    if max < 2 || spur.len() <= max {
+        return spur;
+    }
+    let n = spur.len();
+    (0..max).map(|i| spur[i * (n - 1) / (max - 1)]).collect()
+}
+
+fn protokoll_datei(dir: &Path, pirep_id: &str) -> Result<PathBuf, Fehler> {
+    name_pruefen("PIREP-id", pirep_id)?;
+    Ok(dir.join(format!("{pirep_id}.jsonl")))
+}
+
+fn oeffnen(pfad: &Path) -> Option<BufReader<fs::File>> {
+    crate::sicher::lesend_ohne_folgen(pfad).ok().map(BufReader::new)
+}
+
+/// Erste Zeit eines Protokolls (die erste Zeile mit Zeitstempel).
+fn erste_zeit(pfad: &Path) -> Option<i64> {
+    oeffnen(pfad)?.lines().map_while(Result::ok).take(5).find_map(|z| zeile_zeit(&z))
+}
+
+/// Protokolle, deren Zeitraum (erste Zeile bis Aenderungszeit) eine der Zeiten einschliesst.
+fn kandidaten(dir: &Path, zeiten: &[i64]) -> Vec<(String, PathBuf)> {
+    let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
+    let mut v = Vec::new();
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Some(id) = p.file_stem().and_then(|s| s.to_str()).map(str::to_string) else { continue };
+        if !crate::namen::name_gueltig(&id) {
+            continue;
+        }
+        let Some(ende) = e.metadata().and_then(|m| m.modified()).ok().and_then(|t: SystemTime| ms_seit_1970(t)) else { continue };
+        let Some(start) = erste_zeit(&p) else { continue };
+        if zeiten.iter().any(|z| *z >= start - TOLERANZ_MS && *z <= ende + TOLERANZ_MS) {
+            v.push((id, p));
+        }
+    }
+    v.sort();
+    v
+}
+
+/// Je Zeit der naechste Protokollstand (aus allen in Frage kommenden Flugprotokollen,
+/// oder nur aus dem von `pirep_id`).
+pub fn protokoll_staende(dir: &Path, pirep_id: Option<&str>, zeiten: &[i64]) -> Result<Vec<Option<Treffer>>, Fehler> {
+    let dateien = match pirep_id {
+        Some(id) => vec![(id.to_string(), protokoll_datei(dir, id)?)],
+        None => kandidaten(dir, zeiten),
+    };
+    let mut best: Vec<Option<Treffer>> = vec![None; zeiten.len()];
+    for (id, p) in dateien {
+        let Some(r) = oeffnen(&p) else { continue };
+        let a = protokoll_auswerten(r, &id, zeiten, false);
+        for (i, t) in a.treffer.into_iter().enumerate() {
+            if let Some(t) = t {
+                if best[i].as_ref().is_none_or(|b| t.abstand_ms < b.abstand_ms) {
+                    best[i] = Some(t);
+                }
+            }
+        }
+    }
+    Ok(best)
+}
+
+/// Ausgeduennte Spur eines Flugs aus seinem Protokoll (`[[breite, laenge], ...]`).
+pub fn protokoll_spur(dir: &Path, pirep_id: &str) -> Result<Vec<[f64; 2]>, Fehler> {
+    let p = protokoll_datei(dir, pirep_id)?;
+    let Some(r) = oeffnen(&p) else { return Err(Fehler::NichtGefunden(format!("Kein Flugprotokoll fuer {pirep_id}"))) };
+    Ok(ausduennen(protokoll_auswerten(r, pirep_id, &[], true).spur, MAX_SPUR))
+}
+
+/// Was von einem PIREP bei phpVMS bekannt ist.
+#[derive(Debug, Clone, Default)]
+pub struct PirepKurz {
+    pub pirep_id: String,
+    pub block_off_ms: Option<i64>,
+    pub block_on_ms: Option<i64>,
+    /// Flugnummer aus phpVMS (kein Funkrufzeichen).
+    pub flugnummer: Option<String>,
+    pub abflug: Option<String>,
+    pub ziel: Option<String>,
+    pub flugzeug_icao: Option<String>,
+}
+
+/// Der PIREP, dessen Block-Zeiten `zeit` einschliessen. Fehlt eine der beiden Zeiten, passt er nicht.
+pub fn logbuch_stand(pireps: &[PirepKurz], zeit: i64) -> Option<Stand> {
+    let p = pireps.iter().find(|p| matches!((p.block_off_ms, p.block_on_ms), (Some(a), Some(b)) if a <= zeit && zeit <= b))?;
+    let opt = |s: &Option<String>| s.clone().filter(|x| !x.is_empty()).map_or(Value::Null, Value::String);
+    let mut m = Stand::new();
+    m.insert("pirep_id".into(), json!(p.pirep_id));
+    m.insert("flugnummer".into(), opt(&p.flugnummer));
+    m.insert("abflug".into(), opt(&p.abflug));
+    m.insert("ziel".into(), opt(&p.ziel));
+    m.insert("flugzeug_icao".into(), opt(&p.flugzeug_icao));
+    Some(m)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn pos(ts: &str, lat: f64, lon: f64, alt: f64) -> String {
+        format!(
+            r#"{{"type":"position","timestamp":"{ts}","snapshot":{{"timestamp":"{ts}","lat":{lat},"lon":{lon},"altitude_msl_ft":{alt},"groundspeed_kt":250.0,"heading_deg_true":90.0,"aircraft_title":"A320 NX","aircraft_icao":"A20N","simulator":"Msfs2024"}}}}"#
+        )
+    }
+
+    fn protokoll() -> String {
+        [
+            r#"{"type":"flight_started","timestamp":"2026-11-07T10:00:00Z","pirep_id":"P1","airline_icao":"GSG","flight_number":"123","dpt_airport":"EDDF","arr_airport":"EGLL"}"#.to_string(),
+            r#"{"type":"phase_changed","timestamp":"2026-11-07T10:00:30Z","from":"Boarding","to":"Climb","altitude_msl_ft":100.0,"groundspeed_kt":150.0,"altitude_agl_ft":50.0}"#.to_string(),
+            pos("2026-11-07T10:01:00Z", 50.0, 8.0, 1000.0),
+            pos("2026-11-07T10:02:00Z", 50.1, 8.1, 2000.0),
+            r#"{"type":"phase_changed","timestamp":"2026-11-07T10:02:30Z","from":"Climb","to":"Cruise","altitude_msl_ft":2000.0,"groundspeed_kt":250.0,"altitude_agl_ft":1900.0}"#.to_string(),
+            r#"{"type":"activity","timestamp":"2026-11-07T10:02:40Z","level":"info","message":"x","detail":null}"#.to_string(),
+            pos("2026-11-07T10:03:00Z", 50.2, 8.2, 3000.0),
+            "kaputte zeile".to_string(),
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn zeiten_mit_und_ohne_versatz() {
+        assert_eq!(zeit_ms("2026-11-07T10:00:00Z"), zeit_ms("2026-11-07 10:00:00"));
+        assert_eq!(zeit_ms("2026-11-07T11:00:00+01:00"), zeit_ms("2026-11-07T10:00:00Z"));
+        assert!(zeit_ms("gestern").is_none());
+    }
+
+    #[test]
+    fn der_naechste_stand_mit_phase_und_flugdaten() {
+        let z = |s| zeit_ms(s).unwrap();
+        let a = protokoll_auswerten(Cursor::new(protokoll()), "P1", &[z("2026-11-07T10:01:50Z"), z("2026-11-07T10:03:10Z")], false);
+        let t0 = a.treffer[0].as_ref().unwrap();
+        assert_eq!(t0.abstand_ms, 10_000, "10:02:00 ist naeher als 10:01:00");
+        assert_eq!(t0.stand["breite"], 50.1);
+        assert_eq!(t0.stand["hoehe_ft"], 2000.0);
+        assert_eq!(t0.stand["phase"], "Climb", "die Phase, die um 10:02:00 galt");
+        assert_eq!(t0.stand["rufzeichen"], "GSG123");
+        assert_eq!((t0.stand["abflug"].as_str(), t0.stand["ziel"].as_str()), (Some("EDDF"), Some("EGLL")));
+        assert_eq!(t0.stand["flugzeug_icao"], "A20N");
+        assert_eq!(t0.stand["simulator"], "Msfs2024");
+        assert_eq!(t0.stand["pirep_id"], "P1");
+        let t1 = a.treffer[1].as_ref().unwrap();
+        assert_eq!(t1.stand["phase"], "Cruise");
+        assert_eq!(t1.abstand_ms, 10_000);
+    }
+
+    #[test]
+    fn zu_weit_weg_ist_kein_stand_nichts_wird_geraten() {
+        let a = protokoll_auswerten(Cursor::new(protokoll()), "P1", &[zeit_ms("2026-11-07T11:00:00Z").unwrap(), zeit_ms("2026-11-07T09:00:00Z").unwrap()], false);
+        assert!(a.treffer.iter().all(Option::is_none));
+        // knapp ausserhalb der Toleranz
+        let b = protokoll_auswerten(Cursor::new(protokoll()), "P1", &[zeit_ms("2026-11-07T10:05:01Z").unwrap()], false);
+        assert!(b.treffer[0].is_none());
+        let c = protokoll_auswerten(Cursor::new(protokoll()), "P1", &[zeit_ms("2026-11-07T10:04:59Z").unwrap()], false);
+        assert!(c.treffer[0].is_some());
+    }
+
+    #[test]
+    fn spur_ausgeduennt_erster_und_letzter_punkt_bleiben() {
+        let a = protokoll_auswerten(Cursor::new(protokoll()), "P1", &[], true);
+        assert_eq!(a.spur, vec![[50.0, 8.0], [50.1, 8.1], [50.2, 8.2]]);
+        let viele: Vec<[f64; 2]> = (0..5000).map(|i| [i as f64, 0.0]).collect();
+        let d = ausduennen(viele.clone(), MAX_SPUR);
+        assert_eq!(d.len(), MAX_SPUR);
+        assert_eq!((d[0], d[MAX_SPUR - 1]), (viele[0], viele[4999]));
+        assert_eq!(ausduennen(vec![[1.0, 2.0]], MAX_SPUR).len(), 1);
+    }
+
+    #[test]
+    fn das_richtige_protokoll_wird_gefunden_und_pirep_namen_sind_streng() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(t.path().join("P1.jsonl"), protokoll()).unwrap();
+        let anderes = protokoll().replace("2026-11-07", "2026-11-06").replace("P1", "P2");
+        fs::write(t.path().join("P2.jsonl"), anderes).unwrap();
+        fs::write(t.path().join("notiz.txt"), "x").unwrap();
+        let z = zeit_ms("2026-11-07T10:02:05Z").unwrap();
+        // Aenderungszeit der Dateien ist „jetzt“ (2026-11-07 oder spaeter): beide Zeitraeume werden geprueft
+        let r = protokoll_staende(t.path(), None, &[z]).unwrap();
+        assert_eq!(r[0].as_ref().unwrap().stand["pirep_id"], "P1");
+        let nur = protokoll_staende(t.path(), Some("P2"), &[z]).unwrap();
+        assert!(nur[0].is_none(), "P2 liegt einen Tag davor");
+        assert!(protokoll_staende(t.path(), Some("../x"), &[z]).is_err());
+        assert_eq!(protokoll_spur(t.path(), "P1").unwrap().len(), 3);
+        assert!(matches!(protokoll_spur(t.path(), "P9"), Err(Fehler::NichtGefunden(_))));
+    }
+
+    #[test]
+    fn logbuch_nur_mit_beiden_block_zeiten_und_nur_was_dasteht() {
+        let ms = |s| zeit_ms(s);
+        let p = PirepKurz {
+            pirep_id: "L1".into(),
+            block_off_ms: ms("2026-11-07T10:00:00Z"),
+            block_on_ms: ms("2026-11-07T12:00:00Z"),
+            flugnummer: Some("9".into()),
+            abflug: Some("EDDF".into()),
+            ziel: None,
+            flugzeug_icao: Some("A20N".into()),
+        };
+        let z = ms("2026-11-07T11:00:00Z").unwrap();
+        let s = logbuch_stand(std::slice::from_ref(&p), z).unwrap();
+        assert_eq!((s["pirep_id"].as_str(), s["abflug"].as_str(), s["ziel"].is_null()), (Some("L1"), Some("EDDF"), true));
+        assert!(!s.contains_key("breite"), "keine Position geraten");
+        assert!(logbuch_stand(std::slice::from_ref(&p), ms("2026-11-07T12:00:01Z").unwrap()).is_none());
+        let ohne_ende = PirepKurz { block_on_ms: None, ..p.clone() };
+        assert!(logbuch_stand(&[ohne_ende], z).is_none(), "ohne Block-on passt nichts");
+    }
+}

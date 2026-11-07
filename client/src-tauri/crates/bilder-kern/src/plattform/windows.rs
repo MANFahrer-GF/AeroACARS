@@ -196,6 +196,12 @@ fn sim_fenster() -> Option<(HWND, RECT)> {
     liste.into_iter().max_by_key(|(_, r)| i64::from(r.right - r.left) * i64::from(r.bottom - r.top))
 }
 
+/// Breite und Hoehe (Pixel) des Simulatorfensters, falls eines offen ist.
+pub fn sim_fenstermasse() -> Option<(u32, u32)> {
+    let (_, r) = sim_fenster()?;
+    Some(((r.right - r.left).max(0) as u32, (r.bottom - r.top).max(0) as u32))
+}
+
 fn ganz_schwarz(bgra: &[u8]) -> bool {
     bgra.chunks_exact(4).step_by(997).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0)
 }

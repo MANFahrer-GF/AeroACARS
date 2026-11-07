@@ -8,6 +8,9 @@
 //!
 //! * [`namen`]       strenge Namenspruefung, ein Bild = Teile mit festen Endungen
 //! * [`speicher`]    verwalteter Ordner: lesen, schreiben (atomar), loeschen
+//! * [`eingang`]     dauerhafter Eingang der Funde (`.eingang/`)
+//! * [`jpeg`]        EXIF/XMP (APP1) aus JPEG-Bytes entfernen
+//! * [`kontext`]     Stand zu einer Zeit aus Flugprotokoll und Logbuch
 //! * [`quellen`]     bestaetigte Quellordner, Uebernahme, „vollstaendig geschrieben“
 //! * [`beobachter`]  Ordnerbeobachtung (Abfrage im Takt), Ereignis `bild_quelle_neu`
 //! * [`live`]        Multipart-Aufbau fuer `POST /api/bilder` (P-7.25 „Vertrag“)
@@ -20,7 +23,10 @@
 //!   Fensteraufnahme, Hotkey); auf anderen Systemen Ersatz ohne Wirkung
 
 pub mod beobachter;
+pub mod eingang;
 pub mod fehler;
+pub mod jpeg;
+pub mod kontext;
 pub mod live;
 pub mod namen;
 pub mod plattform;

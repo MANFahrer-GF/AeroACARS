@@ -123,7 +123,7 @@ fn teile_im_ordner(dir: &Path) -> BTreeMap<String, Vec<Gefunden>> {
 }
 
 /// Liest eine Datei des verwalteten Ordners vom geoeffneten Handle, ohne Linkfolgen.
-fn sicher_lesen(pfad: &Path, max: u64) -> Result<Vec<u8>, Fehler> {
+pub(crate) fn sicher_lesen(pfad: &Path, max: u64) -> Result<Vec<u8>, Fehler> {
     let (Some(dir), Some(name)) = (pfad.parent(), pfad.file_name()) else {
         return Err(Fehler::Pfad("Pfad ungueltig".into()));
     };
@@ -240,6 +240,31 @@ pub struct SchreibAnfrage {
     pub sidecar: Option<Value>,
     /// Eingangskopie dieser id (aus `bild_uebernehmen`/`bild_aufnehmen`) nach dem Schreiben entfernen.
     pub quelle_entfernen: bool,
+    /// Kanonischer Hash (SHA-256, 64 Hex) der EXIF-freien Bytes. Wird im Sidecar
+    /// als `sha256` festgehalten; ein schon vorhandener Hash einer anderen Bild-id
+    /// wird atomar mit `duplikat` abgelehnt. Braucht ein Sidecar.
+    pub sha256: Option<String>,
+}
+
+/// Schreibvorgaenge mit Hash laufen nacheinander: Pruefen und Schreiben ist ein Schritt.
+static SCHREIB_SPERRE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Bild-id, deren Sidecar diesen Hash traegt (nicht `ausser_id`).
+fn hash_vorhanden(wurzel: &Path, hash: &str, ausser_id: &str) -> Option<(String, String)> {
+    for (gruppe, dir) in gruppen(wurzel) {
+        for (id, teile) in teile_im_ordner(&dir) {
+            if id == ausser_id {
+                continue;
+            }
+            let Some(sc) = teile.iter().find(|t| t.teil == Teil::Sidecar) else { continue };
+            let Ok(b) = sicher_lesen(&sc.pfad, MAX_SIDECAR as u64) else { continue };
+            let Ok(v) = serde_json::from_slice::<Value>(&b) else { continue };
+            if v.get("sha256").and_then(Value::as_str).is_some_and(|h| h.eq_ignore_ascii_case(hash)) {
+                return Some((gruppe, id));
+            }
+        }
+    }
+    None
 }
 
 fn temp_name(id: &str, teil: &str) -> String {
@@ -299,6 +324,12 @@ fn teile_von(wurzel: &Path, id: &str) -> Vec<(String, Gefunden)> {
 }
 
 pub fn schreiben(wurzel: &Path, a: SchreibAnfrage) -> Result<Eintrag, Fehler> {
+    // Mit Hash: Duplikatpruefung und Schreiben als ein Schritt (auch bei zwei gleichzeitigen Aufrufen).
+    let _sperre = SCHREIB_SPERRE.lock().unwrap_or_else(|e| e.into_inner());
+    schreiben_gesperrt(wurzel, a)
+}
+
+fn schreiben_gesperrt(wurzel: &Path, mut a: SchreibAnfrage) -> Result<Eintrag, Fehler> {
     name_pruefen("Gruppe", &a.gruppe)?;
     name_pruefen("Bild-id", &a.id)?;
     for (was, b) in [("JPEG", &a.jpeg), ("Vorschau", &a.vorschau)] {
@@ -309,6 +340,24 @@ pub fn schreiben(wurzel: &Path, a: SchreibAnfrage) -> Result<Eintrag, Fehler> {
             if b.len() as u64 > MAX_DATEI {
                 return Err(Fehler::Gross(format!("{was} ist zu gross")));
             }
+        }
+    }
+    let hash = match a.sha256.take() {
+        None => None,
+        Some(h) => {
+            let h = h.trim().to_ascii_lowercase();
+            if h.len() != 64 || !h.bytes().all(|c| c.is_ascii_hexdigit()) {
+                return Err(Fehler::Eingabe("sha256 muss 64 Hexzeichen haben".into()));
+            }
+            Some(h)
+        }
+    };
+    if let Some(h) = &hash {
+        match a.sidecar.as_mut() {
+            Some(Value::Object(m)) => {
+                m.insert("sha256".into(), Value::String(h.clone()));
+            }
+            _ => return Err(Fehler::Eingabe("sha256 braucht das Sidecar".into())),
         }
     }
     let sidecar_bytes = match &a.sidecar {
@@ -324,6 +373,21 @@ pub fn schreiben(wurzel: &Path, a: SchreibAnfrage) -> Result<Eintrag, Fehler> {
     };
 
     let dir = wurzel.join(&a.gruppe);
+    if let Some(h) = &hash {
+        if let Some((g, i)) = hash_vorhanden(wurzel, h, &a.id) {
+            // Die Eingangskopie dieser (nie angelegten) Bild-id bleibt nicht als Waise liegen.
+            let neu = !dir.join(Teil::Jpeg.dateiname(&a.id)).exists() && !dir.join(Teil::Sidecar.dateiname(&a.id)).exists();
+            if neu {
+                for (_, t) in teile_von(wurzel, &a.id) {
+                    if matches!(t.teil, Teil::Quelle(_)) {
+                        let _ = fs::remove_file(&t.pfad);
+                    }
+                }
+                let _ = fs::remove_dir(wurzel.join("eingang"));
+            }
+            return Err(Fehler::Duplikat(format!("{g}/{i}")));
+        }
+    }
     let hat_jpeg = dir.join(Teil::Jpeg.dateiname(&a.id)).exists();
     let hat_sidecar = dir.join(Teil::Sidecar.dateiname(&a.id)).exists();
     let neu = !hat_jpeg && !hat_sidecar;
@@ -560,6 +624,24 @@ fn loeschen_mit(
     Ok(entfernt)
 }
 
+/// Der Pfad des JPEG eines Bildes fuer „Im Ordner zeigen“: nur ein echtes, vorhandenes
+/// JPEG im verwalteten Ordner (kein Link auf dem Weg), Ausbruch ausgeschlossen wie bei [`lesen`].
+pub fn jpeg_pfad(wurzel: &Path, gruppe: &str, id: &str) -> Result<PathBuf, Fehler> {
+    name_pruefen("Gruppe", gruppe)?;
+    name_pruefen("Bild-id", id)?;
+    match fs::symlink_metadata(wurzel) {
+        Err(_) => return Err(Fehler::NichtGefunden("Bilderordner fehlt".into())),
+        Ok(m) if m.file_type().is_symlink() || !m.is_dir() => return Err(Fehler::Pfad("Der Bilderordner ist kein echter Ordner".into())),
+        Ok(_) => {}
+    }
+    let rel = PathBuf::from(gruppe).join(Teil::Jpeg.dateiname(id));
+    sicher::datei_oeffnen(wurzel, &rel).map_err(|e| match e {
+        Fehler::NichtGefunden(_) => Fehler::NichtGefunden(format!("Bild {gruppe}/{id} nicht gefunden")),
+        anders => anders,
+    })?;
+    Ok(wurzel.join(rel))
+}
+
 /// Legt eine Eingangskopie ab (`<gruppe>/<id>.quelle.<ext>`) aus Bytes; fuer die Fensteraufnahme.
 pub fn quelle_schreiben(wurzel: &Path, gruppe: &str, id: &str, format: QuellFormat, bytes: &[u8]) -> Result<Eintrag, Fehler> {
     name_pruefen("Gruppe", gruppe)?;
@@ -619,6 +701,7 @@ mod tests {
             vorschau: Some(jpeg(2)),
             sidecar: Some(json!({"bild_id": id, "text": "Hallo"})),
             quelle_entfernen: false,
+            sha256: None,
         }
     }
 
@@ -994,5 +1077,75 @@ mod tests {
         assert_eq!(l.eintraege.len(), 1);
         assert!(l.eintraege.iter().all(|e| e.id != "b9"));
         assert!(matches!(lesen(&wurzel, ".loeschen/b9.jpg"), Err(Fehler::Pfad(_))));
+    }
+
+    fn mit_hash(gruppe: &str, id: &str, hash: &str) -> SchreibAnfrage {
+        let mut a = anfrage(gruppe, id);
+        a.sha256 = Some(hash.to_string());
+        a
+    }
+    const H1: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const H2: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    #[test]
+    fn ein_vorhandener_hash_wird_als_duplikat_abgelehnt_und_die_eingangskopie_geraeumt() {
+        let t = tempfile::tempdir().unwrap();
+        let w = t.path().join("bilder");
+        let e = schreiben(&w, mit_hash("g1", "b1", H1)).unwrap();
+        assert_eq!(e.sidecar.unwrap()["sha256"], H1, "Hash steht im Sidecar");
+        // neue Bild-id mit Eingangskopie, gleicher Hash -> Duplikat, Kopie weg, nichts angelegt
+        quelle_schreiben(&w, "eingang", "b2", QuellFormat::Png, b"png").unwrap();
+        let r = schreiben(&w, mit_hash("g2", "b2", &H1.to_uppercase()));
+        assert!(matches!(&r, Err(Fehler::Duplikat(m)) if m == "g1/b1"), "{r:?}");
+        assert_eq!(r.unwrap_err().code(), "duplikat");
+        assert!(!w.join("eingang").exists(), "keine Waise in eingang/");
+        assert!(!w.join("g2").exists());
+        assert_eq!(liste(&w).eintraege.len(), 1);
+        // anderer Hash geht; dieselbe id mit demselben Hash (Aktualisieren) ist kein Duplikat
+        assert!(schreiben(&w, mit_hash("g2", "b2", H2)).is_ok());
+        assert!(schreiben(&w, mit_hash("g1", "b1", H1)).is_ok(), "Aktualisieren des eigenen Bildes");
+        // Formfehler
+        assert!(matches!(schreiben(&w, mit_hash("g3", "b3", "zz")), Err(Fehler::Eingabe(_))));
+        let mut ohne_sc = mit_hash("g1", "b1", H1);
+        ohne_sc.sidecar = None;
+        assert!(matches!(schreiben(&w, ohne_sc), Err(Fehler::Eingabe(_))));
+    }
+
+    #[test]
+    fn zwei_gleichzeitige_schreiber_mit_gleichem_hash_lassen_genau_einen_durch() {
+        let t = tempfile::tempdir().unwrap();
+        let w = std::sync::Arc::new(t.path().join("bilder"));
+        let start = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let hs: Vec<_> = (0..8)
+            .map(|i| {
+                let (w, start) = (w.clone(), start.clone());
+                std::thread::spawn(move || {
+                    start.wait();
+                    schreiben(&w, mit_hash(&format!("g{i}"), &format!("b{i}"), H1)).is_ok()
+                })
+            })
+            .collect();
+        let ok = hs.into_iter().map(|h| h.join().unwrap()).filter(|b| *b).count();
+        assert_eq!(ok, 1, "atomar: nur ein Bild mit diesem Hash");
+        assert_eq!(liste(&w).eintraege.len(), 1);
+    }
+
+    #[test]
+    fn jpeg_pfad_nur_fuer_ein_echtes_jpeg_im_ordner() {
+        let t = tempfile::tempdir().unwrap();
+        let w = t.path().join("bilder");
+        schreiben(&w, anfrage("g", "b1")).unwrap();
+        assert_eq!(jpeg_pfad(&w, "g", "b1").unwrap(), w.join("g/b1.jpg"));
+        assert!(matches!(jpeg_pfad(&w, "g", "nix"), Err(Fehler::NichtGefunden(_))));
+        assert!(matches!(jpeg_pfad(&w, "..", "b1"), Err(Fehler::Name(_))));
+        assert!(matches!(jpeg_pfad(&w, "g", "../b1"), Err(Fehler::Name(_))));
+        assert!(matches!(jpeg_pfad(&t.path().join("fehlt"), "g", "b1"), Err(Fehler::NichtGefunden(_))));
+        #[cfg(unix)]
+        {
+            let geheim = t.path().join("geheim.jpg");
+            fs::write(&geheim, jpeg(9)).unwrap();
+            std::os::unix::fs::symlink(&geheim, w.join("g/x1.jpg")).unwrap();
+            assert!(matches!(jpeg_pfad(&w, "g", "x1"), Err(Fehler::Pfad(_))), "ein Link zeigt nicht nach aussen");
+        }
     }
 }

@@ -38,7 +38,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::quellen::{abmessungen, handle_vollstaendig, BildFormat, Quelle};
@@ -57,7 +57,7 @@ const TAKT_MS: u64 = 1500;
 /// Weitere werden erst aufgenommen, wenn Platz ist (der Ordner wird dann neu gelesen).
 const MAX_WARTEND: usize = 512;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Fund {
     pub pfad: String,
     /// Aenderungszeit der Datei (ms seit 1970, UTC).
@@ -67,12 +67,14 @@ pub struct Fund {
     pub format: BildFormat,
     /// Die Datei ist JPG/PNG und abgeschlossen. `false` bei `.jxr` (HDR): wird gemeldet, nie uebernommen.
     pub uebernehmbar: bool,
-    pub breite: Option<u32>,
-    pub hoehe: Option<u32>,
+    pub px_breite: Option<u32>,
+    pub px_hoehe: Option<u32>,
     /// SHA-256 der Originaldatei, fuer die Duplikaterkennung des Pakets.
     pub sha256: Option<String>,
     /// Pfad der bestaetigten Quelle, in der sie liegt.
     pub quelle: String,
+    /// Art dieser Quelle (`standard`, `aufgespuert`, `hand`, sonst frei).
+    pub art: Option<String>,
     /// Stand ein Simulatorfenster im Vordergrund, als die Datei auftauchte (oder im Takt davor)?
     /// `None`, wo das System es nicht ermitteln kann.
     pub sim_vordergrund: Option<bool>,
@@ -366,13 +368,14 @@ impl Stand {
                     groesse: md.len(),
                     format,
                     uebernehmbar: false,
-                    breite: None,
-                    hoehe: None,
+                    px_breite: None,
+                    px_hoehe: None,
                     sha256: None,
                     quelle: self.quelle.pfad.clone(),
+                    art: self.quelle.art.clone(),
                     sim_vordergrund: vg,
                 }),
-                _ => Self::fund_lesen(&p, format, &self.quelle.pfad, vg),
+                _ => Self::fund_lesen(&p, format, &self.quelle.pfad, self.quelle.art.clone(), vg),
             };
             match ergebnis {
                 Ok(fund) => {
@@ -402,7 +405,7 @@ impl Stand {
     /// Oeffnet die Datei einmal (ohne Linkfolgen), prueft am Handle, dass sie
     /// vollstaendig ist, und liest sie von dort; Hash und Masse kommen aus
     /// denselben Bytes. Jede Abweichung ist ein Fehler, nie ein stilles „nichts“.
-    fn fund_lesen(p: &Path, format: BildFormat, quelle: &str, vg: Option<bool>) -> Result<Fund, Fehler> {
+    fn fund_lesen(p: &Path, format: BildFormat, quelle: &str, art: Option<String>, vg: Option<bool>) -> Result<Fund, Fehler> {
         let mut f = sicher::lesend_ohne_folgen(p).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => Fehler::NichtGefunden(e.to_string()),
             _ => Fehler::Unfertig(format!("Datei nicht lesbar (noch in Benutzung?): {e}")),
@@ -423,10 +426,11 @@ impl Stand {
             groesse,
             format,
             uebernehmbar: true,
-            breite: b,
-            hoehe: h,
+            px_breite: b,
+            px_hoehe: h,
             sha256: Some(Sha256::digest(&bytes).iter().map(|x| format!("{x:02x}")).collect()),
             quelle: quelle.to_string(),
+            art,
             sim_vordergrund: vg,
         })
     }
@@ -615,7 +619,7 @@ mod tests {
         let f = b.takt(1500, None);
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].pfad, neu.to_string_lossy());
-        assert_eq!((f[0].breite, f[0].hoehe), (Some(2560), Some(1440)));
+        assert_eq!((f[0].px_breite, f[0].px_hoehe), (Some(2560), Some(1440)));
         assert!(f[0].uebernehmbar && f[0].sha256.as_ref().unwrap().len() == 64);
         assert!(b.takt(3000, None).is_empty(), "nur einmal");
         assert_eq!(b.altbestand().len(), 1, "Altbestand bleibt die Grundlage vom Aufsetzen");
@@ -701,7 +705,7 @@ mod tests {
         fs::write(&p, png_bytes(77, 55)).unwrap();
         let f: Vec<Fund> = (0..4).flat_map(|i| b.takt(13_000 + i * 1500, None)).collect();
         assert_eq!(f.len(), 1, "gleicher Name, neues Bild: wird gemeldet");
-        assert_eq!((f[0].breite, f[0].hoehe), (Some(77), Some(55)));
+        assert_eq!((f[0].px_breite, f[0].px_hoehe), (Some(77), Some(55)));
     }
 
     #[test]
@@ -820,7 +824,7 @@ mod tests {
         takte(&mut b, 1, None);
         let f = (1..4).flat_map(|i| b.takt(i * 1500, None)).collect::<Vec<_>>();
         assert_eq!(f.len(), 1);
-        assert_eq!((f[0].breite, f[0].hoehe), (Some(1470), Some(896)));
+        assert_eq!((f[0].px_breite, f[0].px_hoehe), (Some(1470), Some(896)));
         assert!(b.status()[0].beobachtet && b.status()[0].fehler.is_none());
     }
 

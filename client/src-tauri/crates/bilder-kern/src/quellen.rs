@@ -232,9 +232,11 @@ pub fn quelle_zu_pfad<'a>(echt: &Path, quellen: &'a [Quelle]) -> Result<(&'a Que
 pub enum Modus {
     Verschieben,
     Kopieren,
+    /// Nur den Eingangseintrag entfernen; die Quelldatei bleibt unangetastet.
+    Verwerfen,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BildFormat {
     Png,
@@ -539,7 +541,9 @@ fn id_waehlen(gruppe: &str, id: Option<&str>) -> Result<String, Fehler> {
 /// Nimmt eine Datei aus einer bestaetigten Quelle in den Bilderordner. Das
 /// Paket liest sie von dort (`bild_lesen`), macht das JPEG und schreibt es mit
 /// `bild_schreiben` (`quelle_entfernen`); bis dahin ist nichts verloren, auch
-/// wenn das Programm abbricht. Ohne aktiven Flug: `kein_flug`.
+/// wenn das Programm abbricht. Ohne aktiven Flug: `kein_flug`. (Der Befehl
+/// arbeitet ueber den Eingang, siehe [`uebernehmen_fund`]; diese Funktion ist
+/// der Pfad-Teil dahinter.)
 pub fn uebernehmen(
     wurzel: &Path,
     quellen: &[Quelle],
@@ -551,6 +555,21 @@ pub fn uebernehmen(
 ) -> Result<Uebernahme, Fehler> {
     if !lage.flug_aktiv {
         return Err(Fehler::KeinFlug("Ohne AeroACARS-Flug wird nichts uebernommen".into()));
+    }
+    uebernehmen_pfad(wurzel, quellen, pfad, modus, gruppe, id, lage.stabil_pause)
+}
+
+fn uebernehmen_pfad(
+    wurzel: &Path,
+    quellen: &[Quelle],
+    pfad: &str,
+    modus: Modus,
+    gruppe: &str,
+    id: Option<&str>,
+    stabil_pause: Duration,
+) -> Result<Uebernahme, Fehler> {
+    if modus == Modus::Verwerfen {
+        return Err(Fehler::Eingabe("Verwerfen hat keine Datei zu uebernehmen".into()));
     }
     let id = id_waehlen(gruppe, id)?;
     let p = Path::new(pfad);
@@ -564,7 +583,93 @@ pub fn uebernehmen(
         return Err(Fehler::Verboten("Aus dieser Quelle darf nicht verschoben werden, nur kopiert".into()));
     }
     let rel = echt.strip_prefix(&qk).map_err(|_| Fehler::Quelle("Pfad liegt nicht in der Quelle".into()))?;
-    datei_uebernehmen(wurzel, &qk, rel, modus, gruppe, &id, lage.stabil_pause)
+    datei_uebernehmen(wurzel, &qk, rel, modus, gruppe, &id, stabil_pause)
+}
+
+/// Ergebnis von [`uebernehmen_fund`].
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum FundErgebnis {
+    Uebernommen(Uebernahme),
+    Verworfen { fund_id: String, verworfen: bool },
+}
+
+/// Arbeitet einen Fund des Eingangs ab. Der Fund steht nur im Eingang, wenn er
+/// in einem aktiven Flug entstand (Pruefung `hat_flug`); die Uebernahme selbst
+/// darf nach Flugende laufen. `Verwerfen` entfernt nur den Eintrag und fasst die
+/// Quelldatei nie an (eine eigene Aufnahme-Kopie im Bilderordner wird mit
+/// entfernt, sie hat kein Original). Nach Erfolg wird der Eintrag entfernt.
+pub fn uebernehmen_fund(
+    wurzel: &Path,
+    quellen: &[Quelle],
+    fund_id: &str,
+    modus: Modus,
+    gruppe: Option<&str>,
+    id: Option<&str>,
+    stabil_pause: Duration,
+) -> Result<FundErgebnis, Fehler> {
+    let fund = crate::eingang::lesen(wurzel, fund_id)?;
+    if modus == Modus::Verwerfen {
+        if fund.herkunft == "aufnahme" {
+            if let Some(rel) = &fund.quelle_pfad {
+                if let Ok((g, i, t)) = crate::namen::rel_pfad_lesen(rel) {
+                    let p = wurzel.join(&g).join(t.dateiname(&i));
+                    if fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
+                        fs::remove_file(&p)?;
+                    }
+                    let _ = fs::remove_dir(wurzel.join(g)); // nur, wenn leer
+                }
+            }
+        }
+        crate::eingang::entfernen(wurzel, fund_id)?;
+        return Ok(FundErgebnis::Verworfen { fund_id: fund_id.to_string(), verworfen: true });
+    }
+    if !fund.hat_flug() {
+        return Err(Fehler::KeinFlug("Dieser Fund entstand nicht in einem AeroACARS-Flug".into()));
+    }
+    if !fund.uebernehmbar {
+        return Err(Fehler::Format("Dieser Fund (z. B. HDR) laesst sich nicht uebernehmen; bitte verwerfen".into()));
+    }
+    let gruppe = gruppe.ok_or_else(|| Fehler::Eingabe("gruppe fehlt".into()))?;
+    let u = match fund.herkunft.as_str() {
+        "aufnahme" => aufnahme_umhaengen(wurzel, &fund, modus, gruppe, id)?,
+        _ => {
+            let pfad = fund.pfad.as_deref().ok_or_else(|| Fehler::Eingabe("Fund ohne Pfad".into()))?;
+            uebernehmen_pfad(wurzel, quellen, pfad, modus, gruppe, id, stabil_pause)?
+        }
+    };
+    crate::eingang::entfernen(wurzel, fund_id)?;
+    Ok(FundErgebnis::Uebernommen(u))
+}
+
+/// Eine Fensteraufnahme liegt schon im Bilderordner: sie wandert in die gewaehlte Gruppe.
+fn aufnahme_umhaengen(wurzel: &Path, fund: &crate::eingang::EingangsFund, modus: Modus, gruppe: &str, id: Option<&str>) -> Result<Uebernahme, Fehler> {
+    let rel = fund.quelle_pfad.as_deref().ok_or_else(|| Fehler::Eingabe("Aufnahme ohne Eingangskopie".into()))?;
+    let (g0, id0, teil) = crate::namen::rel_pfad_lesen(rel)?;
+    let Teil::Quelle(qf) = teil else { return Err(Fehler::Pfad("Eingangskopie erwartet".into())) };
+    let neue_id = id_waehlen(gruppe, id.or(Some(&id0)))?;
+    let (f, md) = sicher::datei_oeffnen(wurzel, Path::new(&g0).join(teil.dateiname(&id0)).as_path())?;
+    drop(f);
+    let dir = wurzel.join(gruppe);
+    crate::speicher::ordner_vorbereiten(wurzel, &dir)?;
+    let ziel = dir.join(Teil::Quelle(qf).dateiname(&neue_id));
+    if ziel.exists() {
+        return Err(Fehler::Name(format!("Bild-id {neue_id} hat in {gruppe} schon eine Eingangskopie")));
+    }
+    fs::rename(wurzel.join(&g0).join(teil.dateiname(&id0)), &ziel)?;
+    if g0 != gruppe {
+        let _ = fs::remove_dir(wurzel.join(&g0)); // nur, wenn leer
+    }
+    Ok(Uebernahme {
+        quelle_pfad: crate::namen::rel_pfad(gruppe, &Teil::Quelle(qf).dateiname(&neue_id)),
+        id: neue_id,
+        gruppe: gruppe.to_string(),
+        format: if qf == QuellFormat::Png { BildFormat::Png } else { BildFormat::Jpeg },
+        groesse: md.len(),
+        dateizeit_ms: fund.dateizeit_ms,
+        modus,
+        original_entfernt: false,
+    })
 }
 
 /// Eine vom Piloten gewaehlte oder hineingezogene Datei (auch ausserhalb der
@@ -966,5 +1071,95 @@ pub(crate) mod tests {
         let viele = vec!["/x.png".to_string(); MAX_HINZUFUEGEN + 1];
         assert!(matches!(hinzufuegen_mehrere(&wurzel, &viele, "g", PAUSE), Err(Fehler::Eingabe(_))));
         assert!(matches!(hinzufuegen_mehrere(&wurzel, &pfade, "..", PAUSE), Err(Fehler::Name(_))));
+    }
+
+    fn fund_ablegen(wurzel: &Path, id: &str, pfad: &Path, pirep: &str) {
+        use crate::eingang::{ablegen, EingangsFund};
+        let f = crate::beobachter::Fund {
+            pfad: pfad.to_string_lossy().into(),
+            dateizeit_ms: Some(1),
+            erstellt_ms: None,
+            groesse: 10,
+            format: BildFormat::Png,
+            uebernehmbar: true,
+            px_breite: Some(100),
+            px_hoehe: Some(50),
+            sha256: Some("ab".into()),
+            quelle: pfad.parent().unwrap().to_string_lossy().into(),
+            art: Some("hand".into()),
+            sim_vordergrund: Some(true),
+        };
+        ablegen(wurzel, &EingangsFund::aus_fund(&f, id.into(), 5, None, serde_json::json!({"pirep_id": pirep, "phase": "Cruise"}))).unwrap();
+    }
+
+    #[test]
+    fn fund_uebernehmen_auch_nach_flugende_und_der_eintrag_verschwindet() {
+        let (_t, wurzel, src, q) = aufbau(true);
+        let a = src.join("a.png");
+        fs::write(&a, png_bytes(100, 50)).unwrap();
+        fund_ablegen(&wurzel, "f1", &a, "P1");
+        // kein aktiver Flug mehr noetig: der Fund steht im Eingang
+        let r = uebernehmen_fund(&wurzel, &q, "f1", Modus::Kopieren, Some("g"), Some("b1"), PAUSE).unwrap();
+        let FundErgebnis::Uebernommen(u) = r else { panic!("Uebernahme erwartet") };
+        assert_eq!(u.quelle_pfad, "g/b1.quelle.png");
+        assert!(a.exists());
+        assert!(crate::eingang::liste(&wurzel).is_empty(), "abgearbeitet = Eintrag entfernt");
+        // der Eintrag war einmalig
+        assert!(matches!(uebernehmen_fund(&wurzel, &q, "f1", Modus::Kopieren, Some("g"), Some("b2"), PAUSE), Err(Fehler::NichtGefunden(_))));
+    }
+
+    #[test]
+    fn fund_verwerfen_fasst_die_quelldatei_nie_an() {
+        let (_t, wurzel, src, q) = aufbau(true);
+        let a = src.join("a.png");
+        fs::write(&a, png_bytes(100, 50)).unwrap();
+        fund_ablegen(&wurzel, "f1", &a, "P1");
+        let r = uebernehmen_fund(&wurzel, &q, "f1", Modus::Verwerfen, None, None, PAUSE).unwrap();
+        assert_eq!(r, FundErgebnis::Verworfen { fund_id: "f1".into(), verworfen: true });
+        assert!(a.exists(), "Quelldatei bleibt");
+        assert!(crate::eingang::liste(&wurzel).is_empty());
+        assert!(!wurzel.join("g").exists());
+    }
+
+    #[test]
+    fn fund_regeln_verschieben_nur_mit_freigabe_gruppe_pflicht_und_flug_im_eintrag() {
+        let (_t, wurzel, src, q) = aufbau(false);
+        let a = src.join("a.png");
+        fs::write(&a, png_bytes(100, 50)).unwrap();
+        fund_ablegen(&wurzel, "f1", &a, "P1");
+        assert!(matches!(uebernehmen_fund(&wurzel, &q, "f1", Modus::Verschieben, Some("g"), None, PAUSE), Err(Fehler::Verboten(_))));
+        assert!(matches!(uebernehmen_fund(&wurzel, &q, "f1", Modus::Kopieren, None, None, PAUSE), Err(Fehler::Eingabe(_))));
+        assert_eq!(crate::eingang::liste(&wurzel).len(), 1, "Fehler lassen den Eintrag stehen");
+        assert!(a.exists());
+        // ein Eintrag ohne Flug (von Hand verfaelscht) wird nicht uebernommen
+        let mut f = crate::eingang::lesen(&wurzel, "f1").unwrap();
+        f.meta_basis = serde_json::json!({});
+        fs::write(wurzel.join(".eingang/f1.json"), serde_json::to_vec(&f).unwrap()).unwrap();
+        assert!(matches!(uebernehmen_fund(&wurzel, &q, "f1", Modus::Kopieren, Some("g"), None, PAUSE), Err(Fehler::KeinFlug(_))));
+        // Datei ausserhalb einer aktiven Quelle: weiter abgelehnt
+        let mut q2 = q.clone();
+        q2[0].aktiv = false;
+        let mut f2 = crate::eingang::lesen(&wurzel, "f1").unwrap();
+        f2.meta_basis = serde_json::json!({"pirep_id": "P"});
+        fs::write(wurzel.join(".eingang/f1.json"), serde_json::to_vec(&f2).unwrap()).unwrap();
+        assert!(matches!(uebernehmen_fund(&wurzel, &q2, "f1", Modus::Kopieren, Some("g"), None, PAUSE), Err(Fehler::Quelle(_))));
+    }
+
+    #[test]
+    fn aufnahme_fund_wandert_in_die_gruppe_und_verwerfen_raeumt_die_eigene_kopie() {
+        use crate::eingang::{ablegen, EingangsFund};
+        let t = tempfile::tempdir().unwrap();
+        let w = t.path().join("bilder");
+        for id in ["a1", "a2"] {
+            crate::speicher::quelle_schreiben(&w, "eingang", id, QuellFormat::Png, &png_bytes(30, 20)).unwrap();
+            ablegen(&w, &EingangsFund::aufnahme(id.into(), 1, format!("eingang/{id}.quelle.png"), 50, 30, 20, None, serde_json::json!({"pirep_id": "P1"}))).unwrap();
+        }
+        let r = uebernehmen_fund(&w, &[], "a1", Modus::Kopieren, Some("P1"), None, PAUSE).unwrap();
+        let FundErgebnis::Uebernommen(u) = r else { panic!() };
+        assert_eq!((u.quelle_pfad.as_str(), u.id.as_str()), ("P1/a1.quelle.png", "a1"));
+        assert!(w.join("P1/a1.quelle.png").exists() && !w.join("eingang/a1.quelle.png").exists());
+        uebernehmen_fund(&w, &[], "a2", Modus::Verwerfen, None, None, PAUSE).unwrap();
+        assert!(!w.join("eingang").exists(), "keine Waise der Aufnahme");
+        assert!(crate::eingang::liste(&w).is_empty());
     }
 }

@@ -1681,6 +1681,8 @@ mod tests {
             "bild_status",
             "bild_senden",
             "bild_hinzufuegen",
+            "bild_kontext",
+            "bild_ordner_zeigen",
             "bild_loeschen",
             "bild_quellen_setzen",
             "bild_export",

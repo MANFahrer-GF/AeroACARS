@@ -28,6 +28,32 @@ pub struct LiveBild {
     pub meta: Value,
 }
 
+/// Ein Bild der Sendung, nur als Kennung: der Kern liest die verwaltete Datei selbst.
+#[derive(Debug, Clone)]
+pub struct BildKennung {
+    pub gruppe: String,
+    pub bild_id: String,
+    pub meta: Value,
+}
+
+/// Liest `<gruppe>/<bild_id>.jpg` aus dem verwalteten Ordner (sicher, ohne Linkfolgen)
+/// und entfernt alle APP1-Segmente (EXIF mit GPS, XMP). Gleiche Datei ergibt
+/// gleiche Bytes.
+pub fn bilder_aus_dateien(wurzel: &std::path::Path, kennungen: &[BildKennung]) -> Result<Vec<LiveBild>, Fehler> {
+    kennungen
+        .iter()
+        .map(|k| {
+            crate::namen::name_pruefen("Gruppe", &k.gruppe)?;
+            crate::namen::name_pruefen("Bild-id", &k.bild_id)?;
+            let roh = crate::speicher::lesen(wurzel, &crate::namen::rel_pfad(&k.gruppe, &crate::namen::Teil::Jpeg.dateiname(&k.bild_id)))?;
+            if !ist_jpeg(&roh) {
+                return Err(Fehler::Format(format!("{}/{} ist kein JPEG", k.gruppe, k.bild_id)));
+            }
+            Ok(LiveBild { bild_id: k.bild_id.clone(), jpeg: crate::jpeg::app1_entfernen(&roh)?, meta: k.meta.clone() })
+        })
+        .collect()
+}
+
 /// Kanonische Schreibweise 8-4-4-4-12 (Hex, beliebige Gross-/Kleinschreibung).
 pub fn ist_uuid(s: &str) -> bool {
     let b = s.as_bytes();
@@ -269,5 +295,32 @@ pub(crate) mod tests {
         assert_eq!(status_url("https://live.example", None).unwrap(), "https://live.example/api/bilder/status");
         assert_eq!(status_url("https://live.example", Some(S)).unwrap(), format!("https://live.example/api/bilder/status?sendung_id={S}"));
         assert!(status_url("https://live.example", Some("x&y=1")).is_err());
+    }
+
+    #[test]
+    fn bilder_aus_dateien_liest_selbst_und_entfernt_exif_deterministisch() {
+        use serde_json::json;
+        let t = tempfile::tempdir().unwrap();
+        let mut j = vec![0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x0A, b'E', b'x', b'i', b'f', 0, 0, 1, 2]; // APP1
+        j.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x04, 0, 0, 0x55, 0xFF, 0xD9]);
+        crate::speicher::schreiben(
+            t.path(),
+            crate::speicher::SchreibAnfrage { gruppe: "g".into(), id: "b1".into(), jpeg: Some(j.clone()), sidecar: Some(json!({"bild_id": "b1"})), ..Default::default() },
+        )
+        .unwrap();
+        let k = [BildKennung { gruppe: "g".into(), bild_id: "b1".into(), meta: json!({"fassung": 1}) }];
+        let a = bilder_aus_dateien(t.path(), &k).unwrap();
+        let b = bilder_aus_dateien(t.path(), &k).unwrap();
+        assert_eq!(a[0].jpeg, b[0].jpeg, "gleiche Datei, gleiche Upload-Bytes");
+        assert!(!a[0].jpeg.windows(4).any(|w| w == b"Exif"), "EXIF ist weg");
+        assert_eq!(&a[0].jpeg[..2], &[0xFF, 0xD8]);
+        assert!(a[0].jpeg.len() < j.len());
+        // Datei auf der Platte bleibt unveraendert (EXIF dient der Datei auf dem Rechner)
+        assert_eq!(std::fs::read(t.path().join("g/b1.jpg")).unwrap(), j);
+        // Fehlerfaelle
+        let fehlt = [BildKennung { gruppe: "g".into(), bild_id: "nix".into(), meta: json!({}) }];
+        assert!(matches!(bilder_aus_dateien(t.path(), &fehlt), Err(Fehler::NichtGefunden(_))));
+        let schlecht = [BildKennung { gruppe: "../x".into(), bild_id: "b1".into(), meta: json!({}) }];
+        assert!(matches!(bilder_aus_dateien(t.path(), &schlecht), Err(Fehler::Name(_))));
     }
 }
