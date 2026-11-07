@@ -57,7 +57,16 @@ pub struct Quelle {
     /// Pakets (z. B. `xplane_standard`) bleiben erlaubt.
     #[serde(default)]
     pub art: Option<String>,
+    /// Der aufgeloeste (kanonische) Pfad zum Zeitpunkt der Bestaetigung. Ist der
+    /// Ordner spaeter ein anderer (Pfad durch Link/Junction ersetzt), wird die
+    /// Quelle nicht beobachtet und nichts daraus uebernommen. Fehlt der Wert
+    /// (alte Einstellungen), bindet ihn der naechste Start an den dann gueltigen Pfad.
+    #[serde(default)]
+    pub kanonisch: Option<String>,
 }
+
+/// Fehlerbezeichnung im Quellenstatus, wenn der Pfad nicht mehr der bestaetigte Ordner ist.
+pub const FEHLER_QUELLE_GEAENDERT: &str = "quelle_geaendert";
 
 fn wahr() -> bool {
     true
@@ -125,10 +134,33 @@ fn aufloesen(p: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Gehoert der Pfad der Quelle noch zu dem Ordner, den der Pilot bestaetigt hat?
+/// Ohne gespeicherte Identitaet (alte Einstellungen) gilt er als unveraendert.
+/// Ein fehlender Ordner (Laufwerk offline) ist keine Aenderung, das meldet die
+/// Beobachtung als `nicht_vorhanden`.
+pub fn identitaet_stimmt(q: &Quelle) -> bool {
+    let Some(soll) = &q.kanonisch else { return true };
+    let roh = Path::new(&q.pfad);
+    !roh.exists() || aufloesen(roh).is_some_and(|ist| ist.to_string_lossy() == soll.as_str())
+}
+
+/// Bindet jede Quelle ohne gespeicherte Identitaet an den heute aufgeloesten
+/// Pfad. Gibt zurueck, ob etwas gebunden wurde (dann neu speichern).
+pub fn identitaet_binden(e: &mut Einstellungen) -> bool {
+    let mut geaendert = false;
+    for q in e.quellen.iter_mut().filter(|q| q.kanonisch.is_none()) {
+        if let Some(k) = aufloesen(Path::new(&q.pfad)) {
+            q.kanonisch = Some(k.to_string_lossy().into_owned());
+            geaendert = true;
+        }
+    }
+    geaendert
+}
+
 /// Ein vom Piloten gewaehlter Ordner: aktiv, **nur kopieren** (`original_entfernen`
 /// aus; je Quelle spaeter einschaltbar), Art `hand`.
 pub fn quelle_von_hand(pfad: &Path) -> Quelle {
-    Quelle { pfad: pfad.to_string_lossy().into_owned(), aktiv: true, original_entfernen: false, art: Some(ART_HAND.to_string()) }
+    Quelle { pfad: pfad.to_string_lossy().into_owned(), aktiv: true, original_entfernen: false, art: Some(ART_HAND.to_string()), kanonisch: None }
 }
 
 /// Haengt `neu` an die Liste. Steht der Ordner (aufgeloest) schon darin, bleibt
@@ -167,6 +199,12 @@ pub fn einstellungen_neu(
         },
         yoke: yoke.unwrap_or_else(|| bisher.yoke.clone()),
     };
+    // Die Identitaet kommt nie vom Aufrufer: eine bekannte Quelle behaelt die
+    // bestaetigte, eine neue wird jetzt gebunden. (Ersetzt ein Pilot den Ordner
+    // einer Quelle bewusst, nimmt er sie heraus und fuegt sie neu hinzu.)
+    for q in &mut neu.quellen {
+        q.kanonisch = bisher.quellen.iter().find(|b| b.pfad == q.pfad).and_then(|b| b.kanonisch.clone());
+    }
     match ordner {
         Some(o) => {
             let (mit, _) = quelle_anhaengen(&neu, quelle_von_hand(o), bilder_wurzel, home)?;
@@ -174,6 +212,7 @@ pub fn einstellungen_neu(
         }
         None => einstellungen_pruefen(&neu, bilder_wurzel, home)?,
     }
+    identitaet_binden(&mut neu);
     Ok(neu)
 }
 
@@ -228,6 +267,12 @@ pub fn quelle_zu_pfad<'a>(echt: &Path, quellen: &'a [Quelle]) -> Result<(&'a Que
     for q in quellen.iter().filter(|q| q.aktiv) {
         if let Ok(qk) = fs::canonicalize(&q.pfad) {
             if echt.starts_with(&qk) && echt != qk {
+                if !identitaet_stimmt(q) {
+                    return Err(Fehler::Quelle(format!(
+                        "Die Bildquelle {} ist nicht mehr der bestaetigte Ordner (durch einen Link oder eine Verknuepfung ersetzt); bitte entfernen und neu hinzufuegen",
+                        q.pfad
+                    )));
+                }
                 return Ok((q, qk));
             }
         }
@@ -777,7 +822,7 @@ pub(crate) mod tests {
     }
 
     fn quelle(dir: &Path, entfernen: bool) -> Quelle {
-        Quelle { pfad: dir.to_string_lossy().into(), aktiv: true, original_entfernen: entfernen, art: None }
+        Quelle { pfad: dir.to_string_lossy().into(), aktiv: true, original_entfernen: entfernen, art: None, kanonisch: None }
     }
 
     const PAUSE: Duration = Duration::from_millis(20);
@@ -1096,7 +1141,9 @@ pub(crate) mod tests {
         let (a, b) = (home.join("A"), home.join("B"));
         fs::create_dir_all(&a).unwrap();
         fs::create_dir_all(&b).unwrap();
-        let bisher = Einstellungen { quellen: vec![quelle(&a, true)], tastenkuerzel: "Alt+F9".into(), yoke: None };
+        let mut bisher = Einstellungen { quellen: vec![quelle(&a, true)], tastenkuerzel: "Alt+F9".into(), yoke: None };
+        assert!(identitaet_binden(&mut bisher), "eine Quelle ohne Identitaet wird gebunden");
+        assert!(!identitaet_binden(&mut bisher), "danach ist nichts mehr zu binden");
         let neu = einstellungen_neu(&bisher, None, None, None, Some(&b), &wurzel, Some(&home)).unwrap();
         assert_eq!(neu.quellen.len(), 2);
         assert_eq!(neu.quellen[0], bisher.quellen[0], "die bisherige Quelle bleibt unveraendert");
@@ -1134,6 +1181,67 @@ pub(crate) mod tests {
         let viele = vec!["/x.png".to_string(); MAX_HINZUFUEGEN + 1];
         assert!(matches!(hinzufuegen_mehrere(&wurzel, &viele, "g", PAUSE), Err(Fehler::Eingabe(_))));
         assert!(matches!(hinzufuegen_mehrere(&wurzel, &pfade, "..", PAUSE), Err(Fehler::Name(_))));
+    }
+
+    /// Fund 6: wird der bestaetigte Pfad durch einen Link auf einen anderen Ordner
+    /// ersetzt, wird daraus weder uebernommen noch (verschoben) geloescht.
+    #[cfg(unix)]
+    #[test]
+    fn ersetzter_quellpfad_wird_nicht_verwendet_nichts_wird_geloescht() {
+        let (t, wurzel, src, _) = aufbau(true);
+        let fremd = t.path().join("nie-bestaetigt");
+        fs::create_dir_all(&fremd).unwrap();
+        fs::write(fremd.join("x.png"), png_bytes(100, 50)).unwrap();
+        // bestaetigen = binden
+        let mut e = Einstellungen { quellen: vec![quelle(&src, true)], tastenkuerzel: VORGABE_TASTENKUERZEL.into(), yoke: None };
+        identitaet_binden(&mut e);
+        assert!(identitaet_stimmt(&e.quellen[0]));
+        let a = src.join("a.png");
+        fs::write(&a, png_bytes(100, 50)).unwrap();
+        assert!(uebernehmen(&wurzel, &e.quellen, a.to_str().unwrap(), Modus::Kopieren, "g", Some("b0"), LAGE).is_ok(), "vorher geht es");
+        // Pfad der Quelle wird durch einen Link auf den fremden Ordner ersetzt
+        let echt = t.path().join("screens-echt");
+        fs::rename(&src, &echt).unwrap();
+        std::os::unix::fs::symlink(&fremd, &src).unwrap();
+        assert!(!identitaet_stimmt(&e.quellen[0]));
+        let x = src.join("x.png"); // liegt jetzt im nie bestaetigten Ordner
+        for modus in [Modus::Verschieben, Modus::Kopieren] {
+            let r = uebernehmen(&wurzel, &e.quellen, x.to_str().unwrap(), modus, "g", Some("b1"), LAGE);
+            assert!(matches!(r, Err(Fehler::Quelle(_))), "{modus:?}: {r:?}");
+        }
+        assert!(fremd.join("x.png").exists(), "aus dem fremden Ordner wird nichts geloescht");
+        assert!(!wurzel.join("g/b1.quelle.png").exists());
+        // Der Pilot nimmt die Quelle heraus und bestaetigt den Ordner neu: dann gilt der neue Stand.
+        let mut neu = Einstellungen { quellen: vec![quelle(&src, true)], ..e.clone() };
+        assert!(identitaet_binden(&mut neu));
+        assert!(identitaet_stimmt(&neu.quellen[0]));
+    }
+
+    #[test]
+    fn identitaet_kommt_nie_vom_aufrufer_und_alte_einstellungen_ohne_feld_laufen_weiter() {
+        let t = tempfile::tempdir().unwrap();
+        let (home, wurzel) = (t.path().join("home"), t.path().join("bilder"));
+        let (a, b) = (home.join("A"), home.join("B"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        // alte Datei ohne das Feld
+        let alt = format!(r#"{{"quellen":[{{"pfad":{:?},"aktiv":true}}],"tastenkuerzel":"Alt+F9"}}"#, a.to_string_lossy());
+        let mut e: Einstellungen = serde_json::from_str(&alt).unwrap();
+        assert_eq!(e.quellen[0].kanonisch, None);
+        assert!(identitaet_stimmt(&e.quellen[0]), "ohne Identitaet gilt sie als unveraendert");
+        identitaet_binden(&mut e);
+        let gebunden = e.quellen[0].kanonisch.clone().unwrap();
+        // Ein Aufrufer schickt eine erfundene Identitaet mit: sie zaehlt nicht, die bestaetigte bleibt.
+        let mut falsch = e.quellen[0].clone();
+        falsch.kanonisch = Some("/irgendwo".into());
+        let neu = einstellungen_neu(&e, Some(vec![falsch]), None, None, None, &wurzel, Some(&home)).unwrap();
+        assert_eq!(neu.quellen[0].kanonisch.as_deref(), Some(gebunden.as_str()));
+        // Eine neue Quelle bekommt beim Speichern ihre Identitaet.
+        let mit_b = einstellungen_neu(&e, None, None, None, Some(&b), &wurzel, Some(&home)).unwrap();
+        assert!(mit_b.quellen[1].kanonisch.is_some());
+        // Ein nicht erreichbarer Ordner (Laufwerk offline) ist keine Aenderung der Identitaet.
+        let fehlt = Quelle { pfad: t.path().join("offline/x").to_string_lossy().into(), kanonisch: Some("/anderswo".into()), ..quelle(&a, false) };
+        assert!(identitaet_stimmt(&fehlt));
     }
 
     fn fund_ablegen(wurzel: &Path, id: &str, pfad: &Path, pirep: &str) {

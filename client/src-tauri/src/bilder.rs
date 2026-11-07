@@ -48,7 +48,8 @@
 //!   `Output/preferences/control profiles/User Profile - Keys.prf` (Vorrang) bzw. `X-Plane Keys.prf` der ersten
 //!   erkannten Installation mit lesbarer Belegung; `null` bei fehlender Datei, fremdem Format oder ohne X-Plane,
 //!   nie ein Fehler, nie geraten. Der Tab zeigt sie statt einer festen Taste.
-//!   `quellen[]` tragen `art` (`standard`, `aufgespuert`, `hand`, sonst frei) und `wird_geprueft`
+//!   `quellen[]` tragen `art` (`standard`, `aufgespuert`, `hand`, sonst frei), `wird_geprueft` und `fehler`
+//!   (`nicht_vorhanden`, `zugriff_verweigert`, `quelle_geaendert` oder `null`)
 //! * `bild_lesen({pfad})` -> ArrayBuffer (`pfad` relativ aus der Liste)
 //! * `bild_quellen_finden()` -> `[{pfad, art, simulator, existiert, vorschlag_modus}]`
 //! * `bild_status({sendungId?})` -> Stand einer Sendung und Kontingent (`GET /api/bilder/status`)
@@ -87,7 +88,12 @@
 //!   `gruppe` ist Pflicht (der Tab gibt `ohne-flug`); ohne `pfade` (Ziehen) oeffnet der Kern die Dateiauswahl;
 //!   JPG/PNG, immer kopiert, auch ohne Flug. Ergebnis wie `bild_uebernehmen`: Eingangskopie in `gruppe`
 //! * `bild_loeschen({gruppe, id, bezeichnung?})`, `bild_export({zipBase64, dateiname})`
-//! * `bild_quellen_setzen({quellen?, tastenkuerzel?, yokeTaste?, ordnerWaehlen?})`: `ordnerWaehlen: true` oeffnet nach der
+//! * `bild_quellen_setzen({quellen?, tastenkuerzel?, yokeTaste?, ordnerWaehlen?})`: Mit der Bestaetigung wird der
+//!   aufgeloeste Pfad jeder Quelle gespeichert (`kanonisch`, kommt nie vom Aufrufer; alte Einstellungen werden beim
+//!   Start gebunden). Ist der Pfad spaeter ein anderer Ordner (durch Link/Junction ersetzt), wird die Quelle nicht
+//!   beobachtet (Status `fehler: "quelle_geaendert"`, `beobachtet: false`) und nichts daraus uebernommen oder
+//!   verschoben (`bild_quelle`); Abhilfe: Quelle entfernen und neu hinzufuegen.
+//!   `ordnerWaehlen: true` oeffnet nach der
 //!   Bestaetigung den Ordnerdialog des Systems und haengt den Ordner als Quelle `hand` an (nur kopieren);
 //!   Abbrechen aendert nichts. `yokeTaste` ist `{geraet_name, hersteller_id, produkt_id, knopf}` (Knopf 1 bis 32)
 //!   oder `null`: fehlt der Schluessel, bleibt der Knopf; `null` loescht ihn. Der Befehl liest dazu den Rohauftrag,
@@ -455,7 +461,7 @@ fn naechster_flugplatz(lat: f64, lon: f64) -> Option<Value> {
 
 /// Ausgang der Ablage eines Funds aus der Ordnerbeobachtung.
 enum Ablage {
-    Abgelegt(EingangsFund),
+    Abgelegt(Box<EingangsFund>),
     /// Kein aktiver Flug: es entsteht kein Fund, die Datei bleibt unangetastet (und gilt als gesehen).
     KeinFlug,
     /// Das Schreiben des Eintrags misslang (z. B. Datentraeger voll): die Datei wird erneut gemeldet.
@@ -469,7 +475,7 @@ fn fund_in_eingang(app: &AppHandle, f: &bilder_kern::beobachter::Fund) -> Ablage
     let fenster = plattform::sim_fenstermasse().map(|(breite, hoehe)| SimFenster { breite, hoehe });
     let e = EingangsFund::aus_fund(f, uuid::Uuid::new_v4().to_string(), jetzt_ms(), fenster, meta);
     match wurzel(app).map_err(|u| Fehler::Io(u.message)).and_then(|w| eingang::ablegen(&w, &e)) {
-        Ok(()) => Ablage::Abgelegt(e),
+        Ok(()) => Ablage::Abgelegt(Box::new(e)),
         Err(err) => {
             tracing::warn!(fehler = %err, pfad = %f.pfad, "Bilder: Fund nicht im Eingang abgelegt, wird erneut gemeldet");
             Ablage::Misslungen
@@ -977,7 +983,16 @@ pub(crate) fn starten(app: &AppHandle) {
                 tracing::info!(id = %id, "Bilder: liegengebliebenes Loeschen abgeschlossen");
             }
         }
-        let einst = einstellungen_datei(&app).map(|d| quellen::einstellungen_lesen(&d)).unwrap_or_default();
+        let datei = einstellungen_datei(&app);
+        let mut einst = datei.as_ref().map(|d| quellen::einstellungen_lesen(d)).unwrap_or_default();
+        // Alte Einstellungen kennen die Identitaet der Quellen noch nicht: jetzt binden und merken.
+        if quellen::identitaet_binden(&mut einst) {
+            if let Ok(d) = &datei {
+                if let Err(e) = quellen::einstellungen_schreiben(d, &einst) {
+                    tracing::warn!(fehler = %e, "Bilder: Identitaet der Quellen nicht gespeichert");
+                }
+            }
+        }
         beobachtung_aufsetzen(&einst.quellen);
         if plattform::AUFNAHME_VERFUEGBAR {
             let app_taste = app.clone();
@@ -1151,7 +1166,7 @@ mod tests {
     fn misslungene_ablage_meldet_die_datei_erneut_ohne_flug_bleibt_sie_still() {
         let t = tempfile::tempdir().unwrap();
         let png = bilder_kern::png::aus_bgra(2, 2, &[0u8; 16]).unwrap();
-        let quelle = Quelle { pfad: t.path().to_string_lossy().into_owned(), aktiv: true, original_entfernen: false, art: None };
+        let quelle = Quelle { pfad: t.path().to_string_lossy().into_owned(), aktiv: true, original_entfernen: false, art: None, kanonisch: None };
         let mut b = Beobachter::neu();
         b.aufsetzen(&[quelle], None);
         let (slots, _) = b.takt_vorbereiten(None);
@@ -1173,7 +1188,7 @@ mod tests {
         assert_eq!(wieder.len(), 1, "die Datei wird erneut gemeldet");
         // Jetzt klappt das Schreiben: abgelegt, gemeldet, danach still.
         let meta = json!({"pirep_id": "P1"});
-        funde_abarbeiten(&slots, wieder, zeit, |f| Ablage::Abgelegt(EingangsFund::aus_fund(f, "f1".into(), 1, None, meta.clone())), |_| gemeldet += 1);
+        funde_abarbeiten(&slots, wieder, zeit, |f| Ablage::Abgelegt(Box::new(EingangsFund::aus_fund(f, "f1".into(), 1, None, meta.clone()))), |_| gemeldet += 1);
         assert_eq!(gemeldet, 1);
         assert!(takt(&mut zeit).is_empty() && takt(&mut zeit).is_empty());
         // Ohne Flug: kein Fund, nicht erneut melden (Datei bleibt unangetastet).

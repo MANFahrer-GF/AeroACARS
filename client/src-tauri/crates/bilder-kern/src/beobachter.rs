@@ -105,7 +105,7 @@ pub struct QuellenStatus {
     pub beobachtet: bool,
     /// Die Grundlage (Altbestand) wird noch erhoben; solange ist `beobachtet` falsch.
     pub wird_geprueft: bool,
-    /// `nicht_vorhanden` oder `zugriff_verweigert`.
+    /// `nicht_vorhanden`, `zugriff_verweigert` oder `quelle_geaendert` (der Pfad ist nicht mehr der bestaetigte Ordner).
     pub fehler: Option<String>,
     pub altbestand: usize,
 }
@@ -231,6 +231,13 @@ impl Stand {
                 return;
             }
             Ok(_) => self.fehler = None,
+        }
+        if !crate::quellen::identitaet_stimmt(&self.quelle) {
+            // Der Pfad ist durch einen Link/eine Junction ersetzt: dieser Ordner wurde nie bestaetigt.
+            self.fehler = Some(crate::quellen::FEHLER_QUELLE_GEAENDERT.into());
+            self.verz.clear();
+            self.wartend.clear();
+            return;
         }
         let mut lauf = Lauf {
             baseline,
@@ -702,7 +709,7 @@ mod tests {
     }
 
     fn q(dir: &Path) -> Quelle {
-        Quelle { pfad: dir.to_string_lossy().into(), aktiv: true, original_entfernen: false, art: None }
+        Quelle { pfad: dir.to_string_lossy().into(), aktiv: true, original_entfernen: false, art: None, kanonisch: None }
     }
 
     fn takte(b: &mut Beobachter, n: u64, vg: Option<bool>) -> Vec<Fund> {
@@ -761,6 +768,34 @@ mod tests {
         assert_eq!(again[0].pfad, f[0].pfad);
         assert_eq!(again[0].sha256, f[0].sha256);
         assert!(takte(&mut b, 4, None).is_empty(), "wurde die Ablage bestaetigt, bleibt sie still");
+    }
+
+    /// Fund 6: ein durch einen Link ersetzter Quellpfad wird nicht beobachtet, sichtbar im Status.
+    #[cfg(unix)]
+    #[test]
+    fn ersetzter_quellpfad_wird_nicht_beobachtet_und_im_status_gemeldet() {
+        let t = tempfile::tempdir().unwrap();
+        let (src, fremd) = (t.path().join("screens"), t.path().join("fremd"));
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&fremd).unwrap();
+        let mut e = crate::quellen::Einstellungen { quellen: vec![q(&src)], ..Default::default() };
+        crate::quellen::identitaet_binden(&mut e);
+        let mut b = Beobachter::neu();
+        b.aufsetzen(&e.quellen, None);
+        assert_eq!(b.status()[0].fehler, None);
+        fs::write(src.join("ok.png"), png_bytes(10, 10)).unwrap();
+        assert!(b.takt(0, None).is_empty());
+        assert_eq!(b.takt(1500, None).len(), 1, "solange der Pfad der bestaetigte Ordner ist, wird gemeldet");
+
+        let echt = t.path().join("echt");
+        fs::rename(&src, &echt).unwrap();
+        std::os::unix::fs::symlink(&fremd, &src).unwrap();
+        fs::write(fremd.join("fremd.png"), png_bytes(10, 10)).unwrap();
+        let alle: Vec<Fund> = (2..8).flat_map(|i| b.takt(i * 1500, None)).collect();
+        assert!(alle.is_empty(), "aus dem nie bestaetigten Ordner wird nichts gemeldet: {alle:?}");
+        let s = &b.status()[0];
+        assert_eq!(s.fehler.as_deref(), Some("quelle_geaendert"));
+        assert!(!s.beobachtet);
     }
 
     #[test]
