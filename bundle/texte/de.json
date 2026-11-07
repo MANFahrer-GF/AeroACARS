@@ -5178,8 +5178,12 @@
       "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
       "aufnahme_aus": "Aufnahme per Tastenkürzel ist auf diesem System nicht möglich. Nutze die Bildquellen.",
       "nur_im_flug": "Aufnahme und Übernahme laufen nur in einem AeroACARS-Flug.",
-      "zusammenfassung": "{{bilder}} Bilder · {{fluege}} Flüge · {{platz}} auf diesem Rechner",
-      "zusammenfassung_kurz": "{{bilder}} Bilder · {{fluege}} Flüge · {{platz}}",
+      "zusammenfassung": "{{bilder}} · {{fluege}} · {{platz}} auf diesem Rechner",
+      "zusammenfassung_kurz": "{{bilder}} · {{fluege}} · {{platz}}",
+      "anzahl_bilder": "{{n}} Bilder",
+      "anzahl_bild_eins": "1 Bild",
+      "anzahl_fluege": "{{n}} Flüge",
+      "anzahl_flug_eins": "1 Flug",
       "keine": "Noch keine Bilder auf diesem Rechner",
       "ordner_zeigen": "Bilder-Ordner im Dateimanager zeigen",
       "quellen": "Bildquellen",
@@ -5529,6 +5533,7 @@
       "taste_xplane_bekannt": "{{taste}} im Simulator legt das Bild hier ab",
       "taste_msfs": "{{kuerzel}} nimmt das Simulator-Fenster auf",
       "neue": "{{count}} neue Bilder in diesem Flug",
+      "neue_eins": "1 neues Bild in diesem Flug",
       "taste_msfs_neutral": "Die AeroACARS-Aufnahmetaste nimmt das Simulator-Fenster auf"
     },
     "gruppe": {

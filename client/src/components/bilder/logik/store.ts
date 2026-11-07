@@ -340,6 +340,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   }
 
   async function aufnehmen(): Promise<void> {
+    setzen({ meldung: null });
     try {
       await api.aufnehmen();
       await eingang();

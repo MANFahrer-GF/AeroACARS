@@ -5178,8 +5178,12 @@
       "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
       "aufnahme_aus": "Capturing with a shortcut is not possible on this system. Use the picture sources.",
       "nur_im_flug": "Capturing and importing only work during an AeroACARS flight.",
-      "zusammenfassung": "{{bilder}} pictures · {{fluege}} flights · {{platz}} on this computer",
-      "zusammenfassung_kurz": "{{bilder}} pictures · {{fluege}} flights · {{platz}}",
+      "zusammenfassung": "{{bilder}} · {{fluege}} · {{platz}} on this computer",
+      "zusammenfassung_kurz": "{{bilder}} · {{fluege}} · {{platz}}",
+      "anzahl_bilder": "{{n}} pictures",
+      "anzahl_bild_eins": "1 picture",
+      "anzahl_fluege": "{{n}} flights",
+      "anzahl_flug_eins": "1 flight",
       "keine": "No pictures on this computer yet",
       "ordner_zeigen": "Show the pictures folder in the file manager",
       "quellen": "Picture sources",
@@ -5529,6 +5533,7 @@
       "taste_xplane_bekannt": "{{taste}} in the simulator saves the picture here",
       "taste_msfs": "{{kuerzel}} captures the simulator window",
       "neue": "{{count}} new pictures in this flight",
+      "neue_eins": "1 new picture in this flight",
       "taste_msfs_neutral": "The AeroACARS capture key captures the simulator window"
     },
     "gruppe": {

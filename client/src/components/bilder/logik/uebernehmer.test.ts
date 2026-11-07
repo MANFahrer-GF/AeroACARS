@@ -117,6 +117,14 @@ describe("Uebernehmer", () => {
     expect(z1.neu).toBeGreaterThanOrEqual(1);
     expect(a.maxGleichzeitig()).toBe(1);
   });
+  it("Aufnahme: der Fund zieht um, derselbe Durchlauf liest die alte Eingangskopie nicht noch einmal", async () => {
+    const pfad = "eingang/a1.quelle.png";
+    const rest = { ...eintrag({ id: "a1", fertig: false }), quelle_pfad: pfad, gruppe: "eingang" };
+    const a = aufbau({ funde: [{ ...fund("a1"), pfad }], eintraege: [rest] });
+    const z = await a.uebernehmer.eingangAbarbeiten();
+    expect(z.fehler).toBe(0);
+    expect(z.neu).toBe(1);
+  });
   it("Eingangskopie ohne Sidecar wird aus dem Kontext der Dateizeit fertiggestellt", async () => {
     const rest = { ...eintrag({ id: "r1", fertig: false }), quelle_pfad: "eingang/r1.quelle.png", gruppe: "eingang", dateizeit_ms: Date.UTC(2026, 10, 7, 10) };
     const a = aufbau({

@@ -5178,8 +5178,12 @@
       "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
       "aufnahme_aus": "Lo scatto con scorciatoia non è possibile su questo sistema. Usa le fonti delle immagini.",
       "nur_im_flug": "Scatto e importazione funzionano solo durante un volo AeroACARS.",
-      "zusammenfassung": "{{bilder}} immagini · {{fluege}} voli · {{platz}} su questo computer",
-      "zusammenfassung_kurz": "{{bilder}} immagini · {{fluege}} voli · {{platz}}",
+      "zusammenfassung": "{{bilder}} · {{fluege}} · {{platz}} su questo computer",
+      "zusammenfassung_kurz": "{{bilder}} · {{fluege}} · {{platz}}",
+      "anzahl_bilder": "{{n}} immagini",
+      "anzahl_bild_eins": "1 immagine",
+      "anzahl_fluege": "{{n}} voli",
+      "anzahl_flug_eins": "1 volo",
       "keine": "Ancora nessuna immagine su questo computer",
       "ordner_zeigen": "Mostra la cartella delle immagini nel file manager",
       "quellen": "Fonti delle immagini",
@@ -5529,6 +5533,7 @@
       "taste_xplane_bekannt": "{{taste}} nel simulatore salva qui l’immagine",
       "taste_msfs": "{{kuerzel}} cattura la finestra del simulatore",
       "neue": "{{count}} nuove immagini in questo volo",
+      "neue_eins": "1 nuova immagine in questo volo",
       "taste_msfs_neutral": "Il tasto di scatto AeroACARS cattura la finestra del simulatore"
     },
     "gruppe": {
