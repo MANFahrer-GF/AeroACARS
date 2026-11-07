@@ -28,6 +28,7 @@ export function HuelleFenster() {
   const [auftraege, setAuftraege] = useState<Auftrag[]>([]);
   const [laeuft, setLaeuft] = useState(false);
   const flaeche = useRef<HTMLElement>(null);
+  const angefordert = useRef(0);
 
   // 3.0.0-beta.2.1 (Thomas 31.10.): Das Fenster bekommt die Höhe seines
   // Inhalts — vorher 560×440, Inhalt nur im oberen Drittel, Release Notes
@@ -35,14 +36,31 @@ export function HuelleFenster() {
   useEffect(() => {
     const el = flaeche.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const melden = () => {
+    // Thomas 07.11.: Am Mac gilt die Hoehe samt Titelleiste, die Knoepfe waren abgeschnitten.
+    // Was vom Angeforderten nicht im Fenster ankommt, wird deshalb nachgemessen und aufgeschlagen.
+    let takt: ReturnType<typeof setTimeout> | undefined;
+    const pruefen = () => {
       const hoehe = Math.ceil(el.getBoundingClientRect().height);
-      if (hoehe > 0) invoke("fenster_an_inhalt_anpassen", { benoetigtHoehe: hoehe }).catch(() => {});
+      if (hoehe <= 0) return;
+      const rand = angefordert.current > 0 ? Math.max(0, angefordert.current - window.innerHeight) : 0;
+      if (hoehe + rand === angefordert.current) return;
+      angefordert.current = hoehe + rand;
+      invoke("fenster_an_inhalt_anpassen", { benoetigtHoehe: hoehe + rand }).catch(() => {});
+    };
+    // Erst wenn das Fenster steht: ein Wert mitten im Umbau wuerde es springen lassen.
+    const melden = () => {
+      clearTimeout(takt);
+      takt = setTimeout(pruefen, 40);
     };
     const beobachter = new ResizeObserver(melden);
     beobachter.observe(el);
+    window.addEventListener("resize", melden);
     melden();
-    return () => beobachter.disconnect();
+    return () => {
+      clearTimeout(takt);
+      beobachter.disconnect();
+      window.removeEventListener("resize", melden);
+    };
   });
 
   const laden = useCallback(async () => {
@@ -86,12 +104,14 @@ export function HuelleFenster() {
   if (!a) return <main ref={flaeche} className="huelle">{r.leer}</main>;
   const text = dialogText(a.befehl, a.werte, i18n?.resolvedLanguage ?? i18n?.language);
   const werte = werteAnzeige(a.werte);
+  // Die Frage steht oben, die Erklaerung dazu ruhig darunter.
+  const [kopf, ...rest] = text ? text.frage.split(/(?<=\?)\s+/) : [r.titel, r.unbekannt];
   return (
     <main ref={flaeche} className="huelle" role="dialog" aria-labelledby="huelle-titel" aria-describedby="huelle-satz">
-      <h1 id="huelle-titel">{r.titel}</h1>
-      <p id="huelle-satz" data-testid="huelle-satz" className="huelle__frage">
-        {text ? text.frage : r.unbekannt}
-      </p>
+      <div id="huelle-satz" data-testid="huelle-satz" className="huelle__satz">
+        <h1 id="huelle-titel">{kopf}</h1>
+        {rest.length > 0 && <p className="huelle__frage">{rest.join(" ")}</p>}
+      </div>
       {auftraege.length > 1 && <p className="huelle__weitere">{r.weitere.replace("{{anzahl}}", String(auftraege.length - 1))}</p>}
       <details className="huelle__details" open={!text}>
         <summary>{r.details}</summary>

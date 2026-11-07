@@ -6,18 +6,37 @@ import { alsBase64 } from "./bildverarbeitung";
 import { GRENZEN, TABELLE } from "./grenzen";
 import { zipBauen } from "./zip";
 import { fehlerCode, fehlerText } from "./normalisieren";
+import { sendeMeta } from "./nachrichtVorschau";
 import {
   antwortEinarbeiten, aufrufFehler, auswahlNachSenden, offeneIds, sendeStart, sendungIdWaehlen, standNachLaden, type Sendestand,
 } from "./sendezustand";
-import { erzeugeUebernehmer, leereZaehlung, type Kodierer, type Zaehlung } from "./uebernehmer";
-import type { BilderListe, Eintrag, Fundort, GeoStufe, Kontingent, Quelle, SendeAntwort, SendeVermerk, Sidecar } from "./typen";
+import { dateiMitPosition, erzeugeUebernehmer, leereZaehlung, type Kodierer, type Zaehlung } from "./uebernehmer";
+import { bildMetaBauen, isoVonMs } from "./meta";
+import type { BilderListe, Eintrag, FlugEintrag, Fundort, GeoStufe, Kontingent, MetaBasis, MetaQuelle, Quelle, SendeAntwort, SendeVermerk, Sidecar } from "./typen";
 
 export interface FlugAuswahl {
   pirep_id: string | null;
   rufzeichen: string | null;
   abflug: string | null;
   ziel: string | null;
+  flugzeug_icao?: string | null;
 }
+
+/** Eine Meldung fuer das Ergebnis von „Hinzufuegen“: Anzahl und Grund jeder nicht uebernommenen Datei. */
+export function hinzufuegenMeldung(z: Zaehlung): { art: "ok" | "fehler"; schluessel: string; werte: Record<string, string | number> } {
+  const gesamt = z.neu + z.fehler + z.duplikate;
+  const grund = (z.letzterFehler ?? "").replace(/^[a-z0-9_]+: /i, "");
+  const fehlerWerte = { n: z.neu, gesamt, fehler: z.fehler, grund, ...(z.letzterCode === "bild_unlesbar" ? { grundText: "bilder.meldung.grund_unlesbar" } : {}) };
+  if (z.fehler > 0) return { art: z.neu > 0 ? "ok" : "fehler", schluessel: z.neu > 0 ? "bilder.meldung.hinzugefuegt_teil" : "bilder.meldung.hinzufuegen_keins", werte: fehlerWerte };
+  if (z.duplikate > 0) return { art: "ok", schluessel: z.neu > 0 ? "bilder.meldung.hinzugefuegt_mit_duplikaten" : "bilder.meldung.hinzugefuegt_nur_duplikate", werte: { n: z.neu, dup: z.duplikate } };
+  return { art: "ok", schluessel: z.neu === 1 ? "bilder.meldung.hinzugefuegt_eins" : "bilder.meldung.hinzugefuegt", werte: { n: z.neu } };
+}
+
+/** Diese Fehler sagen: Der Server antwortet nicht. Nicht angemeldet oder ein Serverfehler heissen das nicht. */
+const nichtErreichbar = (code: string) => code === "live_nicht_erreichbar" || code === "live_antwort_fehlt";
+
+/** Erreichbarkeit nach einem Fehler: Ein anderer Fehler heisst, der Server hat geantwortet. */
+const erreichbarNach = (code: string, bisher: boolean | null): boolean | null => (nichtErreichbar(code) ? false : bisher === false ? true : bisher);
 
 export interface BilderZustand {
   geladen: boolean;
@@ -34,6 +53,10 @@ export interface BilderZustand {
   /** Altbestand wurde angefordert (Liste in `liste.altbestand`). */
   altbestandGeladen: boolean;
   altbestandErgebnis: Zaehlung | null;
+  /** Antwortet der Server fuers Senden? null = noch nicht gefragt. */
+  serverErreichbar: boolean | null;
+  /** Spaet abgelehnte Bilder, die wieder in die Auswahl gehoeren (die Auswahl liegt in `BilderTab`). */
+  wiederAuswaehlen: string[];
   /** Die Yoke-Taste wird gerade gelernt (Hinweis „Jetzt den Knopf druecken“). */
   yokeLernt: boolean;
   meldung: { art: "ok" | "fehler"; schluessel: string; werte?: Record<string, string | number> } | null;
@@ -47,11 +70,14 @@ export interface StoreAbhaengig {
   neueId: () => string;
   warten: (ms: number) => Promise<void>;
   jetzt: () => number;
+  /** Am Tablet nur neu laden: Den Eingang arbeitet der Sim-PC ab. */
+  ohneEingang?: boolean;
 }
 
 const ANFANG: BilderZustand = {
   geladen: false, liste: null, fehler: null, sendestand: {}, kontingent: null, uebernahme: leereZaehlung(), arbeitet: false,
-  eingeschaltet: null, geoStufe: TABELLE.geoVorgabe, vorschlaege: null, altbestandGeladen: false, altbestandErgebnis: null, yokeLernt: false, meldung: null,
+  eingeschaltet: null, geoStufe: TABELLE.geoVorgabe, vorschlaege: null, altbestandGeladen: false, altbestandErgebnis: null,
+  serverErreichbar: null, wiederAuswaehlen: [], yokeLernt: false, meldung: null,
 };
 
 export function erzeugeStore(dep: StoreAbhaengig) {
@@ -112,6 +138,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
 
   let eingangLaeufe = 0;
   async function eingang(): Promise<void> {
+    if (dep.ohneEingang) return laden();
     eingangLaeufe++;
     setzen({ arbeitet: true });
     try {
@@ -132,37 +159,83 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   }
 
   /** Sidecar eines Bildes aendern (voller Stand, `bild_schreiben` ersetzt das Dokument). */
-  function sidecarAendern(e: Eintrag, f: (s: Sidecar) => Sidecar): Promise<void> {
+  function sidecarAendern(e: Eintrag, f: (s: Sidecar) => Sidecar, jpegBase64?: string): Promise<void> {
     return reihe(async () => {
-      const alt = e.sidecar as Sidecar;
-      await api.schreiben({ gruppe: e.gruppe, id: e.id, sidecar: f(alt) });
+      // Tablet und Sim-PC schreiben dasselbe Dokument: vom frischen Stand ausgehen, nicht vom Stand der Anzeige.
+      await laden();
+      const alt = (z.liste?.eintraege.find((x) => x.id === e.id)?.sidecar ?? e.sidecar) as Sidecar;
+      await api.schreiben({ gruppe: e.gruppe, id: e.id, sidecar: f(alt), ...(jpegBase64 ? { jpegBase64 } : {}) });
       await laden();
     });
   }
 
   const textSetzen = (e: Eintrag, text: string) => sidecarAendern(e, (s) => ({ ...s, text: text.slice(0, GRENZEN.text_max_zeichen) }));
   const favoritSetzen = (e: Eintrag, favorit: boolean) => sidecarAendern(e, (s) => ({ ...s, favorit }));
-  const flugSetzen = (e: Eintrag, f: FlugAuswahl) =>
-    sidecarAendern(e, (s) => ({ ...s, flug_von_hand: true, meta: { ...s.meta, pirep_id: f.pirep_id, rufzeichen: f.rufzeichen, abflug: f.abflug, ziel: f.ziel } }));
 
-  async function loeschen(e: Eintrag, bezeichnung: string): Promise<boolean> {
+  /** Die Fluege, denen sich ein Bild dieser Zeit zuordnen laesst; der naechste steht vorn. */
+  async function flugKandidaten(zeit: string | null): Promise<{ fluege: FlugEintrag[]; gekuerzt: boolean; unvollstaendig: boolean }> {
     try {
-      await api.loeschen({ gruppe: e.gruppe, id: e.id, bezeichnung });
+      const k = await api.kontext({ zeiten: zeit ? [zeit] : [], fluege: true });
+      return { fluege: k.fluege ?? [], gekuerzt: k.fluegeGekuerzt === true, unvollstaendig: k.logbuchUnvollstaendig === true };
+    } catch {
+      return { fluege: [], gekuerzt: false, unvollstaendig: true }; // Die Liste fehlt: Der Tab sagt es, statt still weniger anzubieten
+    }
+  }
+
+  /**
+   * Bild einem Flug zuordnen: Alle Flugdaten kommen neu aus dem Protokoll dieses Flugs zur Bildzeit,
+   * „Ohne Flug“ laesst nichts vom alten Flug stehen, auch nicht die Position im JPEG.
+   */
+  async function flugSetzen(e: Eintrag, f: FlugAuswahl): Promise<void> {
+    // Derselbe Flug noch einmal: Daten vom Simulator oder aus dem Protokoll bleiben, nur ein Bild mit
+    // blossen Logbuchdaten darf aus einem inzwischen vorhandenen Protokoll ergaenzt werden.
+    const vorher = e.sidecar?.meta;
+    if (f.pirep_id && vorher?.pirep_id === f.pirep_id && (vorher.quelle === "sim" || vorher.quelle === "protokoll")) return;
+    const zeit = e.sidecar?.meta?.zeit_utc ?? isoVonMs(e.dateizeit_ms);
+    let basis: MetaBasis = {};
+    let quelle: MetaQuelle = f.pirep_id ? "logbuch" : "keine";
+    if (f.pirep_id && zeit) {
+      try {
+        // Der Logbuch-Rueckfall nennt den Flug zur Bildzeit: Daten eines anderen Flugs gelten hier nicht.
+        const s = (await api.kontext({ zeiten: [zeit], pirepId: f.pirep_id })).staende[0];
+        if (s?.basis.pirep_id === f.pirep_id) { basis = s.basis; quelle = s.quelle; }
+      } catch { /* ohne Protokoll zaehlt der gewaehlte Flug allein */ }
+    }
+
+    const meta = bildMetaBauen({
+      ...basis, zeit_utc: zeit, pirep_id: f.pirep_id, rufzeichen: f.rufzeichen ?? basis.rufzeichen, abflug: f.abflug ?? basis.abflug, ziel: f.ziel ?? basis.ziel,
+      flugzeug_icao: basis.flugzeug_icao ?? f.flugzeug_icao,
+    }, quelle, e.dateizeit_ms);
+    try {
+      const alt = e.sidecar?.meta;
+      // Am Tablet schreibt das Programm die Position selbst ins JPEG (`sidecar_vom_tablet`).
+      const neueDatei = !dep.ohneEingang && e.pfad && (alt?.breite !== meta.breite || alt?.laenge !== meta.laenge);
+      const jpeg = neueDatei ? alsBase64(dateiMitPosition(await api.lesen(e.pfad!), meta)) : undefined;
+      await sidecarAendern(e, (s) => ({ ...s, flug_von_hand: true, meta }), jpeg);
+    } catch (err) {
+      meldung("fehler", "bilder.meldung.zuordnen_fehler", { fehler: fehlerText(err) });
+    }
+  }
+
+  async function loeschen(bilder: Eintrag[], bezeichnung: string): Promise<boolean> {
+    try {
+      await api.loeschen({ bilder: bilder.map((e) => ({ gruppe: e.gruppe, id: e.id })), bezeichnung });
       await laden();
       return true;
     } catch (err) {
-      if (fehlerCode(err) !== "abgelehnt" && fehlerCode(err) !== "huelle_abgelehnt") meldung("fehler", "bilder.meldung.loeschen_fehler", { fehler: fehlerText(err) });
+      if (fehlerCode(err) === "abgelehnt" || fehlerCode(err) === "huelle_abgelehnt") return false;
+      meldung("fehler", "bilder.meldung.loeschen_fehler", { fehler: fehlerText(err) });
+      await laden(); // ein Teil kann schon im Papierkorb liegen
       return false;
     }
   }
 
-  function vermerk(e: Eintrag, v: SendeVermerk): Sidecar["sendungen"] {
-    const alt = (e.sidecar?.sendungen ?? []).filter((x) => x.sendung_id !== v.sendung_id);
-    return [...alt, v];
+  function vermerk(sc: Sidecar, v: SendeVermerk): Sidecar["sendungen"] {
+    return [...sc.sendungen.filter((x) => x.sendung_id !== v.sendung_id), v];
   }
 
   /** `stufe` nur beim Senden selbst; Nachfragen und Fortsetzen behalten die Stufe des vorhandenen Vermerks. */
-  async function vermerkeSchreiben(ids: string[], sendungId: string, stufe: GeoStufe | null, stand: Sendestand): Promise<void> {
+  async function vermerkeSchreiben(ids: string[], sendungId: string, stufe: GeoStufe | null, stand: Sendestand, text?: string): Promise<void> {
     for (const id of ids) {
       const e = z.liste?.eintraege.find((x) => x.id === id);
       const s = stand[id];
@@ -173,12 +246,15 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       const vorAufruf = s.phase === "sendet";
       const status: SendeVermerk["status"] = s.phase === "gesendet" ? "gesendet" : s.phase === "fehlgeschlagen" || vorAufruf ? "abgelehnt" : "angenommen";
       const code = vorAufruf ? "discord_unklar" : s.code;
-      await sidecarAendern(e, (sc) => ({ ...sc, sendungen: vermerk(e, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe ?? sc.sendungen.find((x) => x.sendung_id === sendungId)?.geo_stufe ?? z.geoStufe, status, code }) }));
+      await sidecarAendern(e, (sc) => {
+        const vorher = sc.sendungen.find((x) => x.sendung_id === sendungId);
+        return { ...sc, sendungen: vermerk(sc, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe ?? vorher?.geo_stufe ?? z.geoStufe, status, code, text: text ?? vorher?.text }) };
+      });
     }
   }
 
   /** Senden (hoechstens `max_je_sendung`). Rueckgabe: neue Auswahl (Fehlgeschlagene bleiben). */
-  async function senden(ids: string[], text: string, stufe: GeoStufe): Promise<Set<string>> {
+  async function senden(ids: string[], text: string, stufe: GeoStufe, phaseText: (e: Eintrag) => string): Promise<Set<string>> {
     const liste = z.liste?.eintraege ?? [];
     const gewaehlt = ids.map((id) => liste.find((e) => e.id === id)).filter((e): e is Eintrag => !!e && !!e.sidecar?.meta);
     if (gewaehlt.length === 0 || gewaehlt.length > GRENZEN.max_je_sendung) return new Set(ids);
@@ -186,13 +262,13 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     const sendungId = sendungIdWaehlen(z.sendestand, idListe, dep.neueId);
     setzen({ sendestand: sendeStart(z.sendestand, idListe, sendungId) });
     // Sendung zuerst festhalten, damit ein Neustart mitten im Aufruf fortsetzen kann
-    await vermerkeSchreiben(idListe, sendungId, stufe, z.sendestand);
+    await vermerkeSchreiben(idListe, sendungId, stufe, z.sendestand, text);
     let stand = z.sendestand;
-    const anfrage = { sendungId, text, geoStufe: stufe, bilder: gewaehlt.map((e) => ({ gruppe: e.gruppe, bild_id: e.id, meta: e.sidecar!.meta! })) };
+    const anfrage = { sendungId, text, geoStufe: stufe, bilder: gewaehlt.map((e) => ({ gruppe: e.gruppe, bild_id: e.id, meta: sendeMeta(e.sidecar!.meta!, stufe, phaseText(e)) })) };
     try {
       const a = await api.senden(anfrage);
       stand = antwortEinarbeiten(stand, idListe, sendungId, a);
-      setzen({ sendestand: stand, kontingent: a.kontingent ?? z.kontingent });
+      setzen({ sendestand: stand, kontingent: a.kontingent ?? z.kontingent, serverErreichbar: true });
     } catch (err) {
       const code = fehlerCode(err);
       let a: SendeAntwort | null = null;
@@ -202,16 +278,27 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       }
       if (a && a.bilder.length > 0) {
         stand = antwortEinarbeiten(stand, idListe, sendungId, a);
-        setzen({ sendestand: stand, kontingent: a.kontingent ?? z.kontingent });
+        setzen({ sendestand: stand, kontingent: a.kontingent ?? z.kontingent, serverErreichbar: true });
       } else {
         const details = (err as { details?: { retry_after?: unknown } })?.details;
         stand = aufrufFehler(stand, idListe, sendungId, code, details?.retry_after);
-        setzen({ sendestand: stand });
+        setzen({ sendestand: stand, serverErreichbar: erreichbarNach(code, z.serverErreichbar) });
       }
     }
     await vermerkeSchreiben(idListe, sendungId, stufe, stand);
     void nachfragen(sendungId);
     return auswahlNachSenden(new Set(ids), stand);
+  }
+
+  function statusEinarbeiten(ids: string[], sendungId: string, a: SendeAntwort): Sendestand {
+    const stand = antwortEinarbeiten(z.sendestand, ids, sendungId, a);
+    // Die Auswahl hat sie schon als „angenommen“ verlassen: Ein spaeter Fehlschlag bringt sie zurueck.
+    const abgelehnt = ids.filter((id) => stand[id]?.phase === "fehlgeschlagen");
+    setzen({
+      sendestand: stand, kontingent: a.kontingent ?? z.kontingent, serverErreichbar: true,
+      wiederAuswaehlen: abgelehnt.length > 0 ? [...z.wiederAuswaehlen, ...abgelehnt] : z.wiederAuswaehlen,
+    });
+    return stand;
   }
 
   /** Fragt den Stand angenommener Bilder ab, bis alle gesendet oder abgelehnt sind. */
@@ -223,11 +310,10 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       try {
         const a = await api.status(sendungId);
         const ids = offen.map((o) => o.id);
-        const stand = antwortEinarbeiten(z.sendestand, ids, sendungId, a);
-        setzen({ sendestand: stand, kontingent: a.kontingent ?? z.kontingent });
-        await vermerkeSchreiben(ids, sendungId, null, stand);
-      } catch {
-        return;
+        await vermerkeSchreiben(ids, sendungId, null, statusEinarbeiten(ids, sendungId, a));
+      } catch (e) {
+        // Ein Aussetzer beendet das Nachfragen nicht; was offen bleibt, fragt der naechste Start nach.
+        setzen({ serverErreichbar: erreichbarNach(fehlerCode(e), z.serverErreichbar) });
       }
     }
   }
@@ -242,19 +328,21 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     for (const [sendungId, ids] of offen) {
       try {
         const a = await api.status(sendungId);
-        const stand = antwortEinarbeiten(z.sendestand, ids, sendungId, a);
-        setzen({ sendestand: stand, kontingent: a.kontingent ?? z.kontingent });
-        await vermerkeSchreiben(ids, sendungId, null, stand);
+        await vermerkeSchreiben(ids, sendungId, null, statusEinarbeiten(ids, sendungId, a));
         void nachfragen(sendungId);
-      } catch { /* kein Netz: bleibt „unterwegs“, naechster Start fragt wieder */ }
+      } catch (e) { /* kein Netz: bleibt „unterwegs“, naechster Start fragt wieder */
+        setzen({ serverErreichbar: erreichbarNach(fehlerCode(e), z.serverErreichbar) });
+      }
     }
   }
 
   async function kontingentHolen(): Promise<void> {
     try {
       const a = await api.status();
-      if (a.kontingent) setzen({ kontingent: a.kontingent });
-    } catch { /* ohne Verbindung bleibt das Kontingent unbekannt */ }
+      setzen({ kontingent: a.kontingent ?? z.kontingent, serverErreichbar: true });
+    } catch (e) { /* ohne Verbindung bleibt das Kontingent unbekannt */
+      setzen({ serverErreichbar: erreichbarNach(fehlerCode(e), z.serverErreichbar) });
+    }
   }
 
   // ---- Bildquellen ----
@@ -274,7 +362,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     quellenSetzen(aktuelleQuellen().map((q) => (q.pfad === pfad ? { ...q, ...aendern } : q)));
   const quelleEntfernen = (pfad: string) => quellenSetzen(aktuelleQuellen().filter((q) => q.pfad !== pfad));
   const quelleVorschlagen = (f: Fundort) =>
-    quellenSetzen([...aktuelleQuellen().filter((q) => q.pfad !== f.pfad), { pfad: f.pfad, aktiv: true, original_entfernen: false, art: "aufgespuert" }]);
+    quellenSetzen([...aktuelleQuellen().filter((q) => q.pfad !== f.pfad), { pfad: f.pfad, aktiv: true, original_entfernen: false, art: f.art }]);
   async function ordnerWaehlen(): Promise<void> {
     try {
       const r = await api.quellenSetzen({ ordnerWaehlen: true });
@@ -285,16 +373,19 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   }
   async function yokeFestlegen(): Promise<void> {
     if (z.yokeLernt) return;
-    setzen({ yokeLernt: true });
+    setzen({ yokeLernt: true, meldung: null }); // eine alte Meldung gilt fuer den neuen Versuch nicht mehr
     try {
-      const t = await api.tasteLernen();
+      let t: Awaited<ReturnType<typeof api.tasteLernen>>;
+      try {
+        t = await api.tasteLernen();
+      } finally {
+        setzen({ yokeLernt: false }); // Das Lernen endet hier, nicht erst mit der Bestaetigung
+      }
       if (t === null) { meldung("fehler", "bilder.meldung.yoke_abgelaufen"); return; }
       await api.quellenSetzen({ yokeTaste: t });
       await laden();
     } catch (e) {
       if (fehlerCode(e) !== "huelle_abgelehnt") meldung("fehler", "bilder.meldung.yoke_fehler", { fehler: fehlerText(e) });
-    } finally {
-      setzen({ yokeLernt: false });
     }
   }
   async function yokeEntfernen(): Promise<void> {
@@ -313,8 +404,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     try {
       const r = await uebernehmer.hinzufuegen(pfade);
       if (!r.abgebrochen) {
-        setzen({ altbestandErgebnis: r.zaehlung });
-        meldung(r.zaehlung.fehler > 0 && r.zaehlung.neu === 0 ? "fehler" : "ok", "bilder.meldung.hinzugefuegt", { n: r.zaehlung.neu });
+        setzen({ altbestandErgebnis: r.zaehlung, meldung: hinzufuegenMeldung(r.zaehlung) });
       }
     } catch (e) {
       if (fehlerCode(e) !== "huelle_abgelehnt") meldung("fehler", "bilder.meldung.hinzufuegen_fehler", { fehler: fehlerText(e) });
@@ -336,14 +426,19 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     await laden(false);
   }
 
+  /** `bild_io`: Der Simulator hat nicht innerhalb der Zeitgrenze (8 s) geantwortet oder die vorige Aufnahme haengt noch. */
+  function aufnahmeGescheitert(code: string, text: string): void {
+    const art = code === "kein_flug" ? "kein_flug" : code === "bild_io" ? "aufnahme_zeit" : "aufnahme_fehler";
+    meldung("fehler", `bilder.meldung.${art}`, { fehler: text });
+  }
+
   async function aufnehmen(): Promise<void> {
+    setzen({ meldung: null });
     try {
       await api.aufnehmen();
       await eingang();
     } catch (e) {
-      // `bild_io`: Der Simulator hat nicht innerhalb der Zeitgrenze (5 s) geantwortet oder die vorige Aufnahme haengt noch.
-      const art = fehlerCode(e) === "kein_flug" ? "kein_flug" : fehlerCode(e) === "bild_io" ? "aufnahme_zeit" : "aufnahme_fehler";
-      meldung("fehler", `bilder.meldung.${art}`, { fehler: fehlerText(e) });
+      aufnahmeGescheitert(fehlerCode(e), fehlerText(e));
     }
   }
 
@@ -363,7 +458,10 @@ export function erzeugeStore(dep: StoreAbhaengig) {
         const e = z.liste?.eintraege.find((x) => x.id === id);
         if (!e?.pfad) continue;
         const zeit = e.sidecar?.meta?.zeit_utc?.replace(/[:.]/g, "-") ?? e.id;
-        dateien.push({ name: `${zeit}-${e.id.slice(0, 8)}.jpg`, daten: await api.lesen(e.pfad), zeit_ms: e.dateizeit_ms ?? undefined });
+        // Die Position im JPEG folgt dem Sidecar: Ein Flugwechsel am Tablet laesst das JPEG ohne Position zurueck.
+        const roh = await api.lesen(e.pfad);
+        const daten = e.sidecar?.meta ? dateiMitPosition(roh, e.sidecar.meta) : roh;
+        dateien.push({ name: `${zeit}-${e.id.slice(0, 8)}.jpg`, daten, zeit_ms: e.dateizeit_ms ?? undefined });
         dateien.push({ name: `${zeit}-${e.id.slice(0, 8)}.json`, daten: new TextEncoder().encode(JSON.stringify(e.sidecar, null, 2)) });
       }
       if (dateien.length === 0) return;
@@ -376,10 +474,11 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   return {
     lesen: () => z,
     abonnieren: (h: () => void) => { hoerer.add(h); return () => { hoerer.delete(h); }; },
-    laden, pilotSetzen, einschalten, geoStufeSetzen, eingang, textSetzen, favoritSetzen, flugSetzen, loeschen, senden, fortsetzen, kontingentHolen,
+    laden, pilotSetzen, einschalten, geoStufeSetzen, eingang, textSetzen, favoritSetzen, flugKandidaten, flugSetzen, loeschen, senden, fortsetzen, kontingentHolen,
     yokeFestlegen, yokeEntfernen, quellenFinden, quelleUmschalten, quelleEntfernen, quelleVorschlagen, ordnerWaehlen, tastenkuerzelSetzen, hinzufuegen,
-    altbestandAnzeigen, altbestandUebernehmen, aufnehmen, ordnerZeigen, exportieren,
+    altbestandAnzeigen, altbestandUebernehmen, aufnehmen, aufnahmeGescheitert, ordnerZeigen, exportieren,
     meldungLoeschen: () => setzen({ meldung: null }),
+    wiederAuswaehlenLoeschen: () => setzen({ wiederAuswaehlen: [] }),
   };
 }
 

@@ -72,6 +72,14 @@ struct Kopf {
     ziel: Option<String>,
 }
 
+fn kopf_lesen(v: &Value, kopf: &mut Kopf) {
+    let airline = v["airline_icao"].as_str().unwrap_or("").trim();
+    let nr = v["flight_number"].as_str().unwrap_or("").trim();
+    kopf.rufzeichen = (!nr.is_empty()).then(|| format!("{airline}{nr}"));
+    kopf.abflug = v["dpt_airport"].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+    kopf.ziel = v["arr_airport"].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+}
+
 /// Wertet ein Flugprotokoll (eine JSON-Zeile je Ereignis) fuer die gefragten
 /// Zeiten aus: je Zeit der zeitlich naechste `position`-Stand innerhalb von
 /// [`TOLERANZ_MS`], mit der Phase und den Flugdaten, die zu diesem Zeitpunkt galten.
@@ -122,11 +130,7 @@ pub fn protokoll_auswerten<R: BufRead>(leser: R, pirep_id: &str, zeiten: &[i64],
             }
         } else if zeile.starts_with(r#"{"type":"flight_started""#) {
             if let Ok(v) = serde_json::from_str::<Value>(&zeile) {
-                let airline = v["airline_icao"].as_str().unwrap_or("").trim();
-                let nr = v["flight_number"].as_str().unwrap_or("").trim();
-                kopf.rufzeichen = (!nr.is_empty()).then(|| format!("{airline}{nr}"));
-                kopf.abflug = v["dpt_airport"].as_str().filter(|s| !s.is_empty()).map(str::to_string);
-                kopf.ziel = v["arr_airport"].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+                kopf_lesen(&v, &mut kopf);
             }
         }
     }
@@ -158,6 +162,17 @@ fn erste_zeit(pfad: &Path) -> Option<i64> {
 
 /// Protokolle, deren Zeitraum (erste Zeile bis Aenderungszeit) eine der Zeiten einschliesst.
 fn kandidaten(dir: &Path, zeiten: &[i64]) -> Vec<(String, PathBuf)> {
+    let mut v: Vec<(String, PathBuf)> = protokolle(dir)
+        .into_iter()
+        .filter(|(_, _, start, ende)| zeiten.iter().any(|z| *z >= start - TOLERANZ_MS && *z <= ende + TOLERANZ_MS))
+        .map(|(id, p, _, _)| (id, p))
+        .collect();
+    v.sort();
+    v
+}
+
+/// Alle lesbaren Flugprotokolle: Pirep-Kennung, Pfad, erste Zeit, Aenderungszeit.
+fn protokolle(dir: &Path) -> Vec<(String, PathBuf, i64, i64)> {
     let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
     let mut v = Vec::new();
     for e in rd.flatten() {
@@ -171,11 +186,8 @@ fn kandidaten(dir: &Path, zeiten: &[i64]) -> Vec<(String, PathBuf)> {
         }
         let Some(ende) = e.metadata().and_then(|m| m.modified()).ok().and_then(|t: SystemTime| ms_seit_1970(t)) else { continue };
         let Some(start) = erste_zeit(&p) else { continue };
-        if zeiten.iter().any(|z| *z >= start - TOLERANZ_MS && *z <= ende + TOLERANZ_MS) {
-            v.push((id, p));
-        }
+        v.push((id, p, start, ende));
     }
-    v.sort();
     v
 }
 
@@ -234,10 +246,131 @@ pub fn logbuch_stand(pireps: &[PirepKurz], zeit: i64) -> Option<Stand> {
     Some(m)
 }
 
+/// So viele Fluege bietet die Zuordnung hoechstens an.
+pub const MAX_FLUEGE: usize = 100;
+
+/// Ein Flug, dem ein Bild von Hand zugeordnet werden kann.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FlugEintrag {
+    pub pirep_id: String,
+    /// Nur aus dem Flugprotokoll (Airline und Flugnummer); das Logbuch kennt kein Rufzeichen.
+    pub rufzeichen: Option<String>,
+    /// Flugnummer aus phpVMS, nur fuer die Anzeige der Liste.
+    pub flugnummer: Option<String>,
+    pub abflug: Option<String>,
+    pub ziel: Option<String>,
+    pub flugzeug_icao: Option<String>,
+    pub start_ms: Option<i64>,
+    pub ende_ms: Option<i64>,
+}
+
+impl FlugEintrag {
+    pub fn als_json(&self) -> Value {
+        json!({
+            "pirep_id": self.pirep_id, "rufzeichen": self.rufzeichen, "flugnummer": self.flugnummer, "abflug": self.abflug, "ziel": self.ziel,
+            "flugzeug_icao": self.flugzeug_icao, "start_ms": self.start_ms, "ende_ms": self.ende_ms,
+        })
+    }
+
+    /// Abstand zur Bildzeit; ein Flug, der die Zeit einschliesst, hat 0. Ohne Flugzeit ganz hinten.
+    fn abstand(&self, zeit: i64) -> i64 {
+        match (self.start_ms, self.ende_ms) {
+            (Some(a), Some(b)) if a <= zeit && zeit <= b => 0,
+            (Some(a), Some(b)) => (zeit - a).abs().min((zeit - b).abs()),
+            (Some(t), None) | (None, Some(t)) => (zeit - t).abs(),
+            (None, None) => i64::MAX,
+        }
+    }
+}
+
+/// Die Fluege aus den lokalen Flugprotokollen (auch ohne Verbindung zu phpVMS).
+pub fn protokoll_fluege(dir: &Path) -> Vec<FlugEintrag> {
+    protokolle(dir)
+        .into_iter()
+        .map(|(id, p, start, ende)| {
+            let mut kopf = Kopf::default();
+            // `flight_started` steht am Anfang; ein Protokoll ohne die Zeile bleibt mit Kennung und Zeit anwaehlbar.
+            let zeile = oeffnen(&p).and_then(|r| r.lines().map_while(Result::ok).take(50).find(|z| z.starts_with(r#"{"type":"flight_started""#)));
+            if let Some(v) = zeile.and_then(|z| serde_json::from_str::<Value>(&z).ok()) {
+                kopf_lesen(&v, &mut kopf);
+            }
+            FlugEintrag { pirep_id: id, rufzeichen: kopf.rufzeichen, flugnummer: None, abflug: kopf.abflug, ziel: kopf.ziel, flugzeug_icao: None, start_ms: Some(start), ende_ms: Some(ende) }
+        })
+        .collect()
+}
+
+/// Protokoll und Logbuch zu einer Liste: je PIREP ein Eintrag, die Block-Zeiten gehen vor,
+/// das Rufzeichen kommt nur aus dem Protokoll. Mit `zeit` steht der zeitlich naechste Flug
+/// vorn, sonst der neueste. Zweiter Wert: Die Liste wurde auf [`MAX_FLUEGE`] gekuerzt.
+pub fn fluege_ordnen(mut fluege: Vec<FlugEintrag>, logbuch: &[PirepKurz], zeit: Option<i64>) -> (Vec<FlugEintrag>, bool) {
+    for p in logbuch {
+        let i = fluege.iter().position(|f| f.pirep_id == p.pirep_id).unwrap_or_else(|| {
+            fluege.push(FlugEintrag { pirep_id: p.pirep_id.clone(), ..Default::default() });
+            fluege.len() - 1
+        });
+        let f = &mut fluege[i];
+        let leer = |s: &Option<String>| s.clone().filter(|x| !x.is_empty());
+        f.flugnummer = leer(&p.flugnummer);
+        f.abflug = f.abflug.take().or_else(|| leer(&p.abflug));
+        f.ziel = f.ziel.take().or_else(|| leer(&p.ziel));
+        f.flugzeug_icao = f.flugzeug_icao.take().or_else(|| leer(&p.flugzeug_icao));
+        f.start_ms = p.block_off_ms.or(f.start_ms);
+        f.ende_ms = p.block_on_ms.or(f.ende_ms);
+    }
+    match zeit {
+        Some(z) => fluege.sort_by_key(|f| f.abstand(z)),
+        None => fluege.sort_by_key(|f| std::cmp::Reverse(f.start_ms.or(f.ende_ms))),
+    }
+    let gekuerzt = fluege.len() > MAX_FLUEGE;
+    fluege.truncate(MAX_FLUEGE);
+    (fluege, gekuerzt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn fluege_aus_protokoll_und_logbuch_je_pirep_einmal_der_naechste_vorn() {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(t.path().join("P1.jsonl"), protokoll()).unwrap();
+        let start = zeit_ms("2026-11-07T10:00:00Z").unwrap();
+        let aus_protokoll = protokoll_fluege(t.path());
+        assert_eq!(aus_protokoll.len(), 1);
+        assert_eq!(aus_protokoll[0].rufzeichen.as_deref(), Some("GSG123"));
+        assert_eq!(aus_protokoll[0].abflug.as_deref(), Some("EDDF"));
+        assert_eq!(aus_protokoll[0].start_ms, Some(start));
+
+        let logbuch = [
+            PirepKurz { pirep_id: "P1".into(), block_off_ms: Some(start + 60_000), block_on_ms: Some(start + 3_600_000), flugnummer: Some("123".into()), abflug: Some("EDDF".into()), ziel: Some("EGLL".into()), flugzeug_icao: Some("A20N".into()) },
+            PirepKurz { pirep_id: "P2".into(), block_off_ms: Some(start - 86_400_000), block_on_ms: Some(start - 82_800_000), flugnummer: Some("77".into()), ziel: Some("".into()), ..Default::default() },
+            PirepKurz { pirep_id: "P3".into(), flugnummer: Some("88".into()), ..Default::default() },
+        ];
+        // Das Bild liegt im Flug P2: P2 steht vorn, obwohl P1 neuer ist.
+        let (v, gekuerzt) = fluege_ordnen(aus_protokoll.clone(), &logbuch, Some(start - 84_000_000));
+        assert!(!gekuerzt);
+        assert_eq!(v.iter().map(|f| f.pirep_id.as_str()).collect::<Vec<_>>(), ["P2", "P1", "P3"]);
+        assert_eq!(v[0].rufzeichen, None, "das Logbuch kennt kein Rufzeichen, die Flugnummer ist keins");
+        assert_eq!(v[0].flugnummer.as_deref(), Some("77"));
+        assert_eq!(v[0].ziel, None, "leere Felder bleiben leer");
+        assert_eq!(v[1].rufzeichen.as_deref(), Some("GSG123"), "das Protokoll kennt das Rufzeichen");
+        assert_eq!(v[1].flugzeug_icao.as_deref(), Some("A20N"));
+        assert_eq!(v[1].start_ms, Some(start + 60_000), "Block-Zeiten gehen vor");
+
+        // Ohne Bildzeit: der neueste zuerst
+        let (v, _) = fluege_ordnen(aus_protokoll, &logbuch, None);
+        assert_eq!(v[0].pirep_id, "P1");
+        assert_eq!(v[2].pirep_id, "P3");
+    }
+
+    #[test]
+    fn hoechstens_max_fluege() {
+        let viele: Vec<_> = (0..MAX_FLUEGE + 5).map(|i| FlugEintrag { pirep_id: i.to_string(), start_ms: Some(i as i64), ..Default::default() }).collect();
+        let (v, gekuerzt) = fluege_ordnen(viele, &[], None);
+        assert_eq!(v.len(), MAX_FLUEGE);
+        assert!(gekuerzt, "die Oberflaeche erfaehrt, dass Fluege fehlen");
+    }
 
     fn pos(ts: &str, lat: f64, lon: f64, alt: f64) -> String {
         format!(

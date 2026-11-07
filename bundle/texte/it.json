@@ -5181,8 +5181,12 @@
       "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
       "aufnahme_aus": "Lo scatto con scorciatoia non è possibile su questo sistema. Usa le fonti delle immagini.",
       "nur_im_flug": "Scatto e importazione funzionano solo durante un volo AeroACARS.",
-      "zusammenfassung": "{{bilder}} immagini · {{fluege}} voli · {{platz}} su questo computer",
-      "zusammenfassung_kurz": "{{bilder}} immagini · {{fluege}} voli · {{platz}}",
+      "zusammenfassung": "{{bilder}} · {{fluege}} · {{platz}} su questo computer",
+      "zusammenfassung_kurz": "{{bilder}} · {{fluege}} · {{platz}}",
+      "anzahl_bilder": "{{n}} immagini",
+      "anzahl_bild_eins": "1 immagine",
+      "anzahl_fluege": "{{n}} voli",
+      "anzahl_flug_eins": "1 volo",
       "keine": "Ancora nessuna immagine su questo computer",
       "ordner_zeigen": "Mostra la cartella delle immagini nel file manager",
       "quellen": "Fonti delle immagini",
@@ -5223,7 +5227,7 @@
       "schon": "già configurata",
       "fehlt": "La cartella non esiste",
       "kuerzel": "Scorciatoia per lo scatto",
-      "kuerzel_setzen": "Salva",
+      "kuerzel_setzen": "Imposta scorciatoia",
       "kuerzel_fehler": "Scorciatoia non registrata: {{fehler}}",
       "bestaetigung": "Confermi ogni modifica alle fonti in una finestra del programma.",
       "eigene_werkzeuge": "I tuoi strumenti funzionano con qualsiasi tasto, non appena la loro cartella è inserita qui come fonte di immagini.",
@@ -5233,6 +5237,9 @@
         "unbelegt": "nessun pulsante assegnato",
         "festlegen": "Imposta pulsante yoke",
         "lernt": "Premi ora il pulsante …",
+        "kuerzel_lernt": "Premi ora i tasti …",
+        "kuerzel_hinweis": "Premi i tasti insieme, con Ctrl, Alt o Shift. Esc annulla.",
+        "kuerzel_nur_taste": "Premilo insieme a Ctrl, Alt o Shift.",
         "hinweis_lernen": "Premi ora il pulsante, hai 10 secondi.",
         "entfernen": "Rimuovi",
         "xplane_hinweis": "In X-Plane assegni il pulsante a sim/operation/screenshot nelle impostazioni del joystick del simulatore."
@@ -5289,7 +5296,8 @@
       "fehlgeschlagen": "Non inviata",
       "oeffnen_mit": "Dettagli: {{zeit}} {{phase}}, {{hoehe}}",
       "auswaehlen_mit": "Seleziona: {{zeit}} {{phase}}",
-      "ohne_flug": "Senza volo"
+      "ohne_flug": "Senza volo",
+      "serie_auswaehlen": "Seleziona serie di {{n}} immagini"
     },
     "status": {
       "sendet": "Invio in corso …",
@@ -5322,7 +5330,10 @@
         "von_hand": "assegnato da te",
         "aendern": "cambia",
         "waehlen": "Scegli il volo",
-        "fertig": "Fatto"
+        "fertig": "Fatto",
+        "laedt": "Caricamento voli …",
+        "gekuerzt": "Sono elencati solo i voli più vicini nel tempo all'immagine.",
+        "unvollstaendig": "Voli più vecchi potrebbero mancare nell'elenco (registro non caricato completamente)."
       },
       "metadaten": "Dati dello scatto",
       "gesendet_am": "Inviata il {{zeit}}",
@@ -5404,7 +5415,6 @@
       "titel": "Invia immagini",
       "zu": "Chiudi",
       "anzahl": "{{count}} immagini al canale Discord del GSG",
-      "max": "Al massimo {{max}} immagini per invio",
       "zu_viele": "Scegli al massimo {{max}} immagini.",
       "text": {
         "label": "Il tuo testo (facoltativo)",
@@ -5419,9 +5429,8 @@
         "verdeckt": "Nascosti, da aprire",
         "verdeckt_text": "Gli stessi dati stanno sotto una barra grigia e compaiono solo al clic.",
         "aus": "Non inviare",
-        "aus_text": "La posizione non lascia mai il tuo programma. Il messaggio nomina solo te, il volo e il tuo testo.",
-        "ohne_position": "Queste immagini non hanno una posizione, la scelta non ha effetto.",
-        "hinweis": "Vale per tutti gli invii finché non lo cambi qui. Il file dell’immagine va a Discord senza metadati; ciò che scegli qui compare nel testo."
+        "aus_text": "La posizione non lascia il programma. Il messaggio indica te, il volo, ora, quota, fase e il tuo testo.",
+        "ohne_position": "Queste immagini non hanno una posizione, la scelta non ha effetto."
       },
       "vorschau": {
         "titel": "Come apparirà il messaggio",
@@ -5429,12 +5438,11 @@
         "gekuerzt": "Discord accorcia questo messaggio.",
         "bild": "Immagine {{n}}",
         "bilder_hinweis": "Le immagini sono allegate al messaggio come file.",
-        "verdeckt": "Dati geografici nascosti · clic per mostrare",
-        "verdeckt_hinweis": "Dietro ci sono, per immagine: ora, posizione, altitudine, prua, aeroporto più vicino. Le menzioni nel testo non vengono attivate.",
-        "sichtbar_hinweis": "Ogni immagine ha nel testo una riga con ora, posizione, altitudine, prua e aeroporto più vicino. Le menzioni nel testo non vengono attivate.",
-        "aus_hinweis": "Non vengono inviati dati di posizione. Le menzioni nel testo non vengono attivate."
+        "verdeckt": "Dati geografici nascosti · clic per mostrare"
       },
-      "server_offline": "Server non raggiungibile. L’invio attende, nulla va perso.",
+      "schon_gesendet_eins": "Questa immagine è già su Discord. Inviando parte di nuovo come nuovo messaggio.",
+      "schon_gesendet_n": "Già su Discord: {{count}} di {{gesamt}} immagini. Inviando partono di nuovo come nuovo messaggio.",
+      "server_offline": "Server non raggiungibile. La selezione resta, potrai inviare appena risponde di nuovo.",
       "senden": "Invia ({{count}})",
       "abbrechen": "Annulla",
       "wird_gesendet": "Invio in corso …",
@@ -5444,16 +5452,7 @@
       "kanal": "Canale “Immagini” della German Sky Group",
       "text_label_n": "Testo per tutte le {{count}} immagini",
       "text_label_eins": "Testo per l’immagine",
-      "jetzt": "Invia ora",
-      "zeilen": {
-        "groesse": "Dimensione",
-        "groesse_text_eins": "1 immagine, {{groesse}} dopo il ridimensionamento a {{px}} px",
-        "groesse_text": "{{count}} immagini, {{groesse}} dopo il ridimensionamento a {{px}} px",
-        "weg": "Percorso",
-        "weg_text": "Questo computer, server GSG (live), Discord. L’accesso a Discord si trova solo sul server.",
-        "fehlschlag": "Se qualcosa fallisce",
-        "fehlschlag_text": "Ogni immagine riceve il proprio esito. Ciò che non è arrivato resta selezionato e mostra il motivo sulla tessera; “Riprova” invia solo ciò che manca, nulla arriva due volte."
-      }
+      "jetzt": "Invia ora"
     },
     "kontingent": {
       "rest": "Quest’ora ancora {{rest}} su {{grenze}}",
@@ -5470,7 +5469,7 @@
       "unklar": "Consegna incerta, controlla il canale prima di riprovare.",
       "nicht_erreichbar": "Server non raggiungibile",
       "exportieren": "Salva come ZIP",
-      "info": "{{groesse}} dopo il ridimensionamento a {{px}} px · al massimo {{max}} per invio",
+      "info": "{{groesse}} · al massimo {{max}} per invio",
       "server_ok": "Server raggiungibile",
       "papierkorb": "Sposta nel cestino",
       "senden_n": "Invia {{count}} immagini",
@@ -5507,17 +5506,24 @@
       "loeschen_fehler": "Eliminazione non possibile: {{fehler}}",
       "quellen_fehler": "Fonti non salvate: {{fehler}}",
       "kuerzel_fehler": "Scorciatoia non salvata: {{fehler}}",
-      "hinzugefuegt": "{{n}} immagine/i aggiunta/e",
+      "hinzugefuegt": "{{n}} immagini aggiunte",
       "hinzufuegen_fehler": "Aggiunta non possibile: {{fehler}}",
       "kein_flug": "Senza un volo AeroACARS non si scatta nulla.",
       "aufnahme_fehler": "Scatto non possibile: {{fehler}}",
-      "aufnahme_zeit": "Scatto non completato: il simulatore non ha risposto entro 5 s (o lo scatto precedente è ancora in sospeso). Riprova tra un attimo. Tecnico: {{fehler}}",
+      "aufnahme_zeit": "Scatto non completato: il simulatore non ha risposto entro 8 s (o lo scatto precedente è ancora in sospeso). Riprova tra un attimo. Tecnico: {{fehler}}",
       "ordner_fehler": "Impossibile aprire la cartella: {{fehler}}",
       "geladen_fehler": "Impossibile caricare le immagini: {{fehler}}",
       "schliessen": "Chiudi messaggio",
       "export_fehler": "Esportazione non possibile: {{fehler}}",
       "yoke_abgelaufen": "Nessun pulsante premuto, tempo scaduto.",
-      "yoke_fehler": "Pulsante yoke non salvato: {{fehler}}"
+      "yoke_fehler": "Pulsante yoke non salvato: {{fehler}}",
+      "hinzugefuegt_eins": "1 immagine aggiunta",
+      "hinzugefuegt_teil": "Aggiunte: {{n}} di {{gesamt}}. Non possibili: {{fehler}}, motivo: {{grund}}",
+      "hinzufuegen_keins": "Non aggiunte: {{fehler}} di {{gesamt}}. Motivo: {{grund}}",
+      "hinzugefuegt_mit_duplikaten": "{{n}} aggiunte, {{dup}} già presenti",
+      "hinzugefuegt_nur_duplikate": "Niente aggiunto, {{dup}} già presenti",
+      "grund_unlesbar": "File danneggiato o immagine non leggibile",
+      "zuordnen_fehler": "Volo non modificato: {{fehler}}"
     },
     "band": {
       "aktiv": "Volo attivo",
@@ -5529,6 +5535,7 @@
       "taste_xplane_bekannt": "{{taste}} nel simulatore salva qui l’immagine",
       "taste_msfs": "{{kuerzel}} cattura la finestra del simulatore",
       "neue": "{{count}} nuove immagini in questo volo",
+      "neue_eins": "1 nuova immagine in questo volo",
       "taste_msfs_neutral": "Il tasto di scatto AeroACARS cattura la finestra del simulatore"
     },
     "gruppe": {

@@ -18,6 +18,7 @@
 //! * [`verdeckung`]  liegt ein fremdes Fenster ueber dem Simulator? (reine Rechteckpruefung)
 //! * [`suche`]       reine Teile des Aufspuerens von Bildquellen
 //! * [`png`]         PNG-Kodierung der Fensteraufnahme
+//! * [`ton`]         Rueckmeldeton der Aufnahme als WAV-Bytes (rein berechnet)
 //! * [`tastenkuerzel`] Tastenkuerzel-Text lesen
 //! * [`xplane_taste`] die wirkliche Screenshot-Taste von X-Plane (nur lesend)
 //! * [`yoke`]        Yoke-/Joystick-Knopf als Ausloeser: Flanke, Sperre, Geraet wiederfinden
@@ -37,6 +38,7 @@ pub mod quellen;
 pub mod sicher;
 pub mod speicher;
 pub mod suche;
+pub mod ton;
 pub mod tastenkuerzel;
 pub mod verdeckung;
 pub mod xplane_taste;

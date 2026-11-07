@@ -30,6 +30,26 @@ use crate::UiError;
 /// Label des Huelle-Fensters (capabilities/huelle.json).
 pub(crate) const FENSTER: &str = "huelle";
 
+/// Haelt das Fenster verborgen, solange ein Systemdialog offen ist: Es liegt immer
+/// im Vordergrund und verdeckte sonst dessen Knoepfe.
+pub(crate) struct Verborgen(Option<tauri::WebviewWindow>);
+
+pub(crate) fn fuer_systemdialog(app: &tauri::AppHandle) -> Verborgen {
+    let w = app.get_webview_window(FENSTER);
+    if let Some(w) = &w {
+        let _ = w.hide();
+    }
+    Verborgen(w)
+}
+
+impl Drop for Verborgen {
+    fn drop(&mut self) {
+        if let Some(w) = &self.0 {
+            let _ = w.show();
+        }
+    }
+}
+
 /// Tage fuer das automatische Loeschen alter Flugprotokolle (wie bisher
 /// `AUTO_DELETE_LOGS_DAYS` in der Oberflaeche).
 pub(crate) const FLUGPROTOKOLLE_TAGE: u32 = 30;
@@ -192,6 +212,9 @@ fn nach_dem_schliessen(selbst: bool, offen: bool) -> Nachher {
 /// andere Fenster gehen weiter ueber [`bestaetigen_lassen`]. Die Stufe in befehle.json bleibt „system“:
 /// sonst riefe ein neues Paket den Befehl direkt und aeltere Clients (deren
 /// Rechte im Programm stehen) verweigerten das Update ganz.
+///
+/// Bilder (Thomas 07.11.2026: zweimal klicken ist unnoetig): `bild_senden` bestaetigt der
+/// Pilot schon im Senden-Dialog; dieselben Grenzen wie beim Update.
 #[tauri::command]
 pub(crate) async fn shell_request(
     app: AppHandle,
@@ -201,6 +224,9 @@ pub(crate) async fn shell_request(
 ) -> Result<Value, UiError> {
     if fenster.label() == crate::fenster::HAUPTFENSTER && ohne_rueckfrage(&befehl) {
         tracing::info!(befehl = %befehl, "Huelle: ohne Rueckfrage ausgefuehrt");
+        if befehl == "bild_senden" {
+            return crate::bilder::bild_senden_aus_werten(app, werte.unwrap_or_default()).await;
+        }
         return update_installieren(app).await.map(|()| Value::Null);
     }
     bestaetigen_lassen(app, befehl, werte).await
@@ -208,7 +234,7 @@ pub(crate) async fn shell_request(
 
 /// Systembefehle, die aus dem eigenen Fenster ohne Huelle-Fenster laufen.
 fn ohne_rueckfrage(befehl: &str) -> bool {
-    befehl == "update_installieren"
+    matches!(befehl, "update_installieren" | "bild_senden")
 }
 
 /// Auftrag ablegen und im Fenster der Huelle bestaetigen lassen.
@@ -472,16 +498,25 @@ pub(crate) fn beim_start_anwenden(app: &AppHandle) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn jeder_systemdialog_der_bilder_verbirgt_das_fenster() {
+        let q = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bilder.rs")).unwrap();
+        assert_eq!(q.matches("app.dialog().file()").count(), q.matches("fuer_systemdialog(").count());
+        assert_eq!(q.matches("fuer_systemdialog(").count(), 3, "Ordner, Dateien, ZIP");
+    }
+
     /// Die Auftraege sind ein gemeinsamer Zustand: Tests, die ihn leeren,
     /// laufen nicht neben anderen.
     static SPERRE: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn nur_das_update_laeuft_ohne_rueckfrage() {
+    fn nur_update_und_bildversand_laufen_ohne_rueckfrage() {
         assert!(ohne_rueckfrage("update_installieren"));
+        assert!(ohne_rueckfrage("bild_senden"), "der Senden-Dialog ist die Bestaetigung");
+        assert_eq!(stufe("bild_senden"), Some("system"));
         // Stufe bleibt „system“ — aeltere Clients brauchen den Weg ueber die Huelle.
         assert_eq!(stufe("update_installieren"), Some("system"));
-        for (befehl, s) in [("flight_logs_delete_all", "system"), ("activity_log_clear", "system")] {
+        for (befehl, s) in [("flight_logs_delete_all", "system"), ("activity_log_clear", "system"), ("bild_loeschen", "system")] {
             assert_eq!(stufe(befehl), Some(s));
             assert!(!ohne_rueckfrage(befehl), "{befehl}");
         }

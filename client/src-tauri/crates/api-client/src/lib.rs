@@ -306,6 +306,14 @@ impl Connection {
     pub fn base_url(&self) -> &str {
         self.base_url.as_str()
     }
+
+    /// Unterscheidet Anmeldungen (etwa fuer einen Zwischenspeicher), ohne den Schluessel selbst herauszugeben.
+    pub fn api_key_kennung(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        self.api_key.hash(&mut h);
+        h.finish()
+    }
 }
 
 // ---- Resource types ----

@@ -5181,8 +5181,12 @@
       "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
       "aufnahme_aus": "Capturing with a shortcut is not possible on this system. Use the picture sources.",
       "nur_im_flug": "Capturing and importing only work during an AeroACARS flight.",
-      "zusammenfassung": "{{bilder}} pictures · {{fluege}} flights · {{platz}} on this computer",
-      "zusammenfassung_kurz": "{{bilder}} pictures · {{fluege}} flights · {{platz}}",
+      "zusammenfassung": "{{bilder}} · {{fluege}} · {{platz}} on this computer",
+      "zusammenfassung_kurz": "{{bilder}} · {{fluege}} · {{platz}}",
+      "anzahl_bilder": "{{n}} pictures",
+      "anzahl_bild_eins": "1 picture",
+      "anzahl_fluege": "{{n}} flights",
+      "anzahl_flug_eins": "1 flight",
       "keine": "No pictures on this computer yet",
       "ordner_zeigen": "Show the pictures folder in the file manager",
       "quellen": "Picture sources",
@@ -5223,7 +5227,7 @@
       "schon": "already set up",
       "fehlt": "Folder does not exist",
       "kuerzel": "Shortcut for capturing",
-      "kuerzel_setzen": "Save",
+      "kuerzel_setzen": "Set shortcut",
       "kuerzel_fehler": "Shortcut not registered: {{fehler}}",
       "bestaetigung": "You confirm every change to the sources in a window of the program.",
       "eigene_werkzeuge": "Your own tools work with any key as soon as their folder is added here as a picture source.",
@@ -5233,6 +5237,9 @@
         "unbelegt": "no button assigned",
         "festlegen": "Set yoke button",
         "lernt": "Press the button now …",
+        "kuerzel_lernt": "Press the keys now …",
+        "kuerzel_hinweis": "Press the keys together, with Ctrl, Alt or Shift. Esc cancels.",
+        "kuerzel_nur_taste": "Please press it together with Ctrl, Alt or Shift.",
         "hinweis_lernen": "Press the button now, you have 10 seconds.",
         "entfernen": "Remove",
         "xplane_hinweis": "In X-Plane you assign the button to sim/operation/screenshot in the simulator’s joystick settings."
@@ -5289,7 +5296,8 @@
       "fehlgeschlagen": "Not sent",
       "oeffnen_mit": "Details: {{zeit}} {{phase}}, {{hoehe}}",
       "auswaehlen_mit": "Select: {{zeit}} {{phase}}",
-      "ohne_flug": "No flight"
+      "ohne_flug": "No flight",
+      "serie_auswaehlen": "Select series of {{n}} pictures"
     },
     "status": {
       "sendet": "Sending …",
@@ -5322,7 +5330,10 @@
         "von_hand": "assigned by you",
         "aendern": "change",
         "waehlen": "Choose flight",
-        "fertig": "Done"
+        "fertig": "Done",
+        "laedt": "Loading flights …",
+        "gekuerzt": "Only the flights closest in time to the picture are listed.",
+        "unvollstaendig": "Older flights may be missing from the list (logbook not fully loaded)."
       },
       "metadaten": "Capture data",
       "gesendet_am": "Sent on {{zeit}}",
@@ -5404,7 +5415,6 @@
       "titel": "Send pictures",
       "zu": "Close",
       "anzahl": "{{count}} pictures to the GSG Discord channel",
-      "max": "At most {{max}} pictures per post",
       "zu_viele": "Choose at most {{max}} pictures.",
       "text": {
         "label": "Your text (optional)",
@@ -5419,9 +5429,8 @@
         "verdeckt": "Hidden, click to reveal",
         "verdeckt_text": "The same details sit under a grey bar and only appear when clicked.",
         "aus": "Do not send",
-        "aus_text": "The position never leaves your program. The message only names you, the flight and your text.",
-        "ohne_position": "These pictures have no position, so this choice has no effect.",
-        "hinweis": "Applies to all posts until you change it here. The picture file goes to Discord without metadata; what you choose here appears in the text."
+        "aus_text": "Your position does not leave the program. The message names you, the flight, time, altitude, phase and your text.",
+        "ohne_position": "These pictures have no position, so this choice has no effect."
       },
       "vorschau": {
         "titel": "How the message will look",
@@ -5429,12 +5438,11 @@
         "gekuerzt": "Discord shortens this message.",
         "bild": "Picture {{n}}",
         "bilder_hinweis": "The pictures are attached to the message as files.",
-        "verdeckt": "Geo data hidden · click to reveal",
-        "verdeckt_hinweis": "Behind it, per picture: time, position, altitude, heading, nearest airport. Mentions in the text are not triggered.",
-        "sichtbar_hinweis": "Each picture gets a line with time, position, altitude, heading and nearest airport in the text. Mentions in the text are not triggered.",
-        "aus_hinweis": "No position data goes along. Mentions in the text are not triggered."
+        "verdeckt": "Geo data hidden · click to reveal"
       },
-      "server_offline": "Server not reachable. Sending waits, nothing is lost.",
+      "schon_gesendet_eins": "This picture is already on Discord. Sending posts it again as a new message.",
+      "schon_gesendet_n": "Already on Discord: {{count}} of {{gesamt}} pictures. Sending posts them again as a new message.",
+      "server_offline": "Server not reachable. Your selection stays, you can send as soon as it answers again.",
       "senden": "Send ({{count}})",
       "abbrechen": "Cancel",
       "wird_gesendet": "Sending …",
@@ -5444,16 +5452,7 @@
       "kanal": "Channel “Pictures” of German Sky Group",
       "text_label_n": "Text for all {{count}} pictures",
       "text_label_eins": "Text for the picture",
-      "jetzt": "Send now",
-      "zeilen": {
-        "groesse": "Size",
-        "groesse_text_eins": "1 picture, {{groesse}} after resizing to {{px}} px",
-        "groesse_text": "{{count}} pictures, {{groesse}} after resizing to {{px}} px",
-        "weg": "Route",
-        "weg_text": "This computer, GSG server (live), Discord. The access to Discord only exists on the server.",
-        "fehlschlag": "If something fails",
-        "fehlschlag_text": "Every picture gets its own result. What did not arrive stays selected and shows the reason on its tile; “Try again” sends only what is missing, nothing arrives twice."
-      }
+      "jetzt": "Send now"
     },
     "kontingent": {
       "rest": "{{rest}} of {{grenze}} left this hour",
@@ -5470,7 +5469,7 @@
       "unklar": "Delivery unclear, please check the channel before you try again.",
       "nicht_erreichbar": "Server not reachable",
       "exportieren": "Save as ZIP",
-      "info": "{{groesse}} after resizing to {{px}} px · at most {{max}} per post",
+      "info": "{{groesse}} · at most {{max}} per post",
       "server_ok": "Server reachable",
       "papierkorb": "Move to trash",
       "senden_n": "Send {{count}} pictures",
@@ -5507,17 +5506,24 @@
       "loeschen_fehler": "Cannot delete: {{fehler}}",
       "quellen_fehler": "Picture sources not saved: {{fehler}}",
       "kuerzel_fehler": "Shortcut not saved: {{fehler}}",
-      "hinzugefuegt": "{{n}} picture(s) added",
+      "hinzugefuegt": "{{n}} pictures added",
       "hinzufuegen_fehler": "Cannot add: {{fehler}}",
       "kein_flug": "Nothing is captured without an AeroACARS flight.",
       "aufnahme_fehler": "Cannot capture: {{fehler}}",
-      "aufnahme_zeit": "Capture not completed: the simulator did not answer within 5 s (or the previous capture is still hanging). Please try again in a moment. Technical: {{fehler}}",
+      "aufnahme_zeit": "Capture not completed: the simulator did not answer within 8 s (or the previous capture is still hanging). Please try again in a moment. Technical: {{fehler}}",
       "ordner_fehler": "Cannot open the folder: {{fehler}}",
       "geladen_fehler": "Pictures could not be loaded: {{fehler}}",
       "schliessen": "Close message",
       "export_fehler": "Cannot export: {{fehler}}",
       "yoke_abgelaufen": "No button pressed, time ran out.",
-      "yoke_fehler": "Yoke button not saved: {{fehler}}"
+      "yoke_fehler": "Yoke button not saved: {{fehler}}",
+      "hinzugefuegt_eins": "1 picture added",
+      "hinzugefuegt_teil": "Added: {{n}} of {{gesamt}}. Not possible: {{fehler}}, reason: {{grund}}",
+      "hinzufuegen_keins": "Not added: {{fehler}} of {{gesamt}}. Reason: {{grund}}",
+      "hinzugefuegt_mit_duplikaten": "{{n}} added, {{dup}} already there",
+      "hinzugefuegt_nur_duplikate": "Nothing added, {{dup}} already there",
+      "grund_unlesbar": "File damaged or not a readable picture",
+      "zuordnen_fehler": "Flight not changed: {{fehler}}"
     },
     "band": {
       "aktiv": "Flight active",
@@ -5529,6 +5535,7 @@
       "taste_xplane_bekannt": "{{taste}} in the simulator saves the picture here",
       "taste_msfs": "{{kuerzel}} captures the simulator window",
       "neue": "{{count}} new pictures in this flight",
+      "neue_eins": "1 new picture in this flight",
       "taste_msfs_neutral": "The AeroACARS capture key captures the simulator window"
     },
     "gruppe": {

@@ -148,6 +148,6 @@ describe("Sendezustand", () => {
       c: { phase: "fehlgeschlagen", sendungId: "S", code: "discord_unklar" }, d: { phase: "gesendet", sendungId: "S" },
     };
     expect(offeneIds(s)).toEqual([{ id: "a", sendungId: "S" }]);
-    expect(zusammenfassung(s, ["a", "b", "c", "d"])).toEqual({ sendet: 1, fehlgeschlagen: 2, gesendet: 1, unklar: true, nichtErreichbar: true });
+    expect(zusammenfassung(s, ["a", "b", "c", "d"])).toEqual({ sendet: 1, fehlgeschlagen: 2, gesendet: 1, unklar: true });
   });
 });

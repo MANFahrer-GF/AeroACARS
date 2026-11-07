@@ -53,7 +53,7 @@
 //! * `bild_lesen({pfad})` -> ArrayBuffer (`pfad` relativ aus der Liste)
 //! * `bild_quellen_finden()` -> `[{pfad, art, simulator, existiert, vorschlag_modus}]`
 //! * `bild_status({sendungId?})` -> Stand einer Sendung und Kontingent (`GET /api/bilder/status`)
-//! * `bild_kontext({zeiten?: [iso], pirepId?, mitSpur?})` -> `{staende: [{zeit, quelle, abstand_s?, ...}], spur: [[lat, lon], ...]}`.
+//! * `bild_kontext({zeiten?: [iso], pirepId?, mitSpur?, fluege?})` -> `{staende: [{zeit, quelle, abstand_s?, ...}], spur: [[lat, lon], ...], fluege?: [{pirep_id, rufzeichen, abflug, ziel, flugzeug_icao, start_ms, ende_ms}]}`.
 //!   Je Zeit der zeitlich naechste Stand aus `flight_logs/<pirep>.jsonl` (`quelle: "protokoll"`, hoechstens 120 s
 //!   Abstand) mit den Feldern von `meta_basis` (flach) samt `naechster_flugplatz` aus dem OurAirports-Stand der
 //!   aktiven Generation; sonst die Block-Zeiten des PIREP aus phpVMS (`"logbuch"`: nur `pirep_id`, `flugnummer`,
@@ -73,7 +73,7 @@
 //!   Bilderordner schon vorhandener Hash einer anderen Bild-id wird atomar mit Code `duplikat` abgelehnt (Meldung
 //!   `gruppe/id` des vorhandenen Bildes) und die Eingangskopie dieser id selbst weggeraeumt (keine Waise)
 //! * `bild_aufnehmen({gruppe?})` -> `{fund, methode}`; nur im aktiven Flug (`kein_flug`). Die Aufnahme laeuft in einem
-//!   eigenen Faden mit Zeitgrenze (5 s): antwortet der Simulator nicht, kommt `bild_io` und eine neue Aufnahme ist
+//!   eigenen Faden mit Zeitgrenze (8 s): antwortet der Simulator nicht, kommt `bild_io` und eine neue Aufnahme ist
 //!   sofort wieder moeglich; der haengende Faden bleibt liegen (hoechstens einer, solange er haengt kommt `bild_io`
 //!   "haengt noch"), ein zu spaetes Ergebnis wird verworfen
 //! * `bild_ordner_zeigen({gruppe, id})`: markiert das JPEG im Dateimanager (Finder, Explorer); nur ein vorhandenes
@@ -87,7 +87,7 @@
 //! * `bild_hinzufuegen({gruppe, pfade?})` -> `{abgebrochen, ergebnisse: [{pfad, ok, uebernahme | code, meldung}]}`;
 //!   `gruppe` ist Pflicht (der Tab gibt `ohne-flug`); ohne `pfade` (Ziehen) oeffnet der Kern die Dateiauswahl;
 //!   JPG/PNG, immer kopiert, auch ohne Flug. Ergebnis wie `bild_uebernehmen`: Eingangskopie in `gruppe`
-//! * `bild_loeschen({gruppe, id, bezeichnung?})`, `bild_export({zipBase64, dateiname})`
+//! * `bild_loeschen({bilder: [{gruppe, id}], bezeichnung?})`, `bild_export({zipBase64, dateiname})`
 //! * `bild_quellen_setzen({quellen?, tastenkuerzel?, yokeTaste?, ordnerWaehlen?})`: Mit der Bestaetigung wird der
 //!   aufgeloeste Pfad jeder Quelle gespeichert (`kanonisch`, kommt nie vom Aufrufer; alte Einstellungen werden beim
 //!   Start gebunden). Ist der Pfad spaeter ein anderer Ordner (durch Link/Junction ersetzt), wird die Quelle nicht
@@ -113,6 +113,17 @@
 //! Ereignisse (nur Wecksignale): `bild_quelle_neu` (der Eingangseintrag), `bild_aufgenommen`
 //! (`{ok, aufnahme}` oder `{ok:false, code, meldung}`, `code` z. B. `kein_flug`, `verdeckt`).
 //!
+//! Fensteraufnahme (Windows): zuerst Windows.Graphics.Capture (`aufnahme.methode: "wgc"`). Das nimmt das
+//! Simulatorfenster selbst auf, auch im Vollbild und wenn AeroACARS im Hintergrund liegt, und kopiert nichts
+//! von anderen Fenstern; das Bildmass kommt aus dem Rahmen. Nur wenn WGC nicht verfuegbar ist, scheitert oder
+//! ganz schwarz liefert, folgt der Rueckfall `printwindow`, dann `bitblt`. Der Code `verdeckt` gilt allein fuer
+//! diese Bildschirmkopie (liegt ein fremdes Fenster darueber), nie fuer `wgc`. Die Aufnahme bekommt hoechstens 8 s.
+//! Der Windows-Teil ist unter macOS nur uebersetzt (`cargo check --target x86_64-pc-windows-msvc`), nicht ausgefuehrt.
+//!
+//! Ton: Jede Aufnahme (Tastenkuerzel, Yoke-Knopf, `bild_aufnehmen`) meldet sich hoerbar, auch wenn AeroACARS
+//! im Hintergrund liegt: kurzes doppeltes Klicken bei Erfolg, tiefer Ton bei Fehlschlag (auch `kein_flug`). Die
+//! Nutzlast des Ereignisses bleibt unveraendert; ein Fehlschlag steht zusaetzlich als Warnung im Protokoll.
+//!
 //! Fehlercodes des Kerns: `bild_name`, `bild_pfad`, `bild_nicht_gefunden`, `bild_format`, `bild_unfertig`,
 //! `bild_quelle`, `bild_verboten`, `bild_zu_gross`, `bild_eingabe`, `bild_nicht_verfuegbar`, `bild_io`,
 //! `bild_veraltet` (nur `bild_uebernehmen` eines Funds `datei`: Groesse oder SHA-256 der Datei passen nicht mehr zum
@@ -125,8 +136,12 @@
 //! Stufen (befehle.json): lesen `bilder_liste`, `bild_lesen`, `bild_quellen_finden`, `bild_status`,
 //! `bild_kontext`; fachlich `bild_uebernehmen`, `bild_schreiben`, `bild_aufnehmen`, `bild_ordner_zeigen`,
 //! `bild_taste_lernen`;
-//! system `bild_senden`, `bild_hinzufuegen`, `bild_loeschen`, `bild_quellen_setzen`, `bild_export`.
-//! Die LAN-Bruecke reicht keinen davon durch.
+//! system `bild_senden` (aus dem Hauptfenster ohne Huelle-Fenster: der Senden-Dialog ist die Bestaetigung,
+//! Thomas 07.11.), `bild_hinzufuegen`, `bild_loeschen`, `bild_quellen_setzen`, `bild_export`.
+//! LAN-Bruecke (Thomas 07.11.): `bilder_liste`, `bild_status`, `bild_kontext`, `bild_aufnehmen` und `bild_schreiben`
+//! (dort nur der Sidecar) haben Arme, `bild_lesen` die Route `POST /api/bild` (Token-Kopf, Antwort rohe Bytes),
+//! `bild_senden` laeuft ueber `shell_request` ohne Huelle-Fenster, die anderen Systembefehle mit. Den Eingang arbeitet
+//! nur der Sim-PC ab; Quellen, Tasten, Hinzufuegen, Export und Dateimanager gibt es am Tablet nicht.
 //!
 //! Auslegung: Weil es genau fuenfzehn Befehle sind, tragen zwei Antworten mehr als der Name sagt:
 //! `bilder_liste` liefert auch Funde, Quellen mit Beobachtungszustand, den Altbestand (auf Wunsch) und das
@@ -308,8 +323,60 @@ pub(crate) fn bilder_liste(app: AppHandle, mit_altbestand: Option<bool>) -> Resu
 /// relative Pfad aus `bilder_liste`. Pfad-Ausbruch ist ausgeschlossen.
 #[tauri::command(async)]
 pub(crate) fn bild_lesen(app: AppHandle, pfad: String) -> Result<tauri::ipc::Response, UiError> {
-    let bytes = speicher::lesen(&wurzel(&app)?, &pfad).map_err(fehler)?;
-    Ok(tauri::ipc::Response::new(bytes))
+    Ok(tauri::ipc::Response::new(bild_bytes(&app, &pfad)?))
+}
+
+/// Fertige Bilder und Vorschauen; die Eingangskopien bleiben am Sim-PC.
+pub(crate) fn fuers_tablet(pfad: &str) -> bool {
+    pfad.ends_with(".jpg") && !pfad.ends_with(".quelle.jpg")
+}
+
+/// Der Hash haengt am Bild und an der Duplikatpruefung: Er bleibt, was immer das Tablet schickt.
+fn sha_behalten(neu: &mut Value, alt: Option<&Value>) {
+    if let Some(o) = neu.as_object_mut() {
+        match alt.and_then(|a| a.get("sha256")) {
+            Some(sha) => o.insert("sha256".into(), sha.clone()),
+            None => o.remove("sha256"),
+        };
+    }
+}
+
+pub(crate) fn sidecar_vom_tablet(app: AppHandle, gruppe: String, id: String, sidecar: Value) -> Result<speicher::Eintrag, UiError> {
+    tablet_sidecar_schreiben(&wurzel(&app)?, gruppe, id, sidecar)
+}
+
+fn tablet_sidecar_schreiben(wurzel: &std::path::Path, gruppe: String, id: String, mut sidecar: Value) -> Result<speicher::Eintrag, UiError> {
+    let alt = speicher::eintrag(wurzel, &gruppe, &id).map_err(fehler)?;
+    let exif_veraltet = position_geaendert(alt.sidecar.as_ref(), &sidecar);
+    sha_behalten(&mut sidecar, alt.sidecar.as_ref());
+    // Das Tablet legt keine Bytes ab: Nach einem Flugwechsel schreibt das Programm die neue Position ins JPEG (oder keine).
+    let jpeg = if exif_veraltet && alt.pfad.is_some() {
+        Some(speicher::jpeg_mit_position(wurzel, &gruppe, &id, gps_aus_meta(&sidecar["meta"]).as_ref()).map_err(fehler)?)
+    } else {
+        None
+    };
+    speicher::schreiben(wurzel, SchreibAnfrage { gruppe, id, jpeg, vorschau: None, sidecar: Some(sidecar), quelle_entfernen: false, sha256: None }).map_err(fehler)
+}
+
+fn gps_aus_meta(m: &Value) -> Option<bilder_kern::jpeg::GpsPunkt> {
+    let (breite, laenge) = (m["breite"].as_f64()?, m["laenge"].as_f64()?);
+    ((-90.0..=90.0).contains(&breite) && (-180.0..=180.0).contains(&laenge)).then(|| bilder_kern::jpeg::GpsPunkt {
+        breite,
+        laenge,
+        hoehe_ft: m["hoehe_ft"].as_f64(),
+        kurs: m["kurs"].as_f64(),
+        zeit_ms: m["zeit_utc"].as_str().and_then(kontext::zeit_ms),
+    })
+}
+
+fn position_geaendert(alt: Option<&Value>, neu: &Value) -> bool {
+    let ort = |s: &Value| (s["meta"]["breite"].clone(), s["meta"]["laenge"].clone());
+    // Ein Sidecar ohne Metadaten sagt nichts ueber die Position: das JPEG bleibt unberuehrt.
+    neu["meta"].is_object() && alt.is_some_and(|a| ort(a) != ort(neu))
+}
+
+pub(crate) fn bild_bytes(app: &AppHandle, pfad: &str) -> Result<Vec<u8>, UiError> {
+    speicher::lesen(&wurzel(app)?, pfad).map_err(fehler)
 }
 
 /// Windows: Game Bar, Bilder-Ordner (mit OneDrive), Steam, NVIDIA. X-Plane:
@@ -516,6 +583,7 @@ fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
     }
     let r = (|| -> Result<Value, Fehler> {
         let a = plattform::fenster_aufnehmen()?;
+        tracing::info!(methode = a.methode, rueckfall = ?a.rueckfall_grund, "Bildaufnahme");
         let png = bilder_kern::png::aus_bgra(a.breite, a.hoehe, &a.bgra)?;
         let id = uuid::Uuid::new_v4().to_string();
         let w = wurzel(app).map_err(|u| Fehler::Io(u.message))?;
@@ -540,9 +608,20 @@ fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
 #[tauri::command]
 pub(crate) async fn bild_aufnehmen(app: AppHandle, gruppe: Option<String>) -> Result<Value, UiError> {
     let gruppe = gruppe.unwrap_or_else(|| EINGANG.to_string());
-    tauri::async_runtime::spawn_blocking(move || aufnehmen_intern(&app, &gruppe))
+    let r = tauri::async_runtime::spawn_blocking(move || aufnehmen_intern(&app, &gruppe))
         .await
-        .map_err(|e| UiError::new("bild_io", e.to_string()))?
+        .map_err(|e| UiError::new("bild_io", e.to_string()))?;
+    rueckmeldung(&r);
+    r
+}
+
+/// Hoerbare Rueckmeldung zu einer Aufnahme (Klicken bei Erfolg, tiefer Ton sonst, auch
+/// `kein_flug`); bei Fehlschlag zusaetzlich ins Protokoll, bisher blieb er still.
+fn rueckmeldung(r: &Result<Value, UiError>) {
+    if let Err(e) = r {
+        tracing::warn!(code = %e.code, meldung = %e.message, "Bilder: Aufnahme fehlgeschlagen");
+    }
+    plattform::ton_abspielen(r.is_ok());
 }
 
 /// Nutzlast des Ereignisses `bild_aufgenommen`. Ohne aktiven Flug wird die
@@ -556,6 +635,36 @@ fn aufgenommen_nutzlast(flug_aktiv: bool, aufnehmen: impl FnOnce() -> Result<Val
     }
 }
 
+/// Wie [`rueckmeldung`], aber nach der Nutzlast des Ereignisses `bild_aufgenommen`
+/// (die dabei unveraendert bleibt): `ok` entscheidet ueber den Ton, `code` und
+/// `meldung` gehen bei Fehlschlag ins Protokoll.
+fn nutzlast_rueckmeldung(nutzlast: &Value) {
+    let ok = nutzlast["ok"].as_bool().unwrap_or(false);
+    if !ok {
+        tracing::warn!(
+            code = nutzlast["code"].as_str().unwrap_or(""),
+            meldung = nutzlast["meldung"].as_str().unwrap_or(""),
+            "Bilder: Aufnahme per Taste fehlgeschlagen"
+        );
+    }
+    plattform::ton_abspielen(ok);
+}
+
+/// Werte von `bild_senden`, wenn der Befehl ueber `shell_request` kommt (ohne zweite Rueckfrage).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendenWerte {
+    sendung_id: String,
+    text: Option<String>,
+    geo_stufe: Option<String>,
+    bilder: Vec<BildKennungEin>,
+}
+
+pub(crate) async fn bild_senden_aus_werten(app: AppHandle, werte: Value) -> Result<Value, UiError> {
+    let w: SendenWerte = serde_json::from_value(werte).map_err(|e| UiError::new("bild_eingabe", e.to_string()))?;
+    bild_senden(app, w.sendung_id, w.text, w.geo_stufe, w.bilder).await
+}
+
 /// Ein Bild der Sendung als Kennung: der Kern liest `<gruppe>/<bild_id>.jpg`
 /// selbst und entfernt EXIF/XMP; es gehen keine Bytes durch die Oberflaeche.
 #[derive(Debug, Deserialize)]
@@ -565,9 +674,9 @@ pub(crate) struct BildKennungEin {
     meta: Value,
 }
 
-/// Sendet Bilder an `POST /api/bilder` (P-7.25). Stufe **system**: ein
-/// gesendetes Bild laesst sich nicht zurueckholen, darum bestaetigt die Huelle
-/// (nur mit der Zahl der Bilder). Der Kern liest die verwalteten JPEG-Dateien,
+/// Sendet Bilder an `POST /api/bilder` (P-7.25). Stufe **system**, aber ohne
+/// Huelle-Fenster (Thomas 07.11.): Bestaetigung ist der Senden-Dialog, am Sim-PC
+/// wie am Tablet; `shell_request` und die Bruecke machen die Ausnahme nur hierfuer. Der Kern liest die verwalteten JPEG-Dateien,
 /// entfernt alle APP1-Segmente (gleiche Datei = gleiche Upload-Bytes, kein
 /// `konflikt` bei Wiederholung) und haengt das Pilot-Token an; es erreicht die
 /// Oberflaeche nie. Die Antwort des Servers geht unveraendert zurueck.
@@ -619,7 +728,8 @@ async fn live_mit_token(anfrage: LiveAnfrage) -> Result<Value, UiError> {
 /// nichts, seitenweise zurueckgeblaettert), sonst `"keine"`. Dazu der naechste Flugplatz
 /// (OurAirports der aktiven Generation) und mit `mit_spur` die ausgeduennte Spur
 /// `[[breite, laenge], ...]` des Flugs (`pirep_id`, sonst der des ersten Treffers; im
-/// aktiven Flug dessen Aufzeichnung). Lesend.
+/// aktiven Flug dessen Aufzeichnung). Mit `fluege` die Flugliste fuer die Zuordnung von
+/// Hand aus Protokollen und Logbuch, der Bildzeit (erste Zeit) naechster Flug vorn. Lesend.
 #[tauri::command]
 pub(crate) async fn bild_kontext(
     app: AppHandle,
@@ -627,7 +737,9 @@ pub(crate) async fn bild_kontext(
     zeiten: Option<Vec<String>>,
     pirep_id: Option<String>,
     mit_spur: Option<bool>,
+    fluege: Option<bool>,
 ) -> Result<Value, UiError> {
+    let mit_fluegen = fluege == Some(true);
     let zeiten = zeiten.unwrap_or_default();
     if zeiten.len() > 500 {
         return Err(UiError::new("bild_eingabe", "Hoechstens 500 Zeiten auf einmal"));
@@ -636,8 +748,8 @@ pub(crate) async fn bild_kontext(
         .iter()
         .map(|z| kontext::zeit_ms(z).ok_or_else(|| UiError::new("bild_eingabe", format!("Zeit unlesbar: {z}"))))
         .collect::<Result<_, _>>()?;
-    if ms.is_empty() && mit_spur != Some(true) {
-        return Err(UiError::new("bild_eingabe", "zeiten oder mitSpur noetig"));
+    if ms.is_empty() && mit_spur != Some(true) && !mit_fluegen {
+        return Err(UiError::new("bild_eingabe", "zeiten, mitSpur oder fluege noetig"));
     }
     let client = state.client.lock().expect("client mutex").as_ref().cloned();
     let aktiv = state.active_flight.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -650,7 +762,7 @@ pub(crate) async fn bild_kontext(
     let dir = app.path().app_data_dir().map(|d| d.join("flight_logs")).map_err(|e| UiError::new("bild_io", e.to_string()))?;
     let (ms2, pirep2) = (ms.clone(), pirep_id.clone());
     let hat_aktive_spur = aktiv_spur.is_some();
-    let (treffer, spur_datei) = tauri::async_runtime::spawn_blocking(move || {
+    let (treffer, spur_datei, protokoll_fluege) = tauri::async_runtime::spawn_blocking(move || {
         crate::flugprotokoll_abwarten(); // alles Bisherige steht in der Datei
         let t = kontext::protokoll_staende(&dir, pirep2.as_deref(), &ms2).map_err(fehler)?;
         let spur = if mit_spur == Some(true) && !hat_aktive_spur {
@@ -659,16 +771,21 @@ pub(crate) async fn bild_kontext(
         } else {
             None
         };
-        Ok::<_, UiError>((t, spur))
+        let fluege = if mit_fluegen { kontext::protokoll_fluege(&dir) } else { Vec::new() };
+        Ok::<_, UiError>((t, spur, fluege))
     })
     .await
     .map_err(|e| UiError::new("bild_io", e.to_string()))??;
 
     // Rueckfall Logbuch fuer alles, was das Protokoll nicht abdeckt.
     let offen: Vec<i64> = ms.iter().zip(&treffer).filter(|(_, t)| t.is_none()).map(|(z, _)| *z).collect();
-    let pireps = match (&client, offen.iter().min()) {
-        (Some(c), Some(frueh)) => logbuch_pireps(c, *frueh).await,
-        _ => Vec::new(),
+    // Die Flugliste reicht einen Monat hinter die Bildzeit zurueck: Die Dateizeit eines Bildes kann spaeter liegen als der Flug.
+    // Die Flugliste blaettert, bis die zeitlich naechsten Fluege sicher dabei sind (hoechstens 60 Seiten).
+    let bis = if mit_fluegen { Some(Bis::Fluege(ms.first().copied())) } else { offen.iter().min().map(|z| Bis::Zeit(*z)) };
+    let (pireps, logbuch_ganz) = match (&client, bis) {
+        (Some(c), Some(bis)) => logbuch_pireps(c, bis, if mit_fluegen { 60 } else { 15 }).await,
+        (None, Some(_)) => (Vec::new(), false),
+        (_, None) => (Vec::new(), true),
     };
     let staende: Vec<Value> = zeiten
         .iter()
@@ -694,36 +811,120 @@ pub(crate) async fn bild_kontext(
         })
         .collect();
     let spur = aktiv_spur.map(|s| kontext::ausduennen(s, kontext::MAX_SPUR)).or(spur_datei).unwrap_or_default();
-    Ok(json!({"staende": staende, "spur": spur}))
+    let mut antwort = json!({"staende": staende, "spur": spur});
+    if mit_fluegen {
+        let (liste, gekuerzt) = kontext::fluege_ordnen(protokoll_fluege, &pireps, ms.first().copied());
+        antwort["fluege"] = liste.iter().map(kontext::FlugEintrag::als_json).collect();
+        // Die Oberflaeche sagt, warum Fluege fehlen koennen: Liste auf die naechsten gekuerzt, oder Logbuch nicht ganz gelesen.
+        antwort["fluege_gekuerzt"] = json!(gekuerzt);
+        antwort["logbuch_unvollstaendig"] = json!(!logbuch_ganz);
+    }
+    Ok(antwort)
 }
 
 /// Die PIREPs des Piloten bei phpVMS, seitenweise zurueck, bis die fruehste gefragte
-/// Zeit abgedeckt ist (hoechstens 15 Seiten). Fehler beenden das Blaettern still:
-/// es bleibt bei `keine`, nichts wird geraten.
-async fn logbuch_pireps(client: &api_client::Client, fruehestens_ms: i64) -> Vec<PirepKurz> {
+/// Zeit abgedeckt ist (`None`: bis zur letzten Seite, hoechstens `max_seiten`). Fehler beenden
+/// das Blaettern: es bleibt bei `keine`, nichts wird geraten. Zweiter Wert: wirklich abgedeckt?
+async fn logbuch_pireps(client: &api_client::Client, bis: Bis, max_seiten: u32) -> (Vec<PirepKurz>, bool) {
+    let schluessel = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        (client.connection().base_url(), &client.connection().api_key_kennung()).hash(&mut h);
+        h.finish()
+    };
     let mut alle = Vec::new();
-    for seite in 1..=15u32 {
-        let Ok(v) = client.get_user_pireps_seite(seite).await else { break };
-        if v.is_empty() {
-            break;
+    for seite in 1..=max_seiten {
+        let s = match logbuch_seite_gemerkt(schluessel, seite) {
+            Some(s) => s,
+            None => {
+                let Ok(v) = client.get_user_pireps_seite(seite).await else { return (alle, false) };
+                let s = LogbuchSeite {
+                    aelteste: v.iter().filter_map(|p| p.created_at.as_deref().and_then(kontext::zeit_ms)).min(),
+                    letzte: v.len() < 20,
+                    pireps: v
+                        .into_iter()
+                        .map(|p| PirepKurz {
+                            pirep_id: p.id,
+                            block_off_ms: p.block_off_time.as_deref().and_then(kontext::zeit_ms),
+                            block_on_ms: p.block_on_time.as_deref().and_then(kontext::zeit_ms),
+                            flugnummer: p.flight_number,
+                            abflug: p.dpt_airport_id,
+                            ziel: p.arr_airport_id,
+                            flugzeug_icao: p.aircraft_icao,
+                        })
+                        .collect(),
+                };
+                logbuch_seite_merken(schluessel, seite, s.clone());
+                s
+            }
+        };
+        if s.pireps.is_empty() {
+            return (alle, true);
         }
-        let aelteste = v.iter().filter_map(|p| p.created_at.as_deref().and_then(kontext::zeit_ms)).min();
-        let letzte_seite = v.len() < 20;
-        alle.extend(v.into_iter().map(|p| PirepKurz {
-            pirep_id: p.id,
-            block_off_ms: p.block_off_time.as_deref().and_then(kontext::zeit_ms),
-            block_on_ms: p.block_on_time.as_deref().and_then(kontext::zeit_ms),
-            flugnummer: p.flight_number,
-            abflug: p.dpt_airport_id,
-            ziel: p.arr_airport_id,
-            flugzeug_icao: p.aircraft_icao,
-        }));
-        // 2 Tage Puffer: der PIREP wird vor dem Block-off angelegt
-        if letzte_seite || aelteste.is_some_and(|a| a < fruehestens_ms - 2 * 86_400_000) {
-            break;
+        alle.extend(s.pireps);
+        if logbuch_abgedeckt(s.letzte, s.aelteste, bis, &alle) {
+            return (alle, true);
         }
     }
-    alle
+    (alle, false)
+}
+
+#[derive(Clone)]
+struct LogbuchSeite {
+    pireps: Vec<PirepKurz>,
+    aelteste: Option<i64>,
+    letzte: bool,
+}
+
+/// Gelesene Logbuchseiten, fuenf Minuten je Anmeldung: Wer mehrere Bilder nacheinander zuordnet, wartet nur einmal.
+type SeitenSpeicher = Mutex<Option<(u64, std::time::Instant, Vec<LogbuchSeite>)>>;
+static LOGBUCH_SEITEN: OnceLock<SeitenSpeicher> = OnceLock::new();
+const LOGBUCH_FRISCH: Duration = Duration::from_secs(300);
+
+fn logbuch_seite_gemerkt(schluessel: u64, seite: u32) -> Option<LogbuchSeite> {
+    let g = LOGBUCH_SEITEN.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref() {
+        Some((k, seit, seiten)) if *k == schluessel && seit.elapsed() < LOGBUCH_FRISCH => seiten.get(seite as usize - 1).cloned(),
+        _ => None,
+    }
+}
+
+fn logbuch_seite_merken(schluessel: u64, seite: u32, s: LogbuchSeite) {
+    let mut g = LOGBUCH_SEITEN.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    let frisch = matches!(g.as_ref(), Some((k, seit, _)) if *k == schluessel && seit.elapsed() < LOGBUCH_FRISCH);
+    if !frisch || seite == 1 {
+        *g = Some((schluessel, std::time::Instant::now(), Vec::new()));
+    }
+    if let Some((_, _, seiten)) = g.as_mut() {
+        // Nur lueckenlos ab Seite 1: Seite n gilt nur hinter den Seiten davor
+        if seiten.len() + 1 == seite as usize {
+            seiten.push(s);
+        }
+    }
+}
+
+/// Wie weit das Logbuch gelesen wird.
+#[derive(Clone, Copy)]
+enum Bis {
+    /// Bis vor diese Zeit (Rueckfall fuer die Staende).
+    Zeit(i64),
+    /// Flugliste: bis die [`kontext::MAX_FLUEGE`] zeitlich naechsten Fluege zur Bildzeit sicher dabei sind.
+    Fluege(Option<i64>),
+}
+
+/// Reicht das Geblaetterte? Immer auf der letzten Seite. Fuer eine Zeit, wenn der aelteste PIREP der Seite
+/// mehr als 2 Tage davor liegt (der PIREP wird vor dem Block-off angelegt). Fuer die Flugliste, wenn
+/// [`kontext::MAX_FLUEGE`] Fluege vor der Bildzeit (ohne Bildzeit: ueberhaupt) da sind: jeder aeltere
+/// liegt dann weiter weg als alle diese und gehoerte nicht mehr zu den naechsten.
+fn logbuch_abgedeckt(letzte_seite: bool, aelteste_ms: Option<i64>, bis: Bis, gelesen: &[PirepKurz]) -> bool {
+    letzte_seite
+        || match bis {
+            Bis::Zeit(f) => aelteste_ms.is_some_and(|a| a < f - 2 * 86_400_000),
+            Bis::Fluege(zeit) => {
+                let davor = gelesen.iter().filter(|p| zeit.is_none_or(|z| p.block_on_ms.or(p.block_off_ms).is_some_and(|t| t < z))).count();
+                davor >= kontext::MAX_FLUEGE
+            }
+        }
 }
 
 /// Markiert das JPEG eines Bildes im Dateimanager des Systems (Finder „Im Finder
@@ -799,10 +1000,44 @@ fn papierkorb(p: &std::path::Path) -> Result<(), trash::Error> {
 /// Entfernt ein Bild mit allen Teilen: JPEG (und eine uebrige Eingangskopie) in
 /// den Papierkorb, Vorschau und Sidecar endgueltig. Nie nur ein Teil. Der
 /// Hüllen-Dialog zeigt `bezeichnung`, falls das Paket sie mitgibt.
+///
+/// Nimmt auch die erste Form `{gruppe, id}` an (Generation 74): Paket und
+/// Programm wechseln unabhaengig, und beide melden `bilder-1`.
 #[tauri::command(async)]
-pub(crate) fn bild_loeschen(app: AppHandle, gruppe: String, id: String) -> Result<Vec<String>, UiError> {
+pub(crate) fn bild_loeschen(
+    app: AppHandle,
+    bilder: Option<Vec<BildZiel>>,
+    gruppe: Option<String>,
+    id: Option<String>,
+) -> Result<Vec<String>, UiError> {
+    let bilder = loesch_ziele(bilder, gruppe, id)?;
     let weg = |p: &std::path::Path| papierkorb(p).map_err(|e| std::io::Error::other(e.to_string()));
-    speicher::loeschen(&wurzel(&app)?, &gruppe, &id, &weg).map_err(fehler)
+    let wurzel = wurzel(&app)?;
+    let mut entfernt = Vec::new();
+    for b in &bilder {
+        entfernt.extend(speicher::loeschen(&wurzel, &b.gruppe, &b.id, &weg).map_err(fehler)?);
+    }
+    Ok(entfernt)
+}
+
+/// Ein Bild in `bild_loeschen`: alle gewaehlten Bilder gehen mit einer Rueckfrage in einem Aufruf.
+#[derive(serde::Deserialize)]
+pub(crate) struct BildZiel {
+    gruppe: String,
+    id: String,
+}
+
+/// `bilder` (seit dem Papierkorb fuer die Auswahl) oder `gruppe` + `id` (ein Bild).
+fn loesch_ziele(
+    bilder: Option<Vec<BildZiel>>,
+    gruppe: Option<String>,
+    id: Option<String>,
+) -> Result<Vec<BildZiel>, UiError> {
+    match (bilder, gruppe, id) {
+        (Some(b), _, _) => Ok(b),
+        (None, Some(gruppe), Some(id)) => Ok(vec![BildZiel { gruppe, id }]),
+        _ => Err(UiError::new("bild_eingabe", "bild_loeschen braucht `bilder` oder `gruppe` und `id`")),
+    }
 }
 
 /// Speichert die bestaetigte Liste der Bildquellen (und, wenn angegeben, das
@@ -870,6 +1105,7 @@ fn quellen_setzen_intern(
 /// Ordnerdialog des Systems; `None`, wenn der Pilot abbricht.
 async fn ordner_dialog(app: &AppHandle) -> Result<Option<PathBuf>, UiError> {
     use tauri_plugin_dialog::DialogExt;
+    let _verborgen = crate::huelle::fuer_systemdialog(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().pick_folder(move |p| {
         let _ = tx.send(p);
@@ -915,6 +1151,7 @@ fn hinzufuegen_ergebnis(wurzel: &std::path::Path, pfade: &[String], gruppe: &str
 /// Dateiauswahl des Systems (JPG, PNG); `None`, wenn der Pilot abbricht.
 async fn dateien_dialog(app: &AppHandle) -> Result<Option<Vec<String>>, UiError> {
     use tauri_plugin_dialog::DialogExt;
+    let _verborgen = crate::huelle::fuer_systemdialog(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().add_filter("JPG, PNG", &["jpg", "jpeg", "png"]).pick_files(move |p| {
         let _ = tx.send(p);
@@ -936,6 +1173,7 @@ pub(crate) async fn bild_export(app: AppHandle, zip_base64: String, dateiname: S
     let bytes = b64(&zip_base64, "zip_base64")?;
     let vorschlag: String = dateiname.chars().filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ' ')).collect();
     let vorschlag = if vorschlag.trim().is_empty() { "AeroACARS-Bilder.zip".to_string() } else { vorschlag };
+    let _verborgen = crate::huelle::fuer_systemdialog(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().add_filter("ZIP", &["zip"]).set_file_name(vorschlag).save_file(move |p| {
         let _ = tx.send(p);
@@ -1033,12 +1271,20 @@ pub(crate) fn starten(app: &AppHandle) {
             entsperren(anzeige()).status = status;
             // Zuerst dauerhaft im Eingang; das Ereignis ist nur ein Wecksignal.
             funde_abarbeiten(&slots, funde, jetzt, |f| fund_in_eingang(&app, f), |e| {
+                ans_tablet(&app, EREIGNIS_QUELLE_NEU, e);
                 if let Err(err) = app.emit(EREIGNIS_QUELLE_NEU, e) {
                     tracing::warn!(fehler = %err, "bild_quelle_neu nicht gesendet");
                 }
             });
         }
     });
+}
+
+/// Dieselben Wecksignale fuer offene Tablets.
+fn ans_tablet(app: &AppHandle, ereignis: &str, nutzlast: &impl serde::Serialize) {
+    if let Ok(wert) = serde_json::to_value(nutzlast) {
+        app.state::<crate::AppState>().remote_events.send(crate::remote::RemoteEvent::new(ereignis, wert));
+    }
 }
 
 /// Tastenkuerzel oder Yoke-Knopf gedrueckt: ohne aktiven Flug nichts aufnehmen (Ereignis mit
@@ -1048,13 +1294,123 @@ fn taste_gedrueckt(app: &AppHandle) {
     let app = app.clone();
     let _ = std::thread::Builder::new().name("bild-aufnahme".into()).spawn(move || {
         let nutzlast = aufgenommen_nutzlast(flug_aktiv(&app), || aufnehmen_intern(&app, EINGANG));
+        nutzlast_rueckmeldung(&nutzlast);
+        ans_tablet(&app, EREIGNIS_AUFGENOMMEN, &nutzlast);
         let _ = app.emit(EREIGNIS_AUFGENOMMEN, nutzlast);
     });
 }
 
 #[cfg(test)]
 mod tests {
+    /// Die Oberflaeche aus Generation 74 schickt `{gruppe, id}`, die neue
+    /// `{bilder: [...]}`; beide loeschen (Windows-Test Thomas 08.11.2026:
+    /// „missing required key bilder“).
+    #[test]
+    fn bild_loeschen_nimmt_beide_formen() {
+        let alt = super::loesch_ziele(None, Some("g".into()), Some("a".into())).unwrap();
+        assert_eq!(alt.iter().map(|b| (b.gruppe.as_str(), b.id.as_str())).collect::<Vec<_>>(), vec![("g", "a")]);
+        let neu: Vec<super::BildZiel> =
+            serde_json::from_value(serde_json::json!([{"gruppe": "g", "id": "a"}, {"gruppe": "g", "id": "b"}])).unwrap();
+        let neu = super::loesch_ziele(Some(neu), None, None).unwrap();
+        assert_eq!(neu.len(), 2);
+        assert!(super::loesch_ziele(None, Some("g".into()), None).is_err());
+        assert!(super::loesch_ziele(None, None, None).is_err());
+    }
+
     use super::*;
+
+    #[test]
+    fn das_tablet_liest_nur_fertige_bilder() {
+        assert!(fuers_tablet("P1/b1.jpg"));
+        assert!(fuers_tablet("P1/b1.vorschau.jpg"));
+        assert!(!fuers_tablet("eingang/b1.quelle.jpg"));
+        assert!(!fuers_tablet("eingang/b1.quelle.png"));
+        assert!(!fuers_tablet("P1/b1.json"));
+    }
+
+    #[test]
+    fn nur_eine_andere_position_macht_das_exif_im_jpeg_alt() {
+        let mit = |la: f64| json!({"text": "x", "meta": {"breite": la, "laenge": 8.0}});
+        assert!(!position_geaendert(Some(&mit(50.0)), &json!({"text": "neu", "meta": {"breite": 50.0, "laenge": 8.0}})));
+        assert!(position_geaendert(Some(&mit(50.0)), &mit(51.0)));
+        assert!(position_geaendert(Some(&mit(50.0)), &json!({"meta": {"breite": null, "laenge": null}})), "Ohne Flug: Position weg");
+        assert!(!position_geaendert(None, &mit(50.0)));
+        assert!(!position_geaendert(Some(&mit(50.0)), &json!({"text": "ohne meta"})), "ohne Metadaten bleibt das JPEG");
+    }
+
+    #[test]
+    fn logbuchseiten_gelten_nur_fuer_dieselbe_anmeldung_und_lueckenlos() {
+        let s = |id: &str| LogbuchSeite { pireps: vec![PirepKurz { pirep_id: id.into(), ..Default::default() }], aelteste: None, letzte: false };
+        logbuch_seite_merken(7, 1, s("a"));
+        logbuch_seite_merken(7, 3, s("c"));
+        logbuch_seite_merken(7, 2, s("b"));
+        assert_eq!(logbuch_seite_gemerkt(7, 1).unwrap().pireps[0].pirep_id, "a");
+        assert_eq!(logbuch_seite_gemerkt(7, 2).unwrap().pireps[0].pirep_id, "b");
+        assert!(logbuch_seite_gemerkt(7, 3).is_none(), "Seite 3 kam vor Seite 2: nicht gemerkt");
+        assert!(logbuch_seite_gemerkt(8, 1).is_none(), "andere Anmeldung sieht nichts");
+        logbuch_seite_merken(8, 1, s("x"));
+        assert!(logbuch_seite_gemerkt(7, 1).is_none(), "Anmeldungswechsel leert den Speicher");
+    }
+
+    #[test]
+    fn logbuch_ist_erst_abgedeckt_wenn_es_bis_vor_die_zeit_reicht() {
+        let tag = 86_400_000;
+        let z = |t: i64| Bis::Zeit(t);
+        assert!(logbuch_abgedeckt(true, None, z(10 * tag), &[]), "letzte Seite");
+        assert!(logbuch_abgedeckt(false, Some(7 * tag), z(10 * tag), &[]), "mehr als 2 Tage davor");
+        assert!(!logbuch_abgedeckt(false, Some(9 * tag), z(10 * tag), &[]), "nur 1 Tag davor: weiterblaettern");
+        assert!(!logbuch_abgedeckt(false, None, z(10 * tag), &[]), "ohne Zeiten nichts belegt");
+        // Flugliste: erst wenn MAX_FLUEGE Fluege vor der Bildzeit gelesen sind
+        let flug = |t: i64| PirepKurz { pirep_id: t.to_string(), block_on_ms: Some(t), ..Default::default() };
+        let vorher: Vec<_> = (0..kontext::MAX_FLUEGE as i64).map(flug).collect();
+        let mut zu_wenig: Vec<_> = vorher[1..].to_vec();
+        zu_wenig.extend((0..50).map(|i| flug(10 * tag + i)));
+        assert!(logbuch_abgedeckt(false, None, Bis::Fluege(Some(5 * tag)), &vorher));
+        assert!(!logbuch_abgedeckt(false, None, Bis::Fluege(Some(5 * tag)), &zu_wenig), "Fluege nach dem Bild zaehlen nicht");
+        assert!(logbuch_abgedeckt(false, None, Bis::Fluege(None), &vorher), "ohne Bildzeit: die neuesten reichen");
+        assert!(logbuch_abgedeckt(true, None, Bis::Fluege(Some(5 * tag)), &[]));
+    }
+
+    #[test]
+    fn tablet_flugwechsel_nimmt_die_position_aus_dem_jpeg_sonst_bleibt_es_gleich() {
+        let t = tempfile::tempdir().unwrap();
+        let w = t.path().join("bilder");
+        let mut mit = vec![0xFF, 0xD8, 0xFF, 0xE1, 0, 8];
+        mit.extend_from_slice(b"Exif\0\0");
+        mit.extend_from_slice(&[0xFF, 0xDA, 0, 2, 0xFF, 0xD9]);
+        let sc = |la: Value| json!({"bild_id": "b1", "sha256": "h", "meta": {"breite": la, "laenge": 8.0}});
+        speicher::schreiben(&w, SchreibAnfrage { gruppe: "g".into(), id: "b1".into(), jpeg: Some(mit.clone()), vorschau: None, sidecar: Some(sc(json!(50.0))), quelle_entfernen: false, sha256: None }).unwrap();
+        let jpeg = || std::fs::read(w.join("g/b1.jpg")).unwrap();
+        tablet_sidecar_schreiben(&w, "g".into(), "b1".into(), json!({"bild_id": "b1", "text": "neu", "meta": {"breite": 50.0, "laenge": 8.0}})).unwrap();
+        assert_eq!(jpeg(), mit, "gleiche Position: JPEG unveraendert");
+        tablet_sidecar_schreiben(&w, "g".into(), "b1".into(), sc(json!(41.0))).unwrap();
+        let p = bilder_kern::jpeg::GpsPunkt { breite: 41.0, laenge: 8.0, hoehe_ft: None, kurs: None, zeit_ms: None };
+        let mut erwartet = vec![0xFF, 0xD8];
+        erwartet.extend(bilder_kern::jpeg::gps_segment(&p));
+        erwartet.extend([0xFF, 0xDA, 0, 2, 0xFF, 0xD9]);
+        assert_eq!(jpeg(), erwartet, "anderer Flug: die neue Position steht im JPEG");
+        tablet_sidecar_schreiben(&w, "g".into(), "b1".into(), sc(Value::Null)).unwrap();
+        assert_eq!(jpeg(), [0xFF, 0xD8, 0xFF, 0xDA, 0, 2, 0xFF, 0xD9], "Ohne Flug: keine Position mehr im JPEG");
+        let neu: Value = serde_json::from_slice(&std::fs::read(w.join("g/b1.json")).unwrap()).unwrap();
+        assert_eq!(neu["sha256"], "h", "der Hash bleibt");
+    }
+
+    #[test]
+    fn das_tablet_aendert_den_hash_nicht() {
+        let mut neu = json!({"text": "x", "sha256": "fremd"});
+        sha_behalten(&mut neu, Some(&json!({"sha256": "echt"})));
+        assert_eq!(neu, json!({"text": "x", "sha256": "echt"}));
+        let mut ohne = json!({"sha256": "fremd"});
+        sha_behalten(&mut ohne, Some(&json!({})));
+        assert_eq!(ohne, json!({}));
+    }
+
+    #[test]
+    fn senden_werte_aus_der_oberflaeche() {
+        let w: SendenWerte = serde_json::from_value(json!({"sendungId": S, "text": "Hallo", "geoStufe": "verdeckt", "bilder": [{"gruppe": "P1", "bild_id": B1, "meta": {"fassung": 1}}]})).unwrap();
+        assert_eq!((w.sendung_id.as_str(), w.text.as_deref(), w.geo_stufe.as_deref(), w.bilder.len()), (S, Some("Hallo"), Some("verdeckt"), 1));
+        assert!(serde_json::from_value::<SendenWerte>(json!({"text": "ohne Kennung"})).is_err());
+    }
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const S: &str = "11111111-2222-4333-8444-555555555555";

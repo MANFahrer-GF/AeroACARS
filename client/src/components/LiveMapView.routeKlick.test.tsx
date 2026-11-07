@@ -41,6 +41,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/ipc", () => ({
+  isTauri: true,
   invoke: (cmd: string, args?: Record<string, unknown>) => {
     h.invokeRufe.push({ cmd, args });
     const a = h.invokeAntworten[cmd];

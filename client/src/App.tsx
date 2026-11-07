@@ -348,8 +348,7 @@ function App() {
   const [abgabeAn, setAbgabeAn] = useState(false);
   const [bildFokus, setBildFokus] = useState<BildFokus | null>(null);
   useEffect(() => {
-    // Die LAN-Bruecke reicht keinen Bilder-Befehl durch: im Browser (Tablet) gibt es Reiter und Uebernahme nicht
-    if (status.kind !== "loggedIn" || !isTauri) return;
+    if (status.kind !== "loggedIn") return;
     let weg = false;
     void invoke<{ faehigkeiten?: unknown }>("paket_info")
       .then((i) => {
@@ -1169,7 +1168,7 @@ function App() {
         />
       )}
 
-      {status.kind === "loggedIn" && bilderAn && <BilderHintergrund />}
+      {status.kind === "loggedIn" && bilderAn && (isTauri || tab === "bilder") && <BilderHintergrund />}
       {status.kind === "loggedIn" && bilderAn && tab === "bilder" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
           <BilderTab

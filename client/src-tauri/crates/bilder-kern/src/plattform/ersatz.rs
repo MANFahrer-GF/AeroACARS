@@ -26,6 +26,9 @@ pub fn fenster_aufnehmen() -> Result<Aufnahme, Fehler> {
     Err(Fehler::NichtVerfuegbar("Die Fensteraufnahme gibt es nur unter Windows".into()))
 }
 
+/// Rueckmeldeton der Aufnahme: hier ohne Wirkung.
+pub fn ton_abspielen(_ok: bool) {}
+
 pub struct Hotkey;
 
 pub fn hotkey_starten(_bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, Fehler> {

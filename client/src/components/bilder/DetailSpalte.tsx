@@ -11,13 +11,16 @@ import { Symbol } from "./Symbole";
 import { useBildUrl } from "./useBildUrl";
 
 export function DetailSpalte({
-  e, gewaehlt, flugBilder, aktivePirep, sendbar, onSenden, onOrdner, onLoeschen, onText, onFavorit, onFlugAendern, onKarteOeffnen, onMarke, onZu,
+  e, gewaehlt, flugBilder, aktivePirep, einzelAktionen, mitOrdner, onSenden, onOrdner, onLoeschen, onText, onFavorit, onFlugAendern, onKarteOeffnen, onMarke, onZu,
 }: {
   e: Eintrag | null;
   gewaehlt: boolean;
   flugBilder: Eintrag[];
   aktivePirep: string | null;
-  sendbar: boolean;
+  /** Mit einer Auswahl handelt nur die Leiste unten: Senden und Loeschen hier meinten sonst ein anderes Bild als der Haken. */
+  einzelAktionen: boolean;
+  /** Den Dateimanager gibt es nur am Sim-PC. */
+  mitOrdner: boolean;
   onSenden: () => void;
   onOrdner: () => void;
   onLoeschen: () => void;
@@ -38,20 +41,24 @@ export function DetailSpalte({
   }
   const zeit = langZeit(bildZeitIso(e));
   const ph = phase(e);
+  const favorit = e.sidecar?.favorit === true;
   return (
     <aside className="bt-detail" aria-label={t("bilder.detail.titel")}>
       <Button size="sm" variant="quiet" className="bt-detail__zu" onClick={onZu} aria-label={t("bilder.detail.schliessen")}>{Symbol.zu}</Button>
-      <div className="bt-detail__bild">{url && <img src={url} alt="" />}</div>
+      <div className="bt-detail__bild">
+        {url && <img src={url} alt="" />}
+        <button type="button" className="bt-detail__stern" data-an={favorit ? "an" : undefined} aria-pressed={favorit} aria-label={t("bilder.detail.favorit.an")} title={t(favorit ? "bilder.detail.favorit.an" : "bilder.detail.favorit.aus")} onClick={() => onFavorit(!favorit)}>{Symbol.stern}</button>
+      </div>
       <div className="bt-detail__kopf">
         <span className="bt-acars bt-detail__zeit">{zeit}</span>
         {ph && <span className="bt-chip bt-chip--an">{ph}</span>}
         <span className="bt-detail__zusatz">{gewaehlt ? t("bilder.detail.ausgewaehlt") : t("bilder.detail.nicht_ausgewaehlt")}</span>
       </div>
       <div className="bt-detail__aktionen">
-        <Button variant="primary" onClick={onSenden} disabled={!sendbar} iconLeft={Symbol.senden}>{t("bilder.detail.aktionen.senden")}</Button>
+        {einzelAktionen && <Button variant="primary" onClick={onSenden} iconLeft={Symbol.senden}>{t("bilder.detail.aktionen.senden")}</Button>}
         <div className="bt-detail__aktionen-reihe">
-          <Button variant="quiet" onClick={onOrdner} iconLeft={Symbol.ordner}>{t("bilder.detail.aktionen.ordner")}</Button>
-          <Button variant="danger" onClick={onLoeschen} iconLeft={Symbol.papierkorb}>{t("bilder.detail.aktionen.loeschen")}</Button>
+          {mitOrdner && <Button variant="quiet" onClick={onOrdner} iconLeft={Symbol.ordner}>{t("bilder.detail.aktionen.ordner")}</Button>}
+          {einzelAktionen && <Button variant="danger" onClick={onLoeschen} iconLeft={Symbol.papierkorb}>{t("bilder.detail.aktionen.loeschen")}</Button>}
         </div>
       </div>
       <dl className="bt-kv">
@@ -99,10 +106,6 @@ export function DetailSpalte({
           onBlur={() => { if (text !== (e.sidecar?.text ?? "")) onText(text); }}
         />
         <span className="bt-zaehler">{t("bilder.detail.text.zaehler", { n: text.length, max: GRENZEN.text_max_zeichen })}</span>
-        <label className="bt-hinweis" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input type="checkbox" checked={e.sidecar?.favorit === true} onChange={(ev) => onFavorit(ev.target.checked)} />
-          {t("bilder.detail.favorit.an")}
-        </label>
       </div>
     </aside>
   );

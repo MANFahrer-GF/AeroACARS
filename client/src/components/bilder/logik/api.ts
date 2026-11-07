@@ -3,7 +3,7 @@
 // bild_export) geht `invoke` selbst ueber `shell_request` an die Huelle (lib/ipc.ts
 // `aufrufZiel`); hier steht nie ein eigener shell_request. Oberste Argumente camelCase,
 // Felder verschachtelter Objekte snake_case.
-import { invoke } from "../../../lib/ipc";
+import { bildBytesHolen, invoke, isTauri } from "../../../lib/ipc";
 import { fundLesen, kontextLesen, listeLesen, quelleLesen, yokeLesen } from "./normalisieren";
 import type { YokeTaste, BildMeta, BilderListe, Fundort, Kontext, QuellenStatus, SendeAntwort, Sidecar, Quelle, Kontingent } from "./typen";
 
@@ -34,7 +34,7 @@ export interface BildAktionen {
     gruppe: string; id: string; jpegBase64?: string; vorschauBase64?: string; sidecar?: Sidecar | Partial<Sidecar>; sha256?: string; quelleEntfernen?: boolean;
   }): Promise<void>;
   hinzufuegen(a: { gruppe: string; pfade?: string[] }): Promise<{ abgebrochen: boolean; ergebnisse: HinzufuegenErgebnis[] }>;
-  loeschen(a: { gruppe: string; id: string; bezeichnung?: string }): Promise<void>;
+  loeschen(a: { bilder: Array<{ gruppe: string; id: string }>; bezeichnung?: string }): Promise<void>;
   senden(a: { sendungId: string; text: string; geoStufe: string; bilder: Array<{ gruppe: string; bild_id: string; meta: BildMeta }> }): Promise<SendeAntwort>;
   status(sendungId?: string): Promise<SendeAntwort>;
   aufnehmen(): Promise<void>;
@@ -42,7 +42,7 @@ export interface BildAktionen {
   tasteLernen(): Promise<YokeTaste | null>;
   ordnerZeigen(a: { gruppe: string; id: string }): Promise<void>;
   exportieren(a: { zipBase64: string; dateiname: string }): Promise<string | null>;
-  kontext(a: { zeiten?: string[]; pirepId?: string; mitSpur?: boolean }): Promise<Kontext>;
+  kontext(a: { zeiten?: string[]; pirepId?: string; mitSpur?: boolean; fluege?: boolean }): Promise<Kontext>;
 }
 
 export function alsBytes(v: unknown): Uint8Array {
@@ -73,7 +73,7 @@ export const bildAktionen: BildAktionen = {
     return listeLesen(await invoke("bilder_liste", { mitAltbestand }));
   },
   async lesen(pfad) {
-    return alsBytes(await invoke("bild_lesen", { pfad }));
+    return isTauri ? alsBytes(await invoke("bild_lesen", { pfad })) : bildBytesHolen(pfad);
   },
   quellenFinden: () => invoke<Fundort[]>("bild_quellen_finden"),
   async quellenSetzen(a) {
