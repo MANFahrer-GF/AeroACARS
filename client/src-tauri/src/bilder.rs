@@ -316,6 +316,7 @@ pub(crate) fn bild_uebernehmen(
 /// Ordner. Ein neues Bild braucht JPEG und Sidecar; danach geht jeder Teil
 /// einzeln (z. B. nur das Sidecar fuer Text oder Favorit).
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)] // die Argumente sind der Vertrag des Befehls
 pub(crate) fn bild_schreiben(
     app: AppHandle,
     gruppe: String,
@@ -422,13 +423,13 @@ fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
         let e = speicher::quelle_schreiben(&w, gruppe, &id, QuellFormat::Png, &png)?;
         // Dauerhaft im Eingang ablegen (mit dem Stand zur Aufnahme), erst dann melden.
         let Some(meta) = meta_basis_jetzt(app) else {
-            let _ = std::fs::remove_file(w.join(&e.quelle_pfad.clone().unwrap_or_default()));
+            let _ = std::fs::remove_file(w.join(e.quelle_pfad.clone().unwrap_or_default()));
             return Err(Fehler::KeinFlug("Der Flug ist inzwischen beendet".into()));
         };
         let quelle_pfad = e.quelle_pfad.clone().unwrap_or_default();
         let fund = EingangsFund::aufnahme(id, jetzt_ms(), quelle_pfad, e.quelle_groesse, a.breite, a.hoehe, Some(SimFenster { breite: a.breite, hoehe: a.hoehe }), meta);
         if let Err(f) = eingang::ablegen(&w, &fund) {
-            let _ = std::fs::remove_file(w.join(&fund.quelle_pfad.clone().unwrap_or_default()));
+            let _ = std::fs::remove_file(w.join(fund.quelle_pfad.clone().unwrap_or_default()));
             return Err(f);
         }
         Ok(json!({"fund": fund, "methode": a.methode}))

@@ -517,9 +517,12 @@ fn datei_uebernehmen(
 /// Hoechstens so viele Dateien je Aufruf von `bild_hinzufuegen`.
 pub const MAX_HINZUFUEGEN: usize = 500;
 
+/// Pfad und Ergebnis einer einzelnen Datei bei [`hinzufuegen_mehrere`].
+pub type HinzufuegenErgebnis = (String, Result<Uebernahme, Fehler>);
+
 /// [`hinzufuegen`] fuer mehrere Dateien; jede ergibt ihr eigenes Ergebnis, ein
 /// Fehler stoppt die anderen nicht.
-pub fn hinzufuegen_mehrere(wurzel: &Path, pfade: &[String], gruppe: &str, stabil_pause: Duration) -> Result<Vec<(String, Result<Uebernahme, Fehler>)>, Fehler> {
+pub fn hinzufuegen_mehrere(wurzel: &Path, pfade: &[String], gruppe: &str, stabil_pause: Duration) -> Result<Vec<HinzufuegenErgebnis>, Fehler> {
     name_pruefen("Gruppe", gruppe)?;
     if pfade.len() > MAX_HINZUFUEGEN {
         return Err(Fehler::Eingabe(format!("Hoechstens {MAX_HINZUFUEGEN} Dateien auf einmal")));
@@ -949,7 +952,7 @@ pub(crate) mod tests {
                 }
             }));
         });
-        let r = uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Verschieben, "g", Some("b1"), LAGE);
+        let r = uebernehmen(&wurzel, &q, a.to_str().unwrap(), Modus::Kopieren, "g", Some("b1"), LAGE);
         ZWISCHEN.with(|z| *z.borrow_mut() = None);
         #[cfg(unix)]
         {
