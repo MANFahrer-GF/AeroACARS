@@ -5503,7 +5503,7 @@
       "hinzufuegen_fehler": "Aggiunta non possibile: {{fehler}}",
       "kein_flug": "Senza un volo AeroACARS non si scatta nulla.",
       "aufnahme_fehler": "Scatto non possibile: {{fehler}}",
-      "aufnahme_zeit": "Scatto non completato: il simulatore non ha risposto entro 5 s (o lo scatto precedente è ancora in sospeso). Riprova tra un attimo. Tecnico: {{fehler}}",
+      "aufnahme_zeit": "Scatto non completato: il simulatore non ha risposto entro 8 s (o lo scatto precedente è ancora in sospeso). Riprova tra un attimo. Tecnico: {{fehler}}",
       "ordner_fehler": "Impossibile aprire la cartella: {{fehler}}",
       "geladen_fehler": "Impossibile caricare le immagini: {{fehler}}",
       "schliessen": "Chiudi messaggio",

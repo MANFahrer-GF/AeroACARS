@@ -11,7 +11,7 @@ export function sauber(s: string | null | undefined, max: number): string {
 }
 
 export function kopfZeile(pilotName: string | null | undefined, m: Pick<BildMeta, "abflug" | "ziel" | "flugzeug_titel" | "flugzeug_icao" | "rufzeichen">): string {
-  const name = sauber(pilotName, 80) || "Pilot";
+  const name = `📷 **${sauber(pilotName, 80) || "Pilot"}**`;
   const strecke = [sauber(m.abflug, 8), sauber(m.ziel, 8)].filter(Boolean).join("\u2013");
   const titel = sauber(m.flugzeug_titel, 80);
   const icao = sauber(m.flugzeug_icao, 8);

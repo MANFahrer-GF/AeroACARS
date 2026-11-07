@@ -166,7 +166,8 @@ export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
           try {
             await einRest(e, z);
           } catch (err) {
-            melden(z, e.id, err);
+            // Die Liste ist schon aelter: Die Kopie ist inzwischen umgezogen, das Bild liegt fertig da.
+            if (fehlerCode(err) !== "bild_nicht_gefunden") melden(z, e.id, err);
           }
         }
       } while (nochmal);

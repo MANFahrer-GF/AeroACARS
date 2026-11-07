@@ -182,5 +182,5 @@ pub fn aufnehmen(hwnd: *mut std::ffi::c_void) -> Result<Aufnahme, String> {
     if super::windows::ganz_schwarz(&bgra) {
         return Err("ganz_schwarz".into());
     }
-    Ok(Aufnahme { breite: b, hoehe: h, bgra, methode: "wgc" })
+    Ok(Aufnahme { breite: b, hoehe: h, bgra, methode: "wgc", rueckfall_grund: None })
 }

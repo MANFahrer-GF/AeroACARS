@@ -125,6 +125,14 @@ describe("Uebernehmer", () => {
     expect(z.fehler).toBe(0);
     expect(z.neu).toBe(1);
   });
+  it("Rest, dessen Kopie inzwischen umgezogen ist, ist kein Fehler", async () => {
+    const rest = { ...eintrag({ id: "r2", fertig: false }), quelle_pfad: "eingang/r2.quelle.png", gruppe: "eingang" };
+    const a = aufbau({ eintraege: [rest] });
+    a.api.lesen = async () => { throw { code: "bild_nicht_gefunden", message: "weg" }; };
+    const z = await a.uebernehmer.eingangAbarbeiten();
+    expect(z.fehler).toBe(0);
+    expect(z.letzterFehler).toBeNull();
+  });
   it("Eingangskopie ohne Sidecar wird aus dem Kontext der Dateizeit fertiggestellt", async () => {
     const rest = { ...eintrag({ id: "r1", fertig: false }), quelle_pfad: "eingang/r1.quelle.png", gruppe: "eingang", dateizeit_ms: Date.UTC(2026, 10, 7, 10) };
     const a = aufbau({

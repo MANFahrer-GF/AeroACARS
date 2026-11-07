@@ -197,7 +197,7 @@ describe("Vorschau der Nachricht (Spiegel des Servers)", () => {
   it("Kopf, eine Zeile je Bild, Text zuletzt; Zeit, Hoehe und Phase bleiben sichtbar", () => {
     const voll = sendeMeta(m, "verdeckt", "Boarding");
     const v = vorschauBauen("Thomas K", [voll], "verdeckt", "Schoen!", 2000);
-    expect(v.kopf).toBe("Thomas K · GSG101 · EDDF\u2013LEPA · Airbus A320 (A320)");
+    expect(v.kopf).toBe("📷 **Thomas K** · GSG101 · EDDF\u2013LEPA · Airbus A320 (A320)");
     expect(v.zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: "50.030° N 8.570° E · 270° · EDDF", verdeckt: true }]);
     expect(vorschauBauen("T", [voll], "sichtbar", "", 2000).zeilen[0].verdeckt).toBe(false);
   });
@@ -215,7 +215,7 @@ describe("Vorschau der Nachricht (Spiegel des Servers)", () => {
     expect(infoZeile({ ...m, phase_text: "||Reise**flug" })).toBe("10:00Z · 12000 ft · Reise flug");
   });
   it("Formatierung in festen Feldern wird entfernt", () => {
-    expect(vorschauBauen("a||b**", [meta({ rufzeichen: "X||Y" })], "aus", "", 2000).kopf).not.toMatch(/[|*]/);
+    expect(vorschauBauen("a||b**", [meta({ rufzeichen: "X||Y" })], "aus", "", 2000).kopf).toBe("📷 **a b** · X Y · EDDF\u2013LEPA · Airbus A320 (A320)");
   });
   it("Kuerzung wird gemeldet", () => {
     expect(vorschauBauen("T", [m], "aus", "x".repeat(2100), 2000).gekuerzt).toBe(true);

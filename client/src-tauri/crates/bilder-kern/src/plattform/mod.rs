@@ -22,6 +22,8 @@ pub struct Aufnahme {
     pub bgra: Vec<u8>,
     /// Womit aufgenommen wurde: `wgc`, `printwindow` oder `bitblt`.
     pub methode: &'static str,
+    /// Warum nicht `wgc`, wenn der Rueckfall gegriffen hat (fuers Protokoll).
+    pub rueckfall_grund: Option<String>,
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,7 +34,7 @@ use crate::Fehler;
 
 /// So lange darf eine Fensteraufnahme hoechstens dauern (`PrintWindow` kann bei
 /// einem haengenden Simulator ohne Ende warten).
-pub const AUFNAHME_FRIST: Duration = Duration::from_secs(5);
+pub const AUFNAHME_FRIST: Duration = Duration::from_secs(8);
 
 /// Setzt die Marke zurueck, wenn der Arbeitsfaden endet (auch bei einem Absturz).
 struct Frei(&'static AtomicBool);

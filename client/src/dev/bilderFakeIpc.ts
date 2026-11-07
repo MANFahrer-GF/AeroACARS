@@ -168,3 +168,4 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
     default: return undefined as T;
   }
 }
+export const bildBytesHolen = async (): Promise<Uint8Array> => new Uint8Array();

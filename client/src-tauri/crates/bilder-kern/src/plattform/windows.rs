@@ -378,10 +378,12 @@ fn fenster_aufnehmen_roh() -> Result<Aufnahme, Fehler> {
         Err(grund) => grund,
     };
     // Rueckfall; scheitert auch er mit einem E/A-Fehler, steht der WGC-Grund dabei.
-    fenster_aufnehmen_gdi(hwnd, r).map_err(|e| match e {
-        Fehler::Io(m) => Fehler::Io(format!("{m} (Windows.Graphics.Capture: {wgc_grund})")),
-        andere => andere,
-    })
+    match fenster_aufnehmen_gdi(hwnd, r) {
+        Ok(a) => Ok(Aufnahme { rueckfall_grund: Some(wgc_grund), ..a }),
+        Err(Fehler::Io(m)) => Err(Fehler::Io(format!("{m} (Windows.Graphics.Capture: {wgc_grund})"))),
+        Err(Fehler::Verdeckt(m)) => Err(Fehler::Verdeckt(format!("{m} (Windows.Graphics.Capture: {wgc_grund})"))),
+        Err(andere) => Err(andere),
+    }
 }
 
 /// Rueckfall: `PrintWindow`, dann `BitBlt` (siehe `fenster_aufnehmen`).
@@ -416,7 +418,7 @@ fn fenster_aufnehmen_gdi(hwnd: HWND, r: RECT) -> Result<Aufnahme, Fehler> {
     if ganz_schwarz(&bgra) {
         return Err(Fehler::Io("Die Aufnahme ist schwarz (Vollbild-Ausgabe des Simulators nicht abgreifbar)".into()));
     }
-    Ok(Aufnahme { breite: b as u32, hoehe: h as u32, bgra, methode })
+    Ok(Aufnahme { breite: b as u32, hoehe: h as u32, bgra, methode, rueckfall_grund: None })
 }
 
 /// Rueckmeldeton der Aufnahme: kurzes Klicken bei Erfolg, tiefer Ton bei Fehlschlag.

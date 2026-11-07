@@ -1487,6 +1487,14 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
 #[cfg(test)]
 mod bild_tests {
     #[test]
+    fn nur_bild_senden_laeuft_vom_tablet_ohne_huelle() {
+        let quelle = include_str!("bridge.rs");
+        let arm = &quelle[quelle.find("\"shell_request\" =>").unwrap()..quelle.find("\"huelle_einstellungen\" =>").unwrap()];
+        assert_eq!(arm.matches("a.befehl ==").count(), 1);
+        assert!(arm.contains("a.befehl == \"bild_senden\""));
+    }
+
+    #[test]
     fn bild_schreiben_vom_tablet_nimmt_keine_bilddaten_an() {
         let nur_sidecar = serde_json::json!({"gruppe": "g", "id": "i", "sidecar": {}});
         assert!(super::parse_args::<super::BildSidecar>(&nur_sidecar).is_ok());

@@ -138,7 +138,9 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   /** Sidecar eines Bildes aendern (voller Stand, `bild_schreiben` ersetzt das Dokument). */
   function sidecarAendern(e: Eintrag, f: (s: Sidecar) => Sidecar): Promise<void> {
     return reihe(async () => {
-      const alt = e.sidecar as Sidecar;
+      // Tablet und Sim-PC schreiben dasselbe Dokument: vom frischen Stand ausgehen, nicht vom Stand der Anzeige.
+      await laden();
+      const alt = (z.liste?.eintraege.find((x) => x.id === e.id)?.sidecar ?? e.sidecar) as Sidecar;
       await api.schreiben({ gruppe: e.gruppe, id: e.id, sidecar: f(alt) });
       await laden();
     });
@@ -343,7 +345,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     await laden(false);
   }
 
-  /** `bild_io`: Der Simulator hat nicht innerhalb der Zeitgrenze (5 s) geantwortet oder die vorige Aufnahme haengt noch. */
+  /** `bild_io`: Der Simulator hat nicht innerhalb der Zeitgrenze (8 s) geantwortet oder die vorige Aufnahme haengt noch. */
   function aufnahmeGescheitert(code: string, text: string): void {
     const art = code === "kein_flug" ? "kein_flug" : code === "bild_io" ? "aufnahme_zeit" : "aufnahme_fehler";
     meldung("fehler", `bilder.meldung.${art}`, { fehler: text });

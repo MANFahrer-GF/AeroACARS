@@ -2,7 +2,8 @@
 // nicht offen ist. Rust legt jeden Fund eines aktiven Flugs persistent im Eingang ab;
 // die Ereignisse `bild_quelle_neu` und `bild_aufgenommen` sind nur Wecksignale, ein
 // langsamer Takt holt nach, was verpasst wurde (Webview gedrosselt, Neustart).
-// Am Tablet gibt es diese Ereignisse nicht: Es laedt die Liste im kurzen Takt neu.
+// Am Tablet laeuft das nur bei offenem Tab: Der Sim-PC verarbeitet die Funde, das Tablet
+// laedt die Liste im kurzen Takt neu und meldet gescheiterte Aufnahmen.
 import { useEffect } from "react";
 import { isTauri, listen } from "../../lib/ipc";
 import { bilderStore } from "./bilderStore";

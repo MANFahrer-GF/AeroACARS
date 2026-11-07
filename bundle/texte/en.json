@@ -5503,7 +5503,7 @@
       "hinzufuegen_fehler": "Cannot add: {{fehler}}",
       "kein_flug": "Nothing is captured without an AeroACARS flight.",
       "aufnahme_fehler": "Cannot capture: {{fehler}}",
-      "aufnahme_zeit": "Capture not completed: the simulator did not answer within 5 s (or the previous capture is still hanging). Please try again in a moment. Technical: {{fehler}}",
+      "aufnahme_zeit": "Capture not completed: the simulator did not answer within 8 s (or the previous capture is still hanging). Please try again in a moment. Technical: {{fehler}}",
       "ordner_fehler": "Cannot open the folder: {{fehler}}",
       "geladen_fehler": "Pictures could not be loaded: {{fehler}}",
       "schliessen": "Close message",

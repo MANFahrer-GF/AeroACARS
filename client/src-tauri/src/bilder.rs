@@ -73,7 +73,7 @@
 //!   Bilderordner schon vorhandener Hash einer anderen Bild-id wird atomar mit Code `duplikat` abgelehnt (Meldung
 //!   `gruppe/id` des vorhandenen Bildes) und die Eingangskopie dieser id selbst weggeraeumt (keine Waise)
 //! * `bild_aufnehmen({gruppe?})` -> `{fund, methode}`; nur im aktiven Flug (`kein_flug`). Die Aufnahme laeuft in einem
-//!   eigenen Faden mit Zeitgrenze (5 s): antwortet der Simulator nicht, kommt `bild_io` und eine neue Aufnahme ist
+//!   eigenen Faden mit Zeitgrenze (8 s): antwortet der Simulator nicht, kommt `bild_io` und eine neue Aufnahme ist
 //!   sofort wieder moeglich; der haengende Faden bleibt liegen (hoechstens einer, solange er haengt kommt `bild_io`
 //!   "haengt noch"), ein zu spaetes Ergebnis wird verworfen
 //! * `bild_ordner_zeigen({gruppe, id})`: markiert das JPEG im Dateimanager (Finder, Explorer); nur ein vorhandenes
@@ -117,7 +117,7 @@
 //! Simulatorfenster selbst auf, auch im Vollbild und wenn AeroACARS im Hintergrund liegt, und kopiert nichts
 //! von anderen Fenstern; das Bildmass kommt aus dem Rahmen. Nur wenn WGC nicht verfuegbar ist, scheitert oder
 //! ganz schwarz liefert, folgt der Rueckfall `printwindow`, dann `bitblt`. Der Code `verdeckt` gilt allein fuer
-//! diese Bildschirmkopie (liegt ein fremdes Fenster darueber), nie fuer `wgc`. Die Aufnahme bekommt hoechstens 5 s.
+//! diese Bildschirmkopie (liegt ein fremdes Fenster darueber), nie fuer `wgc`. Die Aufnahme bekommt hoechstens 8 s.
 //! Der Windows-Teil ist unter macOS nur uebersetzt (`cargo check --target x86_64-pc-windows-msvc`), nicht ausgefuehrt.
 //!
 //! Ton: Jede Aufnahme (Tastenkuerzel, Yoke-Knopf, `bild_aufnehmen`) meldet sich hoerbar, auch wenn AeroACARS
@@ -534,6 +534,7 @@ fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
     }
     let r = (|| -> Result<Value, Fehler> {
         let a = plattform::fenster_aufnehmen()?;
+        tracing::info!(methode = a.methode, rueckfall = ?a.rueckfall_grund, "Bildaufnahme");
         let png = bilder_kern::png::aus_bgra(a.breite, a.hoehe, &a.bgra)?;
         let id = uuid::Uuid::new_v4().to_string();
         let w = wurzel(app).map_err(|u| Fehler::Io(u.message))?;
@@ -624,9 +625,9 @@ pub(crate) struct BildKennungEin {
     meta: Value,
 }
 
-/// Sendet Bilder an `POST /api/bilder` (P-7.25). Stufe **system**: ein
-/// gesendetes Bild laesst sich nicht zurueckholen, darum bestaetigt die Huelle
-/// (nur mit der Zahl der Bilder). Der Kern liest die verwalteten JPEG-Dateien,
+/// Sendet Bilder an `POST /api/bilder` (P-7.25). Stufe **system**, aber ohne
+/// Huelle-Fenster (Thomas 07.11.): Bestaetigung ist der Senden-Dialog, am Sim-PC
+/// wie am Tablet; `shell_request` und die Bruecke machen die Ausnahme nur hierfuer. Der Kern liest die verwalteten JPEG-Dateien,
 /// entfernt alle APP1-Segmente (gleiche Datei = gleiche Upload-Bytes, kein
 /// `konflikt` bei Wiederholung) und haengt das Pilot-Token an; es erreicht die
 /// Oberflaeche nie. Die Antwort des Servers geht unveraendert zurueck.
@@ -1095,12 +1096,20 @@ pub(crate) fn starten(app: &AppHandle) {
             entsperren(anzeige()).status = status;
             // Zuerst dauerhaft im Eingang; das Ereignis ist nur ein Wecksignal.
             funde_abarbeiten(&slots, funde, jetzt, |f| fund_in_eingang(&app, f), |e| {
+                ans_tablet(&app, EREIGNIS_QUELLE_NEU, e);
                 if let Err(err) = app.emit(EREIGNIS_QUELLE_NEU, e) {
                     tracing::warn!(fehler = %err, "bild_quelle_neu nicht gesendet");
                 }
             });
         }
     });
+}
+
+/// Dieselben Wecksignale fuer offene Tablets.
+fn ans_tablet(app: &AppHandle, ereignis: &str, nutzlast: &impl serde::Serialize) {
+    if let Ok(wert) = serde_json::to_value(nutzlast) {
+        app.state::<crate::AppState>().remote_events.send(crate::remote::RemoteEvent::new(ereignis, wert));
+    }
 }
 
 /// Tastenkuerzel oder Yoke-Knopf gedrueckt: ohne aktiven Flug nichts aufnehmen (Ereignis mit
@@ -1111,6 +1120,7 @@ fn taste_gedrueckt(app: &AppHandle) {
     let _ = std::thread::Builder::new().name("bild-aufnahme".into()).spawn(move || {
         let nutzlast = aufgenommen_nutzlast(flug_aktiv(&app), || aufnehmen_intern(&app, EINGANG));
         nutzlast_rueckmeldung(&nutzlast);
+        ans_tablet(&app, EREIGNIS_AUFGENOMMEN, &nutzlast);
         let _ = app.emit(EREIGNIS_AUFGENOMMEN, nutzlast);
     });
 }

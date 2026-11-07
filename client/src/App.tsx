@@ -1155,7 +1155,7 @@ function App() {
         />
       )}
 
-      {status.kind === "loggedIn" && bilderAn && <BilderHintergrund />}
+      {status.kind === "loggedIn" && bilderAn && (isTauri || tab === "bilder") && <BilderHintergrund />}
       {status.kind === "loggedIn" && bilderAn && tab === "bilder" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
           <BilderTab
