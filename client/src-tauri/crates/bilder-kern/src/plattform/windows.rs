@@ -519,7 +519,7 @@ fn joy_geraete() -> Vec<Geraet> {
 /// `Ok(None)`: nichts gedrueckt oder kein Geraet angeschlossen.
 pub fn yoke_lernen(max: std::time::Duration) -> Result<Option<YokeTaste>, Fehler> {
     let geraete = joy_geraete();
-    let mut vorher: Vec<u32> = geraete.iter().map(|g| joy_lesen(g.nummer).unwrap_or(0)).collect();
+    let mut vorher: Vec<u32> = geraete.iter().map(|g| joy_lesen(g.nummer).unwrap_or(u32::MAX)).collect();
     let ende = std::time::Instant::now() + max;
     while !geraete.is_empty() && std::time::Instant::now() < ende {
         std::thread::sleep(std::time::Duration::from_millis(yoke::TAKT_MS));
@@ -569,15 +569,12 @@ pub fn yoke_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Yoke, Fehle
                     nummer = None;
                     zuletzt_gesucht = None;
                 }
-                // Geraet ueber Hersteller, Produkt und Name suchen, einmal je Sekunde:
-                // findet auch ein wieder angestecktes Geraet unter neuer Nummer.
-                if zuletzt_gesucht.is_none_or(|t| jetzt.saturating_sub(t) >= 1000) {
+                // Fehlt das Geraet, einmal je Sekunde ueber Hersteller, Produkt und Name
+                // suchen (auch unter neuer Nummer); `winmm` fragt dabei alle Nummern ab, also
+                // nicht, solange das Geraet lesbar ist.
+                if nummer.is_none() && zuletzt_gesucht.is_none_or(|t| jetzt.saturating_sub(t) >= 1000) {
                     zuletzt_gesucht = Some(jetzt);
-                    let neu = yoke::geraet_finden(&joy_geraete(), &taste);
-                    if neu != nummer {
-                        nummer = neu;
-                        flanke = Flanke::default();
-                    }
+                    nummer = yoke::geraet_finden(&joy_geraete(), &taste);
                 }
                 let gedrueckt = match nummer {
                     Some(n) => match joy_lesen(n) {

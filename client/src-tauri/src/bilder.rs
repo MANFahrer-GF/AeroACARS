@@ -90,7 +90,7 @@
 //!   weil Tauri fehlend und `null` bei `Option` nicht trennt.
 //! * `bild_taste_lernen()` -> `{geraet_name, hersteller_id, produkt_id, knopf} | null`: wartet hoechstens 10 s auf
 //!   einen neu gedrueckten Knopf an einem Yoke oder Joystick (nur Windows, `winmm`) und speichert nichts; das Ergebnis
-//!   geht danach als `yokeTaste` an `bild_quellen_setzen`. Auf anderen Systemen Fehlercode `bild_nicht_verfuegbar`.
+//!   geht danach als `yokeTaste` an `bild_quellen_setzen`. Waehrenddessen loest der belegte Knopf keine Aufnahme aus. Auf anderen Systemen Fehlercode `bild_nicht_verfuegbar`.
 //!   Die Schnittstelle `winmm` sieht je Geraet hoechstens 32 Knoepfe (keine Hat-Schalter, keine Achsen). Der Windows-Teil
 //!   ist unter macOS nur uebersetzt (`cargo check --target x86_64-pc-windows-msvc`), nicht ausgefuehrt.
 //!
@@ -334,6 +334,9 @@ pub(crate) fn bild_quellen_finden() -> Vec<Fundort> {
 
 // ------------------------------------------------------------- fachlich
 
+/// `bild_taste_lernen` laeuft: der belegte Knopf loest solange nichts aus.
+static YOKE_LERNT: AtomicBool = AtomicBool::new(false);
+
 /// Wartet hoechstens 10 s auf einen neu gedrueckten Knopf an einem Yoke oder
 /// Joystick (Windows) und liefert `{geraet_name, hersteller_id, produkt_id, knopf}`
 /// oder `null`, wenn nichts gedrueckt wurde. Speichert nichts: der Tab uebergibt
@@ -341,10 +344,10 @@ pub(crate) fn bild_quellen_finden() -> Vec<Fundort> {
 /// Windows `bild_nicht_verfuegbar`.
 #[tauri::command]
 pub(crate) async fn bild_taste_lernen() -> Result<Value, UiError> {
-    let t = tauri::async_runtime::spawn_blocking(|| plattform::yoke_lernen(Duration::from_secs(10)))
-        .await
-        .map_err(|e| UiError::new("bild_io", e.to_string()))?
-        .map_err(fehler)?;
+    YOKE_LERNT.store(true, Ordering::SeqCst);
+    let ergebnis = tauri::async_runtime::spawn_blocking(|| plattform::yoke_lernen(Duration::from_secs(10))).await;
+    YOKE_LERNT.store(false, Ordering::SeqCst);
+    let t = ergebnis.map_err(|e| UiError::new("bild_io", e.to_string()))?.map_err(fehler)?;
     Ok(json!(t))
 }
 
@@ -953,7 +956,13 @@ pub(crate) fn starten(app: &AppHandle) {
         }
         if plattform::YOKE_VERFUEGBAR {
             let app_yoke = app.clone();
-            match plattform::yoke_starten(move || taste_gedrueckt(&app_yoke)) {
+            // Beim Lernen ist ein Druck die Antwort, keine Aufnahme (auch beim schon belegten Knopf).
+            let bei_knopf = move || {
+                if !YOKE_LERNT.load(Ordering::SeqCst) {
+                    taste_gedrueckt(&app_yoke);
+                }
+            };
+            match plattform::yoke_starten(bei_knopf) {
                 Ok(y) => {
                     *entsperren(yoke()) = Some(y);
                     yoke_anwenden(einst.yoke.as_ref());
