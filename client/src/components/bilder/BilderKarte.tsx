@@ -114,6 +114,7 @@ export function BilderKarte({
           </div>
         )}
       </div>
+      <span className="bt-hinweis">© OpenFreeMap, OpenMapTiles, OpenStreetMap contributors</span>
       <span className="bt-hinweis">{hatOrt && !spur && meta?.pirep_id ? t("bilder.karte.keine_spur") + ". " : ""}{t("bilder.detail.karte.hinweis")}</span>
     </div>
   );

@@ -90,6 +90,9 @@ pub const MAX_ABO_ID: u8 = 16;
 /// Mindestabstand zwischen zwei grossen Datagrammen (> 1 KiB) — das Plugin
 /// liest einmal je Bild; so staut sich bei ihm nichts.
 const SENDEABSTAND: Duration = Duration::from_millis(20);
+/// Liefert das Plugin Werte fuer ein Abo, das wir nicht (mehr) wollen, geht
+/// `ENDE-ABO` hoechstens so oft erneut hinaus (UDP kann es verlieren).
+const NACHBESTELLEN: Duration = Duration::from_secs(1);
 const GROSS: usize = 1024;
 
 // =============================================================================
@@ -756,6 +759,8 @@ pub struct Sitzung {
     /// Nach dem Oeffnen: ungewuenschte IDs abbestellen (Abos einer frueheren
     /// Sitzung, die das Plugin beim HALLO vom selben Port behaelt).
     aufraeumen: bool,
+    /// Wann zuletzt `ENDE-ABO` fuer eine ID hinausging (Nachbestellen).
+    abbestellt: HashMap<u8, Instant>,
     info: SitzungsInfo,
     band: BandStand,
 }
@@ -900,6 +905,7 @@ impl Sitzung {
             letzter_grosser: None,
             gen_zaehler: 0,
             aufraeumen: false,
+            abbestellt: HashMap::new(),
             info: SitzungsInfo::default(),
             band: BandStand::neu(),
         }
@@ -1258,7 +1264,7 @@ impl Sitzung {
         for id in weg {
             self.abos.remove(&id);
             self.aus_warteschlange(id);
-            self.vorrang.push_back(anfrage_ende_abo(id));
+            self.abbestellen(id, jetzt);
         }
         if std::mem::take(&mut self.aufraeumen) {
             // Nach dem (Wieder-)Oeffnen: alles abbestellen, was wir nicht
@@ -1267,10 +1273,15 @@ impl Sitzung {
             // ueber den Vorrang VOR den neuen ABOs hinaus.
             for id in 1..=MAX_ABO_ID {
                 if !behalten.contains(&id) {
-                    self.vorrang.push_back(anfrage_ende_abo(id));
+                    self.abbestellen(id, jetzt);
                 }
             }
         }
+    }
+
+    fn abbestellen(&mut self, id: u8, jetzt: Instant) {
+        self.abbestellt.insert(id, jetzt);
+        self.vorrang.push_back(anfrage_ende_abo(id));
     }
 
     /// Ein Protokoll-2-Paket verarbeiten.
@@ -1371,6 +1382,16 @@ impl Sitzung {
             }
             Antwort::Werte { abo, gen, v, .. } => {
                 let Some(g) = self.abos.get_mut(&abo) else {
+                    // Werte fuer ein abbestelltes Abo: das `ENDE-ABO` ging
+                    // verloren (UDP) — sonst liefert das Plugin endlos weiter.
+                    if (1..=MAX_ABO_ID).contains(&abo)
+                        && self
+                            .abbestellt
+                            .get(&abo)
+                            .is_none_or(|t| jetzt.saturating_duration_since(*t) >= NACHBESTELLEN)
+                    {
+                        self.abbestellen(abo, jetzt);
+                    }
                     return;
                 };
                 match gen {
@@ -2538,6 +2559,41 @@ mod tests {
         );
         assert!(s.takt(t + Duration::from_millis(100), &z).is_empty());
         assert_eq!(s.ausgang_bytes, 0);
+    }
+
+    /// Ging das `ENDE-ABO` verloren (UDP), liefert das Plugin weiter: Werte
+    /// fuer ein abbestelltes Abo bestellen es erneut ab, hoechstens 1x/s.
+    /// (Loopback-Test auf Windows-CI, 07.11.2026, einmal rot.)
+    #[test]
+    fn verlorenes_ende_abo_wird_nachbestellt() {
+        let z = TestZiel::default();
+        *z.wuensche.lock() = vec![AboWunsch {
+            id: 3,
+            rate: 5,
+            namen: Arc::new(namen(&["sim/a"])),
+        }];
+        let mut s = Sitzung::neu("1");
+        let t = Instant::now();
+        let ms = |n: u64| t + Duration::from_millis(n);
+        s.empfangen(hallo_antwort("1.0.0"), t, &z);
+        s.takt(t, &z);
+        *z.wuensche.lock() = Vec::new();
+        *z.gen.lock() += 1;
+        assert_eq!(text_von(&s.takt(ms(10), &z)), vec!["ENDE-ABO 3
+"]);
+        // Werte, die schon unterwegs waren: kein zweites ENDE-ABO sofort.
+        s.empfangen(werte(3, Some(1), vec![]), ms(500), &z);
+        assert!(s.takt(ms(500), &z).is_empty());
+        // Das Plugin liefert nach 1 s immer noch: erneut abbestellen, einmal.
+        s.empfangen(werte(3, Some(1), vec![]), ms(1100), &z);
+        s.empfangen(werte(3, Some(1), vec![]), ms(1150), &z);
+        assert_eq!(text_von(&s.takt(ms(1150), &z)), vec!["ENDE-ABO 3
+"]);
+        assert!(s.takt(ms(1200), &z).is_empty());
+        // Gegenprobe: IDs ausserhalb 1..=16 werden nie abbestellt.
+        s.empfangen(werte(0, None, vec![]), ms(1300), &z);
+        s.empfangen(werte(17, None, vec![]), ms(1300), &z);
+        assert!(s.takt(ms(1300), &z).is_empty());
     }
 
     // ---- Befund H1 (Codex): mehrteilige Status-Antworten ----

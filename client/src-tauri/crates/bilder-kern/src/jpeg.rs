@@ -56,9 +56,129 @@ pub fn app1_entfernen(jpeg: &[u8]) -> Result<Vec<u8>, Fehler> {
     }
 }
 
+/// Position fuer das EXIF-GPS im JPEG (gleicher Aufbau wie `exifGps.ts` im Paket).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpsPunkt {
+    pub breite: f64,
+    pub laenge: f64,
+    pub hoehe_ft: Option<f64>,
+    pub kurs: Option<f64>,
+    pub zeit_ms: Option<i64>,
+}
+
+fn dms(grad: f64) -> [(u32, u32); 3] {
+    let a = grad.abs();
+    let mut d = a.floor();
+    let mut m = ((a - d) * 60.0).floor();
+    let mut s = (((a - d) * 60.0 - m) * 60.0 * 10000.0).round();
+    if s >= 600_000.0 {
+        s -= 600_000.0;
+        m += 1.0;
+    }
+    if m >= 60.0 {
+        m -= 60.0;
+        d += 1.0;
+    }
+    [(d as u32, 1), (m as u32, 1), (s as u32, 10000)]
+}
+
+/// Das APP1-Segment (FF E1, Laenge, "Exif\0\0", TIFF mit GPS-IFD), Byte fuer Byte wie im Paket.
+pub fn gps_segment(p: &GpsPunkt) -> Vec<u8> {
+    let rat = |paare: &[(u32, u32)]| paare.iter().flat_map(|(z, n)| [z.to_be_bytes(), n.to_be_bytes()].concat()).collect::<Vec<u8>>();
+    let ascii = |s: &str| s.bytes().map(|b| b & 127).chain([0]).collect::<Vec<u8>>();
+    // (Tag, Typ, Anzahl, Daten): Typ 1 BYTE, 2 ASCII, 5 RATIONAL
+    let mut e: Vec<(u16, u16, u32, Vec<u8>)> = vec![
+        (1, 2, 2, ascii(if p.breite >= 0.0 { "N" } else { "S" })),
+        (2, 5, 3, rat(&dms(p.breite))),
+        (3, 2, 2, ascii(if p.laenge >= 0.0 { "E" } else { "W" })),
+        (4, 5, 3, rat(&dms(p.laenge))),
+    ];
+    if let Some(ft) = p.hoehe_ft {
+        let m = ft * 0.3048;
+        e.push((5, 1, 1, vec![u8::from(m < 0.0)]));
+        e.push((6, 5, 1, rat(&[((m.abs() * 100.0).round() as u32, 100)])));
+    }
+    let t = p.zeit_ms.and_then(chrono::DateTime::from_timestamp_millis);
+    if let Some(t) = t {
+        use chrono::Timelike;
+        e.push((7, 5, 3, rat(&[(t.hour(), 1), (t.minute(), 1), (t.second(), 1)])));
+    }
+    if let Some(k) = p.kurs {
+        e.push((0x10, 2, 2, ascii("T")));
+        e.push((0x11, 5, 1, rat(&[((((k % 360.0) + 360.0) % 360.0 * 100.0).round() as u32, 100)])));
+    }
+    if let Some(t) = t {
+        e.push((0x1d, 2, 11, ascii(&t.format("%Y:%m:%d").to_string())));
+    }
+    let gps_offset: u32 = 8 + 2 + 12 + 4;
+    let tabelle = 2 + e.len() as u32 * 12 + 4;
+    let (mut zeilen, mut daten) = (Vec::new(), Vec::<u8>::new());
+    for (tag, typ, anzahl, d) in &e {
+        zeilen.extend(tag.to_be_bytes());
+        zeilen.extend(typ.to_be_bytes());
+        zeilen.extend(anzahl.to_be_bytes());
+        if d.len() <= 4 {
+            zeilen.extend(d);
+            zeilen.extend(std::iter::repeat_n(0u8, 4 - d.len()));
+        } else {
+            zeilen.extend((gps_offset + tabelle + daten.len() as u32).to_be_bytes());
+            daten.extend(d);
+            if daten.len() % 2 == 1 {
+                daten.push(0);
+            }
+        }
+    }
+    let mut tiff = vec![0x4D, 0x4D, 0x00, 0x2A, 0, 0, 0, 8];
+    tiff.extend([0, 1, 0x88, 0x25, 0, 4, 0, 0, 0, 1]);
+    tiff.extend(gps_offset.to_be_bytes());
+    tiff.extend([0, 0, 0, 0]);
+    tiff.extend((e.len() as u16).to_be_bytes());
+    tiff.extend(zeilen);
+    tiff.extend([0, 0, 0, 0]);
+    tiff.extend(daten);
+    let mut aus = vec![0xFF, 0xE1];
+    aus.extend(((tiff.len() + 6 + 2) as u16).to_be_bytes());
+    aus.extend(b"Exif\0\0");
+    aus.extend(tiff);
+    aus
+}
+
+/// Ersetzt jedes APP1 durch die neue Position direkt hinter SOI; ohne Position bleibt keine stehen.
+pub fn position_setzen(jpeg: &[u8], p: Option<&GpsPunkt>) -> Result<Vec<u8>, Fehler> {
+    let ohne = app1_entfernen(jpeg)?;
+    let Some(p) = p else { return Ok(ohne) };
+    let mut aus = ohne[..2].to_vec();
+    aus.extend(gps_segment(p));
+    aus.extend_from_slice(&ohne[2..]);
+    Ok(aus)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    #[test]
+    fn gps_segment_gleicht_dem_paket_byte_fuer_byte() {
+        // Erwartung erzeugt mit `exifGpsSegment` aus client/src/components/bilder/logik/exifGps.ts
+        let mit = GpsPunkt { breite: 47.2617, laenge: -11.3414, hoehe_ft: Some(1909.2), kurs: Some(260.9), zeit_ms: Some(1_794_079_811_963) };
+        assert_eq!(hex(&gps_segment(&mit)), "ffe101044578696600004d4d002a00000008000188250004000000010000001a00000000000a00010002000000024e0000000002000500000003000000980003000200000002570000000004000500000003000000b00005000100000001000000000006000500000001000000c80007000500000003000000d00010000200000002540000000011000500000001000000e8001d00020000000b000000f0000000000000002f000000010000000f0000000100066d50000027100000000b00000001000000140000000100046e60000027100000e3500000006400000013000000010000001e000000010000000b00000001000065ea00000064323032363a31313a30370000");
+        let ohne = GpsPunkt { breite: -33.9, laenge: 151.2, hoehe_ft: None, kurs: None, zeit_ms: None };
+        assert_eq!(hex(&gps_segment(&ohne)), "ffe100884578696600004d4d002a00000008000188250004000000010000001a0000000000040001000200000002530000000002000500000003000000500003000200000002450000000004000500000003000000680000000000000021000000010000003600000001000000000000271000000097000000010000000c000000010000000000002710");
+    }
+
+    #[test]
+    fn position_setzen_ersetzt_das_alte_app1() {
+        let alt = jpeg(true, true);
+        let p = GpsPunkt { breite: 1.0, laenge: 2.0, hoehe_ft: None, kurs: None, zeit_ms: None };
+        let neu = position_setzen(&alt, Some(&p)).unwrap();
+        assert_eq!(&neu[2..2 + gps_segment(&p).len()], gps_segment(&p).as_slice(), "neues Segment direkt hinter SOI");
+        assert_eq!(app1_entfernen(&neu).unwrap(), app1_entfernen(&alt).unwrap(), "sonst Byte fuer Byte gleich");
+        assert_eq!(position_setzen(&alt, None).unwrap(), app1_entfernen(&alt).unwrap());
+    }
 
     fn segment(m: u8, inhalt: &[u8]) -> Vec<u8> {
         let mut v = vec![0xFF, m];

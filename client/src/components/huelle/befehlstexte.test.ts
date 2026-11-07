@@ -64,6 +64,12 @@ describe("Klartext der Systembefehle", () => {
     expect(dialogText("update_installieren", { version: "9.9.9" }, "de")!.frage).not.toContain("9.9.9");
   });
 
+  it("Yoke-Knopf und Tastenkürzel fragen nicht nach der Liste der Quellen; mit Quellen bleibt die allgemeine Frage", () => {
+    expect(dialogText("bild_quellen_setzen", { yokeTaste: null }, "de")?.frage).toContain("Yoke-Knopf");
+    expect(dialogText("bild_quellen_setzen", { tastenkuerzel: "Alt+F9" }, "de")?.frage).toContain("Tastenkürzel für die Bildaufnahme ändern");
+    expect(dialogText("bild_quellen_setzen", { quellen: [], yokeTaste: null }, "de")?.frage).toContain("Liste der Bildquellen");
+  });
+
   it("Rahmen des Dialogs in allen drei Sprachen", () => {
     for (const s of ["de", "en", "it"] as const) {
       for (const [k, v] of Object.entries(RAHMEN[s])) expect(v.trim(), `${s}/${k}`).not.toBe("");

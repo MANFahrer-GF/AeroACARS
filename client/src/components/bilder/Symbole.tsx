@@ -13,6 +13,7 @@ export const Symbol = {
   ordner: S(<path d="M3 6h7l2 2h9v11H3z" />),
   papierkorb: S(<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />),
   haken: S(<path d="M5 12l5 5 9-10" />, 3),
+  teil: S(<path d="M6 12h12" />, 3),
   dreh: S(<path d="M12 4a8 8 0 1 1-8 8" />, 2.4),
   ausruf: S(<path d="M12 6v7M12 17v1" />, 2.6),
   suche: S(<><circle cx="11" cy="11" r="6" /><path d="M20 20l-4.5-4.5" /></>, 2),

@@ -22,6 +22,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
     "Win32_Media_Multimedia",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
@@ -31,6 +32,21 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Storage_Xps",
+] }
+# Windows.Graphics.Capture (Fensteraufnahme auch bei verdecktem oder Vollbild-Simulator): nur die noetigen Teile.
+windows = { version = "0.61", features = [
+    "Foundation",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_System_WinRT_Graphics_Capture",
 ] }
 
 [dev-dependencies]

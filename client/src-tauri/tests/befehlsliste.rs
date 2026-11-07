@@ -218,9 +218,16 @@ fn bilder_befehle_der_faehigkeit_bilder_1() {
     }
     assert!(!reg.contains("bild_live"));
     let bruecke = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/remote/bridge.rs")).unwrap();
+    // Thomas 07.11.2026: Der Tab laeuft am Tablet. Genau diese Befehle haben Arme, `bild_lesen` die Route
+    // `/api/bild`; was am Sim-PC bleibt, steht weiter in der Verweigerungsliste.
+    let am_tablet = ["bilder_liste", "bild_status", "bild_kontext", "bild_aufnehmen", "bild_schreiben"];
     for (b, _) in soll {
-        assert!(!bruecke.contains(&format!("\"{b}\" =>")), "{b} gehoert nicht in die LAN-Bruecke");
-        assert!(bruecke.contains(&format!("\"{b}\",")), "{b} fehlt in der Verweigerungsliste der LAN-Bruecke");
+        if am_tablet.contains(&b) {
+            assert!(bruecke.contains(&format!("\"{b}\" =>")), "{b} fehlt in der LAN-Bruecke");
+        } else {
+            assert!(!bruecke.contains(&format!("\"{b}\" =>")), "{b} gehoert nicht in die LAN-Bruecke");
+            assert!(bruecke.contains(&format!("\"{b}\",")), "{b} fehlt in der Verweigerungsliste der LAN-Bruecke");
+        }
     }
     // Der Kern kennt dieselben Namen wie die Huelle: Texte fuer alle Systembefehle.
     let texte = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/components/huelle/befehlstexte.ts")).unwrap();

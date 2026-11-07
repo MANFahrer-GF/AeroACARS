@@ -13,7 +13,7 @@ import { Kachel, SerienKachel } from "./Kacheln";
 import type { Kachel as KachelDaten } from "./logik/serien";
 
 export function GruppenAnsicht({
-  gruppen, sendestand, auswahl, offenId, aktivePirep, jetzt, onWahl, onOeffnen, onErneut, onZuordnen, herkunft,
+  gruppen, sendestand, auswahl, offenId, aktivePirep, jetzt, onWahl, onSerieWahl, onOeffnen, onErneut, onZuordnen, herkunft,
 }: {
   gruppen: Gruppe[];
   sendestand: Sendestand;
@@ -22,6 +22,7 @@ export function GruppenAnsicht({
   aktivePirep: string | null;
   jetzt: number;
   onWahl: (id: string) => void;
+  onSerieWahl: (ids: string[]) => void;
   onOeffnen: (e: Eintrag) => void;
   onErneut: (id: string) => void;
   onZuordnen: (g: Gruppe) => void;
@@ -53,7 +54,7 @@ export function GruppenAnsicht({
 
   const kachel = (k: KachelDaten) => {
     if (k.art === "bild") return einzel(k.bild);
-    if (!offeneSerien.has(k.schluessel)) return <SerienKachel key={k.schluessel} bilder={k.bilder} onOeffnen={() => umschalten(k.schluessel)} />;
+    if (!offeneSerien.has(k.schluessel)) return <SerienKachel key={k.schluessel} bilder={k.bilder} auswahl={auswahl} onOeffnen={() => umschalten(k.schluessel)} onWahl={() => onSerieWahl(k.bilder.map((b) => b.id))} />;
     return (
       <div key={k.schluessel} className="bt-serie__offen">
         <div className="bt-serie__kopf">

@@ -220,6 +220,8 @@ export function Modal({
   closeLabel?: string;
   children?: ReactNode;
 }) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const boxRef = useRef<HTMLDivElement | null>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
@@ -244,7 +246,7 @@ export function Modal({
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -266,7 +268,7 @@ export function Modal({
       document.removeEventListener("keydown", onKey, true);
       restoreRef.current?.focus?.();
     };
-  }, [open, onClose, focusables]);
+  }, [open, focusables]); // `onClose` ueber die Ref: ein neues Handle je Zeichnen darf den Fokus nicht zuruecksetzen
 
   if (!open) return null;
 

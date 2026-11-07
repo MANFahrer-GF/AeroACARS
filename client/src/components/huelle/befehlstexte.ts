@@ -25,6 +25,11 @@ export interface Eintrag {
   en: Text;
   it: Text;
   aus?: Record<Sprache, Text>;
+  /** `bild_quellen_setzen` nur mit `yokeTaste` oder nur mit `tastenkuerzel`: es geht nicht um die Quellen. */
+  yoke?: Record<Sprache, Text>;
+  taste?: Record<Sprache, Text>;
+  /** `bild_loeschen` mit mehr als einem Bild. */
+  mehrere?: Record<Sprache, Text>;
   /** `bild_quellen_setzen` mit `ordnerWaehlen: true`: Frage zum Ordnerdialog. */
   ordner?: Record<Sprache, Text>;
   /** `bild_hinzufuegen` ohne `pfade`: der Kern öffnet gleich die Dateiauswahl. */
@@ -58,14 +63,29 @@ export const BEFEHLSTEXTE: Record<string, Eintrag> = {
     },
   },
   bild_loeschen: {
-    de: { frage: "Das Bild „{{bezeichnung}}“ löschen? Das Foto kommt in den Papierkorb, Vorschau und Beschreibung werden endgültig entfernt.", knopf: "Löschen" },
-    en: { frage: "Delete the image “{{bezeichnung}}”? The photo goes to the recycle bin; the preview and description are removed for good.", knopf: "Delete" },
-    it: { frage: "Eliminare l'immagine «{{bezeichnung}}»? La foto va nel cestino; l'anteprima e la descrizione vengono rimosse definitivamente.", knopf: "Elimina" },
+    de: { frage: "„{{bezeichnung}}“ in den Papierkorb legen? Die Datei lässt sich von dort zurückholen, Vorschau und Beschreibung werden endgültig entfernt. Bereits Gesendetes bleibt in Discord.", knopf: "In den Papierkorb" },
+    en: { frage: "Move “{{bezeichnung}}” to the trash? You can restore the file from there; the preview and description are removed for good. Anything already sent stays in Discord.", knopf: "Move to trash" },
+    it: { frage: "Spostare «{{bezeichnung}}» nel cestino? Il file si può recuperare da lì; anteprima e descrizione vengono rimosse definitivamente. Ciò che è già stato inviato resta su Discord.", knopf: "Sposta nel cestino" },
+    mehrere: {
+      de: { frage: "{{anzahl}} Bilder in den Papierkorb legen? Die Dateien lassen sich von dort zurückholen, Vorschauen und Beschreibungen werden endgültig entfernt. Bereits Gesendetes bleibt in Discord.", knopf: "In den Papierkorb" },
+      en: { frage: "Move {{anzahl}} images to the trash? You can restore the files from there; previews and descriptions are removed for good. Anything already sent stays in Discord.", knopf: "Move to trash" },
+      it: { frage: "Spostare {{anzahl}} immagini nel cestino? I file si possono recuperare da lì; anteprime e descrizioni vengono rimosse definitivamente. Ciò che è già stato inviato resta su Discord.", knopf: "Sposta nel cestino" },
+    },
   },
   bild_quellen_setzen: {
     de: { frage: "Die Liste der Bildquellen speichern? AeroACARS beobachtet diese Ordner und übernimmt neue Bilder daraus (Kopieren oder Verschieben je Ordner). Das Tastenkürzel für die Fensteraufnahme wird mit angemeldet.", knopf: "Speichern" },
     en: { frage: "Save the list of image sources? AeroACARS watches these folders and takes over new images from them (copy or move, per folder). The shortcut for the window capture is registered as well.", knopf: "Save" },
     it: { frage: "Salvare l'elenco delle fonti immagine? AeroACARS osserva queste cartelle e acquisisce le nuove immagini (copia o spostamento, per cartella). Viene registrata anche la scorciatoia per l'acquisizione della finestra.", knopf: "Salva" },
+    yoke: {
+      de: { frage: "Den Yoke-Knopf für die Bildaufnahme ändern? Deine Bildquellen bleiben, wie sie sind.", knopf: "Speichern" },
+      en: { frage: "Change the yoke button for capturing pictures? Your image sources stay as they are.", knopf: "Save" },
+      it: { frage: "Cambiare il pulsante della cloche per gli scatti? Le fonti immagini restano invariate.", knopf: "Salva" },
+    },
+    taste: {
+      de: { frage: "Das Tastenkürzel für die Bildaufnahme ändern? Deine Bildquellen bleiben, wie sie sind.", knopf: "Speichern" },
+      en: { frage: "Change the shortcut for capturing pictures? Your image sources stay as they are.", knopf: "Save" },
+      it: { frage: "Cambiare la scorciatoia per gli scatti? Le fonti immagini restano invariate.", knopf: "Salva" },
+    },
     ordner: {
       de: { frage: "Einen Ordner als Bildquelle hinzufügen? Du wählst ihn gleich im Systemdialog aus. AeroACARS kopiert neue Bilder daraus, das Original bleibt; schon vorhandene Bilder werden nicht übernommen.", knopf: "Ordner wählen" },
       en: { frage: "Add a folder as an image source? You choose it next in the system dialog. AeroACARS copies new images from it and leaves the originals; images already there are not taken over.", knopf: "Choose folder" },
@@ -228,7 +248,12 @@ function einsetzen(vorlage: string, werte: Record<string, unknown> | undefined):
 /** Besondere Fassung der Frage, wenn die Werte es verlangen (Ordnerdialog, Dateiauswahl). */
 function variante(befehl: string, werte: Record<string, unknown> | undefined, e: Eintrag, s: Sprache): Text {
   if (befehl === "bild_quellen_setzen" && werte?.ordnerWaehlen === true && e.ordner) return e.ordner[s];
+  if (befehl === "bild_quellen_setzen" && werte?.quellen === undefined) {
+    if (werte && "yokeTaste" in werte && e.yoke) return e.yoke[s];
+    if (typeof werte?.tastenkuerzel === "string" && e.taste) return e.taste[s];
+  }
   if (befehl === "bild_hinzufuegen" && !(Array.isArray(werte?.pfade) && werte.pfade.length > 0) && e.auswahl) return e.auswahl[s];
+  if (befehl === "bild_loeschen" && Array.isArray(werte?.bilder) && werte.bilder.length > 1 && e.mehrere) return e.mehrere[s];
   return e[s];
 }
 

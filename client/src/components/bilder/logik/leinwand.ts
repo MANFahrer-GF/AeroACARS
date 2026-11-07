@@ -57,7 +57,9 @@ export function kodieren(bytes: Uint8Array, mime: string): Promise<Kodiert> {
   return nacheinander(async () => {
     const kopie = new Uint8Array(bytes.byteLength);
     kopie.set(bytes);
-    const bmp = await createImageBitmap(new Blob([kopie.buffer], { type: mime }));
+    const bmp = await createImageBitmap(new Blob([kopie.buffer], { type: mime })).catch(() => {
+      throw Object.assign(new Error("bild_unlesbar"), { code: "bild_unlesbar" });
+    });
     try {
       const gross = zeichnen(bmp, GRENZEN.max_kante_px);
       const jpeg = await qualitaetWaehlen((q) => alsJpeg(gross, q));

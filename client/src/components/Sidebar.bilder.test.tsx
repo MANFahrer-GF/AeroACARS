@@ -19,10 +19,10 @@ describe("Reiter Bilder", () => {
     rerender(<Sidebar {...basis} bilderAn={true} />);
     expect(screen.getByRole("button", { name: "Bilder" })).toBeInTheDocument();
   });
-  it("im LAN-Browser (kein Programm) gibt es den Reiter nicht, auch mit gemeldeter Faehigkeit", () => {
+  it("im LAN-Browser gibt es den Reiter genauso, Thomas 07.11.", () => {
     h.tauri = false;
     render(<Sidebar {...basis} bilderAn={true} />);
-    expect(screen.queryByRole("button", { name: "Bilder" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Bilder" })).toBeInTheDocument();
     h.tauri = true;
   });
   it("tab=bilder faellt ohne Faehigkeit auf Flug zurueck, mit ihr bleibt er", () => {
