@@ -77,6 +77,8 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     // Beim ersten Laden das neueste Bild des laufenden Flugs (sonst das neueste) zeigen: die Detailspalte ist sonst leer
     if (anfangGeoeffnet || alle.length === 0) return;
     setAnfangGeoeffnet(true);
+    // In schmalen Fenstern liegt die Detailspalte als Blatt ueber der Liste: nicht ungefragt aufschlagen
+    if (typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 1181px)").matches) return;
     const neueste = [...alle].sort((a, b) => (bildZeitIso(b) ?? "").localeCompare(bildZeitIso(a) ?? ""));
     const imFlug = aktiverFlug ? neueste.find((e) => flugSchluessel(e) === aktiverFlug.pirep_id) : undefined;
     setOffenId((imFlug ?? neueste[0]).id);
@@ -180,6 +182,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   })();
 
   const erststart = alle.length === 0;
+  const altbestandAnzahl = Math.max(liste?.altbestand.length ?? 0, (liste?.quellen ?? []).reduce((sum, q) => sum + q.altbestand, 0));
   const einschaltenKarte = z.eingeschaltet === false && !spaeter;
   const beobachtete = (liste?.quellen ?? []).filter((q) => q.aktiv && q.beobachtet);
   const meldung = z.meldung;
@@ -197,7 +200,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             : t("bilder.kopf.keine")}
         </span>
         <div className="bt-kopf__rechts">
-          <div className="bt-chips" role="group" aria-label={t("bilder.liste.filter.alle")}>
+          {!erststart && <div className="bt-chips" role="group" aria-label={t("bilder.liste.filter.alle")}>
             {(["alle", "offen", "gesendet"] as const).map((k) => (
               <button key={k} type="button" className={`bt-chip${filter.gesendet === (k === "alle" ? "alle" : k) ? " bt-chip--an" : ""}`} aria-pressed={filter.gesendet === k} onClick={() => { setFilter({ ...filter, gesendet: k }); setSeite(0); }}>
                 {t(`bilder.liste.filter.${k}`)}
@@ -206,19 +209,19 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             <button type="button" className={`bt-chip${filter.favoriten ? " bt-chip--an" : ""}`} aria-pressed={filter.favoriten} onClick={() => { setFilter({ ...filter, favoriten: !filter.favoriten }); setSeite(0); }}>
               {t("bilder.liste.filter.favoriten")}
             </button>
-          </div>
-          <label className="bt-suche">
+          </div>}
+          {!erststart && <label className="bt-suche">
             {Symbol.suche}
             <input type="search" value={filter.suche} placeholder={t("bilder.kopf.suche_platzhalter")} aria-label={t("bilder.liste.suche_label")} onChange={(ev) => { setFilter({ ...filter, suche: ev.target.value }); setSeite(0); }} />
-          </label>
-          {aufnahmeText && <span className="bt-chip" title={t("bilder.kopf.aufnahme_titel_xplane")}>{Symbol.kamera}{aufnahmeText}</span>}
+          </label>}
+          {!erststart && aufnahmeText && <span className="bt-chip" title={t("bilder.kopf.aufnahme_titel_xplane")}>{Symbol.kamera}{aufnahmeText}</span>}
           {liste?.aufnahme_verfuegbar && simulator === "msfs" && (
             <Button size="sm" variant="primary" iconLeft={Symbol.kamera} onClick={() => void bilderStore.aufnehmen()}>{t("bilder.kopf.aufnehmen")}</Button>
           )}
           <Button size="sm" iconLeft={Symbol.plus} aria-label={t("bilder.kopf.hinzufuegen")} title={t("bilder.kopf.hinzufuegen")} onClick={() => void bilderStore.hinzufuegen()} />
           <Button size="sm" iconLeft={Symbol.regler} aria-label={t("bilder.kopf.quellen")} title={t("bilder.kopf.quellen")} aria-pressed={quellenOffen} onClick={() => { setQuellenOffen((o) => !o); if (!quellenOffen) void bilderStore.quellenFinden(); }} />
-          <Button size="sm" iconLeft={Symbol.herunter} aria-label={t("bilder.leiste.exportieren")} title={t("bilder.leiste.exportieren")} disabled={auswahl.size === 0} onClick={() => void bilderStore.exportieren([...auswahl])} />
-          <Button size="sm" iconLeft={Symbol.ordner} aria-label={t("bilder.kopf.ordner_zeigen")} title={t("bilder.kopf.ordner_zeigen")} disabled={!offen} onClick={() => void ordnerZeigen()} />
+          {!erststart && <Button size="sm" iconLeft={Symbol.herunter} aria-label={t("bilder.leiste.exportieren")} title={t("bilder.leiste.exportieren")} disabled={auswahl.size === 0} onClick={() => void bilderStore.exportieren([...auswahl])} />}
+          {!erststart && <Button size="sm" iconLeft={Symbol.ordner} aria-label={t("bilder.kopf.ordner_zeigen")} title={t("bilder.kopf.ordner_zeigen")} disabled={!offen} onClick={() => void ordnerZeigen()} />}
         </div>
       </header>
 
@@ -236,7 +239,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
         </div>
       )}
 
-      {aktiverFlug ? (
+      {!aktiverFlug && erststart ? null : aktiverFlug ? (
         <div className="bt-band bt-band--aktiv">
           <span className="bt-band__punkt" aria-hidden="true" />
           <span className="bt-band__fett">{t("bilder.band.aktiv")}</span>
@@ -263,16 +266,16 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
       {erststart ? (
         <div className="bt-erst">
           {einschaltenKarte && <EinschaltenKarte onEinschalten={() => void bilderStore.einschalten(true)} onSpaeter={() => setSpaeter(true)} />}
-          <WegeKarte kuerzel={kuerzelText} altbestand={liste?.altbestand.length ?? liste?.quellen.reduce((s, q) => s + q.altbestand, 0) ?? 0} arbeitet={z.arbeitet} onAlt={() => void bilderStore.altbestandAnzeigen().then(() => bilderStore.altbestandUebernehmen())} />
+          <WegeKarte kuerzel={kuerzelText} altbestand={altbestandAnzahl} arbeitet={z.arbeitet} onAlt={() => void bilderStore.altbestandAnzeigen().then(() => bilderStore.altbestandUebernehmen())} />
         </div>
       ) : (
         <div className="bt-haupt">
           <section className="bt-liste" data-ziehen={ziehen ? "an" : undefined} aria-label={t("bilder.titel")}>
             {gruppen.length === 0 && <div className="bt-leerhinweis"><strong>{t("bilder.leer.kein_treffer")}</strong></div>}
-            {liste && liste.quellen.some((q) => q.altbestand > 0) && (
+            {altbestandAnzahl > 0 && (
               <div className="bt-alt">
                 <div className="bt-alt__text">
-                  <span>{t("bilder.altbestand.titel", { n: liste.quellen.reduce((s, q) => s + q.altbestand, 0) })}</span>
+                  <span>{t("bilder.altbestand.titel", { n: altbestandAnzahl })}</span>
                   <span>{z.altbestandErgebnis ? t("bilder.altbestand.ergebnis", { mit: z.altbestandErgebnis.mit_daten, flug: z.altbestandErgebnis.nur_flug, ohne: z.altbestandErgebnis.ohne_daten }) : t("bilder.altbestand.text")}</span>
                 </div>
                 <Button disabled={z.arbeitet} onClick={() => void bilderStore.altbestandAnzeigen().then(() => bilderStore.altbestandUebernehmen())}>

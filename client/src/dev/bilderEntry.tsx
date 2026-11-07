@@ -28,9 +28,9 @@ const imFlug = !["ohneflug", "leer", "leerein"].includes(fall);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <div className="shell" data-nav="wide" style={{ height: "100vh" }}>
+    <div className="shell" data-nav={q.get("nav") === "icon" ? "icon" : "wide"} style={{ height: "100vh" }}>
       <Sidebar
-        tab="bilder" setTab={() => undefined} collapsed={false} onToggleCollapsed={() => undefined}
+        tab="bilder" setTab={() => undefined} collapsed={q.get("nav") === "icon"} onToggleCollapsed={() => undefined}
         cpdlcEnabled={false} cpdlcPendingCount={0} onCpdlcOpen={() => undefined} chatAn={true} chatUngelesen={0} onChatOpen={() => undefined}
         kabineAn={true} bilderAn={true} unreadNews={0} hasActiveFlight={imFlug} phpvmsConnected={true} simConnected={true} simConnecting={false} simLabel="X-Plane 12"
       />
