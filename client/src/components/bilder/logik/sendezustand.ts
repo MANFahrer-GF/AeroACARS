@@ -119,3 +119,11 @@ export function zusammenfassung(stand: Sendestand, ids: Iterable<string>) {
   }
   return { sendet, fehlgeschlagen, gesendet, unklar, nichtErreichbar };
 }
+
+/** Stand einer Kachel, wenn es in dieser Sitzung keinen gibt: aus dem letzten Vermerk im Sidecar. */
+export function standAusVermerk(v: { sendung_id: string; status: "angenommen" | "gesendet" | "abgelehnt"; code?: string } | undefined): KachelStand | undefined {
+  if (!v) return undefined;
+  if (v.status === "gesendet") return { phase: "gesendet", sendungId: v.sendung_id };
+  if (v.status === "angenommen") return { phase: "angenommen", sendungId: v.sendung_id };
+  return { phase: "fehlgeschlagen", sendungId: v.sendung_id, code: fehlerCodeNormal(v.code) };
+}
