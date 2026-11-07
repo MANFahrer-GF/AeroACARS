@@ -225,14 +225,28 @@ describe("Bilder-Tab", () => {
     expect(await within(detail).findByText("Die Karte kann hier nicht gezeichnet werden (WebGL fehlt).")).toBeInTheDocument();
   });
 
+  it("Papierkorb in der Leiste loescht alle gewaehlten Bilder in EINEM Aufruf, das Detail bietet dann kein Einzel-Loeschen", async () => {
+    vorbereiten();
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    for (const b of [boxen[0], boxen[1], boxen[2]]) await userEvent.click(b);
+    expect(within(await screen.findByRole("complementary")).queryByRole("button", { name: "Löschen" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "In den Papierkorb" }));
+    await waitFor(() => expect(h.aufrufe.some((a) => a.cmd === "bild_loeschen")).toBe(true));
+    const aufrufe = h.aufrufe.filter((a) => a.cmd === "bild_loeschen");
+    expect(aufrufe).toHaveLength(1);
+    expect((aufrufe[0].args as { bilder: unknown[] }).bilder).toHaveLength(3);
+  });
+
   it("Loeschen geht je Bild ueber bild_loeschen mit Bezeichnung", async () => {
     vorbereiten();
     zeigen();
     const detail = await screen.findByRole("complementary");
     await userEvent.click(within(detail).getByRole("button", { name: "Löschen" }));
     await waitFor(() => expect(h.aufrufe.some((a) => a.cmd === "bild_loeschen")).toBe(true));
-    const a = h.aufrufe.find((x) => x.cmd === "bild_loeschen")!.args as { gruppe: string; id: string; bezeichnung: string };
-    expect(a.id).toMatch(/^r\d$/);
+    const a = h.aufrufe.find((x) => x.cmd === "bild_loeschen")!.args as { bilder: Array<{ gruppe: string; id: string }>; bezeichnung: string };
+    expect(a.bilder).toHaveLength(1);
+    expect(a.bilder[0].id).toMatch(/^r\d$/);
     expect(a.bezeichnung).toMatch(/^Bild vom/);
   });
 

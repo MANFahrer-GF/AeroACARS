@@ -165,16 +165,12 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   }
 
   async function loeschen(ids: string[]) {
-    for (const id of ids) {
-      const e = alle.find((x) => x.id === id);
-      if (!e) continue;
-      const zeit = kurzZeit(bildZeitIso(e));
-      const ok = await bilderStore.loeschen(e, t("bilder.loeschen.bezeichnung", { zeit }));
-      if (!ok) break;
-      bildUrlVergessen([e.pfad, e.vorschau_pfad]);
-      setAuswahl((a) => { const n = new Set(a); n.delete(id); return n; });
-      if (offenId === id) setOffenId(null);
-    }
+    const ziel = alle.filter((e) => ids.includes(e.id));
+    if (ziel.length === 0) return;
+    if (!await bilderStore.loeschen(ziel, t("bilder.loeschen.bezeichnung", { zeit: kurzZeit(bildZeitIso(ziel[0])) }))) return;
+    bildUrlVergessen(ziel.flatMap((e) => [e.pfad, e.vorschau_pfad]));
+    setAuswahl((a) => { const n = new Set(a); for (const id of ids) n.delete(id); return n; });
+    if (offenId && ids.includes(offenId)) setOffenId(null);
   }
 
   async function ordnerZeigen() {
@@ -349,7 +345,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             gewaehlt={offen ? auswahl.has(offen.id) : false}
             flugBilder={flugBilder}
             aktivePirep={aktiverFlug?.pirep_id ?? null}
-            mitSenden={auswahl.size === 0}
+            einzelAktionen={auswahl.size === 0}
             onSenden={sendenDetail}
             mitOrdner={isTauri}
             onOrdner={() => void ordnerZeigen()}

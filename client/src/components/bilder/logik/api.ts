@@ -34,7 +34,7 @@ export interface BildAktionen {
     gruppe: string; id: string; jpegBase64?: string; vorschauBase64?: string; sidecar?: Sidecar | Partial<Sidecar>; sha256?: string; quelleEntfernen?: boolean;
   }): Promise<void>;
   hinzufuegen(a: { gruppe: string; pfade?: string[] }): Promise<{ abgebrochen: boolean; ergebnisse: HinzufuegenErgebnis[] }>;
-  loeschen(a: { gruppe: string; id: string; bezeichnung?: string }): Promise<void>;
+  loeschen(a: { bilder: Array<{ gruppe: string; id: string }>; bezeichnung?: string }): Promise<void>;
   senden(a: { sendungId: string; text: string; geoStufe: string; bilder: Array<{ gruppe: string; bild_id: string; meta: BildMeta }> }): Promise<SendeAntwort>;
   status(sendungId?: string): Promise<SendeAntwort>;
   aufnehmen(): Promise<void>;

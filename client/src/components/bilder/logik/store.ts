@@ -151,13 +151,15 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   const flugSetzen = (e: Eintrag, f: FlugAuswahl) =>
     sidecarAendern(e, (s) => ({ ...s, flug_von_hand: true, meta: { ...s.meta, pirep_id: f.pirep_id, rufzeichen: f.rufzeichen, abflug: f.abflug, ziel: f.ziel } }));
 
-  async function loeschen(e: Eintrag, bezeichnung: string): Promise<boolean> {
+  async function loeschen(bilder: Eintrag[], bezeichnung: string): Promise<boolean> {
     try {
-      await api.loeschen({ gruppe: e.gruppe, id: e.id, bezeichnung });
+      await api.loeschen({ bilder: bilder.map((e) => ({ gruppe: e.gruppe, id: e.id })), bezeichnung });
       await laden();
       return true;
     } catch (err) {
-      if (fehlerCode(err) !== "abgelehnt" && fehlerCode(err) !== "huelle_abgelehnt") meldung("fehler", "bilder.meldung.loeschen_fehler", { fehler: fehlerText(err) });
+      if (fehlerCode(err) === "abgelehnt" || fehlerCode(err) === "huelle_abgelehnt") return false;
+      meldung("fehler", "bilder.meldung.loeschen_fehler", { fehler: fehlerText(err) });
+      await laden(); // ein Teil kann schon im Papierkorb liegen
       return false;
     }
   }

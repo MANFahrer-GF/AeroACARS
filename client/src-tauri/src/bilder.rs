@@ -87,7 +87,7 @@
 //! * `bild_hinzufuegen({gruppe, pfade?})` -> `{abgebrochen, ergebnisse: [{pfad, ok, uebernahme | code, meldung}]}`;
 //!   `gruppe` ist Pflicht (der Tab gibt `ohne-flug`); ohne `pfade` (Ziehen) oeffnet der Kern die Dateiauswahl;
 //!   JPG/PNG, immer kopiert, auch ohne Flug. Ergebnis wie `bild_uebernehmen`: Eingangskopie in `gruppe`
-//! * `bild_loeschen({gruppe, id, bezeichnung?})`, `bild_export({zipBase64, dateiname})`
+//! * `bild_loeschen({bilder: [{gruppe, id}], bezeichnung?})`, `bild_export({zipBase64, dateiname})`
 //! * `bild_quellen_setzen({quellen?, tastenkuerzel?, yokeTaste?, ordnerWaehlen?})`: Mit der Bestaetigung wird der
 //!   aufgeloeste Pfad jeder Quelle gespeichert (`kanonisch`, kommt nie vom Aufrufer; alte Einstellungen werden beim
 //!   Start gebunden). Ist der Pfad spaeter ein anderer Ordner (durch Link/Junction ersetzt), wird die Quelle nicht
@@ -881,9 +881,21 @@ fn papierkorb(p: &std::path::Path) -> Result<(), trash::Error> {
 /// den Papierkorb, Vorschau und Sidecar endgueltig. Nie nur ein Teil. Der
 /// Hüllen-Dialog zeigt `bezeichnung`, falls das Paket sie mitgibt.
 #[tauri::command(async)]
-pub(crate) fn bild_loeschen(app: AppHandle, gruppe: String, id: String) -> Result<Vec<String>, UiError> {
+pub(crate) fn bild_loeschen(app: AppHandle, bilder: Vec<BildZiel>) -> Result<Vec<String>, UiError> {
     let weg = |p: &std::path::Path| papierkorb(p).map_err(|e| std::io::Error::other(e.to_string()));
-    speicher::loeschen(&wurzel(&app)?, &gruppe, &id, &weg).map_err(fehler)
+    let wurzel = wurzel(&app)?;
+    let mut entfernt = Vec::new();
+    for b in &bilder {
+        entfernt.extend(speicher::loeschen(&wurzel, &b.gruppe, &b.id, &weg).map_err(fehler)?);
+    }
+    Ok(entfernt)
+}
+
+/// Ein Bild in `bild_loeschen`: alle gewaehlten Bilder gehen mit einer Rueckfrage in einem Aufruf.
+#[derive(serde::Deserialize)]
+pub(crate) struct BildZiel {
+    gruppe: String,
+    id: String,
 }
 
 /// Speichert die bestaetigte Liste der Bildquellen (und, wenn angegeben, das
