@@ -122,7 +122,8 @@
 //! `bilder_liste` liefert auch Funde, Quellen mit Beobachtungszustand, den Altbestand (auf Wunsch) und das
 //! Tastenkuerzel; `bild_quellen_setzen` setzt neben den Ordnern auch das Tastenkuerzel.
 //!
-//! Beobachtung: jede Quelle hat ihren eigenen Stand (siehe `bilder_kern::beobachter`); die Grundlage einer
+//! Beobachtung: jede Quelle hat ihren eigenen Stand und im Takt ihren eigenen Abfrage-Faden (siehe
+//! `bilder_kern::beobachter`): eine haengende Netzquelle haelt die lokalen nicht auf. Die Grundlage einer
 //! neuen Quelle laeuft im Hintergrund, `bild_quellen_setzen` wartet nie auf einen haengenden Ordner.
 
 use std::path::PathBuf;
@@ -978,7 +979,7 @@ pub(crate) fn starten(app: &AppHandle) {
             std::thread::sleep(TAKT);
             let vordergrund = plattform::sim_vordergrund();
             // Sperre nur zum Holen der Quellen: die Ordnerabfragen laufen ohne sie,
-            // ein haengender Ordner haelt hoechstens diesen Faden auf.
+            // je Quelle in einem eigenen Faden; ein haengender Ordner haelt hoechstens 1 s auf.
             let (slots, vg) = entsperren(beobachter()).takt_vorbereiten(vordergrund);
             let funde = bilder_kern::beobachter::takt_ausfuehren(&slots, start.elapsed().as_millis() as u64, vg);
             let status = entsperren(beobachter()).status();

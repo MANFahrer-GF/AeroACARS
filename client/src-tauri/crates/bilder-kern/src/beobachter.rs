@@ -20,7 +20,11 @@
 //! * Jede Quelle hat ihren eigenen Stand mit eigener Sperre. Ein haengender
 //!   Ordner (Netzlaufwerk ohne Verbindung) haelt nur seine eigene Abfrage auf:
 //!   Anzeige, Einstellungen und die uebrigen Quellen warten nie darauf, und die
-//!   Grundlage einer neuen Quelle laeuft getrennt vom Speichern.
+//!   Grundlage einer neuen Quelle laeuft getrennt vom Speichern. Auch die
+//!   Abfrage im Takt laeuft je Quelle in einem eigenen Faden
+//!   ([`takt_ausfuehren`]): eine haengende Netzquelle haelt die lokalen nicht
+//!   auf, ihr Faden bleibt einfach stehen, wird nicht doppelt gestartet und
+//!   liefert nach dem Loesen nach.
 //!
 //! Kosten: Ein Ordner wird nur dann neu gelesen, wenn sich seine Aenderungszeit
 //! geaendert hat oder frisch ist (< 6 s, wegen grober Zeitaufloesung mancher
@@ -32,7 +36,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -164,6 +168,10 @@ pub struct Slot {
     kurz: Mutex<Kurz>,
     bereit: AtomicBool,
     inner: Mutex<Stand>,
+    /// Ein Abfrage-Faden dieser Quelle laeuft (oder haengt) noch.
+    laeuft: AtomicBool,
+    /// Funde, die ein Abfrage-Faden gefunden hat und die der Takt noch abholt.
+    ausgang: Mutex<Vec<Fund>>,
 }
 
 fn sperre<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -444,6 +452,8 @@ impl Slot {
             kurz: Mutex::new(Kurz::default()),
             bereit: AtomicBool::new(false),
             inner: Mutex::new(Stand::neu(q)),
+            laeuft: AtomicBool::new(false),
+            ausgang: Mutex::new(Vec::new()),
         }
     }
 
@@ -477,6 +487,8 @@ impl Slot {
         // Gerade belegt (Grundlage laeuft): in diesem Takt auslassen, nie warten.
         let Ok(mut st) = self.inner.try_lock() else { return };
         st.quelle = k;
+        #[cfg(test)]
+        tests::haengen(&self.pfad);
         st.scannen(false, SystemTime::now(), vg);
         st.wartende_pruefen(jetzt_ms, funde);
         self.kurz_erneuern(&st, false);
@@ -487,14 +499,54 @@ impl Slot {
     }
 }
 
-/// Ein Takt ueber die gegebenen Quellen. Haelt keine Sperre des Beobachters:
-/// ein haengender Ordner stoppt nur diesen Faden.
-pub fn takt_ausfuehren(slots: &[Arc<Slot>], jetzt_ms: u64, vordergrund: Option<bool>) -> Vec<Fund> {
-    let mut funde = Vec::new();
-    for s in slots {
-        s.takt(jetzt_ms, vordergrund, &mut funde);
+/// So lange wartet ein Takt hoechstens auf die Abfragen; was dann noch laeuft,
+/// liefert beim naechsten Takt nach.
+const ABFRAGE_FRIST: Duration = Duration::from_secs(1);
+
+/// Gibt die Quelle frei, wenn ihr Abfrage-Faden endet (auch bei einem Absturz).
+struct LaufEnde(Arc<Slot>);
+
+impl Drop for LaufEnde {
+    fn drop(&mut self) {
+        self.0.laeuft.store(false, Ordering::SeqCst);
     }
-    funde
+}
+
+/// Ein Takt ueber die gegebenen Quellen. Jede Quelle wird in einem eigenen Faden
+/// abgefragt; eine haengende (Netzlaufwerk ohne Verbindung) haelt weder die
+/// anderen noch diesen Aufruf laenger als [`ABFRAGE_FRIST`] auf. Ihr Faden
+/// bleibt stehen, bis das Laufwerk antwortet, wird nicht ein zweites Mal
+/// gestartet, und was er dann findet, kommt mit einem spaeteren Takt.
+pub fn takt_ausfuehren(slots: &[Arc<Slot>], jetzt_ms: u64, vordergrund: Option<bool>) -> Vec<Fund> {
+    let (tx, rx) = mpsc::channel::<()>();
+    let mut gestartet = 0;
+    for s in slots {
+        if s.laeuft.swap(true, Ordering::SeqCst) {
+            continue; // der vorige Faden dieser Quelle haengt noch
+        }
+        let ende = LaufEnde(Arc::clone(s));
+        let tx = tx.clone();
+        let start = std::thread::Builder::new().name("bilder-abfrage".into()).spawn(move || {
+            let mut funde = Vec::new();
+            ende.0.takt(jetzt_ms, vordergrund, &mut funde);
+            sperre(&ende.0.ausgang).extend(funde);
+            drop(ende);
+            let _ = tx.send(());
+        });
+        if start.is_ok() {
+            gestartet += 1;
+        } else {
+            s.laeuft.store(false, Ordering::SeqCst);
+        }
+    }
+    drop(tx);
+    let frist = std::time::Instant::now() + ABFRAGE_FRIST;
+    for _ in 0..gestartet {
+        if rx.recv_timeout(frist.saturating_duration_since(std::time::Instant::now())).is_err() {
+            break;
+        }
+    }
+    slots.iter().flat_map(|s| std::mem::take(&mut *sperre(&s.ausgang))).collect()
 }
 
 #[derive(Default)]
@@ -595,12 +647,58 @@ mod tests {
     use super::*;
     use crate::quellen::tests::{jpeg_bytes, png_bytes};
 
+    /// Test-Haken: laesst die Abfrage einer Quelle haengen, bis sie freigegeben wird (hoechstens 5 s).
+    static HAENGT: Mutex<Vec<(String, Arc<AtomicBool>)>> = Mutex::new(Vec::new());
+
+    pub(super) fn haengen(pfad: &str) {
+        let frei = sperre(&HAENGT).iter().find(|(p, _)| p == pfad).map(|(_, f)| Arc::clone(f));
+        if let Some(frei) = frei {
+            let start = std::time::Instant::now();
+            while !frei.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
     fn q(dir: &Path) -> Quelle {
         Quelle { pfad: dir.to_string_lossy().into(), aktiv: true, original_entfernen: false, art: None }
     }
 
     fn takte(b: &mut Beobachter, n: u64, vg: Option<bool>) -> Vec<Fund> {
         (0..n).flat_map(|i| b.takt(i * 1500, vg)).collect()
+    }
+
+    /// Fund 3: eine haengende Netzquelle haelt die lokalen nicht auf.
+    #[test]
+    fn haengende_quelle_haelt_die_anderen_nicht_auf_und_wird_nicht_doppelt_gestartet() {
+        let netz = tempfile::tempdir().unwrap();
+        let lokal = tempfile::tempdir().unwrap();
+        let mut b = Beobachter::neu();
+        // Die haengende Quelle steht zuerst: ein einzelner Faden bliebe an ihr haengen.
+        b.aufsetzen(&[q(netz.path()), q(lokal.path())], None);
+        let frei = Arc::new(AtomicBool::new(false));
+        sperre(&HAENGT).push((netz.path().to_string_lossy().into_owned(), Arc::clone(&frei)));
+        fs::write(lokal.path().join("neu.png"), png_bytes(10, 10)).unwrap();
+        fs::write(netz.path().join("spaet.png"), png_bytes(10, 10)).unwrap();
+
+        let t = std::time::Instant::now();
+        assert!(b.takt(0, None).is_empty(), "erster Takt: nur entdeckt");
+        assert!(t.elapsed() < Duration::from_secs(3), "der Takt wartet nicht auf die haengende Quelle: {:?}", t.elapsed());
+        let t = std::time::Instant::now();
+        let f = b.takt(1500, None);
+        assert_eq!(f.len(), 1, "die lokale Quelle meldet trotz haengender Nachbarin");
+        assert!(f[0].pfad.ends_with("neu.png"));
+        assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+        assert!(b.slots[0].laeuft.load(Ordering::SeqCst), "der haengende Faden steht noch und wird nicht doppelt gestartet");
+
+        frei.store(true, Ordering::SeqCst); // das Laufwerk antwortet wieder
+        let mut spaeter = Vec::new();
+        for i in 2..10 {
+            spaeter.extend(b.takt(i * 1500, None));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(spaeter.len(), 1, "die zuvor haengende Quelle liefert nach");
+        assert!(spaeter[0].pfad.ends_with("spaet.png"));
     }
 
     #[test]
