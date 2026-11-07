@@ -5293,7 +5293,8 @@
       "fehlgeschlagen": "Not sent",
       "oeffnen_mit": "Details: {{zeit}} {{phase}}, {{hoehe}}",
       "auswaehlen_mit": "Select: {{zeit}} {{phase}}",
-      "ohne_flug": "No flight"
+      "ohne_flug": "No flight",
+      "serie_auswaehlen": "Select series of {{n}} pictures"
     },
     "status": {
       "sendet": "Sending …",
@@ -5326,7 +5327,8 @@
         "von_hand": "assigned by you",
         "aendern": "change",
         "waehlen": "Choose flight",
-        "fertig": "Done"
+        "fertig": "Done",
+        "laedt": "Loading flights …"
       },
       "metadaten": "Capture data",
       "gesendet_am": "Sent on {{zeit}}",
@@ -5435,7 +5437,7 @@
       },
       "schon_gesendet_eins": "This picture is already on Discord. Sending posts it again as a new message.",
       "schon_gesendet_n": "Already on Discord: {{count}} of {{gesamt}} pictures. Sending posts them again as a new message.",
-      "server_offline": "Server not reachable. Sending waits, nothing is lost.",
+      "server_offline": "Server not reachable. Your selection stays, you can send as soon as it answers again.",
       "senden": "Send ({{count}})",
       "abbrechen": "Cancel",
       "wird_gesendet": "Sending …",
@@ -5462,7 +5464,7 @@
       "unklar": "Delivery unclear, please check the channel before you try again.",
       "nicht_erreichbar": "Server not reachable",
       "exportieren": "Save as ZIP",
-      "info": "{{groesse}} after resizing to {{px}} px · at most {{max}} per post",
+      "info": "{{groesse}} · at most {{max}} per post",
       "server_ok": "Server reachable",
       "papierkorb": "Move to trash",
       "senden_n": "Send {{count}} pictures",
@@ -5499,7 +5501,7 @@
       "loeschen_fehler": "Cannot delete: {{fehler}}",
       "quellen_fehler": "Picture sources not saved: {{fehler}}",
       "kuerzel_fehler": "Shortcut not saved: {{fehler}}",
-      "hinzugefuegt": "{{n}} picture(s) added",
+      "hinzugefuegt": "{{n}} pictures added",
       "hinzufuegen_fehler": "Cannot add: {{fehler}}",
       "kein_flug": "Nothing is captured without an AeroACARS flight.",
       "aufnahme_fehler": "Cannot capture: {{fehler}}",
@@ -5509,7 +5511,14 @@
       "schliessen": "Close message",
       "export_fehler": "Cannot export: {{fehler}}",
       "yoke_abgelaufen": "No button pressed, time ran out.",
-      "yoke_fehler": "Yoke button not saved: {{fehler}}"
+      "yoke_fehler": "Yoke button not saved: {{fehler}}",
+      "hinzugefuegt_eins": "1 picture added",
+      "hinzugefuegt_teil": "{{n}} of {{gesamt}} files added, {{fehler}} not possible: {{grund}}",
+      "hinzufuegen_keins": "{{fehler}} of {{gesamt}} files not added: {{grund}}",
+      "hinzugefuegt_mit_duplikaten": "{{n}} added, {{dup}} already there",
+      "hinzugefuegt_nur_duplikate": "Nothing added, {{dup}} already there",
+      "grund_unlesbar": "File damaged or not a readable picture",
+      "zuordnen_fehler": "Flight not changed: {{fehler}}"
     },
     "band": {
       "aktiv": "Flight active",

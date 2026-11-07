@@ -33,6 +33,8 @@ export interface SendeVermerk {
   geo_stufe: GeoStufe;
   status: "angenommen" | "gesendet" | "abgelehnt";
   code?: string;
+  /** Text der Sendung: „Erneut senden“ schlaegt ihn wieder vor. */
+  text?: string;
 }
 
 /** Sidecar-Dokument, wie das Paket es ueber `bild_schreiben` ablegt. */
@@ -159,9 +161,21 @@ export interface KontextStand {
   basis: MetaBasis;
 }
 
+/** Flug fuer die Zuordnung von Hand (`bild_kontext` mit `fluege`), aus Protokoll und Logbuch. */
+export interface FlugEintrag {
+  pirep_id: string;
+  rufzeichen: string | null;
+  abflug: string | null;
+  ziel: string | null;
+  flugzeug_icao: string | null;
+  start_ms: number | null;
+  ende_ms: number | null;
+}
+
 export interface Kontext {
   staende: KontextStand[];
   spur: Array<[number, number]> | null;
+  fluege?: FlugEintrag[];
 }
 
 /** Antwort des Servers je Bild (P-7.25). */

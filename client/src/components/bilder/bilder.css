@@ -166,7 +166,7 @@ button.bt-chip:hover { color: var(--text); }
   background: rgba(10, 13, 16, 0.35);
   cursor: pointer;
 }
-.bt-kachel__wahl:checked { background: var(--acc); border-color: var(--acc); }
+.bt-kachel__wahl:checked, .bt-kachel__wahl:indeterminate { background: var(--acc); border-color: var(--acc); }
 .bt-kachel__wahl:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
 .bt-kachel__haken { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; display: grid; place-items: center; color: var(--on-acc); pointer-events: none; }
 .bt-kachel__haken svg, .bt-marke svg { width: 14px; height: 14px; }
@@ -184,6 +184,7 @@ button.bt-chip:hover { color: var(--text); }
 .bt-notiz--info { color: var(--text-dim); }
 .bt-notiz--ok { color: var(--sem-ok); }
 .bt-notiz__link { background: none; border: 0; padding: 0; color: var(--text); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.bt-serie { position: relative; }
 .bt-serie__stapel {
   position: relative; display: block; width: 100%; aspect-ratio: 16 / 10; padding: 0;
   border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-3); cursor: pointer; overflow: hidden;

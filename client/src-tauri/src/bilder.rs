@@ -53,7 +53,7 @@
 //! * `bild_lesen({pfad})` -> ArrayBuffer (`pfad` relativ aus der Liste)
 //! * `bild_quellen_finden()` -> `[{pfad, art, simulator, existiert, vorschlag_modus}]`
 //! * `bild_status({sendungId?})` -> Stand einer Sendung und Kontingent (`GET /api/bilder/status`)
-//! * `bild_kontext({zeiten?: [iso], pirepId?, mitSpur?})` -> `{staende: [{zeit, quelle, abstand_s?, ...}], spur: [[lat, lon], ...]}`.
+//! * `bild_kontext({zeiten?: [iso], pirepId?, mitSpur?, fluege?})` -> `{staende: [{zeit, quelle, abstand_s?, ...}], spur: [[lat, lon], ...], fluege?: [{pirep_id, rufzeichen, abflug, ziel, flugzeug_icao, start_ms, ende_ms}]}`.
 //!   Je Zeit der zeitlich naechste Stand aus `flight_logs/<pirep>.jsonl` (`quelle: "protokoll"`, hoechstens 120 s
 //!   Abstand) mit den Feldern von `meta_basis` (flach) samt `naechster_flugplatz` aus dem OurAirports-Stand der
 //!   aktiven Generation; sonst die Block-Zeiten des PIREP aus phpVMS (`"logbuch"`: nur `pirep_id`, `flugnummer`,
@@ -343,8 +343,19 @@ fn sha_behalten(neu: &mut Value, alt: Option<&Value>) {
 
 pub(crate) fn sidecar_vom_tablet(app: AppHandle, gruppe: String, id: String, mut sidecar: Value) -> Result<speicher::Eintrag, UiError> {
     let alt = speicher::eintrag(&wurzel(&app)?, &gruppe, &id).map_err(fehler)?;
+    let exif_veraltet = position_geaendert(alt.sidecar.as_ref(), &sidecar);
     sha_behalten(&mut sidecar, alt.sidecar.as_ref());
-    bild_schreiben(app, gruppe, id, None, None, Some(sidecar), None, None)
+    // Das Tablet legt keine Bytes ab: Nach einem Flugwechsel faellt die alte Position aus dem JPEG, statt falsch stehen zu bleiben.
+    let jpeg = match alt.pfad.as_deref().filter(|_| exif_veraltet) {
+        Some(p) => Some(bilder_kern::jpeg::app1_entfernen(&std::fs::read(p).map_err(|e| UiError::new("bild_io", e.to_string()))?).map_err(fehler)?),
+        None => None,
+    };
+    speicher::schreiben(&wurzel(&app)?, SchreibAnfrage { gruppe, id, jpeg, vorschau: None, sidecar: Some(sidecar), quelle_entfernen: false, sha256: None }).map_err(fehler)
+}
+
+fn position_geaendert(alt: Option<&Value>, neu: &Value) -> bool {
+    let ort = |s: &Value| (s["meta"]["breite"].clone(), s["meta"]["laenge"].clone());
+    alt.is_some_and(|a| ort(a) != ort(neu))
 }
 
 pub(crate) fn bild_bytes(app: &AppHandle, pfad: &str) -> Result<Vec<u8>, UiError> {
@@ -700,7 +711,8 @@ async fn live_mit_token(anfrage: LiveAnfrage) -> Result<Value, UiError> {
 /// nichts, seitenweise zurueckgeblaettert), sonst `"keine"`. Dazu der naechste Flugplatz
 /// (OurAirports der aktiven Generation) und mit `mit_spur` die ausgeduennte Spur
 /// `[[breite, laenge], ...]` des Flugs (`pirep_id`, sonst der des ersten Treffers; im
-/// aktiven Flug dessen Aufzeichnung). Lesend.
+/// aktiven Flug dessen Aufzeichnung). Mit `fluege` die Flugliste fuer die Zuordnung von
+/// Hand aus Protokollen und Logbuch, der Bildzeit (erste Zeit) naechster Flug vorn. Lesend.
 #[tauri::command]
 pub(crate) async fn bild_kontext(
     app: AppHandle,
@@ -708,7 +720,9 @@ pub(crate) async fn bild_kontext(
     zeiten: Option<Vec<String>>,
     pirep_id: Option<String>,
     mit_spur: Option<bool>,
+    fluege: Option<bool>,
 ) -> Result<Value, UiError> {
+    let mit_fluegen = fluege == Some(true);
     let zeiten = zeiten.unwrap_or_default();
     if zeiten.len() > 500 {
         return Err(UiError::new("bild_eingabe", "Hoechstens 500 Zeiten auf einmal"));
@@ -717,8 +731,8 @@ pub(crate) async fn bild_kontext(
         .iter()
         .map(|z| kontext::zeit_ms(z).ok_or_else(|| UiError::new("bild_eingabe", format!("Zeit unlesbar: {z}"))))
         .collect::<Result<_, _>>()?;
-    if ms.is_empty() && mit_spur != Some(true) {
-        return Err(UiError::new("bild_eingabe", "zeiten oder mitSpur noetig"));
+    if ms.is_empty() && mit_spur != Some(true) && !mit_fluegen {
+        return Err(UiError::new("bild_eingabe", "zeiten, mitSpur oder fluege noetig"));
     }
     let client = state.client.lock().expect("client mutex").as_ref().cloned();
     let aktiv = state.active_flight.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -731,7 +745,7 @@ pub(crate) async fn bild_kontext(
     let dir = app.path().app_data_dir().map(|d| d.join("flight_logs")).map_err(|e| UiError::new("bild_io", e.to_string()))?;
     let (ms2, pirep2) = (ms.clone(), pirep_id.clone());
     let hat_aktive_spur = aktiv_spur.is_some();
-    let (treffer, spur_datei) = tauri::async_runtime::spawn_blocking(move || {
+    let (treffer, spur_datei, protokoll_fluege) = tauri::async_runtime::spawn_blocking(move || {
         crate::flugprotokoll_abwarten(); // alles Bisherige steht in der Datei
         let t = kontext::protokoll_staende(&dir, pirep2.as_deref(), &ms2).map_err(fehler)?;
         let spur = if mit_spur == Some(true) && !hat_aktive_spur {
@@ -740,15 +754,19 @@ pub(crate) async fn bild_kontext(
         } else {
             None
         };
-        Ok::<_, UiError>((t, spur))
+        let fluege = if mit_fluegen { kontext::protokoll_fluege(&dir) } else { Vec::new() };
+        Ok::<_, UiError>((t, spur, fluege))
     })
     .await
     .map_err(|e| UiError::new("bild_io", e.to_string()))??;
 
     // Rueckfall Logbuch fuer alles, was das Protokoll nicht abdeckt.
     let offen: Vec<i64> = ms.iter().zip(&treffer).filter(|(_, t)| t.is_none()).map(|(z, _)| *z).collect();
-    let pireps = match (&client, offen.iter().min()) {
-        (Some(c), Some(frueh)) => logbuch_pireps(c, *frueh).await,
+    // Die Flugliste reicht einen Monat hinter die Bildzeit zurueck: Die Dateizeit eines Bildes kann spaeter liegen als der Flug.
+    let bezug = ms.first().copied().unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let frueh = offen.iter().copied().chain(mit_fluegen.then_some(bezug - 30 * 86_400_000)).min();
+    let pireps = match (&client, frueh) {
+        (Some(c), Some(frueh)) => logbuch_pireps(c, frueh).await,
         _ => Vec::new(),
     };
     let staende: Vec<Value> = zeiten
@@ -775,7 +793,12 @@ pub(crate) async fn bild_kontext(
         })
         .collect();
     let spur = aktiv_spur.map(|s| kontext::ausduennen(s, kontext::MAX_SPUR)).or(spur_datei).unwrap_or_default();
-    Ok(json!({"staende": staende, "spur": spur}))
+    let mut antwort = json!({"staende": staende, "spur": spur});
+    if mit_fluegen {
+        let liste = kontext::fluege_ordnen(protokoll_fluege, &pireps, ms.first().copied());
+        antwort["fluege"] = liste.iter().map(kontext::FlugEintrag::als_json).collect();
+    }
+    Ok(antwort)
 }
 
 /// Die PIREPs des Piloten bei phpVMS, seitenweise zurueck, bis die fruehste gefragte
@@ -1169,6 +1192,15 @@ mod tests {
         assert!(!fuers_tablet("eingang/b1.quelle.jpg"));
         assert!(!fuers_tablet("eingang/b1.quelle.png"));
         assert!(!fuers_tablet("P1/b1.json"));
+    }
+
+    #[test]
+    fn nur_eine_andere_position_macht_das_exif_im_jpeg_alt() {
+        let mit = |la: f64| json!({"text": "x", "meta": {"breite": la, "laenge": 8.0}});
+        assert!(!position_geaendert(Some(&mit(50.0)), &json!({"text": "neu", "meta": {"breite": 50.0, "laenge": 8.0}})));
+        assert!(position_geaendert(Some(&mit(50.0)), &mit(51.0)));
+        assert!(position_geaendert(Some(&mit(50.0)), &json!({"meta": {"breite": null, "laenge": null}})), "Ohne Flug: Position weg");
+        assert!(!position_geaendert(None, &mit(50.0)));
     }
 
     #[test]

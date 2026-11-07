@@ -105,7 +105,7 @@ export function sendungIdWaehlen(stand: Sendestand, ids: string[], neue: () => s
 /** Zusammenfassung fuer die Auswahlleiste. */
 export function zusammenfassung(stand: Sendestand, ids: Iterable<string>) {
   let sendet = 0, fehlgeschlagen = 0, gesendet = 0;
-  let unklar = false, nichtErreichbar = false;
+  let unklar = false;
   for (const id of ids) {
     const s = stand[id];
     if (!s) continue;
@@ -114,10 +114,19 @@ export function zusammenfassung(stand: Sendestand, ids: Iterable<string>) {
     else {
       fehlgeschlagen++;
       if (s.code === "discord_unklar") unklar = true;
-      if (s.code === "server_nicht_erreichbar") nichtErreichbar = true;
     }
   }
-  return { sendet, fehlgeschlagen, gesendet, unklar, nichtErreichbar };
+  return { sendet, fehlgeschlagen, gesendet, unklar };
+}
+
+/**
+ * „Erneut senden“: der Text der fehlgeschlagenen Sendung, wenn die Auswahl genau zu ihr gehoert.
+ * Sonst null (ein neuer Vorgang beginnt mit den Texten der Bilder).
+ */
+export function wiederholText(bilder: ReadonlyArray<{ id: string; sidecar: { sendungen?: Array<{ sendung_id: string; text?: string }> } | null }>, stand: Sendestand): string | null {
+  const alt = bilder.map((b) => stand[b.id]);
+  if (alt.length === 0 || !alt.every((s) => s?.phase === "fehlgeschlagen" && s.sendungId === alt[0].sendungId)) return null;
+  return bilder[0].sidecar?.sendungen?.find((v) => v.sendung_id === alt[0].sendungId)?.text ?? null;
 }
 
 /** Hat Discord dieses Bild schon einmal bekommen? Ein spaeterer Fehlschlag aendert daran nichts. */

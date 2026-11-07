@@ -12,7 +12,7 @@ import { fehlerCode, fehlerText } from "./normalisieren";
 import { TABELLE } from "./grenzen";
 import { bildMetaBauen, datenStufe, hatPosition, isoVonMs, type DatenStufe } from "./meta";
 import { entscheide, gruppeFuer } from "./uebernahmeRegel";
-import type { BilderListe, Eintrag, Fund, MetaBasis, MetaQuelle, Sidecar } from "./typen";
+import type { BildMeta, BilderListe, Eintrag, Fund, MetaBasis, MetaQuelle, Sidecar } from "./typen";
 
 export interface Kodierer {
   (bytes: Uint8Array, mime: string): Promise<{ jpeg: Uint8Array; vorschau: Uint8Array; breite: number; hoehe: number }>;
@@ -35,11 +35,17 @@ export interface Zaehlung {
   /** Datei wurde waehrend der Uebernahme ueberschrieben (`bild_veraltet`): Fund verworfen, die Datei kommt als neuer Fund. */
   veraltet: number;
   letzterFehler: string | null;
+  letzterCode?: string | null;
 }
 
 export const leereZaehlung = (): Zaehlung => ({
   neu: 0, verworfen: 0, duplikate: 0, fehler: 0, mit_daten: 0, nur_flug: 0, ohne_daten: 0, veraltet: 0, letzterFehler: null,
 });
+
+/** Die Position des Bildes als EXIF im JPEG; ohne Position bleibt keine alte Angabe stehen. */
+export function dateiMitPosition(jpeg: Uint8Array, meta: BildMeta): Uint8Array {
+  return exifEinsetzen(jpeg, hatPosition(meta) ? exifGpsSegment({ breite: meta.breite!, laenge: meta.laenge!, hoehe_ft: meta.hoehe_ft, kurs: meta.kurs, zeit_utc: meta.zeit_utc }) : new Uint8Array(0));
+}
 
 const mimeVon = (format: string | null | undefined, pfad: string): string =>
   (format ?? "").toLowerCase().startsWith("jp") || /\.jpe?g$/i.test(pfad) ? "image/jpeg" : "image/png";
@@ -68,9 +74,7 @@ export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
     // Kanonischer Hash: nach Verkleinern und Neukodierung, ohne EXIF (P-7.25).
     const sha = await sha256Hex(k.jpeg);
     const meta = bildMetaBauen({ ...basis, zeit_utc: basis.zeit_utc ?? isoVonMs(u.dateizeit_ms) ?? undefined }, quelle, u.dateizeit_ms);
-    const datei = hatPosition(meta)
-      ? exifEinsetzen(k.jpeg, exifGpsSegment({ breite: meta.breite!, laenge: meta.laenge!, hoehe_ft: meta.hoehe_ft, kurs: meta.kurs, zeit_utc: meta.zeit_utc }))
-      : k.jpeg;
+    const datei = hatPosition(meta) ? dateiMitPosition(k.jpeg, meta) : k.jpeg;
     const sidecar: Sidecar = {
       fassung: 1, bild_id: u.id, text: "", favorit: false, meta, breite_px: k.breite, hoehe_px: k.hoehe,
       sha256: sha, erstellt_ms: jetzt(), sendungen: [], herkunft,
@@ -136,6 +140,7 @@ export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
   function melden(z: Zaehlung, id: string, e: unknown) {
     z.fehler++;
     z.letzterFehler = `${fehlerCode(e)}: ${fehlerText(e)}`;
+    z.letzterCode = fehlerCode(e);
     versuche.set(id, (versuche.get(id) ?? 0) + 1);
   }
 
@@ -186,6 +191,7 @@ export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
       if (!e.ok || !e.uebernahme) {
         z.fehler++;
         z.letzterFehler = `${e.code ?? "unbekannt"}: ${e.meldung ?? e.pfad}`;
+        z.letzterCode = e.code ?? "unbekannt";
         continue;
       }
       try {

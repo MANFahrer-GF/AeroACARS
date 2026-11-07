@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   kuerzel: null as null | { text: string; verfuegbar: boolean; aktiv: boolean; fehler: null },
   lerne: null as unknown,
   senden: null as null | ((a: Record<string, unknown>) => unknown),
+  status: null as null | (() => unknown),
+  fluege: [] as unknown[],
   hoerer: new Map<string, Array<(e: { payload: unknown }) => void>>(),
 }));
 
@@ -27,9 +29,10 @@ vi.mock("../../lib/ipc", () => ({
       case "bilder_liste":
         return { eintraege: h.zeilen, belegt_bytes: 5_000_000, quellen: [], tastenkuerzel: h.kuerzel, aufnahme_verfuegbar: false, simulator_taste: h.taste, funde: [], altbestand: [] };
       case "ui_state_get_all": return h.einwilligung ? { "aeroacars.bilder.einwilligung.17": "1" } : {};
-      case "bild_lesen": return new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+      case "bild_lesen": return new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0, 2, 0xff, 0xd9]);
       case "bild_senden": return h.senden ? h.senden(args!) : { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
-      case "bild_status": return { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
+      case "bild_status": return h.status ? h.status() : { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
+      case "bild_kontext": return { staende: [], spur: [], fluege: h.fluege };
       case "bild_schreiben": return undefined;
       case "bild_taste_lernen": return h.lerne;
       case "bild_quellen_setzen": return { quellen: [], abgebrochen: false };
@@ -46,7 +49,7 @@ import { eintrag } from "./logik/testhilfen";
 
 beforeEach(() => {
   h.tablet = false;
-  h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null; h.taste = null; h.kuerzel = null; h.lerne = null;
+  h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null; h.status = null; h.fluege = []; h.taste = null; h.kuerzel = null; h.lerne = null;
   URL.createObjectURL = vi.fn(() => "blob:x");
   URL.revokeObjectURL = vi.fn();
   void bilderStore.pilotSetzen(null);
@@ -170,6 +173,56 @@ describe("Bilder-Tab", () => {
     expect(screen.getByRole("button", { name: "Erneut versuchen" })).toBeInTheDocument();
     expect(screen.getByText("1 ausgewählt")).toBeInTheDocument();
     expect(screen.getByText("Server nicht erreichbar")).toBeInTheDocument();
+  });
+
+  it("Server aus: schon vor dem ersten Senden in Leiste und Dialog sichtbar, Senden gesperrt", async () => {
+    vorbereiten();
+    h.status = () => { throw { code: "live_nicht_erreichbar", message: "x" }; };
+    zeigen();
+    await userEvent.click((await screen.findAllByRole("checkbox", { name: /Auswählen/ }))[0]);
+    expect(await screen.findByText("Server nicht erreichbar")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "1 Bild senden" }));
+    const d = within(await screen.findByRole("dialog"));
+    expect(d.getByText(/Deine Auswahl bleibt/)).toBeInTheDocument();
+    expect(d.getByRole("button", { name: "Jetzt senden" })).toBeDisabled();
+    expect(h.aufrufe.some((a) => a.cmd === "bild_senden")).toBe(false);
+  });
+
+  it("Flug aendern bietet einen frueheren Flug ohne Galeriebild an und schreibt seine Daten", async () => {
+    vorbereiten();
+    h.fluege = [{ pirep_id: "ALT7", rufzeichen: "GSG700", abflug: "LOWI", ziel: "EDDM", flugzeug_icao: "A320", start_ms: Date.UTC(2026, 9, 2), ende_ms: null }];
+    zeigen(false);
+    await userEvent.click(await screen.findByRole("button", { name: "Flug zuordnen" }));
+    const d = within(await screen.findByRole("dialog"));
+    const wahl = d.getByRole("combobox");
+    await within(wahl).findByRole("option", { name: /GSG700 LOWI–EDDM/ });
+    expect(h.aufrufe.find((a) => a.cmd === "bild_kontext" && a.args?.fluege)?.args).toMatchObject({ fluege: true, zeiten: ["2026-11-03T10:02:00.000Z"] });
+    await userEvent.selectOptions(wahl, "ALT7");
+    await userEvent.click(d.getByRole("button", { name: "Fertig" }));
+    await waitFor(() => {
+      const s = h.aufrufe.filter((a) => a.cmd === "bild_schreiben").pop();
+      expect((s?.args?.sidecar as { meta: Record<string, unknown> } | undefined)?.meta).toMatchObject({ pirep_id: "ALT7", rufzeichen: "GSG700", abflug: "LOWI", flugzeug_icao: "A320", breite: null });
+    });
+  });
+
+  it("eine geschlossene Serie laesst sich als Ganzes waehlen, mit eindeutigem Teilzustand", async () => {
+    h.zeilen = [0, 1, 2].map((i) => eintrag({ id: `s${i}`, meta: { zeit_utc: `2026-11-07T10:00:0${i}.000Z` } }));
+    zeigen();
+    const haken = await screen.findByRole("checkbox", { name: "Serie mit 3 Bildern auswählen" }) as HTMLInputElement;
+    await userEvent.click(haken);
+    expect(screen.getByText("3 ausgewählt")).toBeInTheDocument();
+    expect(haken.checked).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: /Serie mit 3 Bildern, / }));
+    await userEvent.click(screen.getAllByRole("checkbox", { name: /Auswählen/ })[0]);
+    expect(screen.getByText("2 ausgewählt")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Serie schließen" }));
+    const teil = await screen.findByRole("checkbox", { name: "Serie mit 3 Bildern auswählen" }) as HTMLInputElement;
+    expect(teil.indeterminate).toBe(true);
+    expect(teil.checked).toBe(false);
+    await userEvent.click(teil);
+    expect(screen.getByText("3 ausgewählt")).toBeInTheDocument();
+    await userEvent.click(teil);
+    expect(screen.queryByText(/ausgewählt$/, { selector: ".bt-leiste__fett" })).toBeNull();
   });
 
   it("Zustellung unklar: eigener Text, Bild bleibt ausgewaehlt", async () => {

@@ -68,7 +68,7 @@ function SendenInhalt({
           )}
           <span style={{ marginLeft: "auto" }} />
           <Button variant="quiet" onClick={onZu}>{t("bilder.senden.abbrechen")}</Button>
-          <Button variant="primary" iconLeft={Symbol.senden} disabled={bilder.length === 0 || zuViele || !reicht} onClick={() => onSenden(text.trim(), geoStufe)}>
+          <Button variant="primary" iconLeft={Symbol.senden} disabled={bilder.length === 0 || zuViele || !reicht || serverAus} onClick={() => onSenden(text.trim(), geoStufe)}>
             {t("bilder.senden.jetzt")}
           </Button>
         </div>

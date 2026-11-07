@@ -2,8 +2,7 @@
 // hinzufuegen und Namen leicht abweichen lassen; das Paket liest hier an EINER
 // Stelle. Fehlendes bleibt null, nie ein Ersatzwert (P-11.30: kein 0 ft).
 import type {
-  AltEintrag, BilderListe, Eintrag, Fund, Kontext, KontextStand, MetaBasis, MetaQuelle, QuellenStatus,
-} from "./typen";
+  AltEintrag, BilderListe, Eintrag, Fund, Kontext, KontextStand, MetaBasis, MetaQuelle, QuellenStatus, FlugEintrag } from "./typen";
 
 type Roh = Record<string, unknown>;
 
@@ -162,7 +161,16 @@ export function kontextLesen(roh: unknown): Kontext {
         })
         .filter((p): p is [number, number] => p !== null)
     : null;
-  return { staende: staende.map(standLesen), spur };
+  const fluege = Array.isArray(r.fluege) ? r.fluege.map(flugLesen).filter((f): f is FlugEintrag => f !== null) : undefined;
+  return { staende: staende.map(standLesen), spur, ...(fluege ? { fluege } : {}) };
+}
+
+function flugLesen(roh: unknown): FlugEintrag | null {
+  const r = obj(roh);
+  const pirep_id = text(r.pirep_id);
+  return pirep_id === null ? null : {
+    pirep_id, rufzeichen: text(r.rufzeichen), abflug: text(r.abflug), ziel: text(r.ziel), flugzeug_icao: text(r.flugzeug_icao), start_ms: zahl(r.start_ms), ende_ms: zahl(r.ende_ms),
+  };
 }
 
 /** Fehlerobjekt von `invoke`: Code und Meldung, sonst ein Text. */

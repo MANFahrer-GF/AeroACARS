@@ -1,6 +1,7 @@
 // Kacheln der Liste (Entwurf Main.dc.html): Vorschau, Leiste mit Zeit, Hoehe und Phase,
 // Auswahl-Checkbox oben rechts GETRENNT vom Oeffnen, Marke oben links fuer den
 // Sendestand, Textzeile mit Grund und „Erneut versuchen“ unter der Kachel.
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { kurzZeit } from "./logik/metaFormat";
 import { fehlerCodeNormal, type KachelStand } from "./logik/sendezustand";
@@ -95,15 +96,25 @@ export function Kachel({
   );
 }
 
-export function SerienKachel({ bilder, onOeffnen }: { bilder: Eintrag[]; onOeffnen: () => void }) {
+export function SerienKachel({ bilder, auswahl, onOeffnen, onWahl }: { bilder: Eintrag[]; auswahl: ReadonlySet<string>; onOeffnen: () => void; onWahl: () => void }) {
   const { t } = useKachelTexte();
   const url = useBildUrl(bilder[0].vorschau_pfad ?? bilder[0].pfad);
+  const gewaehlt = bilder.filter((b) => auswahl.has(b.id)).length;
+  const alle = gewaehlt === bilder.length;
+  const teil = gewaehlt > 0 && !alle;
+  const wahl = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (wahl.current) wahl.current.indeterminate = teil; }, [teil]);
   return (
     <div className="bt-kachelwrap">
-      <button type="button" className="bt-serie__stapel" onClick={onOeffnen} aria-label={`${t("bilder.kachel.serie", { n: bilder.length })}, ${t("bilder.kachel.serie_oeffnen")}`}>
-        {url && <img src={url} alt="" />}
-        <span className="bt-serie__zahl">{bilder.length}</span>
-      </button>
+      <div className="bt-serie">
+        <button type="button" className="bt-serie__stapel" onClick={onOeffnen} aria-label={`${t("bilder.kachel.serie", { n: bilder.length })}, ${t("bilder.kachel.serie_oeffnen")}`}>
+          {url && <img src={url} alt="" />}
+          <span className="bt-serie__zahl">{bilder.length}</span>
+        </button>
+        <input ref={wahl} type="checkbox" className="bt-kachel__wahl" checked={alle} onChange={onWahl} aria-label={t("bilder.kachel.serie_auswaehlen", { n: bilder.length })} />
+        {alle && <span className="bt-kachel__haken" aria-hidden="true">{Symbol.haken}</span>}
+        {teil && <span className="bt-kachel__haken" aria-hidden="true">{Symbol.teil}</span>}
+      </div>
     </div>
   );
 }

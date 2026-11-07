@@ -12,14 +12,15 @@ import { SendenDialog } from "./SendenDialog";
 import { Symbol } from "./Symbole";
 import { bilderStore, useBilder } from "./bilderStore";
 import { bildUrlVergessen } from "./useBildUrl";
-import { bereinigen, offenNachHaken, umschalten } from "./logik/auswahl";
+import { bereinigen, offenNachHaken, serieUmschalten, umschalten } from "./logik/auswahl";
 import { GRENZEN } from "./logik/grenzen";
-import { KEIN_FILTER, anzeigbar, bytesText, filtern, flugSchluessel, gesendeteAelterAls, gruppieren, seitenweise, type Filter, type Gruppe } from "./logik/gruppen";
+import { KEIN_FILTER, anzeigbar, bytesText, filtern, flugOptionenBauen, flugSchluessel, gesendeteAelterAls, gruppieren, seitenweise, type Filter, type Gruppe } from "./logik/gruppen";
 import { reichtKontingent } from "./logik/kontingent";
-import { simulatorName, streckeText, kurzZeit } from "./logik/metaFormat";
+import { kurzZeit, simulatorName } from "./logik/metaFormat";
 import type { FlugAuswahl } from "./logik/store";
+import type { FlugEintrag } from "./logik/typen";
 import { bildZeitIso, useKachelTexte } from "./Kacheln";
-import { zusammenfassung } from "./logik/sendezustand";
+import { wiederholText, zusammenfassung } from "./logik/sendezustand";
 import "./bilder.css";
 
 export interface AktiverFlug {
@@ -59,6 +60,8 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const [spaeter, setSpaeter] = useState(false);
   const [zuordnen, setZuordnen] = useState<string[] | null>(null);
   const [zuordnenWahl, setZuordnenWahl] = useState("");
+  const [kandidaten, setKandidaten] = useState<FlugEintrag[] | null>(null);
+  const kandidatenLauf = useRef(0);
   const [ziehen, setZiehen] = useState(false);
 
   useEffect(() => { void bilderStore.pilotSetzen(pilotId); }, [pilotId]);
@@ -74,6 +77,18 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const sichtbar = useMemo(() => seitenweise(gruppen, seite, GRENZEN.seite), [gruppen, seite]);
   useEffect(() => { if (seite !== sichtbar.seite) setSeite(sichtbar.seite); }, [seite, sichtbar.seite]);
   useEffect(() => { setAuswahl((a) => bereinigen(a, alle.map((e) => e.id))); }, [alle]);
+  useEffect(() => {
+    if (z.wiederAuswaehlen.length === 0) return;
+    setAuswahl((a) => new Set([...a, ...z.wiederAuswaehlen]));
+    bilderStore.wiederAuswaehlenLoeschen();
+  }, [z.wiederAuswaehlen]);
+  // Kommt der Server zurueck, wird die Warnung ohne Zutun des Piloten wieder frei.
+  const serverAus = z.serverErreichbar === false;
+  useEffect(() => {
+    if (!serverAus) return;
+    const takt = setInterval(() => void bilderStore.kontingentHolen(), 15_000);
+    return () => clearInterval(takt);
+  }, [serverAus]);
 
   const [anfangGeoeffnet, setAnfangGeoeffnet] = useState(false);
   useEffect(() => {
@@ -104,15 +119,10 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     return () => { aus = true; weg?.(); };
   }, []);
 
-  const flugOptionen: Array<FlugAuswahl & { label: string }> = useMemo(() => {
-    const o: Array<FlugAuswahl & { label: string }> = [];
-    if (aktiverFlug) o.push({ pirep_id: aktiverFlug.pirep_id, rufzeichen: aktiverFlug.callsign, abflug: aktiverFlug.dpt, ziel: aktiverFlug.arr, label: `${aktiverFlug.callsign} ${aktiverFlug.dpt}–${aktiverFlug.arr} (${t("bilder.gruppe.laeuft")})` });
-    for (const g of alleGruppen) {
-      if (g.schluessel === "" || g.schluessel === aktiverFlug?.pirep_id) continue;
-      o.push({ pirep_id: g.schluessel, rufzeichen: g.rufzeichen, abflug: g.abflug, ziel: g.ziel, label: [new Date(g.zeit).toLocaleDateString(sprache), g.rufzeichen, streckeText(g)].filter(Boolean).join(" ") });
-    }
-    return o;
-  }, [aktiverFlug, alleGruppen, sprache, t]);
+  const flugOptionen = useMemo(
+    () => flugOptionenBauen(aktiverFlug, kandidaten ?? [], alleGruppen, sprache, t("bilder.gruppe.laeuft")),
+    [aktiverFlug, alleGruppen, kandidaten, sprache, t],
+  );
 
   const aufraeumen = useMemo(() => gesendeteAelterAls(alle, GRENZEN.aufraeumen_tage, Date.now()), [alle]);
   const fluegeAnzahl = alleGruppen.filter((g) => g.schluessel !== "").length;
@@ -123,6 +133,12 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     const neu = umschalten(auswahl, id);
     setAuswahl(neu);
     setOffenId((o) => offenNachHaken(o, id, neu, breiteSpalte()));
+  }, [auswahl]);
+
+  const serieWahl = useCallback((ids: string[]) => {
+    const neu = serieUmschalten(auswahl, ids);
+    setAuswahl(neu);
+    setOffenId((o) => offenNachHaken(o, ids[0], neu, breiteSpalte()));
   }, [auswahl]);
 
   // „Senden“ in der Detailspalte waehlt das Bild nur fuer den Dialog: ein Abbruch laesst keinen Haken zurueck.
@@ -154,6 +170,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     const gleiche = s ? Object.entries(z.sendestand).filter(([, x]) => x.phase === "fehlgeschlagen" && x.sendungId === s.sendungId).map(([k]) => k) : [id];
     setAuswahl(new Set(gleiche.length ? gleiche : [id]));
     if (z.eingeschaltet !== true) { setEinschaltenOffen(true); return; }
+    void bilderStore.kontingentHolen();
     setSendenOffen(true);
   }
 
@@ -179,9 +196,18 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     if (offen) await bilderStore.ordnerZeigen(offen);
   }
 
+  function zuordnenOeffnen(ids: string[], wahl: string) {
+    setZuordnenWahl(wahl);
+    setZuordnen(ids);
+    setKandidaten(null);
+    const lauf = ++kandidatenLauf.current;
+    const bild = alle.find((e) => e.id === ids[0]);
+    void bilderStore.flugKandidaten(bild ? bildZeitIso(bild) : null).then((k) => { if (lauf === kandidatenLauf.current) setKandidaten(k); });
+  }
+
   function zuordnenSpeichern() {
     const ziel = flugOptionen.find((o) => (o.pirep_id ?? "") === zuordnenWahl);
-    const f: FlugAuswahl = ziel ?? { pirep_id: null, rufzeichen: null, abflug: null, ziel: null };
+    const f: FlugAuswahl = ziel ?? { pirep_id: null, rufzeichen: null, abflug: null, ziel: null, flugzeug_icao: null };
     const ids = zuordnen ?? [];
     setZuordnen(null);
     void (async () => {
@@ -216,7 +242,6 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const beobachtete = (liste?.quellen ?? []).filter((q) => q.aktiv && q.beobachtet);
   const meldung = z.meldung;
   const neueImFlug = aktiverFlug ? alle.filter((e) => flugSchluessel(e) === aktiverFlug.pirep_id).length : 0;
-  const serverAus = zus.nichtErreichbar;
 
   return (
     <div className="bt" style={{ ["--tile-w" as string]: `${GRENZEN.tile_breite_px}px` }}>
@@ -252,7 +277,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
 
       {meldung && (
         <div className="bt-meldungen">
-          <Notice tone={meldung.art === "ok" ? "success" : "error"} detail={t(meldung.schluessel, meldung.werte)} actions={<Button size="sm" variant="quiet" onClick={() => bilderStore.meldungLoeschen()} aria-label={t("bilder.meldung.schliessen")}>{Symbol.zu}</Button>} />
+          <Notice tone={meldung.art === "ok" ? "success" : "error"} detail={t(meldung.schluessel, { ...meldung.werte, ...(meldung.werte?.grundText ? { grund: t(String(meldung.werte.grundText)) } : {}) })} actions={<Button size="sm" variant="quiet" onClick={() => bilderStore.meldungLoeschen()} aria-label={t("bilder.meldung.schliessen")}>{Symbol.zu}</Button>} />
         </div>
       )}
       {(z.fehler || z.uebernahme.fehler > 0 || z.uebernahme.verworfen > 0 || z.uebernahme.duplikate > 0 || z.uebernahme.veraltet > 0) && (
@@ -326,9 +351,10 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
               aktivePirep={aktiverFlug?.pirep_id ?? null}
               jetzt={Date.now()}
               onWahl={toggle}
+              onSerieWahl={serieWahl}
               onOeffnen={(e) => setOffenId((a) => (a === e.id ? null : e.id))}
               onErneut={erneut}
-              onZuordnen={(g: Gruppe) => { setZuordnenWahl(""); setZuordnen(g.kacheln.flatMap((k) => (k.art === "bild" ? [k.bild.id] : k.bilder.map((b) => b.id)))); }}
+              onZuordnen={(g: Gruppe) => zuordnenOeffnen(g.kacheln.flatMap((k) => (k.art === "bild" ? [k.bild.id] : k.bilder.map((b) => b.id))), "")}
               herkunft={(g) => {
                 const e = alle.find((x) => flugSchluessel(x) === g.schluessel && x.sidecar?.herkunft);
                 return e?.sidecar?.herkunft ?? null;
@@ -354,7 +380,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             onLoeschen={() => offen && void loeschen([offen.id])}
             onText={(text) => offen && void bilderStore.textSetzen(offen, text)}
             onFavorit={(an) => offen && void bilderStore.favoritSetzen(offen, an)}
-            onFlugAendern={() => { if (offen) { setZuordnenWahl(flugSchluessel(offen)); setZuordnen([offen.id]); } }}
+            onFlugAendern={() => { if (offen) zuordnenOeffnen([offen.id], flugSchluessel(offen)); }}
             onKarteOeffnen={onKarteOeffnen}
             onMarke={(id) => setOffenId(id)}
             onZu={() => setOffenId(null)}
@@ -366,12 +392,12 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
         <footer className="bt-leiste">
           <span className="bt-leiste__fett">{t("bilder.leiste.ausgewaehlt", { count: auswahl.size })}</span>
           <span className="bt-leiste__info">
-            {t("bilder.leiste.info", { groesse: bytesText(gewaehlteBilder.reduce((s, e) => s + e.groesse, 0), sprache), px: GRENZEN.max_kante_px, max: GRENZEN.max_je_sendung })}
+            {t("bilder.leiste.info", { groesse: bytesText(gewaehlteBilder.reduce((s, e) => s + e.groesse, 0), sprache), max: GRENZEN.max_je_sendung })}
             {" · "}
             {z.kontingent ? (z.kontingent.rest > 0 ? t("bilder.kontingent.rest", { rest: z.kontingent.rest, grenze: z.kontingent.grenze }) : t("bilder.kontingent.leer", { minuten: Math.max(1, Math.ceil(z.kontingent.retry_after / 60)) })) : t("bilder.kontingent.unbekannt")}
           </span>
           {auswahl.size > GRENZEN.max_je_sendung && <span className="bt-leiste__warn">{t("bilder.senden.zu_viele", { max: GRENZEN.max_je_sendung })}</span>}
-          {z.kontingent && !serverAus && <span className="bt-leiste__server">{t("bilder.leiste.server_ok")}</span>}
+          {z.serverErreichbar === true && <span className="bt-leiste__server">{t("bilder.leiste.server_ok")}</span>}
           {serverAus && <span className="bt-leiste__server bt-leiste__server--aus">{t("bilder.leiste.nicht_erreichbar")}</span>}
           {zus.fehlgeschlagen > 0 && <span className="bt-leiste__warn">{t("bilder.leiste.fehlgeschlagen", { count: zus.fehlgeschlagen })}</span>}
           {zus.unklar && <span className="bt-leiste__warn">{t("bilder.leiste.unklar")}</span>}
@@ -391,7 +417,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
         offen={sendenOffen}
         bilder={gewaehlteBilder.filter((e) => e.sidecar?.meta).sort((a, b) => (bildZeitIso(a) ?? "").localeCompare(bildZeitIso(b) ?? ""))}
         pilotName={pilotName}
-        startText={gewaehlteBilder.map((e) => e.sidecar?.text ?? "").filter(Boolean).join(" ").slice(0, GRENZEN.text_max_zeichen)}
+        startText={wiederholText(gewaehlteBilder, z.sendestand) ?? gewaehlteBilder.map((e) => e.sidecar?.text ?? "").filter(Boolean).join(" ").slice(0, GRENZEN.text_max_zeichen)}
         geoStufe={z.geoStufe}
         kontingent={z.kontingent}
         serverAus={serverAus}
@@ -417,6 +443,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
           <option value="">{t("bilder.detail.flug.ohne")}</option>
           {flugOptionen.map((o) => <option key={o.pirep_id ?? ""} value={o.pirep_id ?? ""}>{o.label}</option>)}
         </select>
+        {kandidaten === null && <span className="bt-hinweis">{t("bilder.detail.flug.laedt")}</span>}
       </Modal>
     </div>
   );

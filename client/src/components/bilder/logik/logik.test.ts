@@ -1,10 +1,11 @@
+import type { FlugEintrag } from "./typen";
 import { describe, expect, it } from "vitest";
 import { GRENZEN, TABELLE, tabelleLesen } from "./grenzen";
 import { bildMetaBauen, datenStufe } from "./meta";
 import { entscheide, gruppeFuer, massePassen } from "./uebernahmeRegel";
 import { serienBilden } from "./serien";
-import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppieren, platzJeFlug, seitenweise, wurdeGesendet } from "./gruppen";
-import { bereinigen, offenNachHaken, umschalten } from "./auswahl";
+import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppieren, platzJeFlug, seitenweise, wurdeGesendet, flugOptionenBauen, type Gruppe } from "./gruppen";
+import { bereinigen, offenNachHaken, umschalten, serieUmschalten } from "./auswahl";
 import { kontingentAnzeige, reichtKontingent, retrySekunden } from "./kontingent";
 import { infoZeile, sendeMeta, vorschauBauen } from "./nachrichtVorschau";
 import { schonAufDiscord } from "./sendezustand";
@@ -268,5 +269,29 @@ describe("Antworten des Programms lesen", () => {
     expect(l.eintraege).toHaveLength(1);
     expect(l.funde).toEqual([]);
     expect(l.altbestand).toEqual([]);
+  });
+});
+
+describe("Fluege der Zuordnung", () => {
+  const f = (pirep_id: string, w: Partial<FlugEintrag> = {}): FlugEintrag => ({ pirep_id, rufzeichen: "GSG1", abflug: "EDDF", ziel: "LSZH", flugzeug_icao: null, start_ms: Date.UTC(2026, 10, 3), ende_ms: null, ...w });
+  const gruppe = (schluessel: string) => ({ schluessel, rufzeichen: "GSG9", abflug: "EDDM", ziel: null, zeit: Date.UTC(2026, 10, 1) } as Gruppe);
+  it("frueherer Flug ohne Bild steht drin, je PIREP nur einmal, der laufende vorn", () => {
+    const o = flugOptionenBauen({ pirep_id: "A", callsign: "GSG5", dpt: "EDDB", arr: "EDDH" }, [f("A"), f("B"), f("C", { rufzeichen: null, abflug: null, ziel: null, start_ms: null })], [gruppe("B"), gruppe("D"), gruppe("")], "de", "läuft");
+    expect(o.map((x) => x.pirep_id)).toEqual(["A", "B", "C", "D"]);
+    expect(o[0].label).toBe("GSG5 EDDB–EDDH (läuft)");
+    expect(o[1].label).toBe("3.11.2026 GSG1 EDDF–LSZH");
+    expect(o[2].label).toBe("C"); // ohne Angaben bleibt die Kennung, kein leerer Eintrag
+    expect(o[3].label).toBe("1.11.2026 GSG9 EDDM");
+  });
+  it("kein Flug: nichts wird erfunden", () => {
+    expect(flugOptionenBauen(null, [], [], "de", "x")).toEqual([]);
+  });
+});
+
+describe("Serie auswaehlen", () => {
+  it("nichts oder ein Teil gewaehlt: alle dazu; alle gewaehlt: alle heraus; andere Bilder bleiben", () => {
+    expect([...serieUmschalten(new Set(["x"]), ["a", "b"])]).toEqual(["x", "a", "b"]);
+    expect([...serieUmschalten(new Set(["a"]), ["a", "b"])]).toEqual(["a", "b"]);
+    expect([...serieUmschalten(new Set(["a", "b", "x"]), ["a", "b"])]).toEqual(["x"]);
   });
 });

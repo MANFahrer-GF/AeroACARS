@@ -1,7 +1,8 @@
 // Liste nach Flug gruppiert, Suche, Filter, seitenweise, Platz je Flug (P-11.30, P-11.31).
 import type { Grenzen } from "./grenzen";
+import { streckeText } from "./metaFormat";
 import { bildZeit, serienBilden, type Kachel } from "./serien";
-import type { Eintrag } from "./typen";
+import type { Eintrag, FlugEintrag } from "./typen";
 
 export type GesendetFilter = "alle" | "gesendet" | "offen";
 
@@ -90,6 +91,42 @@ export function gruppieren(eintraege: Eintrag[], g: Pick<Grenzen, "serien_abstan
   }
   // Fluege: neuester zuerst; „Ohne Flug“ steht immer zuletzt.
   return gruppen.sort((a, b) => (a.schluessel === "" ? 1 : b.schluessel === "" ? -1 : b.zeit - a.zeit));
+}
+
+export interface FlugOption {
+  pirep_id: string;
+  rufzeichen: string | null;
+  abflug: string | null;
+  ziel: string | null;
+  flugzeug_icao: string | null;
+  label: string;
+}
+
+/**
+ * Die Fluege der Zuordnung von Hand, je PIREP einmal: der laufende Flug, dann die aus Protokoll und
+ * Logbuch (der Bildzeit naechster vorn), zuletzt Fluege, die nur noch ueber ihre Bilder bekannt sind.
+ */
+export function flugOptionenBauen(
+  aktiv: { pirep_id: string; callsign: string; dpt: string; arr: string } | null,
+  fluege: FlugEintrag[],
+  gruppen: Gruppe[],
+  sprache: string,
+  laeuft: string,
+): FlugOption[] {
+  const o = new Map<string, FlugOption>();
+  const name = (zeit: number | null, f: { rufzeichen: string | null; abflug: string | null; ziel: string | null }) =>
+    [zeit ? new Date(zeit).toLocaleDateString(sprache) : null, f.rufzeichen, streckeText(f)].filter(Boolean).join(" ");
+  if (aktiv) {
+    o.set(aktiv.pirep_id, { pirep_id: aktiv.pirep_id, rufzeichen: aktiv.callsign, abflug: aktiv.dpt, ziel: aktiv.arr, flugzeug_icao: null, label: `${aktiv.callsign} ${aktiv.dpt}–${aktiv.arr} (${laeuft})` });
+  }
+  for (const f of fluege) {
+    if (!o.has(f.pirep_id)) o.set(f.pirep_id, { ...f, label: name(f.start_ms ?? f.ende_ms, f) || f.pirep_id });
+  }
+  for (const g of gruppen) {
+    if (g.schluessel === "" || o.has(g.schluessel)) continue;
+    o.set(g.schluessel, { pirep_id: g.schluessel, rufzeichen: g.rufzeichen, abflug: g.abflug, ziel: g.ziel, flugzeug_icao: null, label: name(g.zeit, g) || g.schluessel });
+  }
+  return [...o.values()];
 }
 
 export interface Seite {

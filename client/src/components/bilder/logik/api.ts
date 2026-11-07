@@ -42,7 +42,7 @@ export interface BildAktionen {
   tasteLernen(): Promise<YokeTaste | null>;
   ordnerZeigen(a: { gruppe: string; id: string }): Promise<void>;
   exportieren(a: { zipBase64: string; dateiname: string }): Promise<string | null>;
-  kontext(a: { zeiten?: string[]; pirepId?: string; mitSpur?: boolean }): Promise<Kontext>;
+  kontext(a: { zeiten?: string[]; pirepId?: string; mitSpur?: boolean; fluege?: boolean }): Promise<Kontext>;
 }
 
 export function alsBytes(v: unknown): Uint8Array {

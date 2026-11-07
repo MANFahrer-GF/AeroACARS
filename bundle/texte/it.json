@@ -5293,7 +5293,8 @@
       "fehlgeschlagen": "Non inviata",
       "oeffnen_mit": "Dettagli: {{zeit}} {{phase}}, {{hoehe}}",
       "auswaehlen_mit": "Seleziona: {{zeit}} {{phase}}",
-      "ohne_flug": "Senza volo"
+      "ohne_flug": "Senza volo",
+      "serie_auswaehlen": "Seleziona serie di {{n}} immagini"
     },
     "status": {
       "sendet": "Invio in corso …",
@@ -5326,7 +5327,8 @@
         "von_hand": "assegnato da te",
         "aendern": "cambia",
         "waehlen": "Scegli il volo",
-        "fertig": "Fatto"
+        "fertig": "Fatto",
+        "laedt": "Caricamento voli …"
       },
       "metadaten": "Dati dello scatto",
       "gesendet_am": "Inviata il {{zeit}}",
@@ -5435,7 +5437,7 @@
       },
       "schon_gesendet_eins": "Questa immagine è già su Discord. Inviando parte di nuovo come nuovo messaggio.",
       "schon_gesendet_n": "Già su Discord: {{count}} di {{gesamt}} immagini. Inviando partono di nuovo come nuovo messaggio.",
-      "server_offline": "Server non raggiungibile. L’invio attende, nulla va perso.",
+      "server_offline": "Server non raggiungibile. La selezione resta, potrai inviare appena risponde di nuovo.",
       "senden": "Invia ({{count}})",
       "abbrechen": "Annulla",
       "wird_gesendet": "Invio in corso …",
@@ -5462,7 +5464,7 @@
       "unklar": "Consegna incerta, controlla il canale prima di riprovare.",
       "nicht_erreichbar": "Server non raggiungibile",
       "exportieren": "Salva come ZIP",
-      "info": "{{groesse}} dopo il ridimensionamento a {{px}} px · al massimo {{max}} per invio",
+      "info": "{{groesse}} · al massimo {{max}} per invio",
       "server_ok": "Server raggiungibile",
       "papierkorb": "Sposta nel cestino",
       "senden_n": "Invia {{count}} immagini",
@@ -5499,7 +5501,7 @@
       "loeschen_fehler": "Eliminazione non possibile: {{fehler}}",
       "quellen_fehler": "Fonti non salvate: {{fehler}}",
       "kuerzel_fehler": "Scorciatoia non salvata: {{fehler}}",
-      "hinzugefuegt": "{{n}} immagine/i aggiunta/e",
+      "hinzugefuegt": "{{n}} immagini aggiunte",
       "hinzufuegen_fehler": "Aggiunta non possibile: {{fehler}}",
       "kein_flug": "Senza un volo AeroACARS non si scatta nulla.",
       "aufnahme_fehler": "Scatto non possibile: {{fehler}}",
@@ -5509,7 +5511,14 @@
       "schliessen": "Chiudi messaggio",
       "export_fehler": "Esportazione non possibile: {{fehler}}",
       "yoke_abgelaufen": "Nessun pulsante premuto, tempo scaduto.",
-      "yoke_fehler": "Pulsante yoke non salvato: {{fehler}}"
+      "yoke_fehler": "Pulsante yoke non salvato: {{fehler}}",
+      "hinzugefuegt_eins": "1 immagine aggiunta",
+      "hinzugefuegt_teil": "{{n}} di {{gesamt}} file aggiunti, {{fehler}} non possibili: {{grund}}",
+      "hinzufuegen_keins": "{{fehler}} di {{gesamt}} file non aggiunti: {{grund}}",
+      "hinzugefuegt_mit_duplikaten": "{{n}} aggiunte, {{dup}} già presenti",
+      "hinzugefuegt_nur_duplikate": "Niente aggiunto, {{dup}} già presenti",
+      "grund_unlesbar": "File danneggiato o immagine non leggibile",
+      "zuordnen_fehler": "Volo non modificato: {{fehler}}"
     },
     "band": {
       "aktiv": "Volo attivo",

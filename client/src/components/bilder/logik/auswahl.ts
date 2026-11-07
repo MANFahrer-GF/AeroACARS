@@ -8,6 +8,17 @@ export function umschalten(a: Auswahl, id: string): Set<string> {
   return n;
 }
 
+/** Serie als Einheit: Sind alle gewaehlt, fallen alle heraus, sonst kommen alle dazu. */
+export function serieUmschalten(a: Auswahl, ids: string[]): Set<string> {
+  const n = new Set(a);
+  const alle = ids.every((id) => n.has(id));
+  for (const id of ids) {
+    if (alle) n.delete(id);
+    else n.add(id);
+  }
+  return n;
+}
+
 /** Nur Bilder, die es noch gibt (nach Loeschen oder Neuladen). */
 export function bereinigen(a: Auswahl, vorhanden: Iterable<string>): Set<string> {
   const v = new Set(vorhanden);

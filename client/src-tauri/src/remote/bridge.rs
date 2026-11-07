@@ -348,9 +348,11 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 pirep_id: Option<String>,
                 #[serde(default)]
                 mit_spur: Option<bool>,
+                #[serde(default)]
+                fluege: Option<bool>,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::bilder::bild_kontext(app.clone(), st!(), a.zeiten, a.pirep_id, a.mit_spur).await),
+                Ok(a) => from_uierr(crate::bilder::bild_kontext(app.clone(), st!(), a.zeiten, a.pirep_id, a.mit_spur, a.fluege).await),
                 Err(e) => Err(e),
             }
         }
