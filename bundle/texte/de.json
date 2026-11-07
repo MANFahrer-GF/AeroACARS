@@ -426,7 +426,8 @@
     "chat": "Chat",
     "telemetrie": "Telemetrie",
     "notizblock": "Notizblock",
-    "bordbuch": "Bordbuch"
+    "bordbuch": "Bordbuch",
+    "bilder": "Bilder"
   },
   "nav": {
     "news": "Nachrichten",
@@ -1858,7 +1859,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Landebericht: Die Anzeige „long landing“ erscheint nur noch außerhalb der Aufsetzzone. Liegt dein Aufsetzpunkt in der Zone, steht dort jetzt „hinter dem Zielpunkt“ oder „deutlich vor dem Zielpunkt“. Die Noten ändern sich dadurch nicht. Auch der Hinweis zu sehr langem Abfangen ist klarer formuliert."
+    "neu_text": "Neuer Reiter „Bilder“: Screenshots aus deinen Flügen werden nach Flug geordnet gesammelt, tragen Position und Flugdaten und lassen sich ausgewählt, mit Text und auf Wunsch mit verdeckter Position, in den Discord-Kanal der GSG senden. Du schaltest das Senden einmal selbst ein; nichts geht automatisch. Außerdem zeigt die Karte jetzt auf Wunsch eine Weltkugel."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
@@ -5157,6 +5158,416 @@
       "ohne_status": "ohne Status",
       "alle": "Alle {{anzahl}} Anfragen anzeigen",
       "weniger": "Weniger anzeigen"
+    }
+  },
+  "bilder": {
+    "titel": "Bilder",
+    "leer": {
+      "titel": "Noch keine Bilder",
+      "text": "Bilder aus deinen Flügen erscheinen hier, sobald der Simulator eines aufnimmt. Du kannst auch Dateien hineinziehen oder über „Bild hinzufügen“ wählen.",
+      "kein_treffer": "Kein Bild passt zu Suche und Filter."
+    },
+    "kopf": {
+      "platz": "{{platz}} belegt",
+      "anzahl": "{{count}} Bilder",
+      "aufnehmen": "Bild aufnehmen",
+      "hinzufuegen": "Bild hinzufügen",
+      "ziehen": "Dateien hierher ziehen",
+      "aufnahme_msfs": "Aufnahme mit {{kuerzel}} (MSFS)",
+      "aufnahme_xplane": "Aufnahme: {{taste}} in X-Plane",
+      "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
+      "aufnahme_aus": "Aufnahme per Tastenkürzel ist auf diesem System nicht möglich. Nutze die Bildquellen.",
+      "nur_im_flug": "Aufnahme und Übernahme laufen nur in einem AeroACARS-Flug.",
+      "zusammenfassung": "{{bilder}} Bilder · {{fluege}} Flüge · {{platz}} auf diesem Rechner",
+      "zusammenfassung_kurz": "{{bilder}} Bilder · {{fluege}} Flüge · {{platz}}",
+      "keine": "Noch keine Bilder auf diesem Rechner",
+      "ordner_zeigen": "Bilder-Ordner im Dateimanager zeigen",
+      "quellen": "Bildquellen",
+      "suche_platzhalter": "Flug, Flughafen, Datum …",
+      "aufnahme": "Aufnahme: {{kuerzel}} in {{sim}}",
+      "aufnahme_neutral": "Screenshot-Taste des Simulators"
+    },
+    "quellen": {
+      "titel": "Bildquellen",
+      "auf": "Bildquellen anzeigen",
+      "zu": "Bildquellen ausblenden",
+      "xplane_gefunden": "X-Plane gefunden, beobachtet: {{pfade}}",
+      "xplane_nicht_beobachtet": "X-Plane gefunden, der Ordner wird nicht beobachtet: {{pfade}}",
+      "keine": "Keine Bildquelle eingerichtet.",
+      "hinzufuegen": "Ordner hinzufügen",
+      "pruefen": "Ordner prüfen",
+      "pruefen_hinweis": "Suchen, ob weitere Ordner mit Simulator-Bildern vorhanden sind",
+      "pausieren": "Pausieren",
+      "fortsetzen": "Fortsetzen",
+      "entfernen": "Entfernen",
+      "original_entfernen": "Original nach Übernahme entfernen",
+      "art": {
+        "standard": "X-Plane-Standard, wird verschoben",
+        "aufgespuert": "Aufgespürt, nur kopiert, nur bei Simulator im Vordergrund",
+        "hand": "Von dir gewählt, nur kopiert"
+      },
+      "zustand": {
+        "beobachtet": "beobachtet",
+        "pausiert": "pausiert",
+        "wird_geprueft": "wird geprüft",
+        "nicht_vorhanden": "Ordner nicht gefunden",
+        "zugriff_verweigert": "Zugriff verweigert, bitte den Ordner in den Systemeinstellungen freigeben"
+      },
+      "vorschlaege": "Gefundene Ordner",
+      "keine_vorschlaege": "Keine weiteren Ordner gefunden.",
+      "uebernehmen": "Als Quelle übernehmen",
+      "schon": "schon eingerichtet",
+      "fehlt": "Ordner nicht vorhanden",
+      "kuerzel": "Tastenkürzel für die Aufnahme",
+      "kuerzel_setzen": "Speichern",
+      "kuerzel_fehler": "Kürzel nicht angemeldet: {{fehler}}",
+      "bestaetigung": "Jede Änderung der Quellen bestätigst du in einem Fenster des Programms.",
+      "eigene_werkzeuge": "Eigene Werkzeuge funktionieren mit jeder Taste, sobald ihr Ordner hier als Bildquelle eingetragen ist.",
+      "yoke": {
+        "titel": "Yoke- oder Joystick-Knopf",
+        "belegt": "{{geraet}}, Knopf {{knopf}}",
+        "unbelegt": "kein Knopf belegt",
+        "festlegen": "Yoke-Taste festlegen",
+        "lernt": "Jetzt den Knopf drücken …",
+        "hinweis_lernen": "Jetzt den Knopf drücken, du hast 10 Sekunden.",
+        "entfernen": "Entfernen",
+        "xplane_hinweis": "In X-Plane belegst du den Knopf in den Joystick-Einstellungen des Simulators mit sim/operation/screenshot."
+      }
+    },
+    "altbestand": {
+      "titel": "{{n}} ältere Bilder gefunden",
+      "text": "Sie bleiben, wo sie sind. Beim Übernehmen werden sie kopiert und, wo möglich, ihrem Flug zugeordnet. Zu manchen gibt es keine Flugdaten mehr.",
+      "uebernehmen": "Ältere Bilder übernehmen",
+      "ergebnis": "Übernommen: {{mit}} mit Daten, {{flug}} nur Flug, {{ohne}} ohne Daten",
+      "laeuft": "Wird übernommen …"
+    },
+    "uebernahme": {
+      "verworfen": "{{n}} Datei(en) nicht übernommen (Simulator nicht im Vordergrund oder Größe passt nicht)",
+      "fehler": "Übernahme gescheitert: {{fehler}}",
+      "duplikate": "{{n}} Duplikat(e) übersprungen",
+      "arbeitet": "Neue Bilder werden übernommen …"
+    },
+    "liste": {
+      "ohne_flug": "Ohne Flug",
+      "flug_titel": "Flug {{rufzeichen}}",
+      "flug_ohne_name": "Flug",
+      "anzahl": "{{count}} Bilder",
+      "platz": "{{platz}}",
+      "suche": "Suchen (Flug, Ort, Text)",
+      "suche_label": "Bilder suchen",
+      "filter": {
+        "alle": "Alle",
+        "favoriten": "Favoriten",
+        "gesendet": "Gesendet",
+        "offen": "Noch nicht gesendet",
+        "flug": "Flug",
+        "alle_fluege": "Alle Flüge"
+      },
+      "seite": "Seite {{seite}} von {{seiten}}",
+      "vor": "Weiter",
+      "zurueck": "Zurück",
+      "bilder_gesamt": "{{count}} Bilder"
+    },
+    "kachel": {
+      "auswaehlen": "Bild {{name}} auswählen",
+      "oeffnen": "Bild {{name}} öffnen",
+      "serie": "Serie mit {{n}} Bildern",
+      "serie_oeffnen": "Serie öffnen",
+      "serie_zu": "Serie schließen",
+      "keine_daten": "Keine Flugdaten",
+      "nur_flug": "Nur Flug, keine Position",
+      "favorit": "Favorit",
+      "name": "Bild vom {{zeit}}",
+      "laedt": "lädt",
+      "gesendet": "Gesendet",
+      "sendet": "Wird gesendet",
+      "fehlgeschlagen": "Nicht gesendet",
+      "oeffnen_mit": "Details: {{zeit}} {{phase}}, {{hoehe}}",
+      "auswaehlen_mit": "Auswählen: {{zeit}} {{phase}}",
+      "ohne_flug": "Ohne Flug"
+    },
+    "status": {
+      "sendet": "Wird gesendet …",
+      "angenommen": "Angenommen, Zustellung läuft",
+      "gesendet": "Gesendet",
+      "fehlgeschlagen": "Nicht gesendet: {{grund}}.",
+      "erneut": "Erneut versuchen"
+    },
+    "detail": {
+      "leer": "Wähle ein Bild, um Details zu sehen.",
+      "titel": "Bild",
+      "schliessen": "Detail schließen",
+      "aktionen": {
+        "senden": "An Discord senden",
+        "ordner": "Im Ordner zeigen",
+        "loeschen": "Löschen"
+      },
+      "text": {
+        "label": "Text für Discord",
+        "platzhalter": "Optional, bis {{max}} Zeichen. Erwähnungen werden nicht ausgelöst.",
+        "zaehler": "{{n}} von {{max}}"
+      },
+      "favorit": {
+        "an": "Favorit",
+        "aus": "Kein Favorit"
+      },
+      "flug": {
+        "label": "Flug",
+        "ohne": "Ohne Flug",
+        "von_hand": "von dir zugeordnet",
+        "aendern": "ändern",
+        "waehlen": "Flug wählen",
+        "fertig": "Fertig"
+      },
+      "metadaten": "Aufnahmedaten",
+      "gesendet_am": "Gesendet am {{zeit}}",
+      "leer_wert": "keine Angabe",
+      "feld": {
+        "zeit_utc": "Zeit (UTC)",
+        "breite": "Breite",
+        "laenge": "Länge",
+        "hoehe_ft": "Höhe",
+        "gs_kt": "Geschwindigkeit",
+        "kurs": "Kurs",
+        "flugzeug_titel": "Flugzeug",
+        "flugzeug_icao": "Flugzeugtyp",
+        "phase": "Flugphase",
+        "rufzeichen": "Rufzeichen",
+        "abflug": "Abflug",
+        "ziel": "Ziel",
+        "simulator": "Simulator",
+        "naechster_flugplatz": "In der Nähe",
+        "quelle": "Datenquelle",
+        "position": "Position",
+        "flugzeug": "Flugzeug",
+        "flug": "Flug",
+        "datei": "Datei"
+      },
+      "quelle": {
+        "sim": "Simulator zur Aufnahmezeit",
+        "protokoll": "Flugprotokoll",
+        "logbuch": "Logbuch (nur Flug)",
+        "keine": "keine"
+      },
+      "phase": {
+        "preflight": "Vorbereitung",
+        "boarding": "Boarding",
+        "pushback": "Pushback",
+        "taxi_out": "Rollen",
+        "takeoff_roll": "Startlauf",
+        "takeoff": "Start",
+        "climb": "Steigflug",
+        "cruise": "Reiseflug",
+        "holding": "Warteschleife",
+        "descent": "Sinkflug",
+        "approach": "Anflug",
+        "final": "Endanflug",
+        "landing": "Landung",
+        "taxi_in": "Rollen",
+        "blocks_on": "Blocks on",
+        "arrived": "Angekommen",
+        "pushback_to_gate": "Pushback"
+      },
+      "ausgewaehlt": "ausgewählt",
+      "nicht_ausgewaehlt": "nicht ausgewählt",
+      "karte": {
+        "titel": "Wo das Bild entstand",
+        "zeigen": "Auf der Karte zeigen",
+        "hinweis": "Spur dieses Flugs und Bildposition, aus der Flugkarte. Klick öffnet die Karte an dieser Stelle."
+      },
+      "zusatz": {
+        "msl": "MSL",
+        "ueber_grund": "über Grund"
+      },
+      "leer_hinweis": "Wähle ein Bild, um Details zu sehen."
+    },
+    "karte": {
+      "titel": "Karte",
+      "karte": "Karte",
+      "kugel": "Weltkugel",
+      "umschalter": "Darstellung der Karte",
+      "oeffnen": "In der Karte öffnen",
+      "ohne_position": "Zu diesem Bild gibt es keine Position.",
+      "keine_spur": "Spur dieses Flugs nicht verfügbar",
+      "laedt": "Karte wird geladen",
+      "bild_marke": "Bild {{name}}",
+      "nicht_verfuegbar": "Die Karte kann hier nicht gezeichnet werden (WebGL fehlt).",
+      "flach": "Flache Karte",
+      "kugel_lang": "Karte als Weltkugel"
+    },
+    "senden": {
+      "titel": "Bilder senden",
+      "zu": "Schließen",
+      "anzahl": "{{count}} Bilder an den Discord-Kanal der GSG",
+      "max": "Höchstens {{max}} Bilder je Sendung",
+      "zu_viele": "Wähle höchstens {{max}} Bilder.",
+      "text": {
+        "label": "Dein Text (optional)",
+        "platzhalter": "Zum Beispiel: Sonnenuntergang über den Alpen",
+        "zaehler": "{{n}} von {{max}}",
+        "hinweis": "Links, zum Beispiel zu YouTube, sind erlaubt."
+      },
+      "geo": {
+        "titel": "Geo-Daten in Discord",
+        "sichtbar": "Sichtbar",
+        "sichtbar_text": "Zeit, Ort, Höhe und Kurs stehen offen in der Nachricht.",
+        "verdeckt": "Verdeckt, zum Aufklappen",
+        "verdeckt_text": "Dieselben Angaben stehen unter einem grauen Balken und erscheinen erst beim Klick.",
+        "aus": "Nicht mitsenden",
+        "aus_text": "Die Position verlässt dein Programm nicht. Die Nachricht nennt nur dich, den Flug und deinen Text.",
+        "ohne_position": "Zu diesen Bildern gibt es keine Position, die Auswahl bleibt ohne Wirkung.",
+        "hinweis": "Gilt für alle Sendungen, bis du es hier änderst. Die Bilddatei geht ohne Metadaten nach Discord; was du hier wählst, steht im Text."
+      },
+      "vorschau": {
+        "titel": "So erscheint die Nachricht",
+        "balken": "Position verdeckt",
+        "gekuerzt": "Discord kürzt diese Nachricht.",
+        "bild": "Bild {{n}}",
+        "bilder_hinweis": "Die Bilder hängen als Dateien an der Nachricht.",
+        "verdeckt": "Geo-Daten verdeckt · zum Anzeigen klicken",
+        "verdeckt_hinweis": "Dahinter steht je Bild: Zeit, Position, Höhe, Kurs, nächster Flugplatz. Erwähnungen im Text werden nicht ausgelöst.",
+        "sichtbar_hinweis": "Je Bild steht eine Zeile mit Zeit, Position, Höhe, Kurs und nächstem Flugplatz im Text. Erwähnungen im Text werden nicht ausgelöst.",
+        "aus_hinweis": "Es gehen keine Positionsdaten mit. Erwähnungen im Text werden nicht ausgelöst."
+      },
+      "server_offline": "Server nicht erreichbar. Senden wartet, nichts geht verloren.",
+      "senden": "Senden ({{count}})",
+      "abbrechen": "Abbrechen",
+      "wird_gesendet": "Wird gesendet …",
+      "kontingent_zu_wenig": "Diese Stunde sind nur noch {{rest}} Bilder möglich.",
+      "titel_n": "{{count}} Bilder an Discord senden",
+      "titel_eins": "1 Bild an Discord senden",
+      "kanal": "Kanal „Bilder“ der German Sky Group",
+      "text_label_n": "Text für alle {{count}} Bilder",
+      "text_label_eins": "Text für das Bild",
+      "jetzt": "Jetzt senden",
+      "zeilen": {
+        "groesse": "Größe",
+        "groesse_text_eins": "1 Bild, {{groesse}} nach Verkleinerung auf {{px}} px",
+        "groesse_text": "{{count}} Bilder, {{groesse}} nach Verkleinerung auf {{px}} px",
+        "weg": "Weg",
+        "weg_text": "Dieser Rechner, GSG-Server (live), Discord. Der Zugang zu Discord liegt nur auf dem Server.",
+        "fehlschlag": "Falls etwas fehlschlägt",
+        "fehlschlag_text": "Jedes Bild bekommt sein eigenes Ergebnis. Was nicht ankam, bleibt ausgewählt und zeigt den Grund an der Kachel; „Erneut versuchen“ schickt nur das Fehlende, nichts kommt doppelt an."
+      }
+    },
+    "kontingent": {
+      "rest": "Diese Stunde noch {{rest}} von {{grenze}}",
+      "leer": "Diese Stunde keine Bilder mehr, wieder möglich in etwa {{minuten}} Min.",
+      "unbekannt": "Kontingent wird beim Senden angezeigt"
+    },
+    "leiste": {
+      "ausgewaehlt": "{{count}} ausgewählt",
+      "senden": "Senden",
+      "aufheben": "Auswahl aufheben",
+      "sendet": "{{count}} werden gesendet",
+      "gesendet": "{{count}} gesendet",
+      "fehlgeschlagen": "{{count}} nicht gesendet, sie bleiben ausgewählt",
+      "unklar": "Zustellung unklar, bitte im Kanal prüfen, bevor du es erneut versuchst.",
+      "nicht_erreichbar": "Server nicht erreichbar",
+      "exportieren": "Als ZIP speichern",
+      "info": "{{groesse}} nach Verkleinerung auf {{px}} px · höchstens {{max}} je Sendung",
+      "server_ok": "Server erreichbar",
+      "papierkorb": "In den Papierkorb",
+      "senden_n": "{{count}} Bilder senden",
+      "senden_eins": "1 Bild senden"
+    },
+    "fehler": {
+      "zu_gross": "Datei zu groß",
+      "kontingent": "Stundenkontingent erreicht",
+      "discord_fehler": "Discord hat die Nachricht abgelehnt",
+      "discord_unklar": "Zustellung unklar, bitte im Kanal prüfen",
+      "ungueltig": "Keine lesbare Bilddatei oder falsche Angaben",
+      "konflikt": "Dieses Bild wurde mit anderem Inhalt schon unter derselben Sendung geschickt",
+      "nicht_eingerichtet": "Der Bilder-Kanal ist auf dem Server noch nicht eingerichtet",
+      "server_nicht_erreichbar": "Server nicht erreichbar",
+      "nicht_angemeldet": "Nicht bei live angemeldet",
+      "server_fehler": "Server meldet einen Fehler",
+      "datei_fehlt": "Bilddatei nicht gefunden",
+      "unbekannt": "Unbekannter Fehler",
+      "wieder_in": "wieder möglich in etwa {{minuten}} Min."
+    },
+    "einschalten": {
+      "titel": "Bilder an Discord senden",
+      "text": "Mit dem Senden erscheinen dein Pilotenname, Flug, Flugzeug und, wenn du es erlaubst, die Position des Bildes im Discord-Kanal der GSG. Nichts wird automatisch gesendet: Du wählst jedes Bild selbst aus. Gesendete Bilder kannst du nicht zurückholen; falsche Bilder löscht ein Moderator in Discord. Auf dem Server bleiben keine Bilddaten, nur die Nachrichten-ID, damit deine Nachricht bei einer Löschung deines Kontos auch in Discord entfernt werden kann.",
+      "hinweis_privat": "Prüfe jedes Bild vor dem Senden: Fremde Fenster können private Inhalte zeigen.",
+      "einschalten": "Senden einschalten",
+      "spaeter": "Später",
+      "ausschalten": "Senden ausschalten",
+      "ist_an": "Senden an Discord ist eingeschaltet"
+    },
+    "loeschen": {
+      "bezeichnung": "Bild vom {{zeit}}"
+    },
+    "meldung": {
+      "loeschen_fehler": "Löschen nicht möglich: {{fehler}}",
+      "quellen_fehler": "Bildquellen nicht gespeichert: {{fehler}}",
+      "kuerzel_fehler": "Tastenkürzel nicht gespeichert: {{fehler}}",
+      "hinzugefuegt": "{{n}} Bild(er) hinzugefügt",
+      "hinzufuegen_fehler": "Hinzufügen nicht möglich: {{fehler}}",
+      "kein_flug": "Ohne AeroACARS-Flug wird nichts aufgenommen.",
+      "aufnahme_fehler": "Aufnahme nicht möglich: {{fehler}}",
+      "ordner_fehler": "Ordner nicht zu öffnen: {{fehler}}",
+      "geladen_fehler": "Bilder nicht ladbar: {{fehler}}",
+      "schliessen": "Meldung schließen",
+      "export_fehler": "Export nicht möglich: {{fehler}}",
+      "yoke_abgelaufen": "Kein Knopf gedrückt, die Zeit ist abgelaufen.",
+      "yoke_fehler": "Yoke-Taste nicht gespeichert: {{fehler}}"
+    },
+    "band": {
+      "aktiv": "Flug aktiv",
+      "kein_flug": "Kein Flug aktiv",
+      "kein_flug_text": "Bilder werden nur in einem AeroACARS-Flug übernommen.",
+      "beobachtet": "{{sim}} · Ordner {{pfad}} wird beobachtet",
+      "keine_quelle": "Keine Bildquelle beobachtet",
+      "taste_xplane": "Die Taste des Simulators legt das Bild hier ab",
+      "taste_xplane_bekannt": "{{taste}} im Simulator legt das Bild hier ab",
+      "taste_msfs": "{{kuerzel}} nimmt das Simulator-Fenster auf",
+      "neue": "{{count}} neue Bilder in diesem Flug",
+      "taste_msfs_neutral": "Die AeroACARS-Aufnahmetaste nimmt das Simulator-Fenster auf"
+    },
+    "gruppe": {
+      "heute": "Heute, {{datum}}",
+      "gestern": "Gestern, {{datum}}",
+      "ohne_flug": "Ohne Flug · {{datum}}",
+      "ohne_flug_ohne_datum": "Ohne Flug",
+      "laeuft": "läuft gerade",
+      "gesendet_n": "{{count}} gesendet",
+      "zuordnen": "Flug zuordnen",
+      "herkunft": "Übernommen aus {{ordner}}",
+      "hinzugefuegt": "Hinzugefügt",
+      "bilder": "{{count}} Bilder",
+      "bild_eins": "1 Bild"
+    },
+    "erststart": {
+      "karte1": {
+        "titel": "Bilder sammeln und nach Discord teilen",
+        "text": "AeroACARS legt deine Screenshots je Flug ab, mit Ort, Höhe und Flugzeug im Bild. Nichts verlässt diesen Rechner, bevor du es auswählst.",
+        "punkt1": "Bilder bleiben hier und lassen sich jederzeit in den Papierkorb legen.",
+        "punkt2": "Nur ausgewählte Bilder gehen nach Discord, mit deinem Pilotennamen und Flug. Ob Positionsdaten sichtbar, verdeckt oder gar nicht mitgehen, entscheidest du vor jedem Senden.",
+        "punkt3": "Der Versand läuft über den GSG-Server. Zugangsdaten für Discord liegen nicht auf deinem Rechner.",
+        "einschalten": "Bilder einschalten",
+        "spaeter": "Später"
+      },
+      "karte2": {
+        "titel": "So kommen Bilder hierher",
+        "xplane": "X-Plane · Mac und Windows",
+        "xplane1": "Im Simulator {{taste}} drücken, wie gewohnt.",
+        "xplane2": "AeroACARS sieht das neue Bild im Bilderordner des Simulators und verschiebt es hierher.",
+        "xplane3": "Ort, Höhe, Kurs und Flug werden aus dem laufenden Flug ergänzt.",
+        "msfs": "MSFS 2020 und 2024 · Windows",
+        "msfs1": "{{taste}} drücken, auch wenn der Simulator im Vordergrund ist.",
+        "msfs2": "AeroACARS nimmt das Simulator-Fenster auf und legt es hier ab.",
+        "msfs3": "Die Taste lässt sich ändern.",
+        "ziehen": "Oder ein Bild aus einem anderen Ordner hierher ziehen. Es wird dem laufenden Flug zugeordnet oder unter „Ohne Flug“ abgelegt.",
+        "xplane1_neutral": "Im Simulator die Screenshot-Taste drücken, wie gewohnt.",
+        "msfs1_neutral": "Die AeroACARS-Aufnahmetaste drücken, auch wenn der Simulator im Vordergrund ist.",
+        "eigene_werkzeuge": "Eigene Werkzeuge wie Game Bar, NVIDIA oder Steam funktionieren mit jeder Taste, sobald ihr Ordner als Bildquelle eingetragen ist."
+      }
+    },
+    "aufraeumen": {
+      "titel": "{{n}} gesendete Bilder sind älter als {{tage}} Tage",
+      "text": "Sie belegen {{platz}}. Wähle sie aus und lege sie in den Papierkorb, wenn du den Platz brauchst.",
+      "auswaehlen": "Zum Aufräumen auswählen"
     }
   }
 }

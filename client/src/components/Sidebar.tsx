@@ -23,11 +23,16 @@ import { isTauri } from "../lib/ipc";
 /** Alle Hauptreiter — eine Liste, aus der auch der Typ entsteht, damit
  *  `reiterAusSeite` keinen neuen Reiter lautlos verwirft. */
 const REITER = [
-  "flug", "map", "cpdlc", "chat", "logbook", "landing", "bordbuch", "telemetrie",
+  "flug", "map", "cpdlc", "chat", "logbook", "landing", "bordbuch", "bilder", "telemetrie",
   "notizblock", "kabine", "news", "log", "settings", "hilfe", "about", "devpreview",
 ] as const;
 
 export type Tab = (typeof REITER)[number];
+
+/** Reiter, der fehlt (Fähigkeit nicht gemeldet), fällt auf „Flug“ zurück statt eine leere Seite zu zeigen. */
+export function erlaubterReiter(tab: Tab, bilderAn: boolean): Tab {
+  return tab === "bilder" && !bilderAn ? "flug" : tab;
+}
 
 /**
  * Seitenname von außen (StreamDeck-Ereignis `deck-seite`) → Reiter.
@@ -107,6 +112,11 @@ const I = {
   bordbuch: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 3h11a1 1 0 0 1 1 1v17H7a2 2 0 0 1-2-2V4a1 1 0 0 1 1-1z" /><path d="M5 17.5A1.5 1.5 0 0 1 6.5 16H18" /><path d="m9 8.5 1.6 1.6L14 6.7M9 12.5h5" />
+    </svg>
+  ),
+  bilder: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" />
     </svg>
   ),
   news: (
@@ -210,6 +220,7 @@ export function Sidebar({
   chatUngelesen,
   onChatOpen,
   kabineAn,
+  bilderAn,
   unreadNews,
   hasActiveFlight,
   phpvmsConnected,
@@ -231,6 +242,8 @@ export function Sidebar({
   onChatOpen: () => void;
   /** Kabinenansagen (Beta) eingeschaltet: Reiter „Kabine“ zeigen. */
   kabineAn?: boolean;
+  /** Fähigkeit `bilder-1` gemeldet (P-11.33): sonst bleibt der Reiter „Bilder“ weg. */
+  bilderAn?: boolean;
   unreadNews: number;
   hasActiveFlight: boolean;
   phpvmsConnected: boolean;
@@ -293,6 +306,9 @@ export function Sidebar({
         <Item icon={I.logbook} label={t("tabs.logbook")} active={tab === "logbook"} onClick={() => setTab("logbook")} />
         <Item icon={I.landing} label={t("tabs.landing")} active={tab === "landing"} onClick={() => setTab("landing")} />
         <Item icon={I.bordbuch} label={t("tabs.bordbuch")} active={tab === "bordbuch"} onClick={() => setTab("bordbuch")} />
+        {isTauri && bilderAn && (
+          <Item icon={I.bilder} label={t("tabs.bilder")} active={tab === "bilder"} onClick={() => setTab("bilder")} />
+        )}
         {/* Kabinenansagen (Beta): nur auf dem Sim-PC und nur eingeschaltet —
             dort spielt der Ton. */}
         {isTauri && kabineAn && (
