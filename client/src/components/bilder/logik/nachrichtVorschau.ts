@@ -59,7 +59,7 @@ export function geoZeile(m: BildMeta, stufe: GeoStufe): GeoTeil | null {
   const breite = m.breite.toFixed(4);
   const laenge = m.laenge.toFixed(4);
   return {
-    text: [...teile, `[Google Maps](<https://www.google.com/maps?q=${breite},${laenge}>)`, `[VATSIM Radar](<https://vatsim-radar.com/?center=${laenge},${breite}&zoom=10>)`].join(" · "),
+    text: [...teile, `[Google Maps](<https://www.google.com/maps?q=${breite},${laenge}>)`, `[VATSIM Radar](<https://vatsim-radar.com/?center=${laenge},${breite}&zoom=15>)`].join(" · "),
     anzeige: [...teile, "Google Maps", "VATSIM Radar"].join(" · "),
     verdeckt: stufe === "verdeckt",
   };
