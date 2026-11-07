@@ -11,6 +11,7 @@
 // dem App-Theme (data-theme) umschaltet; Overlay-Farben aus CSS-Vars.
 // Rein Anzeige — keine Wertung.
 
+import { useBildKarte, type BildFokus } from "./bilder/useBildKarte";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -381,9 +382,11 @@ interface Props {
    *  Optional mit Vorgabe `true`, damit Einbindungen ohne diese Angabe
    *  (Tests, Vorschau) sich unveraendert verhalten. */
   sichtbar?: boolean;
+  /** Stelle, die im Bilder-Tab angeklickt wurde (P-11.36): die Karte fliegt dorthin. */
+  bildFokus?: BildFokus | null;
 }
 
-export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBriefing, sichtbar = true }: Props) {
+export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBriefing, sichtbar = true, bildFokus = null }: Props) {
   const grundlage = useKartengrundlage();
   const zugangTakt = useLiveZugangTakt();
   // Die Karte wird einmalig gebaut; der Schlüssel kommt erst danach vom
@@ -2615,6 +2618,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       ? "danger"
       : "ok";
 
+  const bildKarte = useBildKarte(mapRef, bildFokus, activeFlight?.pirep_id ?? null);
   return (
     <section className="aa-livemap">
       {/* README §2 — no buttons here at all; every control lives in the
@@ -2652,6 +2656,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           </div>
         </div>
         <div className="aa-livemap__header-right">
+          <div className="bt-karte__umschalter bt-karte__umschalter--kopf" role="group" aria-label={t("bilder.karte.umschalter")}>
+            <button type="button" aria-pressed={!bildKarte.kugel} onClick={() => bildKarte.setKugel(false)}>{t("bilder.karte.karte")}</button>
+            <button type="button" aria-pressed={bildKarte.kugel} onClick={() => bildKarte.setKugel(true)}>{t("bilder.karte.kugel")}</button>
+          </div>
           <span className="aa-livemap__header-vacount">{t("livemap.header_va_count", { count: vaVisible.length })}</span>
           <span className="aa-livemap__header-clock">
             {clock}

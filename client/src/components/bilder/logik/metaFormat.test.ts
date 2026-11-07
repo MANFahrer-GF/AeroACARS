@@ -12,7 +12,7 @@ describe("Metadaten-Anzeige", () => {
     expect(TABELLE.metadaten.filter((m) => !erlaubt.has(m.format))).toEqual([]);
   });
   it("formatiert nach Format aus der Tabelle", () => {
-    expect(w("position", { breite: -33.9461, laenge: 8.5706 })).toEqual({ art: "text", text: "33.9461° S · 8.5706° E" });
+    expect(w("position", { breite: -33.9461, laenge: 8.5706 })).toEqual({ art: "text", text: "33.9461 S · 8.5706 E" });
     expect(w("hoehe_ft", { hoehe_ft: 354.4 })).toEqual({ art: "text", text: "354 ft", zusatz: "msl" });
     expect(w("gs_kt", { gs_kt: 148 })).toEqual({ art: "text", text: "148 kt", zusatz: "ueber_grund" });
     expect(w("kurs", { kurs: 5 })).toEqual({ art: "text", text: "005°" });

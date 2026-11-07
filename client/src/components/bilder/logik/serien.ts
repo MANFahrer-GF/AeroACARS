@@ -10,9 +10,9 @@ export function bildZeit(e: Eintrag): number {
   return Number.isFinite(z) ? z : (e.dateizeit_ms ?? 0);
 }
 
-/** `bilder` neueste zuerst; Serie = mindestens `minBilder` Bilder mit Abstand <= `abstandS`. */
+/** `bilder` aelteste zuerst (wie im Entwurf: der Flug von links nach rechts); Serie = mindestens `minBilder` Bilder mit Abstand <= `abstandS`. */
 export function serienBilden(bilder: Eintrag[], abstandS: number, minBilder: number): Kachel[] {
-  const sortiert = [...bilder].sort((a, b) => bildZeit(b) - bildZeit(a));
+  const sortiert = [...bilder].sort((a, b) => bildZeit(a) - bildZeit(b));
   const kacheln: Kachel[] = [];
   let lauf: Eintrag[] = [];
   const abschliessen = () => {

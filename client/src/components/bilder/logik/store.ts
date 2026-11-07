@@ -108,7 +108,9 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     if (pilot) await dep.zustandSchreiben(schluesselG(), s);
   }
 
+  let eingangLaeufe = 0;
   async function eingang(): Promise<void> {
+    eingangLaeufe++;
     setzen({ arbeitet: true });
     try {
       const r = await uebernehmer.eingangAbarbeiten();
@@ -121,7 +123,8 @@ export function erzeugeStore(dep: StoreAbhaengig) {
         },
       });
     } finally {
-      setzen({ arbeitet: false });
+      eingangLaeufe--;
+      if (eingangLaeufe === 0) setzen({ arbeitet: false });
     }
     await laden();
   }

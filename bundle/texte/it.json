@@ -5183,7 +5183,7 @@
       "quellen": "Fonti delle immagini",
       "suche_platzhalter": "Volo, aeroporto, data …",
       "aufnahme": "Scatto: {{kuerzel}} in {{sim}}",
-      "aufnahme_taste_sim": "Scatto: tasto del simulatore in X-Plane",
+      "aufnahme_taste_sim": "Scatto: tasto in X-Plane",
       "aufnahme_titel_xplane": "In X-Plane scatta il tasto del simulatore; in MSFS qui c’è il pulsante “Scatta”"
     },
     "quellen": {
@@ -5341,7 +5341,7 @@
         "preflight": "Preparazione",
         "boarding": "Imbarco",
         "pushback": "Pushback",
-        "taxi_out": "Rullaggio in uscita",
+        "taxi_out": "Rullaggio",
         "takeoff_roll": "Corsa di decollo",
         "takeoff": "Decollo",
         "climb": "Salita",
@@ -5351,7 +5351,7 @@
         "approach": "Avvicinamento",
         "final": "Finale",
         "landing": "Atterraggio",
-        "taxi_in": "Rullaggio in arrivo",
+        "taxi_in": "Rullaggio",
         "blocks_on": "Blocks on",
         "arrived": "Arrivato",
         "pushback_to_gate": "Pushback"
@@ -5378,7 +5378,8 @@
       "ohne_position": "Questa immagine non ha una posizione.",
       "keine_spur": "Traccia di questo volo non disponibile",
       "laedt": "Caricamento della mappa",
-      "bild_marke": "Immagine {{name}}"
+      "bild_marke": "Immagine {{name}}",
+      "nicht_verfuegbar": "La mappa non può essere disegnata qui (manca WebGL)."
     },
     "senden": {
       "titel": "Invia immagini",

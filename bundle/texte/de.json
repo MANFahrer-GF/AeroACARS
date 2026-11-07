@@ -5183,7 +5183,7 @@
       "quellen": "Bildquellen",
       "suche_platzhalter": "Flug, Flughafen, Datum …",
       "aufnahme": "Aufnahme: {{kuerzel}} in {{sim}}",
-      "aufnahme_taste_sim": "Aufnahme: Taste des Simulators in X-Plane",
+      "aufnahme_taste_sim": "Aufnahme: Taste in X-Plane",
       "aufnahme_titel_xplane": "In X-Plane löst die Simulator-Taste aus; bei MSFS steht hier der Knopf „Aufnehmen“"
     },
     "quellen": {
@@ -5341,7 +5341,7 @@
         "preflight": "Vorbereitung",
         "boarding": "Boarding",
         "pushback": "Pushback",
-        "taxi_out": "Rollen zum Start",
+        "taxi_out": "Rollen",
         "takeoff_roll": "Startlauf",
         "takeoff": "Start",
         "climb": "Steigflug",
@@ -5351,7 +5351,7 @@
         "approach": "Anflug",
         "final": "Endanflug",
         "landing": "Landung",
-        "taxi_in": "Rollen zum Gate",
+        "taxi_in": "Rollen",
         "blocks_on": "Blocks on",
         "arrived": "Angekommen",
         "pushback_to_gate": "Pushback"
@@ -5378,7 +5378,8 @@
       "ohne_position": "Zu diesem Bild gibt es keine Position.",
       "keine_spur": "Spur dieses Flugs nicht verfügbar",
       "laedt": "Karte wird geladen",
-      "bild_marke": "Bild {{name}}"
+      "bild_marke": "Bild {{name}}",
+      "nicht_verfuegbar": "Die Karte kann hier nicht gezeichnet werden (WebGL fehlt)."
     },
     "senden": {
       "titel": "Bilder senden",

@@ -10,7 +10,7 @@ export type WertTeil =
   | { art: "quelle"; wert: string }
   | { art: "leer" };
 
-const gradText = (v: number, pos: string, neg: string) => `${Math.abs(v).toFixed(4)}° ${v >= 0 ? pos : neg}`;
+const gradText = (v: number, pos: string, neg: string) => `${Math.abs(v).toFixed(4)} ${v >= 0 ? pos : neg}`;
 
 export function zeitText(iso: string, sprache: string): string {
   const d = new Date(iso);

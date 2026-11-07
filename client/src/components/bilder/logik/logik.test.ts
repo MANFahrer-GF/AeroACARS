@@ -92,8 +92,8 @@ describe("Serien, Gruppen, Filter, Seiten", () => {
   it("benachbarte Bilder werden zur Serie, einzelne bleiben einzeln", () => {
     const bilder = [0, 10, 20, 600].map((s) => eintrag({ meta: { zeit_utc: t(s) } }));
     const k = serienBilden(bilder, GRENZEN.serien_abstand_s, GRENZEN.serien_min_bilder);
-    expect(k.map((x) => x.art)).toEqual(["bild", "serie"]);
-    const serie = k[1];
+    expect(k.map((x) => x.art)).toEqual(["serie", "bild"]);
+    const serie = k[0];
     expect(serie.art === "serie" && serie.bilder.length).toBe(3);
   });
   it("zwei nahe Bilder sind noch keine Serie (Grenze aus dem Paket)", () => {

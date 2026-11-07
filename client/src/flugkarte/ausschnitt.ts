@@ -34,6 +34,8 @@ export interface AusschnittOptionen {
   /** Nur Tests: Zugriff auf die Karte. */
   beiKarte?: (karte: maplibregl.Map) => void;
   interaktiv?: boolean;
+  /** Die Karte liess sich nicht aufbauen (kein WebGL): die Oberflaeche zeigt dann einen Hinweis statt abzustuerzen. */
+  beiFehler?: (e: unknown) => void;
 }
 
 export interface Ausschnitt {
@@ -55,11 +57,21 @@ export function spurGeoJson(spur: Array<[number, number]> | null): GeoJSON.Featu
 }
 
 export function bildKarteAnzeigen(root: HTMLElement, opt: AusschnittOptionen): Ausschnitt {
-  let beendet = false;
-  let bereit = false;
-  let letzte: AusschnittEingabe | null = null;
-  let marker: maplibregl.Marker[] = [];
-  const map = new maplibregl.Map({
+  let map: maplibregl.Map;
+  try {
+    map = neueKarte(root, opt);
+  } catch (e) {
+    opt.beiFehler?.(e);
+    return { aktualisieren() { /* keine Karte */ }, aufraeumen() { /* nichts aufzuraeumen */ } };
+  }
+  map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+  opt.beiKarte?.(map);
+  if (opt.beiKlick) map.on("click", () => opt.beiKlick?.());
+  return karteSteuern(map, opt);
+}
+
+function neueKarte(root: HTMLElement, opt: AusschnittOptionen): maplibregl.Map {
+  return new maplibregl.Map({
     container: root,
     attributionControl: false,
     interactive: opt.interaktiv !== false,
@@ -68,16 +80,20 @@ export function bildKarteAnzeigen(root: HTMLElement, opt: AusschnittOptionen): A
     zoom: 1.5,
     style: { version: 8, sources: {}, layers: [{ id: "bg", type: "background", paint: { "background-color": "#0b121b" } }] },
   });
-  map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
-  opt.beiKarte?.(map);
-  if (opt.beiKlick) map.on("click", () => opt.beiKlick?.());
+}
+
+function karteSteuern(map: maplibregl.Map, opt: AusschnittOptionen): Ausschnitt {
+  let beendet = false;
+  let bereit = false;
+  let letzte: AusschnittEingabe | null = null;
+  let marker: maplibregl.Marker[] = [];
 
   function markenZeichnen(e: AusschnittEingabe) {
     marker.forEach((m) => m.remove());
     marker = e.marken.map((m) => {
       const el = document.createElement("button");
       el.type = "button";
-      el.className = "bt-marke" + (m.aktiv ? " bt-marke--aktiv" : "");
+      el.className = "bt-karte__marke" + (m.aktiv ? " bt-karte__marke--aktiv" : "");
       el.title = m.name;
       el.setAttribute("aria-label", m.name);
       el.addEventListener("click", (ev) => {

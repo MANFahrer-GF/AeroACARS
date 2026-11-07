@@ -97,6 +97,7 @@ function prefetchViews(): void {
 }
 
 const LiveMapView = lazy(loadLiveMapView);
+const BilderTab = lazy(() => import("./components/bilder/BilderTab").then((m) => ({ default: m.BilderTab })));
 const LogbookView = lazy(loadLogbookView);
 const LandingPanel = lazy(loadLandingPanel);
 const BordbuchView = lazy(loadBordbuchView);
@@ -117,11 +118,14 @@ import { Notice, Button } from "./components/ui";
 import { useHoppieAttention } from "./hooks/useHoppieAttention";
 import { useDiscordRpcPush } from "./hooks/useDiscordRpcPush";
 import { LiveRecordingIndicator } from "./components/LiveRecordingIndicator";
-import { Sidebar, getInitialCollapsed, reiterAusSeite, type Tab } from "./components/Sidebar";
+import { Sidebar, erlaubterReiter, getInitialCollapsed, reiterAusSeite, type Tab } from "./components/Sidebar";
+import { displayCallsign } from "./lib/callsign";
 import { useSimSession } from "./hooks/useSimSession";
 import { simKindLabel } from "./lib/simKind";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { listen } from "./lib/ipc";
+import { BilderHintergrund } from "./components/bilder/BilderHintergrund";
+import type { BildFokus } from "./components/bilder/useBildKarte";
 import { useFensterAnInhalt } from "./lib/useFensterAnInhalt";
 import { spieleChatTon } from "./lib/chatTon";
 import { ChatView } from "./components/ChatView";
@@ -337,6 +341,19 @@ function App() {
     string | null
   >(null);
   const [tab, setTab] = useState<Tab>("flug");
+  // Fähigkeit `bilder-1` (P-11.33): ohne sie gibt es weder Reiter noch Übernahme. Das Paket
+  // nennt sie bewusst nicht in `requires`, ältere Programme bleiben so auf der neuen Generation.
+  const [bilderAn, setBilderAn] = useState(false);
+  const [bildFokus, setBildFokus] = useState<BildFokus | null>(null);
+  useEffect(() => {
+    if (status.kind !== "loggedIn") return;
+    let weg = false;
+    void invoke<{ faehigkeiten?: unknown }>("paket_info")
+      .then((i) => { if (!weg) setBilderAn(Array.isArray(i?.faehigkeiten) && i.faehigkeiten.includes("bilder-1")); })
+      .catch(() => { if (!weg) setBilderAn(false); });
+    return () => { weg = true; };
+  }, [status.kind]);
+  useEffect(() => { setTab((a) => erlaubterReiter(a, bilderAn)); }, [bilderAn, tab]);
   useEffect(() => {
     if (tab === "hilfe") setHilfeBesucht(true);
   }, [tab]);
@@ -953,6 +970,7 @@ function App() {
           }}
           chatAn={chatAn}
           kabineAn={kabineAn}
+          bilderAn={bilderAn}
           chatUngelesen={chatUngelesen}
           onChatOpen={() => {
             setChatUngelesen(0);
@@ -1137,6 +1155,23 @@ function App() {
         />
       )}
 
+      {status.kind === "loggedIn" && bilderAn && <BilderHintergrund />}
+      {status.kind === "loggedIn" && bilderAn && tab === "bilder" && (
+        <Suspense fallback={<div className="lazy-fallback">…</div>}>
+          <BilderTab
+            pilotId={pilotIdForChat}
+            pilotName={status.session.profile.name}
+            aktiverFlug={activeFlight ? {
+              pirep_id: activeFlight.pirep_id,
+              callsign: displayCallsign(activeFlight.airline_icao, activeFlight.flight_number, activeFlight.callsign),
+              dpt: activeFlight.dpt_airport,
+              arr: activeFlight.arr_airport,
+            } : null}
+            simKind={simStatus?.kind ?? null}
+            onKarteOeffnen={(f) => { setBildFokus({ ...f, n: Date.now() }); setTab("map"); }}
+          />
+        </Suspense>
+      )}
       {status.kind === "loggedIn" && tab === "telemetrie" && <TelemetrieView />}
       {status.kind === "loggedIn" && tab === "notizblock" && <Notizblock />}
       {status.kind === "loggedIn" && tab === "kabine" && <KabinenSeite
@@ -1226,6 +1261,7 @@ function App() {
               simKind={simStatus?.kind}
               onSwitchToBriefing={() => setTab("flug")}
               sichtbar={tab === "map"}
+              bildFokus={bildFokus}
             />
           </Suspense>
         </div>
