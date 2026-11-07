@@ -1,0 +1,86 @@
+{
+ "format": 1,
+ "notiz": [
+  "Bilder-Tab (N-13): Grenzwerte und die Reihenfolge der angezeigten Metadaten.",
+  "Alles Fachliche liegt im Paket, nichts davon im Programm (P-11.33).",
+  "Sicherheitsgrenzen prueft der Server unabhaengig davon (recorder/src/bilder.ts).",
+  "format 1: Felder nur hinzufuegen, nie umdeuten."
+ ],
+ "grenzen": {
+  "max_je_sendung": 5,
+  "max_kante_px": 1600,
+  "vorschau_kante_px": 320,
+  "vorschau_qualitaet": 0.7,
+  "jpeg_qualitaeten": [
+   0.86,
+   0.78,
+   0.68,
+   0.55,
+   0.42
+  ],
+  "max_bytes": 4000000,
+  "text_max_zeichen": 500,
+  "nachricht_max_zeichen": 2000,
+  "serien_abstand_s": 45,
+  "serien_min_bilder": 3,
+  "seite": 24,
+  "aufraeumen_tage": 30,
+  "zuordnung_toleranz_s": 120,
+  "sende_abfrage_s": 4,
+  "sende_abfrage_max": 8,
+  "tile_breite_px": 196
+ },
+ "ordner": {
+  "ohne_flug": "ohne-flug"
+ },
+ "geo": {
+  "stufen": [
+   "sichtbar",
+   "verdeckt",
+   "aus"
+  ],
+  "vorgabe": "verdeckt"
+ },
+ "metadaten": [
+  {
+   "feld": "position",
+   "format": "position"
+  },
+  {
+   "feld": "hoehe_ft",
+   "format": "hoehe"
+  },
+  {
+   "feld": "gs_kt",
+   "format": "gs"
+  },
+  {
+   "feld": "kurs",
+   "format": "kurs"
+  },
+  {
+   "feld": "naechster_flugplatz",
+   "format": "text"
+  },
+  {
+   "feld": "flugzeug",
+   "format": "flugzeug"
+  },
+  {
+   "feld": "flug",
+   "format": "flug"
+  },
+  {
+   "feld": "simulator",
+   "format": "simulator"
+  },
+  {
+   "feld": "quelle",
+   "format": "quelle"
+  },
+  {
+   "feld": "datei",
+   "format": "datei"
+  }
+ ]
+}

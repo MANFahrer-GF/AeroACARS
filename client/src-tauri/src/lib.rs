@@ -31,6 +31,7 @@ mod fahrwerk;
 mod fenster;
 /// v1.9.24: meldet eine eingefrorene Oberfläche (Hauptfaden haengt) ins Log/GlitchTip.
 mod hauptfaden_waechter;
+mod bilder;
 mod navdata_cache;
 mod replay_erkennung;
 mod grenzwerte;
@@ -623,6 +624,8 @@ pub(crate) fn nach_dem_stand(app: &AppHandle, daten: Option<&std::path::Path>) {
     if let Some(daten) = daten { laufzeit_paket::aktualisieren_im_hintergrund(daten.to_path_buf(), paket_pruefung_hinweis(app)); spawn_upload_arbeiter(app); }
     // v3 (Etappe 5): Einstellungen der Huelle anwenden.
     huelle::beim_start_anwenden(app);
+    // v3 (N-13, bilder-1): Ordnerbeobachtung und Tastenkuerzel der Bilder.
+    bilder::starten(app);
 
             // v1.9.14: Neuinstallation bekommt „Automatisch“ als Simulator-
             // Auswahl. ALS ERSTES — bevor Aktivitaetslog oder Geheimnisse
@@ -1038,6 +1041,21 @@ pub fn run() {
             laufzeit_paket::paket_info,
             laufzeit_paket::paket_jetzt_pruefen,
             laufzeit_paket::paket_neu_starten,
+            bilder::bilder_liste,
+            bilder::bild_lesen,
+            bilder::bild_quellen_finden,
+            bilder::bild_uebernehmen,
+            bilder::bild_schreiben,
+            bilder::bild_aufnehmen,
+            bilder::bild_status,
+            bilder::bild_senden,
+            bilder::bild_hinzufuegen,
+            bilder::bild_kontext,
+            bilder::bild_ordner_zeigen,
+            bilder::bild_taste_lernen,
+            bilder::bild_loeschen,
+            bilder::bild_quellen_setzen,
+            bilder::bild_export,
             huelle::shell_request,
             huelle::shell_auftraege,
             huelle::shell_auftrag_beantworten,

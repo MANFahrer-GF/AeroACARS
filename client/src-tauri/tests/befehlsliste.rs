@@ -178,3 +178,64 @@ fn hoppie_logon_code_lesen_nur_lokal() {
     assert!(bruecke.contains("\"hoppie_has_logon_code\" =>"), "Bruecke nicht gelesen");
     assert!(!bruecke.contains("\"hoppie_get_logon_code\" =>"), "LAN-Bruecke darf den Logon-Code nicht herausgeben");
 }
+
+/// Bilder-Tab (N-13, Faehigkeit `bilder-1`, P-11.33): genau fuenfzehn Befehle.
+/// Rust liefert nur Bausteine; was Dateien des Piloten loescht oder dauerhaft
+/// beobachtet (Papierkorb, Bildquellen samt Tastenkuerzel und Ordnerdialog,
+/// Export), Bilder nach aussen sendet (`bild_senden`, nicht rueckholbar) oder
+/// beliebige Dateien in den Bilderordner kopiert (`bild_hinzufuegen`) laeuft
+/// ueber die Huelle; alles andere fachlich oder lesend. `bild_lesen` und die
+/// Befehle mit Pilot-Token stehen nicht in der LAN-Bruecke.
+#[test]
+fn bilder_befehle_der_faehigkeit_bilder_1() {
+    let liste = liste();
+    let soll = [
+        ("bilder_liste", "lesen"),
+        ("bild_lesen", "lesen"),
+        ("bild_quellen_finden", "lesen"),
+        ("bild_status", "lesen"),
+        ("bild_kontext", "lesen"),
+        ("bild_ordner_zeigen", "fachlich"),
+        ("bild_uebernehmen", "fachlich"),
+        ("bild_schreiben", "fachlich"),
+        ("bild_aufnehmen", "fachlich"),
+        ("bild_taste_lernen", "fachlich"),
+        ("bild_senden", "system"),
+        ("bild_hinzufuegen", "system"),
+        ("bild_loeschen", "system"),
+        ("bild_quellen_setzen", "system"),
+        ("bild_export", "system"),
+    ];
+    for (b, stufe) in soll {
+        assert_eq!(liste.get(b).map(String::as_str), Some(stufe), "{b}");
+    }
+    let bilder: Vec<_> = liste.keys().filter(|b| b.starts_with("bild")).collect();
+    assert_eq!(bilder.len(), soll.len(), "genau fuenfzehn Bilder-Befehle: {bilder:?}");
+    assert!(!liste.contains_key("bild_live"), "bild_live gibt es nicht mehr: Senden ist system, der Stand lesen");
+    let reg = registriert();
+    for (b, _) in soll {
+        assert!(reg.contains(b), "{b} registriert");
+    }
+    assert!(!reg.contains("bild_live"));
+    let bruecke = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/remote/bridge.rs")).unwrap();
+    for (b, _) in soll {
+        assert!(!bruecke.contains(&format!("\"{b}\" =>")), "{b} gehoert nicht in die LAN-Bruecke");
+        assert!(bruecke.contains(&format!("\"{b}\",")), "{b} fehlt in der Verweigerungsliste der LAN-Bruecke");
+    }
+    // Der Kern kennt dieselben Namen wie die Huelle: Texte fuer alle Systembefehle.
+    let texte = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/components/huelle/befehlstexte.ts")).unwrap();
+    for (b, stufe) in soll {
+        if stufe == "system" {
+            assert!(texte.contains(&format!("  {b}: {{")), "Huellen-Text fuer {b}");
+        }
+    }
+    // Die Oberflaeche darf keinen System-Bildbefehl aufrufen; die Huelle alle.
+    let ui = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities/ui.json")).unwrap();
+    let huelle = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities/huelle.json")).unwrap();
+    for (b, stufe) in soll {
+        let recht = format!("\"allow-{}\"", b.replace('_', "-"));
+        assert_eq!(ui.contains(&recht), stufe != "system", "ui.json: {b}");
+        assert!(huelle.contains(&recht), "huelle.json: {b}");
+    }
+    assert!(!ui.contains("dialog:"), "die Oberflaeche bekommt kein Dialog-Recht; Ordner- und Dateiwahl macht der Kern");
+}

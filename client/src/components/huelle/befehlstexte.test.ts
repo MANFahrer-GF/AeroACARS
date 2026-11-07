@@ -88,4 +88,30 @@ describe("Klartext der Systembefehle", () => {
     expect(w.settings).not.toContain("t7");
     expect(w.settings).toContain('"url":"u1"');
   });
+
+  it("Bilder: Senden nennt die Zahl der Bilder, Hinzufügen die der Dateien (aus den echten Werten)", () => {
+    const bilder = [{ bild_id: "a", jpeg_base64: "AAAA", meta: {} }, { bild_id: "b", jpeg_base64: "BBBB", meta: {} }, { bild_id: "c", jpeg_base64: "CCCC", meta: {} }];
+    expect(dialogText("bild_senden", { sendungId: "s1", bilder }, "de")?.frage).toContain("3 Bild(er)");
+    expect(dialogText("bild_senden", { sendungId: "s1", bilder: bilder.slice(0, 1) }, "en")?.frage).toContain("1 image(s)");
+    expect(dialogText("bild_senden", { sendungId: "s1", bilder }, "it")?.knopf).toBe("Invia");
+    expect(dialogText("bild_hinzufuegen", { gruppe: "g", pfade: ["/a.png", "/b.jpg"] }, "de")?.frage).toContain("2 Datei(en)");
+  });
+
+  it("Bilder: Dateiauswahl und Ordnerdialog haben eine eigene Frage; Gegenprobe ohne die Werte", () => {
+    const ohne = dialogText("bild_hinzufuegen", { gruppe: "g" }, "de")!;
+    expect(ohne.frage).toContain("gleich auswählst");
+    expect(ohne.frage).not.toContain("Datei(en)");
+    expect(dialogText("bild_hinzufuegen", { gruppe: "g", pfade: [] }, "de")?.knopf).toBe("Auswählen");
+    expect(dialogText("bild_hinzufuegen", { gruppe: "g", pfade: ["/a.png"] }, "de")?.knopf).toBe("Hinzufügen");
+    const ordner = dialogText("bild_quellen_setzen", { ordnerWaehlen: true }, "de")!;
+    expect(ordner.knopf).toBe("Ordner wählen");
+    expect(ordner.frage).toContain("Ordner als Bildquelle");
+    expect(dialogText("bild_quellen_setzen", { quellen: [] }, "de")?.knopf).not.toBe("Ordner wählen");
+    for (const sprache of ["de", "en", "it"] as const) {
+      const e = BEFEHLSTEXTE.bild_quellen_setzen.ordner?.[sprache];
+      expect(e?.frage.trim() && e?.knopf.trim()).toBeTruthy();
+      const a = BEFEHLSTEXTE.bild_hinzufuegen.auswahl?.[sprache];
+      expect(a?.frage.trim() && a?.knopf.trim()).toBeTruthy();
+    }
+  });
 });

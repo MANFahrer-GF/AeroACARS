@@ -426,7 +426,8 @@
     "chat": "Chat",
     "telemetrie": "Telemetry",
     "notizblock": "Notepad",
-    "bordbuch": "SOP Check"
+    "bordbuch": "SOP Check",
+    "bilder": "Pictures"
   },
   "nav": {
     "news": "News",
@@ -1858,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Landing report: the “long landing” label now only appears outside the touchdown zone. If you touch down inside the zone, it now reads “past the aim point” or “well before the aim point”. Scores do not change. The hint about a very long flare has also been reworded."
+    "neu_text": "New “Pictures” tab: screenshots from your flights are collected by flight, carry position and flight data, and can be sent, selected one by one with a text and optionally a hidden position, to the GSG Discord channel. You turn sending on yourself once; nothing goes out automatically. The map can now also show a globe."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -5157,6 +5158,419 @@
       "ohne_status": "no status",
       "alle": "Show all {{anzahl}} requests",
       "weniger": "Show fewer"
+    }
+  },
+  "bilder": {
+    "titel": "Pictures",
+    "leer": {
+      "titel": "No pictures yet",
+      "text": "Pictures from your flights appear here as soon as the simulator takes one. You can also drag files in or choose them with “Add picture”.",
+      "kein_treffer": "No picture matches your search and filter."
+    },
+    "kopf": {
+      "platz": "{{platz}} used",
+      "anzahl": "{{count}} pictures",
+      "aufnehmen": "Take picture",
+      "hinzufuegen": "Add picture",
+      "ziehen": "Drag files here",
+      "aufnahme_msfs": "Capture with {{kuerzel}} (MSFS)",
+      "aufnahme_xplane": "Capture: {{taste}} in X-Plane",
+      "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
+      "aufnahme_aus": "Capturing with a shortcut is not possible on this system. Use the picture sources.",
+      "nur_im_flug": "Capturing and importing only work during an AeroACARS flight.",
+      "zusammenfassung": "{{bilder}} pictures · {{fluege}} flights · {{platz}} on this computer",
+      "zusammenfassung_kurz": "{{bilder}} pictures · {{fluege}} flights · {{platz}}",
+      "keine": "No pictures on this computer yet",
+      "ordner_zeigen": "Show the pictures folder in the file manager",
+      "quellen": "Picture sources",
+      "suche_platzhalter": "Flight, airport, date …",
+      "aufnahme": "Capture: {{kuerzel}} in {{sim}}",
+      "aufnahme_neutral": "Simulator screenshot key"
+    },
+    "quellen": {
+      "titel": "Picture sources",
+      "auf": "Show picture sources",
+      "zu": "Hide picture sources",
+      "xplane_gefunden": "X-Plane found, watching: {{pfade}}",
+      "xplane_nicht_beobachtet": "X-Plane found, the folder is not being watched: {{pfade}}",
+      "keine": "No picture source set up.",
+      "hinzufuegen": "Add folder",
+      "pruefen": "Check folders",
+      "pruefen_hinweis": "Look for more folders with simulator pictures",
+      "pausieren": "Pause",
+      "fortsetzen": "Resume",
+      "entfernen": "Remove",
+      "original_entfernen": "Remove original after import",
+      "art": {
+        "standard": "X-Plane default, files are moved",
+        "aufgespuert": "Detected, copied only, only while the simulator is in front",
+        "hand": "Chosen by you, copied only"
+      },
+      "zustand": {
+        "beobachtet": "watched",
+        "pausiert": "paused",
+        "wird_geprueft": "being checked",
+        "nicht_vorhanden": "Folder not found",
+        "zugriff_verweigert": "Access denied, please allow the folder in the system settings",
+        "quelle_geaendert": "Folder was replaced by a different one, please remove the source and add it again"
+      },
+      "vorschlaege": "Folders found",
+      "keine_vorschlaege": "No further folders found.",
+      "uebernehmen": "Use as source",
+      "schon": "already set up",
+      "fehlt": "Folder does not exist",
+      "kuerzel": "Shortcut for capturing",
+      "kuerzel_setzen": "Save",
+      "kuerzel_fehler": "Shortcut not registered: {{fehler}}",
+      "bestaetigung": "You confirm every change to the sources in a window of the program.",
+      "eigene_werkzeuge": "Your own tools work with any key as soon as their folder is added here as a picture source.",
+      "yoke": {
+        "titel": "Yoke or joystick button",
+        "belegt": "{{geraet}}, button {{knopf}}",
+        "unbelegt": "no button assigned",
+        "festlegen": "Set yoke button",
+        "lernt": "Press the button now …",
+        "hinweis_lernen": "Press the button now, you have 10 seconds.",
+        "entfernen": "Remove",
+        "xplane_hinweis": "In X-Plane you assign the button to sim/operation/screenshot in the simulator’s joystick settings."
+      }
+    },
+    "altbestand": {
+      "titel": "{{n}} older pictures found",
+      "text": "They stay where they are. When imported they are copied and, where possible, assigned to their flight. For some there is no flight data any more.",
+      "uebernehmen": "Import older pictures",
+      "ergebnis": "Imported: {{mit}} with data, {{flug}} flight only, {{ohne}} without data",
+      "laeuft": "Importing …"
+    },
+    "uebernahme": {
+      "verworfen": "{{n}} file(s) not imported (simulator not in front or size does not match)",
+      "fehler": "Import failed: {{fehler}}",
+      "duplikate": "{{n}} duplicate(s) skipped",
+      "veraltet": "{{n}} file(s) were overwritten during import and will be picked up again",
+      "arbeitet": "Importing new pictures …"
+    },
+    "liste": {
+      "ohne_flug": "No flight",
+      "flug_titel": "Flight {{rufzeichen}}",
+      "flug_ohne_name": "Flight",
+      "anzahl": "{{count}} pictures",
+      "platz": "{{platz}}",
+      "suche": "Search (flight, place, text)",
+      "suche_label": "Search pictures",
+      "filter": {
+        "alle": "All",
+        "favoriten": "Favourites",
+        "gesendet": "Sent",
+        "offen": "Not sent yet",
+        "flug": "Flight",
+        "alle_fluege": "All flights"
+      },
+      "seite": "Page {{seite}} of {{seiten}}",
+      "vor": "Next",
+      "zurueck": "Back",
+      "bilder_gesamt": "{{count}} pictures"
+    },
+    "kachel": {
+      "auswaehlen": "Select picture {{name}}",
+      "oeffnen": "Open picture {{name}}",
+      "serie": "Series of {{n}} pictures",
+      "serie_oeffnen": "Open series",
+      "serie_zu": "Close series",
+      "keine_daten": "No flight data",
+      "nur_flug": "Flight only, no position",
+      "favorit": "Favourite",
+      "name": "Picture from {{zeit}}",
+      "laedt": "loading",
+      "gesendet": "Sent",
+      "sendet": "Sending",
+      "fehlgeschlagen": "Not sent",
+      "oeffnen_mit": "Details: {{zeit}} {{phase}}, {{hoehe}}",
+      "auswaehlen_mit": "Select: {{zeit}} {{phase}}",
+      "ohne_flug": "No flight"
+    },
+    "status": {
+      "sendet": "Sending …",
+      "angenommen": "Accepted, delivery in progress",
+      "gesendet": "Sent",
+      "fehlgeschlagen": "Not sent: {{grund}}.",
+      "erneut": "Try again"
+    },
+    "detail": {
+      "leer": "Choose a picture to see its details.",
+      "titel": "Picture",
+      "schliessen": "Close details",
+      "aktionen": {
+        "senden": "Send to Discord",
+        "ordner": "Show in folder",
+        "loeschen": "Delete"
+      },
+      "text": {
+        "label": "Text for Discord",
+        "platzhalter": "Optional, up to {{max}} characters. Mentions are not triggered.",
+        "zaehler": "{{n}} of {{max}}"
+      },
+      "favorit": {
+        "an": "Favourite",
+        "aus": "Not a favourite"
+      },
+      "flug": {
+        "label": "Flight",
+        "ohne": "No flight",
+        "von_hand": "assigned by you",
+        "aendern": "change",
+        "waehlen": "Choose flight",
+        "fertig": "Done"
+      },
+      "metadaten": "Capture data",
+      "gesendet_am": "Sent on {{zeit}}",
+      "leer_wert": "not available",
+      "feld": {
+        "zeit_utc": "Time (UTC)",
+        "breite": "Latitude",
+        "laenge": "Longitude",
+        "hoehe_ft": "Altitude",
+        "gs_kt": "Speed",
+        "kurs": "Heading",
+        "flugzeug_titel": "Aircraft",
+        "flugzeug_icao": "Aircraft type",
+        "phase": "Flight phase",
+        "rufzeichen": "Callsign",
+        "abflug": "Departure",
+        "ziel": "Destination",
+        "simulator": "Simulator",
+        "naechster_flugplatz": "Nearby",
+        "quelle": "Data source",
+        "position": "Position",
+        "flugzeug": "Aircraft",
+        "flug": "Flight",
+        "datei": "File"
+      },
+      "quelle": {
+        "sim": "Simulator at capture time",
+        "protokoll": "Flight log",
+        "logbuch": "Logbook (flight only)",
+        "keine": "none"
+      },
+      "phase": {
+        "preflight": "Preflight",
+        "boarding": "Boarding",
+        "pushback": "Pushback",
+        "taxi_out": "Taxi",
+        "takeoff_roll": "Takeoff roll",
+        "takeoff": "Takeoff",
+        "climb": "Climb",
+        "cruise": "Cruise",
+        "holding": "Holding",
+        "descent": "Descent",
+        "approach": "Approach",
+        "final": "Final",
+        "landing": "Landing",
+        "taxi_in": "Taxi",
+        "blocks_on": "Blocks on",
+        "arrived": "Arrived",
+        "pushback_to_gate": "Pushback"
+      },
+      "ausgewaehlt": "selected",
+      "nicht_ausgewaehlt": "not selected",
+      "karte": {
+        "titel": "Where the picture was taken",
+        "zeigen": "Show on the map",
+        "hinweis": "Track of this flight and picture position, from the flight map. A click opens the map at this spot."
+      },
+      "zusatz": {
+        "msl": "MSL",
+        "ueber_grund": "ground speed"
+      },
+      "leer_hinweis": "Choose a picture to see its details."
+    },
+    "karte": {
+      "titel": "Map",
+      "karte": "Map",
+      "kugel": "Globe",
+      "umschalter": "Map display",
+      "oeffnen": "Open in the map",
+      "ohne_position": "This picture has no position.",
+      "keine_spur": "Track of this flight not available",
+      "laedt": "Loading map",
+      "bild_marke": "Picture {{name}}",
+      "nicht_verfuegbar": "The map cannot be drawn here (WebGL missing).",
+      "flach": "Flat map",
+      "kugel_lang": "Map as globe"
+    },
+    "senden": {
+      "titel": "Send pictures",
+      "zu": "Close",
+      "anzahl": "{{count}} pictures to the GSG Discord channel",
+      "max": "At most {{max}} pictures per post",
+      "zu_viele": "Choose at most {{max}} pictures.",
+      "text": {
+        "label": "Your text (optional)",
+        "platzhalter": "For example: sunset over the Alps",
+        "zaehler": "{{n}} of {{max}}",
+        "hinweis": "Links, for example to YouTube, are allowed."
+      },
+      "geo": {
+        "titel": "Geo data in Discord",
+        "sichtbar": "Visible",
+        "sichtbar_text": "Time, place, altitude and heading appear openly in the message.",
+        "verdeckt": "Hidden, click to reveal",
+        "verdeckt_text": "The same details sit under a grey bar and only appear when clicked.",
+        "aus": "Do not send",
+        "aus_text": "The position never leaves your program. The message only names you, the flight and your text.",
+        "ohne_position": "These pictures have no position, so this choice has no effect.",
+        "hinweis": "Applies to all posts until you change it here. The picture file goes to Discord without metadata; what you choose here appears in the text."
+      },
+      "vorschau": {
+        "titel": "How the message will look",
+        "balken": "Position hidden",
+        "gekuerzt": "Discord shortens this message.",
+        "bild": "Picture {{n}}",
+        "bilder_hinweis": "The pictures are attached to the message as files.",
+        "verdeckt": "Geo data hidden · click to reveal",
+        "verdeckt_hinweis": "Behind it, per picture: time, position, altitude, heading, nearest airport. Mentions in the text are not triggered.",
+        "sichtbar_hinweis": "Each picture gets a line with time, position, altitude, heading and nearest airport in the text. Mentions in the text are not triggered.",
+        "aus_hinweis": "No position data goes along. Mentions in the text are not triggered."
+      },
+      "server_offline": "Server not reachable. Sending waits, nothing is lost.",
+      "senden": "Send ({{count}})",
+      "abbrechen": "Cancel",
+      "wird_gesendet": "Sending …",
+      "kontingent_zu_wenig": "Only {{rest}} pictures are possible this hour.",
+      "titel_n": "Send {{count}} pictures to Discord",
+      "titel_eins": "Send 1 picture to Discord",
+      "kanal": "Channel “Pictures” of German Sky Group",
+      "text_label_n": "Text for all {{count}} pictures",
+      "text_label_eins": "Text for the picture",
+      "jetzt": "Send now",
+      "zeilen": {
+        "groesse": "Size",
+        "groesse_text_eins": "1 picture, {{groesse}} after resizing to {{px}} px",
+        "groesse_text": "{{count}} pictures, {{groesse}} after resizing to {{px}} px",
+        "weg": "Route",
+        "weg_text": "This computer, GSG server (live), Discord. The access to Discord only exists on the server.",
+        "fehlschlag": "If something fails",
+        "fehlschlag_text": "Every picture gets its own result. What did not arrive stays selected and shows the reason on its tile; “Try again” sends only what is missing, nothing arrives twice."
+      }
+    },
+    "kontingent": {
+      "rest": "{{rest}} of {{grenze}} left this hour",
+      "leer": "No pictures left this hour, possible again in about {{minuten}} min.",
+      "unbekannt": "The allowance is shown when you send"
+    },
+    "leiste": {
+      "ausgewaehlt": "{{count}} selected",
+      "senden": "Send",
+      "aufheben": "Clear selection",
+      "sendet": "{{count}} being sent",
+      "gesendet": "{{count}} sent",
+      "fehlgeschlagen": "{{count}} not sent, they stay selected",
+      "unklar": "Delivery unclear, please check the channel before you try again.",
+      "nicht_erreichbar": "Server not reachable",
+      "exportieren": "Save as ZIP",
+      "info": "{{groesse}} after resizing to {{px}} px · at most {{max}} per post",
+      "server_ok": "Server reachable",
+      "papierkorb": "Move to trash",
+      "senden_n": "Send {{count}} pictures",
+      "senden_eins": "Send 1 picture"
+    },
+    "fehler": {
+      "zu_gross": "File too large",
+      "kontingent": "Hourly allowance reached",
+      "discord_fehler": "Discord rejected the message",
+      "discord_unklar": "Delivery unclear, please check the channel",
+      "ungueltig": "Not a readable picture file or wrong details",
+      "konflikt": "This picture was already sent in the same post with different content",
+      "nicht_eingerichtet": "The picture channel is not set up on the server yet",
+      "server_nicht_erreichbar": "Server not reachable",
+      "nicht_angemeldet": "Not signed in to live",
+      "server_fehler": "The server reports an error",
+      "datei_fehlt": "Picture file not found",
+      "unbekannt": "Unknown error",
+      "wieder_in": "possible again in about {{minuten}} min."
+    },
+    "einschalten": {
+      "titel": "Send pictures to Discord",
+      "text": "When you send, your pilot name, flight, aircraft and, if you allow it, the position of the picture appear in the GSG Discord channel. Nothing is sent automatically: you choose every picture yourself. Sent pictures cannot be taken back; a moderator deletes wrong ones in Discord. No picture data stays on the server, only the message ID, so that your message can also be removed in Discord if your account is deleted.",
+      "hinweis_privat": "Check every picture before sending: other windows can show private content.",
+      "einschalten": "Turn on sending",
+      "spaeter": "Later",
+      "ausschalten": "Turn off sending",
+      "ist_an": "Sending to Discord is turned on"
+    },
+    "loeschen": {
+      "bezeichnung": "Picture from {{zeit}}"
+    },
+    "meldung": {
+      "loeschen_fehler": "Cannot delete: {{fehler}}",
+      "quellen_fehler": "Picture sources not saved: {{fehler}}",
+      "kuerzel_fehler": "Shortcut not saved: {{fehler}}",
+      "hinzugefuegt": "{{n}} picture(s) added",
+      "hinzufuegen_fehler": "Cannot add: {{fehler}}",
+      "kein_flug": "Nothing is captured without an AeroACARS flight.",
+      "aufnahme_fehler": "Cannot capture: {{fehler}}",
+      "aufnahme_zeit": "Capture not completed: the simulator did not answer within 5 s (or the previous capture is still hanging). Please try again in a moment. Technical: {{fehler}}",
+      "ordner_fehler": "Cannot open the folder: {{fehler}}",
+      "geladen_fehler": "Pictures could not be loaded: {{fehler}}",
+      "schliessen": "Close message",
+      "export_fehler": "Cannot export: {{fehler}}",
+      "yoke_abgelaufen": "No button pressed, time ran out.",
+      "yoke_fehler": "Yoke button not saved: {{fehler}}"
+    },
+    "band": {
+      "aktiv": "Flight active",
+      "kein_flug": "No flight active",
+      "kein_flug_text": "Pictures are only imported during an AeroACARS flight.",
+      "beobachtet": "{{sim}} · folder {{pfad}} is being watched",
+      "keine_quelle": "No picture source being watched",
+      "taste_xplane": "The simulator’s own key puts the picture here",
+      "taste_xplane_bekannt": "{{taste}} in the simulator saves the picture here",
+      "taste_msfs": "{{kuerzel}} captures the simulator window",
+      "neue": "{{count}} new pictures in this flight",
+      "taste_msfs_neutral": "The AeroACARS capture key captures the simulator window"
+    },
+    "gruppe": {
+      "heute": "Today, {{datum}}",
+      "gestern": "Yesterday, {{datum}}",
+      "ohne_flug": "No flight · {{datum}}",
+      "ohne_flug_ohne_datum": "No flight",
+      "laeuft": "in progress",
+      "gesendet_n": "{{count}} sent",
+      "zuordnen": "Assign flight",
+      "herkunft": "Imported from {{ordner}}",
+      "hinzugefuegt": "Added",
+      "bilder": "{{count}} pictures",
+      "bild_eins": "1 picture"
+    },
+    "erststart": {
+      "karte1": {
+        "titel": "Collect pictures and share them on Discord",
+        "text": "AeroACARS stores your screenshots per flight, with place, altitude and aircraft attached. Nothing leaves this computer before you select it.",
+        "punkt1": "Pictures stay here and can be moved to the trash at any time.",
+        "punkt2": "Only selected pictures go to Discord, with your pilot name and flight. Whether position data goes along visibly, hidden or not at all is your choice before every post.",
+        "punkt3": "Posting goes through the GSG server. Access data for Discord is not stored on your computer.",
+        "einschalten": "Turn on pictures",
+        "spaeter": "Later"
+      },
+      "karte2": {
+        "titel": "How pictures get here",
+        "xplane": "X-Plane · Mac and Windows",
+        "xplane1": "Press {{taste}} in the simulator, as usual.",
+        "xplane2": "AeroACARS sees the new picture in the simulator’s picture folder and moves it here.",
+        "xplane3": "Place, altitude, heading and flight are added from the running flight.",
+        "msfs": "MSFS 2020 and 2024 · Windows",
+        "msfs1": "Press {{taste}}, even while the simulator is in front.",
+        "msfs2": "AeroACARS captures the simulator window and puts it here.",
+        "msfs3": "The key can be changed.",
+        "ziehen": "Or drag a picture from another folder here. It is assigned to the running flight or filed under “No flight”.",
+        "xplane1_neutral": "Press the simulator’s screenshot key, as usual.",
+        "msfs1_neutral": "Press the AeroACARS capture key, even while the simulator is in front.",
+        "eigene_werkzeuge": "Your own tools such as Game Bar, NVIDIA or Steam work with any key as soon as their folder is added as a picture source."
+      }
+    },
+    "aufraeumen": {
+      "titel": "{{n}} sent pictures are older than {{tage}} days",
+      "text": "They use {{platz}}. Select them and move them to the trash if you need the space.",
+      "auswaehlen": "Select for clean-up"
     }
   }
 }

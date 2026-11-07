@@ -1356,6 +1356,13 @@ pub struct PirepSummary {
     /// Clients. Frisch heisst: Der Flug laeuft gerade auf einem Geraet.
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// Bilder-Tab: Block-off/Block-on des PIREP (phpVMS-Felder `block_off_time` /
+    /// `block_on_time`, ISO-8601). Je nach Version/VA nicht garantiert dabei, daher
+    /// optional; fehlen sie, ordnet der Bilder-Tab nach ihnen nichts zu.
+    #[serde(default)]
+    pub block_off_time: Option<String>,
+    #[serde(default)]
+    pub block_on_time: Option<String>,
 }
 
 /// v0.5.33: Subfleet mit nested Aircraft-Liste, wie phpVMS-V7
@@ -1701,6 +1708,13 @@ impl Client {
     /// instead — see the 2026-06-13 incident note there.
     pub async fn get_user_pireps(&self) -> Result<Vec<PirepSummary>, ApiError> {
         self.get_data("/api/user/pireps").await
+    }
+
+    /// `GET /api/user/pireps?page=N` — eine Seite (20 Stueck, neueste zuerst) der
+    /// PIREPs des Piloten, `seite` ab 1. Fuer den Bilder-Tab, der Altfluege nach
+    /// Block-Zeiten zuordnet und dazu seitenweise zurueckblaettert.
+    pub async fn get_user_pireps_seite(&self, seite: u32) -> Result<Vec<PirepSummary>, ApiError> {
+        self.get_data(&format!("/api/user/pireps?page={}", seite.max(1))).await
     }
 
     /// `GET /api/user/pireps?state=0` — ONLY the pilot's IN_PROGRESS PIREPs,

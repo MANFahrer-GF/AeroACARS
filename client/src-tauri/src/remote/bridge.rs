@@ -1666,6 +1666,27 @@ mod tests {
             // 31.10.2026: Den Hoppie-Logon-Code im Klartext zeigt nur der
             // Sim-PC selbst — sonst laege er bei jedem gekoppelten Geraet.
             "hoppie_get_logon_code",
+
+            // 07.11.2026 (Bilder-Tab, bilder-1): Die Bilder liegen auf dem
+            // Sim-PC, die Befehle lesen und loeschen dort Dateien, nehmen sein
+            // Fenster auf, beobachten seine Ordner und senden mit dem
+            // Pilot-Token (das nie ein anderes Geraet erreicht). Nichts davon
+            // gehoert ins LAN; die Brueckenarme fehlen mit Absicht.
+            "bilder_liste",
+            "bild_lesen",
+            "bild_quellen_finden",
+            "bild_uebernehmen",
+            "bild_schreiben",
+            "bild_aufnehmen",
+            "bild_status",
+            "bild_senden",
+            "bild_hinzufuegen",
+            "bild_kontext",
+            "bild_ordner_zeigen",
+            "bild_taste_lernen",
+            "bild_loeschen",
+            "bild_quellen_setzen",
+            "bild_export",
         ];
 
         // v1.5.6: LEER — die frueher hier geparkten Luecken (Taxi-Karte,
