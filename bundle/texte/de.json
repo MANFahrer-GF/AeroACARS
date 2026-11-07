@@ -5211,7 +5211,8 @@
         "pausiert": "pausiert",
         "wird_geprueft": "wird geprüft",
         "nicht_vorhanden": "Ordner nicht gefunden",
-        "zugriff_verweigert": "Zugriff verweigert, bitte den Ordner in den Systemeinstellungen freigeben"
+        "zugriff_verweigert": "Zugriff verweigert, bitte den Ordner in den Systemeinstellungen freigeben",
+        "quelle_geaendert": "Ordner wurde durch einen anderen ersetzt, bitte die Quelle entfernen und neu hinzufügen"
       },
       "vorschlaege": "Gefundene Ordner",
       "keine_vorschlaege": "Keine weiteren Ordner gefunden.",
@@ -5245,6 +5246,7 @@
       "verworfen": "{{n}} Datei(en) nicht übernommen (Simulator nicht im Vordergrund oder Größe passt nicht)",
       "fehler": "Übernahme gescheitert: {{fehler}}",
       "duplikate": "{{n}} Duplikat(e) übersprungen",
+      "veraltet": "{{n}} Datei(en) wurden beim Übernehmen überschrieben und werden neu erkannt",
       "arbeitet": "Neue Bilder werden übernommen …"
     },
     "liste": {
@@ -5506,6 +5508,7 @@
       "hinzufuegen_fehler": "Hinzufügen nicht möglich: {{fehler}}",
       "kein_flug": "Ohne AeroACARS-Flug wird nichts aufgenommen.",
       "aufnahme_fehler": "Aufnahme nicht möglich: {{fehler}}",
+      "aufnahme_zeit": "Aufnahme nicht fertig geworden: Der Simulator hat nicht innerhalb von 5 s geantwortet (oder die vorige Aufnahme hängt noch). Bitte gleich noch einmal versuchen. Technisch: {{fehler}}",
       "ordner_fehler": "Ordner nicht zu öffnen: {{fehler}}",
       "geladen_fehler": "Bilder nicht ladbar: {{fehler}}",
       "schliessen": "Meldung schließen",

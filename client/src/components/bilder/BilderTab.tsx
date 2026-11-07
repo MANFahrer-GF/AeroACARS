@@ -230,12 +230,13 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
           <Notice tone={meldung.art === "ok" ? "success" : "error"} detail={t(meldung.schluessel, meldung.werte)} actions={<Button size="sm" variant="quiet" onClick={() => bilderStore.meldungLoeschen()} aria-label={t("bilder.meldung.schliessen")}>{Symbol.zu}</Button>} />
         </div>
       )}
-      {(z.fehler || z.uebernahme.fehler > 0 || z.uebernahme.verworfen > 0 || z.uebernahme.duplikate > 0) && (
+      {(z.fehler || z.uebernahme.fehler > 0 || z.uebernahme.verworfen > 0 || z.uebernahme.duplikate > 0 || z.uebernahme.veraltet > 0) && (
         <div className="bt-meldungen">
           {z.fehler && <Notice tone="error" detail={t("bilder.meldung.geladen_fehler", { fehler: z.fehler })} />}
           {z.uebernahme.fehler > 0 && <Notice tone="warn" detail={t("bilder.uebernahme.fehler", { fehler: z.uebernahme.letzterFehler ?? "" })} />}
           {z.uebernahme.verworfen > 0 && <Notice tone="info" detail={t("bilder.uebernahme.verworfen", { n: z.uebernahme.verworfen })} />}
           {z.uebernahme.duplikate > 0 && <Notice tone="info" detail={t("bilder.uebernahme.duplikate", { n: z.uebernahme.duplikate })} />}
+          {z.uebernahme.veraltet > 0 && <Notice tone="info" detail={t("bilder.uebernahme.veraltet", { n: z.uebernahme.veraltet })} />}
         </div>
       )}
 

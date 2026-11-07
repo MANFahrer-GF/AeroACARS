@@ -8,7 +8,7 @@ import type { BilderListe, Eintrag } from "./typen";
 
 const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 9, 0, 9, 1, 1, 0x11, 0, 0xff, 0xda, 0, 4, 0, 0, 1, 0xff, 0xd9]);
 
-function aufbau(o: { funde?: ReturnType<typeof fund>[]; eintraege?: Eintrag[]; schreibenFehler?: (n: number) => unknown; kontext?: BildAktionen["kontext"] } = {}) {
+function aufbau(o: { funde?: ReturnType<typeof fund>[]; eintraege?: Eintrag[]; schreibenFehler?: (n: number) => unknown; kontext?: BildAktionen["kontext"]; uebernehmenFehler?: (modus: string) => unknown } = {}) {
   const log: string[] = [];
   const geschrieben: Array<Parameters<BildAktionen["schreiben"]>[0]> = [];
   let imGang = 0, maxGleichzeitig = 0, schreibVersuche = 0;
@@ -23,6 +23,8 @@ function aufbau(o: { funde?: ReturnType<typeof fund>[]; eintraege?: Eintrag[]; s
     },
     uebernehmen: async (a: { fundId: string; modus: string; gruppe: string }) => {
       log.push(`${a.modus}:${a.fundId}:${a.gruppe}`);
+      const fehler = o.uebernehmenFehler?.(a.modus);
+      if (fehler) throw fehler;
       return a.modus === "verwerfen" ? null : ({ id: `id-${a.fundId}`, gruppe: a.gruppe, quelle_pfad: `${a.gruppe}/id-${a.fundId}.quelle.png`, format: "png", dateizeit_ms: Date.UTC(2026, 10, 7, 10) } as Uebernahme);
     },
     schreiben: async (a: Parameters<BildAktionen["schreiben"]>[0]) => {
@@ -76,6 +78,13 @@ describe("Uebernehmer", () => {
     const z = await a.uebernehmer.eingangAbarbeiten();
     expect(z).toMatchObject({ verworfen: 1, neu: 0 });
     expect(a.log).toEqual(["verwerfen:x:ohne-flug"]);
+    expect(a.geschrieben).toEqual([]);
+  });
+  it("bild_veraltet: der Fund wird verworfen (nicht kopiert, nicht erneut versucht) und als Datei gezaehlt, kein Fehler", async () => {
+    const a = aufbau({ funde: [fund({ fund_id: "v" })], uebernehmenFehler: (modus) => (modus === "verwerfen" ? null : { code: "bild_veraltet", message: "x" }) });
+    const z = await a.uebernehmer.eingangAbarbeiten();
+    expect(z).toMatchObject({ veraltet: 1, fehler: 0, neu: 0 });
+    expect(a.log).toEqual(["verschieben:v:ohne-flug", "verwerfen:v:ohne-flug"]);
     expect(a.geschrieben).toEqual([]);
   });
   it("Duplikat wird gezaehlt, nicht als Fehler", async () => {

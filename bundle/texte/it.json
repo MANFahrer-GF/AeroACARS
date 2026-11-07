@@ -5211,7 +5211,8 @@
         "pausiert": "in pausa",
         "wird_geprueft": "in verifica",
         "nicht_vorhanden": "Cartella non trovata",
-        "zugriff_verweigert": "Accesso negato, consenti la cartella nelle impostazioni di sistema"
+        "zugriff_verweigert": "Accesso negato, consenti la cartella nelle impostazioni di sistema",
+        "quelle_geaendert": "Cartella sostituita da un'altra, rimuovi la fonte e aggiungila di nuovo"
       },
       "vorschlaege": "Cartelle trovate",
       "keine_vorschlaege": "Nessun’altra cartella trovata.",
@@ -5245,6 +5246,7 @@
       "verworfen": "{{n}} file non importati (simulatore non in primo piano o dimensioni non corrispondenti)",
       "fehler": "Importazione non riuscita: {{fehler}}",
       "duplikate": "{{n}} duplicati saltati",
+      "veraltet": "{{n}} file sono stati sovrascritti durante l'importazione e verranno riconosciuti di nuovo",
       "arbeitet": "Importazione delle nuove immagini …"
     },
     "liste": {
@@ -5506,6 +5508,7 @@
       "hinzufuegen_fehler": "Aggiunta non possibile: {{fehler}}",
       "kein_flug": "Senza un volo AeroACARS non si scatta nulla.",
       "aufnahme_fehler": "Scatto non possibile: {{fehler}}",
+      "aufnahme_zeit": "Scatto non completato: il simulatore non ha risposto entro 5 s (o lo scatto precedente è ancora in sospeso). Riprova tra un attimo. Tecnico: {{fehler}}",
       "ordner_fehler": "Impossibile aprire la cartella: {{fehler}}",
       "geladen_fehler": "Impossibile caricare le immagini: {{fehler}}",
       "schliessen": "Chiudi messaggio",

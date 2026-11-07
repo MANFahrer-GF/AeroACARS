@@ -32,11 +32,13 @@ export interface Zaehlung {
   mit_daten: number;
   nur_flug: number;
   ohne_daten: number;
+  /** Datei wurde waehrend der Uebernahme ueberschrieben (`bild_veraltet`): Fund verworfen, die Datei kommt als neuer Fund. */
+  veraltet: number;
   letzterFehler: string | null;
 }
 
 export const leereZaehlung = (): Zaehlung => ({
-  neu: 0, verworfen: 0, duplikate: 0, fehler: 0, mit_daten: 0, nur_flug: 0, ohne_daten: 0, letzterFehler: null,
+  neu: 0, verworfen: 0, duplikate: 0, fehler: 0, mit_daten: 0, nur_flug: 0, ohne_daten: 0, veraltet: 0, letzterFehler: null,
 });
 
 const mimeVon = (format: string | null | undefined, pfad: string): string =>
@@ -93,11 +95,20 @@ export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
     }
     let u: Uebernahme | null;
     try {
-      u = await api.uebernehmen({ fundId: f.fund_id, modus: d.modus, gruppe });
+      try {
+        u = await api.uebernehmen({ fundId: f.fund_id, modus: d.modus, gruppe });
+      } catch (e) {
+        // „Verschieben“ nur mit Freigabe der Quelle: ohne sie lieber kopieren als verlieren.
+        if (d.modus !== "verschieben" || fehlerCode(e) === "bild_veraltet") throw e;
+        u = await api.uebernehmen({ fundId: f.fund_id, modus: "kopieren", gruppe });
+      }
     } catch (e) {
-      // „Verschieben“ nur mit Freigabe der Quelle: ohne sie lieber kopieren als verlieren.
-      if (d.modus !== "verschieben") throw e;
-      u = await api.uebernehmen({ fundId: f.fund_id, modus: "kopieren", gruppe });
+      if (fehlerCode(e) !== "bild_veraltet") throw e;
+      // Die Datei wurde unter demselben Namen ueberschrieben: nichts wurde kopiert. Den alten Fund verwerfen,
+      // die Datei meldet der Kern danach als neuen Fund (sonst bliebe er mit altem Hash fuer immer liegen).
+      await api.uebernehmen({ fundId: f.fund_id, modus: "verwerfen", gruppe });
+      z.veraltet++;
+      return;
     }
     if (!u) throw new Error("bild_uebernehmen lieferte nichts");
     await aufnehmen(u, f.basis, "sim", z, herkunftVon(f.quelle));

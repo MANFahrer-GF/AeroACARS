@@ -5211,7 +5211,8 @@
         "pausiert": "paused",
         "wird_geprueft": "being checked",
         "nicht_vorhanden": "Folder not found",
-        "zugriff_verweigert": "Access denied, please allow the folder in the system settings"
+        "zugriff_verweigert": "Access denied, please allow the folder in the system settings",
+        "quelle_geaendert": "Folder was replaced by a different one, please remove the source and add it again"
       },
       "vorschlaege": "Folders found",
       "keine_vorschlaege": "No further folders found.",
@@ -5245,6 +5246,7 @@
       "verworfen": "{{n}} file(s) not imported (simulator not in front or size does not match)",
       "fehler": "Import failed: {{fehler}}",
       "duplikate": "{{n}} duplicate(s) skipped",
+      "veraltet": "{{n}} file(s) were overwritten during import and will be picked up again",
       "arbeitet": "Importing new pictures …"
     },
     "liste": {
@@ -5506,6 +5508,7 @@
       "hinzufuegen_fehler": "Cannot add: {{fehler}}",
       "kein_flug": "Nothing is captured without an AeroACARS flight.",
       "aufnahme_fehler": "Cannot capture: {{fehler}}",
+      "aufnahme_zeit": "Capture not completed: the simulator did not answer within 5 s (or the previous capture is still hanging). Please try again in a moment. Technical: {{fehler}}",
       "ordner_fehler": "Cannot open the folder: {{fehler}}",
       "geladen_fehler": "Pictures could not be loaded: {{fehler}}",
       "schliessen": "Close message",

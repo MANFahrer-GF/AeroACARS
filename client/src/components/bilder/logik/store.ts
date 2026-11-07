@@ -120,7 +120,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       setzen({
         uebernahme: {
           neu: u.neu + r.neu, verworfen: u.verworfen + r.verworfen, duplikate: u.duplikate + r.duplikate, fehler: u.fehler + r.fehler,
-          mit_daten: u.mit_daten + r.mit_daten, nur_flug: u.nur_flug + r.nur_flug, ohne_daten: u.ohne_daten + r.ohne_daten,
+          mit_daten: u.mit_daten + r.mit_daten, nur_flug: u.nur_flug + r.nur_flug, ohne_daten: u.ohne_daten + r.ohne_daten, veraltet: u.veraltet + r.veraltet,
           letzterFehler: r.letzterFehler ?? u.letzterFehler,
         },
       });
@@ -341,7 +341,9 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       await api.aufnehmen();
       await eingang();
     } catch (e) {
-      meldung("fehler", fehlerCode(e) === "kein_flug" ? "bilder.meldung.kein_flug" : "bilder.meldung.aufnahme_fehler", { fehler: fehlerText(e) });
+      // `bild_io`: Der Simulator hat nicht innerhalb der Zeitgrenze (5 s) geantwortet oder die vorige Aufnahme haengt noch.
+      const art = fehlerCode(e) === "kein_flug" ? "kein_flug" : fehlerCode(e) === "bild_io" ? "aufnahme_zeit" : "aufnahme_fehler";
+      meldung("fehler", `bilder.meldung.${art}`, { fehler: fehlerText(e) });
     }
   }
 

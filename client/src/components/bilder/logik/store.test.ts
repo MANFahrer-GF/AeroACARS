@@ -4,7 +4,7 @@ import { erzeugeStore } from "./store";
 import { eintrag } from "./testhilfen";
 import type { BilderListe, SendeAntwort } from "./typen";
 
-function aufbau(o: { senden?: BildAktionen["senden"]; status?: BildAktionen["status"]; eintraege?: ReturnType<typeof eintrag>[]; gespeichert?: Record<string, string> } = {}) {
+function aufbau(o: { aufnehmen?: BildAktionen["aufnehmen"]; senden?: BildAktionen["senden"]; status?: BildAktionen["status"]; eintraege?: ReturnType<typeof eintrag>[]; gespeichert?: Record<string, string> } = {}) {
   const eintraege = o.eintraege ?? [eintrag({ id: "a" }), eintrag({ id: "b" }), eintrag({ id: "c" })];
   const geschrieben: Array<{ id: string; sidecar: { sendungen?: Array<{ status: string; code?: string; sendung_id: string }> } }> = [];
   const gespeichert: Record<string, string> = { ...(o.gespeichert ?? {}) };
@@ -19,6 +19,7 @@ function aufbau(o: { senden?: BildAktionen["senden"]; status?: BildAktionen["sta
     senden: o.senden ?? (async (a) => { aufrufe.push(a); return { bilder: a.bilder.map((b) => ({ bild_id: b.bild_id, status: "gesendet" as const })), kontingent: { rest: 7, grenze: 12, retry_after: 0 } }; }),
     status: o.status ?? (async () => ({ bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } })),
     loeschen: async () => undefined,
+    aufnehmen: o.aufnehmen ?? (async () => undefined),
   } as unknown as BildAktionen;
   let n = 0;
   const store = erzeugeStore({
@@ -176,6 +177,16 @@ describe("Store: Einwilligung, Fortsetzen, Sidecar", () => {
     expect(neu.store.lesen().sendestand.a).toMatchObject({ phase: "fehlgeschlagen", sendungId: "S1", code: "discord_unklar" });
     await neu.store.senden(["a"], "Hallo", "verdeckt");
     expect(neu.aufrufe[0]).toMatchObject({ sendungId: "S1" });
+  });
+  it("Aufnahme: bild_io (Simulator antwortet nicht innerhalb von 5 s) hat einen eigenen Text, kein_flug und Sonstiges behalten ihren", async () => {
+    const art = async (code: string) => {
+      const t = aufbau({ aufnehmen: async () => { throw { code, message: "x" }; } });
+      await t.store.aufnehmen();
+      return t.store.lesen().meldung?.schluessel;
+    };
+    expect(await art("bild_io")).toBe("bilder.meldung.aufnahme_zeit");
+    expect(await art("kein_flug")).toBe("bilder.meldung.kein_flug");
+    expect(await art("bild_name")).toBe("bilder.meldung.aufnahme_fehler");
   });
   it("Text, Favorit und Flug aendern schreiben das ganze Sidecar", async () => {
     const t = aufbau();

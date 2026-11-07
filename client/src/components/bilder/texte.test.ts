@@ -45,7 +45,7 @@ describe("Texte des Bilder-Tabs", () => {
       ["sim", "protokoll", "logbuch", "keine"].forEach((s) => pruefe(`bilder.detail.quelle.${s}`));
       ["preflight", "boarding", "pushback", "taxi_out", "takeoff_roll", "takeoff", "climb", "cruise", "holding", "descent", "approach", "final", "landing", "taxi_in", "blocks_on", "arrived"].forEach((p) => pruefe(`bilder.detail.phase.${p}`));
       ["standard", "aufgespuert", "hand"].forEach((a) => pruefe(`bilder.quellen.art.${a}`));
-      ["beobachtet", "pausiert", "wird_geprueft", "nicht_vorhanden", "zugriff_verweigert"].forEach((z) => pruefe(`bilder.quellen.zustand.${z}`));
+      ["beobachtet", "pausiert", "wird_geprueft", "nicht_vorhanden", "zugriff_verweigert", "quelle_geaendert"].forEach((z) => pruefe(`bilder.quellen.zustand.${z}`));
       ["alle", "offen", "gesendet", "favoriten"].forEach((f) => pruefe(`bilder.liste.filter.${f}`));
       ["zusatz.msl", "zusatz.ueber_grund"].forEach((z) => pruefe(`bilder.detail.${z}`));
       pruefe("tabs.bilder");
