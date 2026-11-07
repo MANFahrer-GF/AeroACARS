@@ -831,12 +831,17 @@ async fn logbuch_pireps(client: &api_client::Client, fruehestens_ms: i64, max_se
             ziel: p.arr_airport_id,
             flugzeug_icao: p.aircraft_icao,
         }));
-        // 2 Tage Puffer: der PIREP wird vor dem Block-off angelegt
-        if letzte_seite || aelteste.is_some_and(|a| a < fruehestens_ms - 2 * 86_400_000) {
+        if logbuch_abgedeckt(letzte_seite, aelteste, fruehestens_ms) {
             return (alle, true);
         }
     }
     (alle, false)
+}
+
+/// Reicht das Geblaetterte bis zur gefragten Zeit? Letzte Seite, oder der aelteste PIREP der Seite
+/// liegt mehr als 2 Tage davor (Puffer: der PIREP wird vor dem Block-off angelegt).
+fn logbuch_abgedeckt(letzte_seite: bool, aelteste_ms: Option<i64>, fruehestens_ms: i64) -> bool {
+    letzte_seite || aelteste_ms.is_some_and(|a| a < fruehestens_ms - 2 * 86_400_000)
 }
 
 /// Markiert das JPEG eines Bildes im Dateimanager des Systems (Finder „Im Finder
@@ -1211,6 +1216,15 @@ mod tests {
         assert!(position_geaendert(Some(&mit(50.0)), &json!({"meta": {"breite": null, "laenge": null}})), "Ohne Flug: Position weg");
         assert!(!position_geaendert(None, &mit(50.0)));
         assert!(!position_geaendert(Some(&mit(50.0)), &json!({"text": "ohne meta"})), "ohne Metadaten bleibt das JPEG");
+    }
+
+    #[test]
+    fn logbuch_ist_erst_abgedeckt_wenn_es_bis_vor_die_zeit_reicht() {
+        let tag = 86_400_000;
+        assert!(logbuch_abgedeckt(true, None, 10 * tag), "letzte Seite");
+        assert!(logbuch_abgedeckt(false, Some(7 * tag), 10 * tag), "mehr als 2 Tage davor");
+        assert!(!logbuch_abgedeckt(false, Some(9 * tag), 10 * tag), "nur 1 Tag davor: weiterblaettern");
+        assert!(!logbuch_abgedeckt(false, None, 10 * tag), "ohne Zeiten nichts belegt");
     }
 
     #[test]

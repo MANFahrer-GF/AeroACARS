@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   senden: null as null | ((a: Record<string, unknown>) => unknown),
   status: null as null | (() => unknown),
   fluege: [] as unknown[],
+  gekuerzt: true,
   hoerer: new Map<string, Array<(e: { payload: unknown }) => void>>(),
 }));
 
@@ -32,7 +33,7 @@ vi.mock("../../lib/ipc", () => ({
       case "bild_lesen": return new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0, 2, 0xff, 0xd9]);
       case "bild_senden": return h.senden ? h.senden(args!) : { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
       case "bild_status": return h.status ? h.status() : { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
-      case "bild_kontext": return { staende: [], spur: [], fluege: h.fluege, fluege_gekuerzt: true };
+      case "bild_kontext": return { staende: [], spur: [], fluege: h.fluege, fluege_gekuerzt: h.gekuerzt };
       case "bild_schreiben": return undefined;
       case "bild_taste_lernen": return h.lerne;
       case "bild_quellen_setzen": return { quellen: [], abgebrochen: false };
@@ -49,7 +50,7 @@ import { eintrag } from "./logik/testhilfen";
 
 beforeEach(() => {
   h.tablet = false;
-  h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null; h.status = null; h.fluege = []; h.taste = null; h.kuerzel = null; h.lerne = null;
+  h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null; h.status = null; h.fluege = []; h.gekuerzt = true; h.taste = null; h.kuerzel = null; h.lerne = null;
   URL.createObjectURL = vi.fn(() => "blob:x");
   URL.revokeObjectURL = vi.fn();
   void bilderStore.pilotSetzen(null);
@@ -204,6 +205,17 @@ describe("Bilder-Tab", () => {
       const s = h.aufrufe.filter((a) => a.cmd === "bild_schreiben").pop();
       expect((s?.args?.sidecar as { meta: Record<string, unknown> } | undefined)?.meta).toMatchObject({ pirep_id: "ALT7", rufzeichen: "GSG700", abflug: "LOWI", flugzeug_icao: "A320", breite: null });
     });
+  });
+
+  it("vollstaendige Flugliste: kein Hinweis auf fehlende Fluege (Gegenprobe)", async () => {
+    vorbereiten();
+    h.gekuerzt = false;
+    h.fluege = [{ pirep_id: "ALT7", rufzeichen: "GSG700", flugnummer: "700", abflug: "LOWI", ziel: "EDDM", flugzeug_icao: null, start_ms: Date.UTC(2026, 9, 2), ende_ms: null }];
+    zeigen(false);
+    await userEvent.click(await screen.findByRole("button", { name: "Flug zuordnen" }));
+    const d = within(await screen.findByRole("dialog"));
+    await within(d.getByRole("combobox")).findByRole("option", { name: /GSG700/ });
+    expect(d.queryByText(/Ältere Flüge fehlen vielleicht/)).toBeNull();
   });
 
   it("eine geschlossene Serie laesst sich als Ganzes waehlen, mit eindeutigem Teilzustand", async () => {

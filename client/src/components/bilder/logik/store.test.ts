@@ -287,6 +287,15 @@ describe("Store: Flug zuordnen", () => {
     expect(gefragt).toBe(false);
     expect(t.store.lesen().liste!.eintraege[0].sidecar!.meta).toMatchObject({ hoehe_ft: 12000, phase: "cruise", quelle: "sim" });
   });
+  it("derselbe Flug, bisher nur Logbuchdaten: das Protokoll ergaenzt die Aufnahmedaten", async () => {
+    const t = aufbau({
+      eintraege: [eintrag({ id: "a", meta: { pirep_id: "P2", quelle: "logbuch", breite: null, laenge: null, hoehe_ft: null } })],
+      kontext: async () => ({ staende: [{ zeit: null, quelle: "protokoll", basis: { pirep_id: "P2", breite: 41, laenge: 2, hoehe_ft: 35000 } }], spur: null }),
+    });
+    await t.store.laden();
+    await t.store.flugSetzen(t.store.lesen().liste!.eintraege[0], { pirep_id: "P2", rufzeichen: null, abflug: null, ziel: null });
+    expect(t.store.lesen().liste!.eintraege[0].sidecar!.meta).toMatchObject({ breite: 41, hoehe_ft: 35000, quelle: "protokoll" });
+  });
   it("gleiche Position: das JPEG wird nicht neu geschrieben", async () => {
     const t = aufbau({ kontext: async () => ({ staende: [{ zeit: null, quelle: "protokoll", basis: { pirep_id: "P2", breite: 50.03, laenge: 8.57 } }], spur: null }) });
     await t.store.laden();

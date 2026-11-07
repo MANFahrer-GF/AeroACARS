@@ -187,8 +187,10 @@ export function erzeugeStore(dep: StoreAbhaengig) {
    * „Ohne Flug“ laesst nichts vom alten Flug stehen, auch nicht die Position im JPEG.
    */
   async function flugSetzen(e: Eintrag, f: FlugAuswahl): Promise<void> {
-    // Derselbe Flug noch einmal: nichts zu aendern, die Daten zur Aufnahmezeit bleiben (sie sind reicher als jedes Protokoll).
-    if (f.pirep_id && e.sidecar?.meta?.pirep_id === f.pirep_id) return;
+    // Derselbe Flug noch einmal: Daten vom Simulator oder aus dem Protokoll bleiben, nur ein Bild mit
+    // blossen Logbuchdaten darf aus einem inzwischen vorhandenen Protokoll ergaenzt werden.
+    const vorher = e.sidecar?.meta;
+    if (f.pirep_id && vorher?.pirep_id === f.pirep_id && (vorher.quelle === "sim" || vorher.quelle === "protokoll")) return;
     const zeit = e.sidecar?.meta?.zeit_utc ?? isoVonMs(e.dateizeit_ms);
     let basis: MetaBasis = {};
     let quelle: MetaQuelle = f.pirep_id ? "logbuch" : "keine";
