@@ -84,7 +84,8 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     const imFlug = aktiverFlug ? neueste.find((e) => flugSchluessel(e) === aktiverFlug.pirep_id) : undefined;
     setOffenId((imFlug ?? neueste[0]).id);
   }, [alle, anfangGeoeffnet, aktiverFlug]);
-  const offen = alle.find((e) => e.id === offenId) ?? null;
+  // Ein einzeln gewaehltes Bild zeigt seine Details, auch ohne es zu oeffnen.
+  const offen = alle.find((e) => e.id === offenId) ?? (auswahl.size === 1 ? alle.find((e) => auswahl.has(e.id)) ?? null : null);
   useEffect(() => { if (offenId && !offen && liste) setOffenId(null); }, [offenId, offen, liste]);
   const flugBilder = useMemo(() => (offen ? alle.filter((e) => flugSchluessel(e) === flugSchluessel(offen) && flugSchluessel(e) !== "") : []), [alle, offen]);
 
@@ -286,7 +287,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
               <div className="bt-alt">
                 <div className="bt-alt__text">
                   <span>{t("bilder.altbestand.titel", { n: altbestandAnzahl })}</span>
-                  <span>{z.altbestandErgebnis ? t("bilder.altbestand.ergebnis", { mit: z.altbestandErgebnis.mit_daten, flug: z.altbestandErgebnis.nur_flug, ohne: z.altbestandErgebnis.ohne_daten }) : t("bilder.altbestand.text")}</span>
+                  {z.altbestandErgebnis && <span>{t("bilder.altbestand.ergebnis", { mit: z.altbestandErgebnis.mit_daten, flug: z.altbestandErgebnis.nur_flug, ohne: z.altbestandErgebnis.ohne_daten })}</span>}
                 </div>
                 <Button disabled={z.arbeitet} onClick={() => void bilderStore.altbestandAnzeigen().then(() => bilderStore.altbestandUebernehmen())}>
                   {z.arbeitet ? t("bilder.altbestand.laeuft") : t("bilder.altbestand.uebernehmen")}

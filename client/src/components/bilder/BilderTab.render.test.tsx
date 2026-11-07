@@ -254,6 +254,16 @@ describe("Bilder-Tab", () => {
     expect(await screen.findByText(/sim\/operation\/screenshot/)).toBeInTheDocument();
   });
 
+  it("Kopf nennt die Zahlen ohne doppelte Woerter, ein einzeln gewaehltes Bild zeigt seine Details", async () => {
+    vorbereiten();
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    expect(document.querySelector(".bt-kopf__zahlen")?.textContent).not.toMatch(/Bilder Bilder|Flüge Flüge|Flug Flüge/);
+    await userEvent.click(screen.getByRole("button", { name: "Detail schließen", hidden: true }));
+    expect(await screen.findByText(/Wähle ein Bild/)).toBeInTheDocument();
+    await userEvent.click(boxen[0]);
+    await waitFor(() => expect(document.querySelector(".bt-detail__zusatz")?.textContent).toBe("ausgewählt"));
+  });
   it("am Tablet fehlen die Aufgaben des Sim-PCs: Hinzufuegen, Quellen, Ordner, Export", async () => {
     vorbereiten();
     h.tablet = true;
