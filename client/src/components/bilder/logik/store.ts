@@ -167,8 +167,13 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       const e = z.liste?.eintraege.find((x) => x.id === id);
       const s = stand[id];
       if (!e || !s) continue;
-      const status: SendeVermerk["status"] = s.phase === "gesendet" ? "gesendet" : s.phase === "fehlgeschlagen" ? "abgelehnt" : "angenommen";
-      await sidecarAendern(e, (sc) => ({ ...sc, sendungen: vermerk(e, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe ?? sc.sendungen.find((x) => x.sendung_id === sendungId)?.geo_stufe ?? z.geoStufe, status, code: s.code }) }));
+      // Vor dem Aufruf („sendet“) ist nichts bestaetigt: Der Vermerk steht auf „unklar“, nie auf „angenommen“.
+      // Bleibt er nach einem Absturz so stehen, zeigt der Tab „Zustellung unklar“ und „Erneut senden“
+      // wiederholt mit derselben `sendung_id` (der Server ist darueber idempotent).
+      const vorAufruf = s.phase === "sendet";
+      const status: SendeVermerk["status"] = s.phase === "gesendet" ? "gesendet" : s.phase === "fehlgeschlagen" || vorAufruf ? "abgelehnt" : "angenommen";
+      const code = vorAufruf ? "discord_unklar" : s.code;
+      await sidecarAendern(e, (sc) => ({ ...sc, sendungen: vermerk(e, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe ?? sc.sendungen.find((x) => x.sendung_id === sendungId)?.geo_stufe ?? z.geoStufe, status, code }) }));
     }
   }
 

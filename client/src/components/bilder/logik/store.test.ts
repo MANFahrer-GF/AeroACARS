@@ -160,6 +160,20 @@ describe("Store: Einwilligung, Fortsetzen, Sidecar", () => {
     expect(t.store.lesen().sendestand.a.phase).toBe("gesendet");
     expect(t.geschrieben.pop()!.sidecar.sendungen![0].status).toBe("gesendet");
   });
+  it("Absturz vor dem HTTP-Aufruf: nach dem Neustart gilt die Sendung als unklar, nicht als angenommen, und Wiederholen nutzt dieselbe sendung_id", async () => {
+    const eintraege = [eintrag({ id: "a" })];
+    const haengt = aufbau({ eintraege, senden: () => new Promise(() => undefined) });
+    await haengt.store.laden();
+    void haengt.store.senden(["a"], "Hallo", "verdeckt");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(eintraege[0].sidecar!.sendungen).toEqual([expect.objectContaining({ sendung_id: "S1", status: "abgelehnt", code: "discord_unklar" })]);
+    // Neustart: neuer Store auf demselben Sidecar
+    let statusAufrufe = 0;
+    const neu = aufbau({ eintraege, status: async () => { statusAufrufe++; return { bilder: [], kontingent: null }; } });
+    await neu.store.laden();
+    await neu.store.fortsetzen();
+    expect(statusAufrufe).toBe(0);
+  });
   it("Text, Favorit und Flug aendern schreiben das ganze Sidecar", async () => {
     const t = aufbau();
     await t.store.laden();
