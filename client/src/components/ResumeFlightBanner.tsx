@@ -23,6 +23,9 @@ interface Props {
   onCancelled: () => void;
   /** Der gelandete Flug wurde aus dem Banner abgegeben (DAL667). */
   onFiledSuccess?: (outcome: FlightEndOutcome) => void;
+  /** Das Programm meldet `abgabe-ankunft-1`. Ein aelteres gaebe mit den
+   *  Live-Werten des Simulators ab (DAL667) — dann kein Knopf. */
+  abgabeMoeglich?: boolean;
 }
 
 type Mode =
@@ -45,6 +48,7 @@ export function ResumeFlightBanner({
   onAdopted,
   onCancelled,
   onFiledSuccess,
+  abgabeMoeglich,
 }: Props) {
   const { t } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -359,6 +363,7 @@ export function ResumeFlightBanner({
    *  abbrechen" — der fertige Flug wurde storniert. Ein Divert wird im
    *  Divert-Banner beantwortet, eine Sperre im Sprung-Banner. */
   const abgebbar =
+    abgabeMoeglich === true &&
     mode.kind === "auto_resumed" &&
     activeFlight?.phase === "arrived" &&
     !activeFlight.abgabe_sperre &&

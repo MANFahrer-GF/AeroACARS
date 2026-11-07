@@ -76,6 +76,7 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
       <ResumeFlightBanner
         activeFlight={DAL667}
         onAdopted={() => {}}
+        abgabeMoeglich
         onCancelled={() => {}}
         onFiledSuccess={filed}
       />,
@@ -96,6 +97,7 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
       <ResumeFlightBanner
         activeFlight={{ ...DAL667, resume_position_suspect: true } as ActiveFlightInfo}
         onAdopted={() => {}}
+        abgabeMoeglich
         onCancelled={() => {}}
         onFiledSuccess={filed}
       />,
@@ -110,6 +112,7 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
       <ResumeFlightBanner
         activeFlight={{ ...DAL667, abgabe_sperre: "sprung" } as ActiveFlightInfo}
         onAdopted={() => {}}
+        abgabeMoeglich
         onCancelled={() => {}}
         onFiledSuccess={() => {}}
       />,
@@ -122,6 +125,7 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
       <ResumeFlightBanner
         activeFlight={{ ...DAL667, phase: "cruise" } as ActiveFlightInfo}
         onAdopted={() => {}}
+        abgabeMoeglich
         onCancelled={() => {}}
         onFiledSuccess={() => {}}
       />,
@@ -136,6 +140,7 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
       <ResumeFlightBanner
         activeFlight={DAL667}
         onAdopted={() => {}}
+        abgabeMoeglich
         onCancelled={() => {}}
         onFiledSuccess={() => {}}
       />,
@@ -156,6 +161,8 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
         <ResumeFlightBanner
           activeFlight={DAL667}
           onAdopted={() => {}}
+          abgabeMoeglich
+        abgabeMoeglich
           onCancelled={() => {}}
           onFiledSuccess={() => {}}
         />,
@@ -178,6 +185,8 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
         <ResumeFlightBanner
           activeFlight={DAL667}
           onAdopted={() => {}}
+          abgabeMoeglich
+        abgabeMoeglich
           onCancelled={zu}
           onFiledSuccess={() => {}}
         />,
@@ -190,5 +199,21 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
       alarm.mockRestore();
     }
   });
-});
 
+  it("aelteres Programm ohne `abgabe-ankunft-1`: weder Knopf noch Hinweis", async () => {
+    tauriInvoke.mockImplementation(backend(false));
+    render(
+      <ResumeFlightBanner
+        activeFlight={DAL667}
+        onAdopted={() => {}}
+        abgabeMoeglich={false}
+        onCancelled={() => {}}
+        onFiledSuccess={() => {}}
+      />,
+    );
+    expect(await screen.findByText("Warte auf den Simulator")).toBeTruthy();
+    expect(screen.getByText("Flug abbrechen")).toBeTruthy();
+    expect(screen.queryByText("Flug abgeben")).toBeNull();
+    expect(screen.queryByText(/mit den Werten der Ankunft abgeben/)).toBeNull();
+  });
+});

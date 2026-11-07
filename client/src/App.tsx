@@ -344,14 +344,21 @@ function App() {
   // Fähigkeit `bilder-1` (P-11.33): ohne sie gibt es weder Reiter noch Übernahme. Das Paket
   // nennt sie bewusst nicht in `requires`, ältere Programme bleiben so auf der neuen Generation.
   const [bilderAn, setBilderAn] = useState(false);
+  // `abgabe-ankunft-1` (DAL667): erst dann gibt `flight_end` mit den Werten der Ankunft ab.
+  const [abgabeAn, setAbgabeAn] = useState(false);
   const [bildFokus, setBildFokus] = useState<BildFokus | null>(null);
   useEffect(() => {
     // Die LAN-Bruecke reicht keinen Bilder-Befehl durch: im Browser (Tablet) gibt es Reiter und Uebernahme nicht
     if (status.kind !== "loggedIn" || !isTauri) return;
     let weg = false;
     void invoke<{ faehigkeiten?: unknown }>("paket_info")
-      .then((i) => { if (!weg) setBilderAn(Array.isArray(i?.faehigkeiten) && i.faehigkeiten.includes("bilder-1")); })
-      .catch(() => { if (!weg) setBilderAn(false); });
+      .then((i) => {
+        if (weg) return;
+        const f = Array.isArray(i?.faehigkeiten) ? i.faehigkeiten : [];
+        setBilderAn(f.includes("bilder-1"));
+        setAbgabeAn(f.includes("abgabe-ankunft-1"));
+      })
+      .catch(() => { if (!weg) { setBilderAn(false); setAbgabeAn(false); } });
     return () => { weg = true; };
   }, [status.kind]);
   useEffect(() => { setTab((a) => erlaubterReiter(a, bilderAn)); }, [bilderAn, tab]);
@@ -1136,6 +1143,7 @@ function App() {
           activeFlight={activeFlight}
           onAdopted={setActiveFlight}
           onCancelled={() => setActiveFlight(null)}
+          abgabeMoeglich={abgabeAn}
           onFiledSuccess={(outcome) => {
             setActiveFlight(null);
             setAbschluss(outcome);

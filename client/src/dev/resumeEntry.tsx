@@ -34,6 +34,6 @@ const flug = {
 const gefunden = q.has("gefunden");
 createRoot(document.getElementById("root")!).render(
   <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-    <ResumeFlightBanner activeFlight={gefunden ? null : flug} onAdopted={() => {}} onCancelled={() => {}} />
+    <ResumeFlightBanner activeFlight={gefunden ? null : flug} onAdopted={() => {}} onCancelled={() => {}} abgabeMoeglich />
   </div>,
 );
