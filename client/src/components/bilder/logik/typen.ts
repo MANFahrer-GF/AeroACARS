@@ -48,6 +48,8 @@ export interface Sidecar {
   sha256: string | null;
   erstellt_ms: number;
   sendungen: SendeVermerk[];
+  /** Ordner, aus dem das Bild uebernommen wurde (letzte Pfadteile); null bei „hinzugefuegt“. */
+  herkunft?: string | null;
   /** Zuordnung per Hand (Flug nachtraeglich gesetzt). */
   flug_von_hand?: boolean;
 }

@@ -45,6 +45,13 @@ const mimeVon = (format: string | null | undefined, pfad: string): string =>
 /** Wie oft ein Fund scheitern darf, bevor er in dieser Sitzung liegen bleibt (Anzeige, kein Dauerlauf). */
 export const MAX_VERSUCHE = 3;
 
+/** Ordnername einer Quelle fuer die Gruppenzeile („screenshots“, „Output/screenshots“). */
+export function herkunftVon(pfad: string | null): string | null {
+  if (!pfad) return null;
+  const teile = pfad.split(/[\\/]+/).filter(Boolean);
+  return teile.length === 0 ? null : teile.slice(-2).join("/");
+}
+
 export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
   const { api, kodieren } = dep;
   const jetzt = dep.jetzt ?? Date.now;
@@ -53,7 +60,7 @@ export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
   let nochmal = false;
 
   /** Eine uebernommene Eingangskopie als fertiges Bild ablegen. */
-  async function aufnehmen(u: Uebernahme, basis: MetaBasis, quelle: MetaQuelle, z: Zaehlung): Promise<void> {
+  async function aufnehmen(u: Uebernahme, basis: MetaBasis, quelle: MetaQuelle, z: Zaehlung, herkunft: string | null = null): Promise<void> {
     const bytes = await api.lesen(u.quelle_pfad);
     const k = await kodieren(bytes, mimeVon(u.format, u.quelle_pfad));
     // Kanonischer Hash: nach Verkleinern und Neukodierung, ohne EXIF (P-7.25).
@@ -64,7 +71,7 @@ export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
       : k.jpeg;
     const sidecar: Sidecar = {
       fassung: 1, bild_id: u.id, text: "", favorit: false, meta, breite_px: k.breite, hoehe_px: k.hoehe,
-      sha256: sha, erstellt_ms: jetzt(), sendungen: [],
+      sha256: sha, erstellt_ms: jetzt(), sendungen: [], herkunft,
     };
     try {
       await api.schreiben({ gruppe: u.gruppe, id: u.id, jpegBase64: alsBase64(datei), vorschauBase64: alsBase64(k.vorschau), sidecar, sha256: sha, quelleEntfernen: true });
@@ -93,7 +100,7 @@ export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
       u = await api.uebernehmen({ fundId: f.fund_id, modus: "kopieren", gruppe });
     }
     if (!u) throw new Error("bild_uebernehmen lieferte nichts");
-    await aufnehmen(u, f.basis, "sim", z);
+    await aufnehmen(u, f.basis, "sim", z, herkunftVon(f.quelle));
   }
 
   /** Eingangskopie ohne Sidecar (Absturz zwischen Uebernahme und Ablage): Daten aus dem Kontext der Dateizeit. */

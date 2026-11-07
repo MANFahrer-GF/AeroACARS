@@ -11,7 +11,13 @@
   "max_kante_px": 1600,
   "vorschau_kante_px": 320,
   "vorschau_qualitaet": 0.7,
-  "jpeg_qualitaeten": [0.86, 0.78, 0.68, 0.55, 0.42],
+  "jpeg_qualitaeten": [
+   0.86,
+   0.78,
+   0.68,
+   0.55,
+   0.42
+  ],
   "max_bytes": 4000000,
   "text_max_zeichen": 500,
   "nachricht_max_zeichen": 2000,
@@ -21,30 +27,60 @@
   "aufraeumen_tage": 30,
   "zuordnung_toleranz_s": 120,
   "sende_abfrage_s": 4,
-  "sende_abfrage_max": 8
+  "sende_abfrage_max": 8,
+  "tile_breite_px": 196
  },
  "ordner": {
   "ohne_flug": "ohne-flug"
  },
  "geo": {
-  "stufen": ["sichtbar", "verdeckt", "aus"],
+  "stufen": [
+   "sichtbar",
+   "verdeckt",
+   "aus"
+  ],
   "vorgabe": "verdeckt"
  },
  "metadaten": [
-  { "feld": "zeit_utc", "format": "zeit" },
-  { "feld": "breite", "format": "breite" },
-  { "feld": "laenge", "format": "laenge" },
-  { "feld": "hoehe_ft", "format": "hoehe" },
-  { "feld": "gs_kt", "format": "gs" },
-  { "feld": "kurs", "format": "kurs" },
-  { "feld": "flugzeug_titel", "format": "text" },
-  { "feld": "flugzeug_icao", "format": "text" },
-  { "feld": "phase", "format": "phase" },
-  { "feld": "rufzeichen", "format": "text" },
-  { "feld": "abflug", "format": "text" },
-  { "feld": "ziel", "format": "text" },
-  { "feld": "simulator", "format": "text" },
-  { "feld": "naechster_flugplatz", "format": "text" },
-  { "feld": "quelle", "format": "quelle" }
+  {
+   "feld": "position",
+   "format": "position"
+  },
+  {
+   "feld": "hoehe_ft",
+   "format": "hoehe"
+  },
+  {
+   "feld": "gs_kt",
+   "format": "gs"
+  },
+  {
+   "feld": "kurs",
+   "format": "kurs"
+  },
+  {
+   "feld": "naechster_flugplatz",
+   "format": "text"
+  },
+  {
+   "feld": "flugzeug",
+   "format": "flugzeug"
+  },
+  {
+   "feld": "flug",
+   "format": "flug"
+  },
+  {
+   "feld": "simulator",
+   "format": "simulator"
+  },
+  {
+   "feld": "quelle",
+   "format": "quelle"
+  },
+  {
+   "feld": "datei",
+   "format": "datei"
+  }
  ]
 }

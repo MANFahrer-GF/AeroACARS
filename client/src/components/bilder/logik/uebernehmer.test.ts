@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BildAktionen, Uebernahme } from "./api";
-import { erzeugeUebernehmer } from "./uebernehmer";
+import { erzeugeUebernehmer, herkunftVon } from "./uebernehmer";
 import { sha256Hex } from "./bildverarbeitung";
 import { exifGpsLesen, app1Anzahl } from "./exifGps";
 import { eintrag, fund } from "./testhilfen";
@@ -136,5 +136,10 @@ describe("Uebernehmer", () => {
     const a = aufbau();
     a.api.hinzufuegen = async () => ({ abgebrochen: true, ergebnisse: [] });
     expect((await a.uebernehmer.hinzufuegen(undefined)).abgebrochen).toBe(true);
+  });
+  it("Herkunft: die letzten zwei Ordnernamen", () => {
+    expect(herkunftVon("/Users/t/X-Plane 12/Output/screenshots")).toBe("Output/screenshots");
+    expect(herkunftVon("C:\\Users\\t\\Videos\\Captures")).toBe("Videos/Captures");
+    expect(herkunftVon(null)).toBeNull();
   });
 });

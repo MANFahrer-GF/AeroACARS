@@ -5,7 +5,7 @@ import type { GeoStufe } from "./typen";
 
 export interface MetaZeile {
   feld: string;
-  format: "zeit" | "breite" | "laenge" | "hoehe" | "gs" | "kurs" | "text" | "phase" | "quelle";
+  format: "position" | "hoehe" | "gs" | "kurs" | "text" | "flugzeug" | "flug" | "simulator" | "quelle" | "datei";
 }
 
 export interface Grenzen {
@@ -24,6 +24,7 @@ export interface Grenzen {
   zuordnung_toleranz_s: number;
   sende_abfrage_s: number;
   sende_abfrage_max: number;
+  tile_breite_px: number;
 }
 
 export interface Tabelle {
@@ -77,6 +78,7 @@ export function tabelleLesen(roh: unknown): Tabelle {
       zuordnung_toleranz_s: zahl("zuordnung_toleranz_s"),
       sende_abfrage_s: zahl("sende_abfrage_s"),
       sende_abfrage_max: zahl("sende_abfrage_max"),
+      tile_breite_px: zahl("tile_breite_px"),
     },
     ohneFlugOrdner: ordner,
     geoStufen: stufen as GeoStufe[],

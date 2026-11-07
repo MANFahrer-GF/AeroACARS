@@ -38,6 +38,8 @@ export interface BildAktionen {
   senden(a: { sendungId: string; text: string; geoStufe: string; bilder: Array<{ gruppe: string; bild_id: string; meta: BildMeta }> }): Promise<SendeAntwort>;
   status(sendungId?: string): Promise<SendeAntwort>;
   aufnehmen(): Promise<void>;
+  ordnerZeigen(a: { gruppe: string; id: string }): Promise<void>;
+  exportieren(a: { zipBase64: string; dateiname: string }): Promise<string | null>;
   kontext(a: { zeiten?: string[]; pirepId?: string; mitSpur?: boolean }): Promise<Kontext>;
 }
 
@@ -98,6 +100,12 @@ export const bildAktionen: BildAktionen = {
   },
   async aufnehmen() {
     await invoke("bild_aufnehmen", {});
+  },
+  async ordnerZeigen(a) {
+    await invoke("bild_ordner_zeigen", a);
+  },
+  async exportieren(a) {
+    return ((await invoke("bild_export", a)) as string | null) ?? null;
   },
   async kontext(a) {
     return kontextLesen(await invoke("bild_kontext", a));

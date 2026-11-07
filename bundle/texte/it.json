@@ -426,7 +426,8 @@
     "chat": "Chat",
     "telemetrie": "Telemetria",
     "notizblock": "Blocco note",
-    "bordbuch": "Diario di bordo"
+    "bordbuch": "Diario di bordo",
+    "bilder": "Immagini"
   },
   "nav": {
     "news": "Notizie",
@@ -1858,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Rapporto di atterraggio: la dicitura “long landing” compare ora solo fuori dalla zona di contatto. Se tocchi all’interno della zona, ora leggi “oltre il punto di mira” o “ben prima del punto di mira”. I voti non cambiano. Anche il suggerimento sulla richiamata molto lunga è stato riformulato."
+    "neu_text": "Nuova scheda “Immagini”: gli screenshot dei tuoi voli vengono raccolti per volo, portano posizione e dati di volo e si possono inviare, scelti uno a uno con un testo e, se vuoi, con la posizione nascosta, al canale Discord del GSG. Attivi l’invio una volta tu stesso; nulla parte in automatico. La mappa può ora mostrare anche un globo."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -5157,6 +5158,390 @@
       "ohne_status": "senza stato",
       "alle": "Mostra tutte le {{anzahl}} richieste",
       "weniger": "Mostra meno"
+    }
+  },
+  "bilder": {
+    "titel": "Immagini",
+    "leer": {
+      "titel": "Ancora nessuna immagine",
+      "text": "Le immagini dei tuoi voli compaiono qui appena il simulatore ne scatta una. Puoi anche trascinare dei file o sceglierli con “Aggiungi immagine”.",
+      "kein_treffer": "Nessuna immagine corrisponde a ricerca e filtro."
+    },
+    "kopf": {
+      "platz": "{{platz}} occupati",
+      "anzahl": "{{count}} immagini",
+      "aufnehmen": "Scatta immagine",
+      "hinzufuegen": "Aggiungi immagine",
+      "ziehen": "Trascina qui i file",
+      "aufnahme_msfs": "Scatto con {{kuerzel}} (MSFS)",
+      "aufnahme_xplane": "Scatto con il tasto del simulatore (X-Plane)",
+      "aufnahme_aus": "Lo scatto con scorciatoia non è possibile su questo sistema. Usa le fonti delle immagini.",
+      "nur_im_flug": "Scatto e importazione funzionano solo durante un volo AeroACARS.",
+      "zusammenfassung": "{{bilder}} immagini · {{fluege}} voli · {{platz}} su questo computer",
+      "keine": "Ancora nessuna immagine su questo computer",
+      "ordner_zeigen": "Mostra la cartella delle immagini nel file manager",
+      "quellen": "Fonti delle immagini",
+      "suche_platzhalter": "Volo, aeroporto, data …",
+      "aufnahme": "Scatto: {{kuerzel}} in {{sim}}",
+      "aufnahme_taste_sim": "Scatto: tasto del simulatore in X-Plane",
+      "aufnahme_titel_xplane": "In X-Plane scatta il tasto del simulatore; in MSFS qui c’è il pulsante “Scatta”"
+    },
+    "quellen": {
+      "titel": "Fonti delle immagini",
+      "auf": "Mostra le fonti delle immagini",
+      "zu": "Nascondi le fonti delle immagini",
+      "xplane_gefunden": "X-Plane trovato, osservata: {{pfade}}",
+      "xplane_nicht_beobachtet": "X-Plane trovato, la cartella non è osservata: {{pfade}}",
+      "keine": "Nessuna fonte di immagini configurata.",
+      "hinzufuegen": "Aggiungi cartella",
+      "pruefen": "Controlla cartelle",
+      "pruefen_hinweis": "Cerca altre cartelle con immagini del simulatore",
+      "pausieren": "Pausa",
+      "fortsetzen": "Riprendi",
+      "entfernen": "Rimuovi",
+      "original_entfernen": "Rimuovi l’originale dopo l’importazione",
+      "art": {
+        "standard": "Predefinita di X-Plane, i file vengono spostati",
+        "aufgespuert": "Rilevata, solo copiata, solo con il simulatore in primo piano",
+        "hand": "Scelta da te, solo copiata"
+      },
+      "zustand": {
+        "beobachtet": "osservata",
+        "pausiert": "in pausa",
+        "wird_geprueft": "in verifica",
+        "nicht_vorhanden": "Cartella non trovata",
+        "zugriff_verweigert": "Accesso negato, consenti la cartella nelle impostazioni di sistema"
+      },
+      "vorschlaege": "Cartelle trovate",
+      "keine_vorschlaege": "Nessun’altra cartella trovata.",
+      "uebernehmen": "Usa come fonte",
+      "schon": "già configurata",
+      "fehlt": "La cartella non esiste",
+      "kuerzel": "Scorciatoia per lo scatto",
+      "kuerzel_setzen": "Salva",
+      "kuerzel_fehler": "Scorciatoia non registrata: {{fehler}}",
+      "bestaetigung": "Confermi ogni modifica alle fonti in una finestra del programma."
+    },
+    "altbestand": {
+      "titel": "{{n}} immagini più vecchie trovate",
+      "text": "Restano dove sono. Con l’importazione vengono copiate e, se possibile, assegnate al loro volo. Per alcune non ci sono più dati di volo.",
+      "uebernehmen": "Importa le immagini più vecchie",
+      "ergebnis": "Importate: {{mit}} con dati, {{flug}} solo volo, {{ohne}} senza dati",
+      "laeuft": "Importazione in corso …"
+    },
+    "uebernahme": {
+      "verworfen": "{{n}} file non importati (simulatore non in primo piano o dimensioni non corrispondenti)",
+      "fehler": "Importazione non riuscita: {{fehler}}",
+      "duplikate": "{{n}} duplicati saltati",
+      "arbeitet": "Importazione delle nuove immagini …"
+    },
+    "liste": {
+      "ohne_flug": "Senza volo",
+      "flug_titel": "Volo {{rufzeichen}}",
+      "flug_ohne_name": "Volo",
+      "anzahl": "{{count}} immagini",
+      "platz": "{{platz}}",
+      "suche": "Cerca (volo, luogo, testo)",
+      "suche_label": "Cerca immagini",
+      "filter": {
+        "alle": "Tutte",
+        "favoriten": "Preferite",
+        "gesendet": "Inviate",
+        "offen": "Non ancora inviate",
+        "flug": "Volo",
+        "alle_fluege": "Tutti i voli"
+      },
+      "seite": "Pagina {{seite}} di {{seiten}}",
+      "vor": "Avanti",
+      "zurueck": "Indietro",
+      "bilder_gesamt": "{{count}} immagini"
+    },
+    "kachel": {
+      "auswaehlen": "Seleziona l’immagine {{name}}",
+      "oeffnen": "Apri l’immagine {{name}}",
+      "serie": "Serie di {{n}} immagini",
+      "serie_oeffnen": "Apri serie",
+      "serie_zu": "Chiudi serie",
+      "keine_daten": "Nessun dato di volo",
+      "nur_flug": "Solo volo, nessuna posizione",
+      "favorit": "Preferita",
+      "name": "Immagine del {{zeit}}",
+      "laedt": "in caricamento",
+      "gesendet": "Inviata",
+      "sendet": "Invio in corso",
+      "fehlgeschlagen": "Non inviata",
+      "oeffnen_mit": "Dettagli: {{zeit}} {{phase}}, {{hoehe}}",
+      "auswaehlen_mit": "Seleziona: {{zeit}} {{phase}}",
+      "ohne_flug": "Senza volo"
+    },
+    "status": {
+      "sendet": "Invio in corso …",
+      "angenommen": "Accettata, consegna in corso",
+      "gesendet": "Inviata",
+      "fehlgeschlagen": "Non inviata: {{grund}}.",
+      "erneut": "Riprova"
+    },
+    "detail": {
+      "leer": "Scegli un’immagine per vedere i dettagli.",
+      "titel": "Immagine",
+      "schliessen": "Chiudi i dettagli",
+      "aktionen": {
+        "senden": "Invia a Discord",
+        "ordner": "Mostra nella cartella",
+        "loeschen": "Elimina"
+      },
+      "text": {
+        "label": "Testo per Discord",
+        "platzhalter": "Facoltativo, fino a {{max}} caratteri. Le menzioni non vengono attivate.",
+        "zaehler": "{{n}} di {{max}}"
+      },
+      "favorit": {
+        "an": "Preferita",
+        "aus": "Non preferita"
+      },
+      "flug": {
+        "label": "Volo",
+        "ohne": "Senza volo",
+        "von_hand": "assegnato da te",
+        "aendern": "cambia",
+        "waehlen": "Scegli il volo",
+        "fertig": "Fatto"
+      },
+      "metadaten": "Dati dello scatto",
+      "gesendet_am": "Inviata il {{zeit}}",
+      "leer_wert": "non disponibile",
+      "feld": {
+        "zeit_utc": "Ora (UTC)",
+        "breite": "Latitudine",
+        "laenge": "Longitudine",
+        "hoehe_ft": "Altitudine",
+        "gs_kt": "Velocità",
+        "kurs": "Prua",
+        "flugzeug_titel": "Aeromobile",
+        "flugzeug_icao": "Tipo di aeromobile",
+        "phase": "Fase di volo",
+        "rufzeichen": "Nominativo",
+        "abflug": "Partenza",
+        "ziel": "Destinazione",
+        "simulator": "Simulatore",
+        "naechster_flugplatz": "Nelle vicinanze",
+        "quelle": "Origine dei dati",
+        "position": "Posizione",
+        "flugzeug": "Aeromobile",
+        "flug": "Volo",
+        "datei": "File"
+      },
+      "quelle": {
+        "sim": "Simulatore al momento dello scatto",
+        "protokoll": "Registro di volo",
+        "logbuch": "Logbook (solo volo)",
+        "keine": "nessuna"
+      },
+      "phase": {
+        "preflight": "Preparazione",
+        "boarding": "Imbarco",
+        "pushback": "Pushback",
+        "taxi_out": "Rullaggio in uscita",
+        "takeoff_roll": "Corsa di decollo",
+        "takeoff": "Decollo",
+        "climb": "Salita",
+        "cruise": "Crociera",
+        "holding": "Attesa",
+        "descent": "Discesa",
+        "approach": "Avvicinamento",
+        "final": "Finale",
+        "landing": "Atterraggio",
+        "taxi_in": "Rullaggio in arrivo",
+        "blocks_on": "Blocks on",
+        "arrived": "Arrivato",
+        "pushback_to_gate": "Pushback"
+      },
+      "ausgewaehlt": "selezionata",
+      "nicht_ausgewaehlt": "non selezionata",
+      "karte": {
+        "titel": "Dove è stata scattata",
+        "zeigen": "Mostra sulla mappa",
+        "hinweis": "Traccia di questo volo e posizione dell’immagine, dalla mappa di volo. Un clic apre la mappa in questo punto."
+      },
+      "zusatz": {
+        "msl": "MSL",
+        "ueber_grund": "al suolo"
+      },
+      "leer_hinweis": "Scegli un’immagine per vedere i dettagli."
+    },
+    "karte": {
+      "titel": "Mappa",
+      "karte": "Mappa",
+      "kugel": "Globo",
+      "umschalter": "Visualizzazione della mappa",
+      "oeffnen": "Apri nella mappa",
+      "ohne_position": "Questa immagine non ha una posizione.",
+      "keine_spur": "Traccia di questo volo non disponibile",
+      "laedt": "Caricamento della mappa",
+      "bild_marke": "Immagine {{name}}"
+    },
+    "senden": {
+      "titel": "Invia immagini",
+      "zu": "Chiudi",
+      "anzahl": "{{count}} immagini al canale Discord del GSG",
+      "max": "Al massimo {{max}} immagini per invio",
+      "zu_viele": "Scegli al massimo {{max}} immagini.",
+      "text": {
+        "label": "Il tuo testo (facoltativo)",
+        "platzhalter": "Per esempio: tramonto sulle Alpi",
+        "zaehler": "{{n}} di {{max}}",
+        "hinweis": "I link, per esempio a YouTube, sono consentiti."
+      },
+      "geo": {
+        "titel": "Dati geografici in Discord",
+        "sichtbar": "Visibili",
+        "sichtbar_text": "Ora, luogo, altitudine e prua compaiono in chiaro nel messaggio.",
+        "verdeckt": "Nascosti, da aprire",
+        "verdeckt_text": "Gli stessi dati stanno sotto una barra grigia e compaiono solo al clic.",
+        "aus": "Non inviare",
+        "aus_text": "La posizione non lascia mai il tuo programma. Il messaggio nomina solo te, il volo e il tuo testo.",
+        "ohne_position": "Queste immagini non hanno una posizione, la scelta non ha effetto.",
+        "hinweis": "Vale per tutti gli invii finché non lo cambi qui. Il file dell’immagine va a Discord senza metadati; ciò che scegli qui compare nel testo."
+      },
+      "vorschau": {
+        "titel": "Come apparirà il messaggio",
+        "balken": "Posizione nascosta",
+        "gekuerzt": "Discord accorcia questo messaggio.",
+        "bild": "Immagine {{n}}",
+        "bilder_hinweis": "Le immagini sono allegate al messaggio come file.",
+        "verdeckt": "Dati geografici nascosti · clic per mostrare",
+        "verdeckt_hinweis": "Dietro ci sono, per immagine: ora, posizione, altitudine, prua, aeroporto più vicino. Le menzioni nel testo non vengono attivate.",
+        "sichtbar_hinweis": "Ogni immagine ha nel testo una riga con ora, posizione, altitudine, prua e aeroporto più vicino. Le menzioni nel testo non vengono attivate.",
+        "aus_hinweis": "Non vengono inviati dati di posizione. Le menzioni nel testo non vengono attivate."
+      },
+      "server_offline": "Server non raggiungibile. L’invio attende, nulla va perso.",
+      "senden": "Invia ({{count}})",
+      "abbrechen": "Annulla",
+      "wird_gesendet": "Invio in corso …",
+      "kontingent_zu_wenig": "Quest’ora sono possibili solo {{rest}} immagini.",
+      "titel_n": "Invia {{count}} immagini a Discord",
+      "titel_eins": "Invia 1 immagine a Discord",
+      "kanal": "Canale “Immagini” della German Sky Group",
+      "text_label_n": "Testo per tutte le {{count}} immagini",
+      "text_label_eins": "Testo per l’immagine",
+      "jetzt": "Invia ora",
+      "zeilen": {
+        "groesse": "Dimensione",
+        "groesse_text": "{{count}} immagini, {{groesse}} dopo il ridimensionamento a {{px}} px",
+        "weg": "Percorso",
+        "weg_text": "Questo computer, server GSG (live), Discord. L’accesso a Discord si trova solo sul server.",
+        "fehlschlag": "Se qualcosa fallisce",
+        "fehlschlag_text": "Ogni immagine riceve il proprio esito. Ciò che non è arrivato resta selezionato e mostra il motivo sulla tessera; “Riprova” invia solo ciò che manca, nulla arriva due volte."
+      }
+    },
+    "kontingent": {
+      "rest": "Quest’ora ancora {{rest}} su {{grenze}}",
+      "leer": "Quest’ora niente più immagini, di nuovo possibile fra circa {{minuten}} min.",
+      "unbekannt": "Il limite viene mostrato all’invio"
+    },
+    "leiste": {
+      "ausgewaehlt": "{{count}} selezionate",
+      "senden": "Invia",
+      "aufheben": "Annulla selezione",
+      "sendet": "{{count}} in invio",
+      "gesendet": "{{count}} inviate",
+      "fehlgeschlagen": "{{count}} non inviate, restano selezionate",
+      "unklar": "Consegna incerta, controlla il canale prima di riprovare.",
+      "nicht_erreichbar": "Server non raggiungibile",
+      "exportieren": "Salva come ZIP",
+      "info": "{{groesse}} dopo il ridimensionamento a {{px}} px · al massimo {{max}} per invio",
+      "server_ok": "Server raggiungibile",
+      "papierkorb": "Sposta nel cestino",
+      "senden_n": "Invia {{count}} immagini",
+      "senden_eins": "Invia 1 immagine"
+    },
+    "fehler": {
+      "zu_gross": "File troppo grande",
+      "kontingent": "Limite orario raggiunto",
+      "discord_fehler": "Discord ha rifiutato il messaggio",
+      "discord_unklar": "Consegna incerta, controlla il canale",
+      "ungueltig": "File non leggibile o dati errati",
+      "konflikt": "Questa immagine è già stata inviata nello stesso invio con un contenuto diverso",
+      "nicht_eingerichtet": "Il canale delle immagini non è ancora configurato sul server",
+      "server_nicht_erreichbar": "Server non raggiungibile",
+      "nicht_angemeldet": "Non connesso a live",
+      "server_fehler": "Il server segnala un errore",
+      "datei_fehlt": "File dell’immagine non trovato",
+      "unbekannt": "Errore sconosciuto",
+      "wieder_in": "di nuovo possibile fra circa {{minuten}} min."
+    },
+    "einschalten": {
+      "titel": "Invia immagini a Discord",
+      "text": "Con l’invio compaiono nel canale Discord del GSG il tuo nome da pilota, il volo, l’aeromobile e, se lo consenti, la posizione dell’immagine. Nulla viene inviato automaticamente: scegli tu ogni immagine. Le immagini inviate non si possono ritirare; quelle sbagliate le elimina un moderatore in Discord. Sul server non restano dati delle immagini, solo l’ID del messaggio, così che il tuo messaggio possa essere rimosso anche in Discord se il tuo account viene eliminato.",
+      "hinweis_privat": "Controlla ogni immagine prima dell’invio: altre finestre possono mostrare contenuti privati.",
+      "einschalten": "Attiva l’invio",
+      "spaeter": "Più tardi",
+      "ausschalten": "Disattiva l’invio",
+      "ist_an": "L’invio a Discord è attivo"
+    },
+    "loeschen": {
+      "bezeichnung": "Immagine del {{zeit}}"
+    },
+    "meldung": {
+      "loeschen_fehler": "Eliminazione non possibile: {{fehler}}",
+      "quellen_fehler": "Fonti non salvate: {{fehler}}",
+      "kuerzel_fehler": "Scorciatoia non salvata: {{fehler}}",
+      "hinzugefuegt": "{{n}} immagine/i aggiunta/e",
+      "hinzufuegen_fehler": "Aggiunta non possibile: {{fehler}}",
+      "kein_flug": "Senza un volo AeroACARS non si scatta nulla.",
+      "aufnahme_fehler": "Scatto non possibile: {{fehler}}",
+      "ordner_fehler": "Impossibile aprire la cartella: {{fehler}}",
+      "geladen_fehler": "Impossibile caricare le immagini: {{fehler}}",
+      "schliessen": "Chiudi messaggio",
+      "export_fehler": "Esportazione non possibile: {{fehler}}"
+    },
+    "band": {
+      "aktiv": "Volo attivo",
+      "kein_flug": "Nessun volo attivo",
+      "kein_flug_text": "Le immagini vengono importate solo durante un volo AeroACARS.",
+      "beobachtet": "{{sim}} · la cartella {{pfad}} è osservata",
+      "keine_quelle": "Nessuna fonte di immagini osservata",
+      "taste_xplane": "Il tasto del simulatore mette qui l’immagine",
+      "taste_msfs": "{{kuerzel}} cattura la finestra del simulatore",
+      "neue": "{{count}} nuove immagini in questo volo"
+    },
+    "gruppe": {
+      "heute": "Oggi, {{datum}}",
+      "gestern": "Ieri, {{datum}}",
+      "ohne_flug": "Senza volo · {{datum}}",
+      "ohne_flug_ohne_datum": "Senza volo",
+      "laeuft": "in corso",
+      "gesendet_n": "{{count}} inviate",
+      "zuordnen": "Assegna volo",
+      "herkunft": "Importate da {{ordner}}",
+      "hinzugefuegt": "Aggiunte",
+      "bilder": "{{count}} immagini",
+      "bild_eins": "1 immagine"
+    },
+    "erststart": {
+      "karte1": {
+        "titel": "Raccogli le immagini e condividile su Discord",
+        "text": "AeroACARS archivia i tuoi screenshot per volo, con luogo, altitudine e aeromobile. Nulla lascia questo computer prima che tu lo selezioni.",
+        "punkt1": "Le immagini restano qui e si possono spostare nel cestino in qualsiasi momento.",
+        "punkt2": "Solo le immagini selezionate vanno a Discord, con il tuo nome da pilota e il volo. Se i dati di posizione vanno visibili, nascosti o per niente lo decidi prima di ogni invio.",
+        "punkt3": "L’invio passa dal server GSG. I dati di accesso a Discord non sono sul tuo computer.",
+        "einschalten": "Attiva le immagini",
+        "spaeter": "Più tardi"
+      },
+      "karte2": {
+        "titel": "Come arrivano le immagini",
+        "xplane": "X-Plane · Mac e Windows",
+        "xplane1": "Premi {{taste}} nel simulatore, come al solito.",
+        "xplane2": "AeroACARS vede la nuova immagine nella cartella delle immagini del simulatore e la sposta qui.",
+        "xplane3": "Luogo, altitudine, prua e volo vengono aggiunti dal volo in corso.",
+        "msfs": "MSFS 2020 e 2024 · Windows",
+        "msfs1": "Premi {{taste}}, anche con il simulatore in primo piano.",
+        "msfs2": "AeroACARS cattura la finestra del simulatore e la mette qui.",
+        "msfs3": "Il tasto si può cambiare.",
+        "ziehen": "Oppure trascina qui un’immagine da un’altra cartella. Viene assegnata al volo in corso o archiviata sotto “Senza volo”."
+      },
+      "shift": "Maiusc",
+      "leertaste": "Spazio"
     }
   }
 }

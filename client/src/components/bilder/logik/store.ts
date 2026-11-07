@@ -2,7 +2,9 @@
 // Tab nicht offen ist (`BilderHintergrund` in App.tsx). Die Oberflaeche liest ueber
 // `useBilder()`. Alle Schreibzugriffe aufs Sidecar laufen nacheinander.
 import type { BildAktionen } from "./api";
+import { alsBase64 } from "./bildverarbeitung";
 import { GRENZEN, TABELLE } from "./grenzen";
+import { zipBauen } from "./zip";
 import { fehlerCode, fehlerText } from "./normalisieren";
 import {
   antwortEinarbeiten, aufrufFehler, auswahlNachSenden, offeneIds, sendeStart, sendungIdWaehlen, type Sendestand,
@@ -313,12 +315,38 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     }
   }
 
+  async function ordnerZeigen(e: Eintrag): Promise<void> {
+    try {
+      await api.ordnerZeigen({ gruppe: e.gruppe, id: e.id });
+    } catch (err) {
+      meldung("fehler", "bilder.meldung.ordner_fehler", { fehler: fehlerText(err) });
+    }
+  }
+
+  /** Auswahl als ZIP (JPEG und Sidecar je Bild) an einen vom Piloten gewaehlten Ort speichern. */
+  async function exportieren(ids: string[]): Promise<void> {
+    try {
+      const dateien = [];
+      for (const id of ids) {
+        const e = z.liste?.eintraege.find((x) => x.id === id);
+        if (!e?.pfad) continue;
+        const zeit = e.sidecar?.meta?.zeit_utc?.replace(/[:.]/g, "-") ?? e.id;
+        dateien.push({ name: `${zeit}-${e.id.slice(0, 8)}.jpg`, daten: await api.lesen(e.pfad), zeit_ms: e.dateizeit_ms ?? undefined });
+        dateien.push({ name: `${zeit}-${e.id.slice(0, 8)}.json`, daten: new TextEncoder().encode(JSON.stringify(e.sidecar, null, 2)) });
+      }
+      if (dateien.length === 0) return;
+      await api.exportieren({ zipBase64: alsBase64(zipBauen(dateien)), dateiname: "AeroACARS-Bilder.zip" });
+    } catch (err) {
+      meldung("fehler", "bilder.meldung.export_fehler", { fehler: fehlerText(err) });
+    }
+  }
+
   return {
     lesen: () => z,
     abonnieren: (h: () => void) => { hoerer.add(h); return () => { hoerer.delete(h); }; },
     laden, pilotSetzen, einschalten, geoStufeSetzen, eingang, textSetzen, favoritSetzen, flugSetzen, loeschen, senden, fortsetzen, kontingentHolen,
     quellenFinden, quelleUmschalten, quelleEntfernen, quelleVorschlagen, ordnerWaehlen, tastenkuerzelSetzen, hinzufuegen,
-    altbestandAnzeigen, altbestandUebernehmen, aufnehmen,
+    altbestandAnzeigen, altbestandUebernehmen, aufnehmen, ordnerZeigen, exportieren,
     meldungLoeschen: () => setzen({ meldung: null }),
   };
 }

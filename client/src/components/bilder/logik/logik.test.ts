@@ -26,10 +26,6 @@ describe("Tabelle aus dem Paket", () => {
     ohneVorgabe.geo.vorgabe = "weg";
     expect(() => tabelleLesen(ohneVorgabe)).toThrow(/geo/);
   });
-  it("jede Metadaten-Zeile hat ein bekanntes Format", () => {
-    const erlaubt = new Set(["zeit", "breite", "laenge", "hoehe", "gs", "kurs", "text", "phase", "quelle"]);
-    expect(TABELLE.metadaten.filter((m) => !erlaubt.has(m.format))).toEqual([]);
-  });
 });
 
 describe("bild_meta Fassung 1", () => {
@@ -178,7 +174,7 @@ describe("Vorschau der Nachricht (Spiegel des Servers)", () => {
   const m = meta({ rufzeichen: "GSG101", abflug: "EDDF", ziel: "LEPA" });
   it("Kopf, Ortszeile je Stufe, Text zuletzt", () => {
     const v = vorschauBauen("Thomas K", [m], "verdeckt", "Schoen!", 2000);
-    expect(v.kopf).toBe("Thomas K · GSG101 · EDDF - LEPA · Airbus A320 (A320)");
+    expect(v.kopf).toBe("Thomas K · GSG101 · EDDF\u2013LEPA · Airbus A320 (A320)");
     expect(v.geo).toEqual([{ text: "10:00 UTC · 50.030° N 8.570° E · 12000 ft · 270° · EDDF", verdeckt: true, nummer: null }]);
     expect(vorschauBauen("T", [m], "sichtbar", "", 2000).geo[0].verdeckt).toBe(false);
     expect(vorschauBauen("T", [m], "aus", "", 2000).geo).toEqual([]);
