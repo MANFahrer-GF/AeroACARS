@@ -4,7 +4,7 @@ import { bildMetaBauen, datenStufe } from "./meta";
 import { entscheide, gruppeFuer, massePassen } from "./uebernahmeRegel";
 import { serienBilden } from "./serien";
 import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppieren, platzJeFlug, seitenweise } from "./gruppen";
-import { bereinigen, umschalten } from "./auswahl";
+import { bereinigen, offenNachHaken, umschalten } from "./auswahl";
 import { kontingentAnzeige, reichtKontingent, retrySekunden } from "./kontingent";
 import { infoZeile, sendeMeta, vorschauBauen } from "./nachrichtVorschau";
 import { schonAufDiscord } from "./sendezustand";
@@ -159,6 +159,16 @@ describe("Aufraeumen", () => {
 });
 
 describe("Auswahl und Kontingent", () => {
+  it("rechts steht das zuletzt gewaehlte Bild, am Blatt oeffnet ein Haken nichts", () => {
+    expect(offenNachHaken("a", "b", new Set(["b"]), true)).toBe("b");
+    expect(offenNachHaken(null, "b", new Set(["b"]), true)).toBe("b");
+    expect(offenNachHaken(null, "b", new Set(["b"]), false)).toBe(null);
+    expect(offenNachHaken("a", "b", new Set(["b"]), false)).toBe("b");
+    expect(offenNachHaken("b", "b", new Set(["a", "c"]), true)).toBe("c");
+    expect(offenNachHaken("b", "b", new Set(), true)).toBe("b");
+    expect(offenNachHaken("a", "b", new Set(["c"]), true)).toBe("a");
+  });
+
   it("umschalten und bereinigen", () => {
     let a = umschalten(new Set(), "x");
     a = umschalten(a, "y");

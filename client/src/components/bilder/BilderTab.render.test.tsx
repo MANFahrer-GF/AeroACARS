@@ -105,14 +105,52 @@ describe("Bilder-Tab", () => {
     await waitFor(() => expect(screen.queryByText(/^\d+ ausgewählt$/)).toBeNull());
   });
 
+  it("ein Haken zeigt dieses Bild rechts, Detail und Leiste reden vom selben Bild", async () => {
+    vorbereiten();
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    await waitFor(() => expect(document.querySelector(".bt-detail__zusatz")?.textContent).toBe("nicht ausgewählt"));
+    const frei = boxen.findIndex((_, i) => screen.getAllByRole("button", { name: /Details:/ })[i].getAttribute("aria-pressed") !== "true");
+    await userEvent.click(boxen[frei]);
+    await waitFor(() => expect(document.querySelector(".bt-detail__zusatz")?.textContent).toBe("ausgewählt"));
+    expect(screen.getAllByRole("button", { name: /Details:/ })[frei].getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("am Blatt ueber der Liste oeffnet ein Haken nichts, damit die naechsten Kacheln frei bleiben", async () => {
+    vorbereiten();
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    await userEvent.click(boxen[0]);
+    await userEvent.click(boxen[1]);
+    expect(await screen.findByText("2 ausgewählt")).toBeInTheDocument();
+    expect(document.querySelector(".bt-detail__zusatz")).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("Abbrechen nach „Senden“ in der Detailspalte laesst keinen Haken zurueck, die Leiste behaelt ihre Auswahl", async () => {
+    vorbereiten();
+    zeigen();
+    await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    await userEvent.click(within(document.querySelector(".bt-detail") as HTMLElement).getByRole("button", { name: /senden/i }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Abbrechen" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByText("1 ausgewählt")).toBeNull();
+    await userEvent.click((await screen.findAllByRole("checkbox", { name: /Auswählen/ }))[0]);
+    await userEvent.click(screen.getByRole("button", { name: "1 Bild senden" }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Abbrechen" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("1 ausgewählt")).toBeInTheDocument();
+  });
+
   it("die Leiste sendet die AUSWAHL, auch wenn ein anderes Bild in der Detailspalte offen ist", async () => {
     vorbereiten();
     h.senden = (a) => ({ bilder: (a.bilder as Array<{ bild_id: string }>).map((b) => ({ bild_id: b.bild_id, status: "gesendet" })), kontingent: null });
     zeigen();
     const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
-    const offen = screen.getAllByRole("button", { name: /Details:/ }).find((b) => b.getAttribute("aria-pressed") === "true");
-    expect(offen).toBeTruthy();
-    for (const b of [boxen[0], boxen[2]]) await userEvent.click(b); // das offene Bild (neuestes im Flug) ist NICHT dabei
+    for (const b of [boxen[0], boxen[2]]) await userEvent.click(b);
+    await userEvent.click(screen.getAllByRole("button", { name: /Details:/ })[1]); // ein Bild ohne Haken ansehen
+    expect(document.querySelector(".bt-detail__zusatz")?.textContent).toBe("nicht ausgewählt");
     await userEvent.click(screen.getByRole("button", { name: "2 Bilder senden" }));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Jetzt senden" }));
     await waitFor(() => expect(h.aufrufe.some((a) => a.cmd === "bild_senden")).toBe(true));

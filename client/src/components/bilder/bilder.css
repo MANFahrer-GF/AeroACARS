@@ -136,7 +136,8 @@ button.bt-chip:hover { color: var(--text); }
   aspect-ratio: 16 / 10;
 }
 .bt-kachel[data-gewaehlt="an"] { outline: 2px solid var(--acc); outline-offset: 0; border-color: var(--acc); }
-.bt-kachel[data-offen="an"]:not([data-gewaehlt="an"]) { border-color: var(--text-dim); }
+.bt-kachel[data-offen="an"]:not([data-gewaehlt="an"]) { outline: 2px solid var(--text-dim); outline-offset: 0; border-color: var(--text-dim); }
+.bt-kachel[data-offen="an"][data-gewaehlt="an"] { box-shadow: 0 0 0 4px var(--text-dim); }
 .bt-kachel img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .bt-kachel__laedt { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-dim); font-size: var(--fs-200); background: var(--surface-3); }
 .bt-kachel__oeffnen { position: absolute; inset: 0; background: none; border: 0; padding: 0; cursor: pointer; color: transparent; font-size: 0; }
@@ -208,7 +209,7 @@ button.bt-chip:hover { color: var(--text); }
 .bt-detail__zu { display: none; align-self: flex-end; }
 .bt-detail__bild { position: relative; border-radius: var(--r-lg); overflow: hidden; border: 1px solid var(--line); aspect-ratio: 16 / 10; background: var(--surface-3); flex: none; }
 .bt-detail__bild img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.bt-detail__stern { position: absolute; top: 8px; right: 8px; width: 36px; height: 36px; border: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 13, 16, 0.72); color: #e9eff5; cursor: pointer; }
+.bt-detail__stern { position: absolute; top: 8px; right: 8px; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 13, 16, 0.72); color: #e9eff5; cursor: pointer; }
 .bt-detail__stern svg { width: 18px; height: 18px; }
 .bt-detail__stern[data-an="an"] { color: var(--sem-warn); }
 .bt-detail__stern[data-an="an"] svg { fill: currentColor; }
