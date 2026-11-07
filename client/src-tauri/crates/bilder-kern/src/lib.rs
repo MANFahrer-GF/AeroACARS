@@ -19,6 +19,7 @@
 //! * [`suche`]       reine Teile des Aufspuerens von Bildquellen
 //! * [`png`]         PNG-Kodierung der Fensteraufnahme
 //! * [`tastenkuerzel`] Tastenkuerzel-Text lesen
+//! * [`xplane_taste`] die wirkliche Screenshot-Taste von X-Plane (nur lesend)
 //! * [`plattform`]   Windows-Teile (Known Folder, Registry, Vordergrund,
 //!   Fensteraufnahme, Hotkey); auf anderen Systemen Ersatz ohne Wirkung
 
@@ -37,5 +38,6 @@ pub mod speicher;
 pub mod suche;
 pub mod tastenkuerzel;
 pub mod verdeckung;
+pub mod xplane_taste;
 
 pub use fehler::Fehler;

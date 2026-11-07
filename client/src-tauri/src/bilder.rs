@@ -41,7 +41,12 @@
 //! Argumente: oberste Ebene camelCase, Felder verschachtelter Objekte snake_case.
 //!
 //! lesen
-//! * `bilder_liste({mitAltbestand?})` -> `{eintraege, belegt_bytes, funde, quellen, tastenkuerzel, aufnahme_verfuegbar, altbestand?}`;
+//! * `bilder_liste({mitAltbestand?})` -> `{eintraege, belegt_bytes, funde, quellen, tastenkuerzel, aufnahme_verfuegbar, simulator_taste, altbestand?}`;
+//!   `simulator_taste` ist `{simulator: "xplane", text} | null`: die wirkliche Screenshot-Taste von X-Plane
+//!   (`text` z. B. `Shift+Space`, mehrere Belegungen mit ` / `), gelesen aus
+//!   `Output/preferences/control profiles/User Profile - Keys.prf` (Vorrang) bzw. `X-Plane Keys.prf` der ersten
+//!   erkannten Installation mit lesbarer Belegung; `null` bei fehlender Datei, fremdem Format oder ohne X-Plane,
+//!   nie ein Fehler, nie geraten. Der Tab zeigt sie statt einer festen Taste.
 //!   `quellen[]` tragen `art` (`standard`, `aufgespuert`, `hand`, sonst frei) und `wird_geprueft`
 //! * `bild_lesen({pfad})` -> ArrayBuffer (`pfad` relativ aus der Liste)
 //! * `bild_quellen_finden()` -> `[{pfad, art, simulator, existiert, vorschlag_modus}]`
@@ -256,6 +261,7 @@ pub(crate) fn bilder_liste(app: AppHandle, mit_altbestand: Option<bool>) -> Resu
         "quellen": a.status,
         "tastenkuerzel": tastenkuerzel_stand(&einst),
         "aufnahme_verfuegbar": plattform::AUFNAHME_VERFUEGBAR,
+        "simulator_taste": simulator_taste(),
     });
     if mit_altbestand == Some(true) {
         v["altbestand"] = json!(a.alt);
@@ -274,14 +280,28 @@ pub(crate) fn bild_lesen(app: AppHandle, pfad: String) -> Result<tauri::ipc::Res
 /// Windows: Game Bar, Bilder-Ordner (mit OneDrive), Steam, NVIDIA. X-Plane:
 /// `Output/screenshots` jeder erkannten Installation (Mac und Windows). Ohne
 /// Treffer eine leere Liste, nie ein Fehler.
-#[tauri::command(async)]
-pub(crate) fn bild_quellen_finden() -> Vec<Fundort> {
+fn xplane_installationen() -> Vec<PathBuf> {
     let mut installs: Vec<PathBuf> = sim_xplane::szenerie::installationen();
     if let Some(p) = crate::xplane_plugin_install::detect_install_path() {
         if !installs.contains(&p) {
             installs.push(p);
         }
     }
+    installs
+}
+
+/// Die wirkliche Screenshot-Taste der ersten erkannten X-Plane-Installation, die
+/// eine lesbare Belegung traegt (`xplane_taste`); sonst `null`, nie ein Fehler.
+fn simulator_taste() -> Value {
+    xplane_installationen()
+        .iter()
+        .find_map(|i| bilder_kern::xplane_taste::screenshot_taste(i))
+        .map_or(Value::Null, |text| json!({ "simulator": "xplane", "text": text }))
+}
+
+#[tauri::command(async)]
+pub(crate) fn bild_quellen_finden() -> Vec<Fundort> {
+    let installs = xplane_installationen();
     let mut v = suche::xplane_fundorte(&installs);
     for f in plattform::windows_fundorte() {
         if !v.iter().any(|g| g.pfad == f.pfad) {
