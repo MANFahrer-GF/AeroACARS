@@ -870,6 +870,7 @@ fn quellen_setzen_intern(
 /// Ordnerdialog des Systems; `None`, wenn der Pilot abbricht.
 async fn ordner_dialog(app: &AppHandle) -> Result<Option<PathBuf>, UiError> {
     use tauri_plugin_dialog::DialogExt;
+    let _verborgen = crate::huelle::fuer_systemdialog(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().pick_folder(move |p| {
         let _ = tx.send(p);
@@ -915,6 +916,7 @@ fn hinzufuegen_ergebnis(wurzel: &std::path::Path, pfade: &[String], gruppe: &str
 /// Dateiauswahl des Systems (JPG, PNG); `None`, wenn der Pilot abbricht.
 async fn dateien_dialog(app: &AppHandle) -> Result<Option<Vec<String>>, UiError> {
     use tauri_plugin_dialog::DialogExt;
+    let _verborgen = crate::huelle::fuer_systemdialog(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().add_filter("JPG, PNG", &["jpg", "jpeg", "png"]).pick_files(move |p| {
         let _ = tx.send(p);
@@ -936,6 +938,7 @@ pub(crate) async fn bild_export(app: AppHandle, zip_base64: String, dateiname: S
     let bytes = b64(&zip_base64, "zip_base64")?;
     let vorschlag: String = dateiname.chars().filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ' ')).collect();
     let vorschlag = if vorschlag.trim().is_empty() { "AeroACARS-Bilder.zip".to_string() } else { vorschlag };
+    let _verborgen = crate::huelle::fuer_systemdialog(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().add_filter("ZIP", &["zip"]).set_file_name(vorschlag).save_file(move |p| {
         let _ = tx.send(p);
