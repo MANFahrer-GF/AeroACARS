@@ -162,14 +162,14 @@ export function kontextLesen(roh: unknown): Kontext {
         .filter((p): p is [number, number] => p !== null)
     : null;
   const fluege = Array.isArray(r.fluege) ? r.fluege.map(flugLesen).filter((f): f is FlugEintrag => f !== null) : undefined;
-  return { staende: staende.map(standLesen), spur, ...(fluege ? { fluege } : {}) };
+  return { staende: staende.map(standLesen), spur, ...(fluege ? { fluege, fluegeGekuerzt: r.fluege_gekuerzt === true } : {}) };
 }
 
 function flugLesen(roh: unknown): FlugEintrag | null {
   const r = obj(roh);
   const pirep_id = text(r.pirep_id);
   return pirep_id === null ? null : {
-    pirep_id, rufzeichen: text(r.rufzeichen), abflug: text(r.abflug), ziel: text(r.ziel), flugzeug_icao: text(r.flugzeug_icao), start_ms: zahl(r.start_ms), ende_ms: zahl(r.ende_ms),
+    pirep_id, rufzeichen: text(r.rufzeichen), flugnummer: text(r.flugnummer), abflug: text(r.abflug), ziel: text(r.ziel), flugzeug_icao: text(r.flugzeug_icao), start_ms: zahl(r.start_ms), ende_ms: zahl(r.ende_ms),
   };
 }
 

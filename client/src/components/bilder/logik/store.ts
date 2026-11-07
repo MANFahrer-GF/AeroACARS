@@ -35,6 +35,9 @@ export function hinzufuegenMeldung(z: Zaehlung): { art: "ok" | "fehler"; schlues
 /** Diese Fehler sagen: Der Server antwortet nicht. Nicht angemeldet oder ein Serverfehler heissen das nicht. */
 const nichtErreichbar = (code: string) => code === "live_nicht_erreichbar" || code === "live_antwort_fehlt";
 
+/** Erreichbarkeit nach einem Fehler: Ein anderer Fehler heisst, der Server hat geantwortet. */
+const erreichbarNach = (code: string, bisher: boolean | null): boolean | null => (nichtErreichbar(code) ? false : bisher === false ? true : bisher);
+
 export interface BilderZustand {
   geladen: boolean;
   liste: BilderListe | null;
@@ -170,11 +173,12 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   const favoritSetzen = (e: Eintrag, favorit: boolean) => sidecarAendern(e, (s) => ({ ...s, favorit }));
 
   /** Die Fluege, denen sich ein Bild dieser Zeit zuordnen laesst; der naechste steht vorn. */
-  async function flugKandidaten(zeit: string | null): Promise<FlugEintrag[]> {
+  async function flugKandidaten(zeit: string | null): Promise<{ fluege: FlugEintrag[]; gekuerzt: boolean }> {
     try {
-      return (await api.kontext({ zeiten: zeit ? [zeit] : [], fluege: true })).fluege ?? [];
+      const k = await api.kontext({ zeiten: zeit ? [zeit] : [], fluege: true });
+      return { fluege: k.fluege ?? [], gekuerzt: k.fluegeGekuerzt === true };
     } catch {
-      return [];
+      return { fluege: [], gekuerzt: true }; // Die Liste fehlt: Der Tab sagt es, statt still weniger anzubieten
     }
   }
 
@@ -183,6 +187,8 @@ export function erzeugeStore(dep: StoreAbhaengig) {
    * „Ohne Flug“ laesst nichts vom alten Flug stehen, auch nicht die Position im JPEG.
    */
   async function flugSetzen(e: Eintrag, f: FlugAuswahl): Promise<void> {
+    // Derselbe Flug noch einmal: nichts zu aendern, die Daten zur Aufnahmezeit bleiben (sie sind reicher als jedes Protokoll).
+    if (f.pirep_id && e.sidecar?.meta?.pirep_id === f.pirep_id) return;
     const zeit = e.sidecar?.meta?.zeit_utc ?? isoVonMs(e.dateizeit_ms);
     let basis: MetaBasis = {};
     let quelle: MetaQuelle = f.pirep_id ? "logbuch" : "keine";
@@ -193,6 +199,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
         if (s?.basis.pirep_id === f.pirep_id) { basis = s.basis; quelle = s.quelle; }
       } catch { /* ohne Protokoll zaehlt der gewaehlte Flug allein */ }
     }
+
     const meta = bildMetaBauen({
       ...basis, zeit_utc: zeit, pirep_id: f.pirep_id, rufzeichen: f.rufzeichen ?? basis.rufzeichen, abflug: f.abflug ?? basis.abflug, ziel: f.ziel ?? basis.ziel,
       flugzeug_icao: basis.flugzeug_icao ?? f.flugzeug_icao,
@@ -273,7 +280,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       } else {
         const details = (err as { details?: { retry_after?: unknown } })?.details;
         stand = aufrufFehler(stand, idListe, sendungId, code, details?.retry_after);
-        setzen({ sendestand: stand, serverErreichbar: nichtErreichbar(code) ? false : z.serverErreichbar });
+        setzen({ sendestand: stand, serverErreichbar: erreichbarNach(code, z.serverErreichbar) });
       }
     }
     await vermerkeSchreiben(idListe, sendungId, stufe, stand);
@@ -304,7 +311,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
         await vermerkeSchreiben(ids, sendungId, null, statusEinarbeiten(ids, sendungId, a));
       } catch (e) {
         // Ein Aussetzer beendet das Nachfragen nicht; was offen bleibt, fragt der naechste Start nach.
-        if (nichtErreichbar(fehlerCode(e))) setzen({ serverErreichbar: false });
+        setzen({ serverErreichbar: erreichbarNach(fehlerCode(e), z.serverErreichbar) });
       }
     }
   }
@@ -322,7 +329,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
         await vermerkeSchreiben(ids, sendungId, null, statusEinarbeiten(ids, sendungId, a));
         void nachfragen(sendungId);
       } catch (e) { /* kein Netz: bleibt „unterwegs“, naechster Start fragt wieder */
-        if (nichtErreichbar(fehlerCode(e))) setzen({ serverErreichbar: false });
+        setzen({ serverErreichbar: erreichbarNach(fehlerCode(e), z.serverErreichbar) });
       }
     }
   }
@@ -332,7 +339,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       const a = await api.status();
       setzen({ kontingent: a.kontingent ?? z.kontingent, serverErreichbar: true });
     } catch (e) { /* ohne Verbindung bleibt das Kontingent unbekannt */
-      if (nichtErreichbar(fehlerCode(e))) setzen({ serverErreichbar: false });
+      setzen({ serverErreichbar: erreichbarNach(fehlerCode(e), z.serverErreichbar) });
     }
   }
 

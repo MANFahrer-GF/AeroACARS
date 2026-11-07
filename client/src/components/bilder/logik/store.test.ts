@@ -277,6 +277,16 @@ describe("Store: Flug zuordnen", () => {
     expect(t.geschrieben.pop()!.jpegBase64).toBeUndefined();
   });
 
+  it("derselbe Flug noch einmal: die Daten zur Aufnahmezeit bleiben, nichts wird geschrieben", async () => {
+    let gefragt = false;
+    const t = aufbau({ kontext: async () => { gefragt = true; return { staende: [], spur: null }; } });
+    await t.store.laden();
+    const n = t.geschrieben.length;
+    await t.store.flugSetzen(t.store.lesen().liste!.eintraege[0], { pirep_id: "P1", rufzeichen: null, abflug: null, ziel: null });
+    expect(t.geschrieben.length).toBe(n);
+    expect(gefragt).toBe(false);
+    expect(t.store.lesen().liste!.eintraege[0].sidecar!.meta).toMatchObject({ hoehe_ft: 12000, phase: "cruise", quelle: "sim" });
+  });
   it("gleiche Position: das JPEG wird nicht neu geschrieben", async () => {
     const t = aufbau({ kontext: async () => ({ staende: [{ zeit: null, quelle: "protokoll", basis: { pirep_id: "P2", breite: 50.03, laenge: 8.57 } }], spur: null }) });
     await t.store.laden();
@@ -286,11 +296,13 @@ describe("Store: Flug zuordnen", () => {
 
   it("Kandidaten kommen mit der Bildzeit, ohne Antwort bleibt die Liste leer statt zu scheitern", async () => {
     let frage: unknown;
-    const t = aufbau({ kontext: async (a) => { frage = a; return { staende: [], spur: null, fluege: [{ pirep_id: "P9", rufzeichen: null, abflug: null, ziel: null, flugzeug_icao: null, start_ms: 1, ende_ms: 2 }] }; } });
-    expect((await t.store.flugKandidaten("2026-11-07T10:00:00Z")).map((f) => f.pirep_id)).toEqual(["P9"]);
+    const t = aufbau({ kontext: async (a) => { frage = a; return { staende: [], spur: null, fluege: [{ pirep_id: "P9", rufzeichen: null, flugnummer: null, abflug: null, ziel: null, flugzeug_icao: null, start_ms: 1, ende_ms: 2 }] }; } });
+    const k = await t.store.flugKandidaten("2026-11-07T10:00:00Z");
+    expect(k.fluege.map((f) => f.pirep_id)).toEqual(["P9"]);
+    expect(k.gekuerzt).toBe(false);
     expect(frage).toEqual({ zeiten: ["2026-11-07T10:00:00Z"], fluege: true });
     const aus = aufbau({ kontext: async () => { throw new Error("offline"); } });
-    expect(await aus.store.flugKandidaten(null)).toEqual([]);
+    expect(await aus.store.flugKandidaten(null)).toEqual({ fluege: [], gekuerzt: true });
   });
 });
 
@@ -301,8 +313,8 @@ describe("Store: Export", () => {
     (t.api as unknown as { exportieren: BildAktionen["exportieren"] }).exportieren = async (a) => { zip = Uint8Array.from(atob(a.zipBase64), (c) => c.charCodeAt(0)); return null; };
     await t.store.laden();
     await t.store.exportieren(["a"]);
-    const text = new TextDecoder("latin1").decode(zip);
-    expect(text).toContain("Exif");
+    const soi = zip.findIndex((b, i) => b === 0xff && zip[i + 1] === 0xd8);
+    expect(exifGpsLesen(zip.subarray(soi))).toMatchObject({ breite: expect.closeTo(50.03, 4), laenge: expect.closeTo(8.57, 4) });
   });
 });
 
@@ -356,6 +368,15 @@ describe("Store: Erreichbarkeit", () => {
     await t.store.kontingentHolen();
     expect(t.store.lesen().serverErreichbar).toBe(false);
     aus = false;
+    await t.store.kontingentHolen();
+    expect(t.store.lesen().serverErreichbar).toBe(true);
+  });
+  it("antwortet der Server nach dem Ausfall mit einem anderen Fehler, ist er wieder erreichbar", async () => {
+    let code = "live_nicht_erreichbar";
+    const t = aufbau({ status: async () => { throw { code, message: "x" }; } });
+    await t.store.kontingentHolen();
+    expect(t.store.lesen().serverErreichbar).toBe(false);
+    code = "live_nicht_angemeldet";
     await t.store.kontingentHolen();
     expect(t.store.lesen().serverErreichbar).toBe(true);
   });

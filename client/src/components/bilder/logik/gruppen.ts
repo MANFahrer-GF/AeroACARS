@@ -120,7 +120,10 @@ export function flugOptionenBauen(
     o.set(aktiv.pirep_id, { pirep_id: aktiv.pirep_id, rufzeichen: aktiv.callsign, abflug: aktiv.dpt, ziel: aktiv.arr, flugzeug_icao: null, label: `${aktiv.callsign} ${aktiv.dpt}–${aktiv.arr} (${laeuft})` });
   }
   for (const f of fluege) {
-    if (!o.has(f.pirep_id)) o.set(f.pirep_id, { ...f, label: name(f.start_ms ?? f.ende_ms, f) || f.pirep_id });
+    if (!o.has(f.pirep_id)) {
+      const anzeige = { ...f, rufzeichen: f.rufzeichen ?? f.flugnummer };
+      o.set(f.pirep_id, { pirep_id: f.pirep_id, rufzeichen: f.rufzeichen, abflug: f.abflug, ziel: f.ziel, flugzeug_icao: f.flugzeug_icao, label: name(f.start_ms ?? f.ende_ms, anzeige) || f.pirep_id });
+    }
   }
   for (const g of gruppen) {
     if (g.schluessel === "" || o.has(g.schluessel)) continue;

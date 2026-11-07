@@ -164,7 +164,10 @@ export interface KontextStand {
 /** Flug fuer die Zuordnung von Hand (`bild_kontext` mit `fluege`), aus Protokoll und Logbuch. */
 export interface FlugEintrag {
   pirep_id: string;
+  /** Nur aus dem Flugprotokoll; das Logbuch kennt kein Rufzeichen. */
   rufzeichen: string | null;
+  /** Flugnummer aus phpVMS, nur fuer die Anzeige. */
+  flugnummer: string | null;
   abflug: string | null;
   ziel: string | null;
   flugzeug_icao: string | null;
@@ -176,6 +179,8 @@ export interface Kontext {
   staende: KontextStand[];
   spur: Array<[number, number]> | null;
   fluege?: FlugEintrag[];
+  /** Es koennen Fluege fehlen (Logbuch nicht erreicht oder Liste gekuerzt). */
+  fluegeGekuerzt?: boolean;
 }
 
 /** Antwort des Servers je Bild (P-7.25). */

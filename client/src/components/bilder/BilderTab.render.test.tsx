@@ -32,7 +32,7 @@ vi.mock("../../lib/ipc", () => ({
       case "bild_lesen": return new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0, 2, 0xff, 0xd9]);
       case "bild_senden": return h.senden ? h.senden(args!) : { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
       case "bild_status": return h.status ? h.status() : { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
-      case "bild_kontext": return { staende: [], spur: [], fluege: h.fluege };
+      case "bild_kontext": return { staende: [], spur: [], fluege: h.fluege, fluege_gekuerzt: true };
       case "bild_schreiben": return undefined;
       case "bild_taste_lernen": return h.lerne;
       case "bild_quellen_setzen": return { quellen: [], abgebrochen: false };
@@ -190,12 +190,13 @@ describe("Bilder-Tab", () => {
 
   it("Flug aendern bietet einen frueheren Flug ohne Galeriebild an und schreibt seine Daten", async () => {
     vorbereiten();
-    h.fluege = [{ pirep_id: "ALT7", rufzeichen: "GSG700", abflug: "LOWI", ziel: "EDDM", flugzeug_icao: "A320", start_ms: Date.UTC(2026, 9, 2), ende_ms: null }];
+    h.fluege = [{ pirep_id: "ALT7", rufzeichen: "GSG700", flugnummer: "700", abflug: "LOWI", ziel: "EDDM", flugzeug_icao: "A320", start_ms: Date.UTC(2026, 9, 2), ende_ms: null }];
     zeigen(false);
     await userEvent.click(await screen.findByRole("button", { name: "Flug zuordnen" }));
     const d = within(await screen.findByRole("dialog"));
     const wahl = d.getByRole("combobox");
     await within(wahl).findByRole("option", { name: /GSG700 LOWI–EDDM/ });
+    expect(d.getByText(/Ältere Flüge fehlen vielleicht/)).toBeInTheDocument();
     expect(h.aufrufe.find((a) => a.cmd === "bild_kontext" && a.args?.fluege)?.args).toMatchObject({ fluege: true, zeiten: ["2026-11-03T10:02:00.000Z"] });
     await userEvent.selectOptions(wahl, "ALT7");
     await userEvent.click(d.getByRole("button", { name: "Fertig" }));

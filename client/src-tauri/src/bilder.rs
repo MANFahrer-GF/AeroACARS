@@ -341,23 +341,27 @@ fn sha_behalten(neu: &mut Value, alt: Option<&Value>) {
     }
 }
 
-pub(crate) fn sidecar_vom_tablet(app: AppHandle, gruppe: String, id: String, mut sidecar: Value) -> Result<speicher::Eintrag, UiError> {
-    let alt = speicher::eintrag(&wurzel(&app)?, &gruppe, &id).map_err(fehler)?;
+pub(crate) fn sidecar_vom_tablet(app: AppHandle, gruppe: String, id: String, sidecar: Value) -> Result<speicher::Eintrag, UiError> {
+    tablet_sidecar_schreiben(&wurzel(&app)?, gruppe, id, sidecar)
+}
+
+fn tablet_sidecar_schreiben(wurzel: &std::path::Path, gruppe: String, id: String, mut sidecar: Value) -> Result<speicher::Eintrag, UiError> {
+    let alt = speicher::eintrag(wurzel, &gruppe, &id).map_err(fehler)?;
     let exif_veraltet = position_geaendert(alt.sidecar.as_ref(), &sidecar);
     sha_behalten(&mut sidecar, alt.sidecar.as_ref());
     // Das Tablet legt keine Bytes ab: Nach einem Flugwechsel faellt die alte Position aus dem JPEG, statt falsch stehen zu bleiben.
-    let wurzel = wurzel(&app)?;
     let jpeg = if exif_veraltet && alt.pfad.is_some() {
-        Some(speicher::jpeg_ohne_exif(&wurzel, &gruppe, &id).map_err(fehler)?)
+        Some(speicher::jpeg_ohne_exif(wurzel, &gruppe, &id).map_err(fehler)?)
     } else {
         None
     };
-    speicher::schreiben(&wurzel, SchreibAnfrage { gruppe, id, jpeg, vorschau: None, sidecar: Some(sidecar), quelle_entfernen: false, sha256: None }).map_err(fehler)
+    speicher::schreiben(wurzel, SchreibAnfrage { gruppe, id, jpeg, vorschau: None, sidecar: Some(sidecar), quelle_entfernen: false, sha256: None }).map_err(fehler)
 }
 
 fn position_geaendert(alt: Option<&Value>, neu: &Value) -> bool {
     let ort = |s: &Value| (s["meta"]["breite"].clone(), s["meta"]["laenge"].clone());
-    alt.is_some_and(|a| ort(a) != ort(neu))
+    // Ein Sidecar ohne Metadaten sagt nichts ueber die Position: das JPEG bleibt unberuehrt.
+    neu["meta"].is_object() && alt.is_some_and(|a| ort(a) != ort(neu))
 }
 
 pub(crate) fn bild_bytes(app: &AppHandle, pfad: &str) -> Result<Vec<u8>, UiError> {
@@ -767,9 +771,10 @@ pub(crate) async fn bild_kontext(
     // Die Flugliste reicht einen Monat hinter die Bildzeit zurueck: Die Dateizeit eines Bildes kann spaeter liegen als der Flug.
     let bezug = ms.first().copied().unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
     let frueh = offen.iter().copied().chain(mit_fluegen.then_some(bezug - 30 * 86_400_000)).min();
-    let pireps = match (&client, frueh) {
-        (Some(c), Some(frueh)) => logbuch_pireps(c, frueh).await,
-        _ => Vec::new(),
+    let (pireps, logbuch_ganz) = match (&client, frueh) {
+        (Some(c), Some(frueh)) => logbuch_pireps(c, frueh, if mit_fluegen { 60 } else { 15 }).await,
+        (None, Some(_)) => (Vec::new(), false),
+        _ => (Vec::new(), true),
     };
     let staende: Vec<Value> = zeiten
         .iter()
@@ -797,21 +802,23 @@ pub(crate) async fn bild_kontext(
     let spur = aktiv_spur.map(|s| kontext::ausduennen(s, kontext::MAX_SPUR)).or(spur_datei).unwrap_or_default();
     let mut antwort = json!({"staende": staende, "spur": spur});
     if mit_fluegen {
-        let liste = kontext::fluege_ordnen(protokoll_fluege, &pireps, ms.first().copied());
+        let (liste, gekuerzt) = kontext::fluege_ordnen(protokoll_fluege, &pireps, ms.first().copied());
         antwort["fluege"] = liste.iter().map(kontext::FlugEintrag::als_json).collect();
+        // Die Oberflaeche sagt, wenn Fluege fehlen koennen: Logbuch nicht erreicht, Notbremse beim Blaettern, Liste gekuerzt.
+        antwort["fluege_gekuerzt"] = json!(gekuerzt || !logbuch_ganz);
     }
     Ok(antwort)
 }
 
 /// Die PIREPs des Piloten bei phpVMS, seitenweise zurueck, bis die fruehste gefragte
-/// Zeit abgedeckt ist (hoechstens 15 Seiten). Fehler beenden das Blaettern still:
-/// es bleibt bei `keine`, nichts wird geraten.
-async fn logbuch_pireps(client: &api_client::Client, fruehestens_ms: i64) -> Vec<PirepKurz> {
+/// Zeit abgedeckt ist (hoechstens `max_seiten`). Fehler beenden das Blaettern: es bleibt
+/// bei `keine`, nichts wird geraten. Zweiter Wert: Ist die Zeit wirklich abgedeckt?
+async fn logbuch_pireps(client: &api_client::Client, fruehestens_ms: i64, max_seiten: u32) -> (Vec<PirepKurz>, bool) {
     let mut alle = Vec::new();
-    for seite in 1..=15u32 {
-        let Ok(v) = client.get_user_pireps_seite(seite).await else { break };
+    for seite in 1..=max_seiten {
+        let Ok(v) = client.get_user_pireps_seite(seite).await else { return (alle, false) };
         if v.is_empty() {
-            break;
+            return (alle, true);
         }
         let aelteste = v.iter().filter_map(|p| p.created_at.as_deref().and_then(kontext::zeit_ms)).min();
         let letzte_seite = v.len() < 20;
@@ -826,10 +833,10 @@ async fn logbuch_pireps(client: &api_client::Client, fruehestens_ms: i64) -> Vec
         }));
         // 2 Tage Puffer: der PIREP wird vor dem Block-off angelegt
         if letzte_seite || aelteste.is_some_and(|a| a < fruehestens_ms - 2 * 86_400_000) {
-            break;
+            return (alle, true);
         }
     }
-    alle
+    (alle, false)
 }
 
 /// Markiert das JPEG eines Bildes im Dateimanager des Systems (Finder „Im Finder
@@ -1203,6 +1210,25 @@ mod tests {
         assert!(position_geaendert(Some(&mit(50.0)), &mit(51.0)));
         assert!(position_geaendert(Some(&mit(50.0)), &json!({"meta": {"breite": null, "laenge": null}})), "Ohne Flug: Position weg");
         assert!(!position_geaendert(None, &mit(50.0)));
+        assert!(!position_geaendert(Some(&mit(50.0)), &json!({"text": "ohne meta"})), "ohne Metadaten bleibt das JPEG");
+    }
+
+    #[test]
+    fn tablet_flugwechsel_nimmt_die_position_aus_dem_jpeg_sonst_bleibt_es_gleich() {
+        let t = tempfile::tempdir().unwrap();
+        let w = t.path().join("bilder");
+        let mut mit = vec![0xFF, 0xD8, 0xFF, 0xE1, 0, 8];
+        mit.extend_from_slice(b"Exif\0\0");
+        mit.extend_from_slice(&[0xFF, 0xDA, 0, 2, 0xFF, 0xD9]);
+        let sc = |la: Value| json!({"bild_id": "b1", "sha256": "h", "meta": {"breite": la, "laenge": 8.0}});
+        speicher::schreiben(&w, SchreibAnfrage { gruppe: "g".into(), id: "b1".into(), jpeg: Some(mit.clone()), vorschau: None, sidecar: Some(sc(json!(50.0))), quelle_entfernen: false, sha256: None }).unwrap();
+        let jpeg = || std::fs::read(w.join("g/b1.jpg")).unwrap();
+        tablet_sidecar_schreiben(&w, "g".into(), "b1".into(), json!({"bild_id": "b1", "text": "neu", "meta": {"breite": 50.0, "laenge": 8.0}})).unwrap();
+        assert_eq!(jpeg(), mit, "gleiche Position: JPEG unveraendert");
+        tablet_sidecar_schreiben(&w, "g".into(), "b1".into(), sc(Value::Null)).unwrap();
+        assert_eq!(jpeg(), [0xFF, 0xD8, 0xFF, 0xDA, 0, 2, 0xFF, 0xD9], "Ohne Flug: keine Position mehr im JPEG");
+        let neu: Value = serde_json::from_slice(&std::fs::read(w.join("g/b1.json")).unwrap()).unwrap();
+        assert_eq!(neu["sha256"], "h", "der Hash bleibt");
     }
 
     #[test]

@@ -253,7 +253,10 @@ pub const MAX_FLUEGE: usize = 100;
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FlugEintrag {
     pub pirep_id: String,
+    /// Nur aus dem Flugprotokoll (Airline und Flugnummer); das Logbuch kennt kein Rufzeichen.
     pub rufzeichen: Option<String>,
+    /// Flugnummer aus phpVMS, nur fuer die Anzeige der Liste.
+    pub flugnummer: Option<String>,
     pub abflug: Option<String>,
     pub ziel: Option<String>,
     pub flugzeug_icao: Option<String>,
@@ -264,7 +267,7 @@ pub struct FlugEintrag {
 impl FlugEintrag {
     pub fn als_json(&self) -> Value {
         json!({
-            "pirep_id": self.pirep_id, "rufzeichen": self.rufzeichen, "abflug": self.abflug, "ziel": self.ziel,
+            "pirep_id": self.pirep_id, "rufzeichen": self.rufzeichen, "flugnummer": self.flugnummer, "abflug": self.abflug, "ziel": self.ziel,
             "flugzeug_icao": self.flugzeug_icao, "start_ms": self.start_ms, "ende_ms": self.ende_ms,
         })
     }
@@ -291,15 +294,15 @@ pub fn protokoll_fluege(dir: &Path) -> Vec<FlugEintrag> {
             if let Some(v) = zeile.and_then(|z| serde_json::from_str::<Value>(&z).ok()) {
                 kopf_lesen(&v, &mut kopf);
             }
-            FlugEintrag { pirep_id: id, rufzeichen: kopf.rufzeichen, abflug: kopf.abflug, ziel: kopf.ziel, flugzeug_icao: None, start_ms: Some(start), ende_ms: Some(ende) }
+            FlugEintrag { pirep_id: id, rufzeichen: kopf.rufzeichen, flugnummer: None, abflug: kopf.abflug, ziel: kopf.ziel, flugzeug_icao: None, start_ms: Some(start), ende_ms: Some(ende) }
         })
         .collect()
 }
 
 /// Protokoll und Logbuch zu einer Liste: je PIREP ein Eintrag, die Block-Zeiten gehen vor,
-/// das Rufzeichen aus dem Protokoll geht vor der blossen Flugnummer. Mit `zeit` steht der
-/// zeitlich naechste Flug vorn, sonst der neueste.
-pub fn fluege_ordnen(mut fluege: Vec<FlugEintrag>, logbuch: &[PirepKurz], zeit: Option<i64>) -> Vec<FlugEintrag> {
+/// das Rufzeichen kommt nur aus dem Protokoll. Mit `zeit` steht der zeitlich naechste Flug
+/// vorn, sonst der neueste. Zweiter Wert: Die Liste wurde auf [`MAX_FLUEGE`] gekuerzt.
+pub fn fluege_ordnen(mut fluege: Vec<FlugEintrag>, logbuch: &[PirepKurz], zeit: Option<i64>) -> (Vec<FlugEintrag>, bool) {
     for p in logbuch {
         let i = fluege.iter().position(|f| f.pirep_id == p.pirep_id).unwrap_or_else(|| {
             fluege.push(FlugEintrag { pirep_id: p.pirep_id.clone(), ..Default::default() });
@@ -307,7 +310,7 @@ pub fn fluege_ordnen(mut fluege: Vec<FlugEintrag>, logbuch: &[PirepKurz], zeit: 
         });
         let f = &mut fluege[i];
         let leer = |s: &Option<String>| s.clone().filter(|x| !x.is_empty());
-        f.rufzeichen = f.rufzeichen.take().or_else(|| leer(&p.flugnummer));
+        f.flugnummer = leer(&p.flugnummer);
         f.abflug = f.abflug.take().or_else(|| leer(&p.abflug));
         f.ziel = f.ziel.take().or_else(|| leer(&p.ziel));
         f.flugzeug_icao = f.flugzeug_icao.take().or_else(|| leer(&p.flugzeug_icao));
@@ -318,8 +321,9 @@ pub fn fluege_ordnen(mut fluege: Vec<FlugEintrag>, logbuch: &[PirepKurz], zeit: 
         Some(z) => fluege.sort_by_key(|f| f.abstand(z)),
         None => fluege.sort_by_key(|f| std::cmp::Reverse(f.start_ms.or(f.ende_ms))),
     }
+    let gekuerzt = fluege.len() > MAX_FLUEGE;
     fluege.truncate(MAX_FLUEGE);
-    fluege
+    (fluege, gekuerzt)
 }
 
 #[cfg(test)]
@@ -344,16 +348,18 @@ mod tests {
             PirepKurz { pirep_id: "P3".into(), flugnummer: Some("88".into()), ..Default::default() },
         ];
         // Das Bild liegt im Flug P2: P2 steht vorn, obwohl P1 neuer ist.
-        let v = fluege_ordnen(aus_protokoll.clone(), &logbuch, Some(start - 84_000_000));
+        let (v, gekuerzt) = fluege_ordnen(aus_protokoll.clone(), &logbuch, Some(start - 84_000_000));
+        assert!(!gekuerzt);
         assert_eq!(v.iter().map(|f| f.pirep_id.as_str()).collect::<Vec<_>>(), ["P2", "P1", "P3"]);
-        assert_eq!(v[0].rufzeichen.as_deref(), Some("77"), "nur die Flugnummer ist bekannt, keine erfundene Airline");
+        assert_eq!(v[0].rufzeichen, None, "das Logbuch kennt kein Rufzeichen, die Flugnummer ist keins");
+        assert_eq!(v[0].flugnummer.as_deref(), Some("77"));
         assert_eq!(v[0].ziel, None, "leere Felder bleiben leer");
         assert_eq!(v[1].rufzeichen.as_deref(), Some("GSG123"), "das Protokoll kennt das Rufzeichen");
         assert_eq!(v[1].flugzeug_icao.as_deref(), Some("A20N"));
         assert_eq!(v[1].start_ms, Some(start + 60_000), "Block-Zeiten gehen vor");
 
         // Ohne Bildzeit: der neueste zuerst
-        let v = fluege_ordnen(aus_protokoll, &logbuch, None);
+        let (v, _) = fluege_ordnen(aus_protokoll, &logbuch, None);
         assert_eq!(v[0].pirep_id, "P1");
         assert_eq!(v[2].pirep_id, "P3");
     }
@@ -361,7 +367,9 @@ mod tests {
     #[test]
     fn hoechstens_max_fluege() {
         let viele: Vec<_> = (0..MAX_FLUEGE + 5).map(|i| FlugEintrag { pirep_id: i.to_string(), start_ms: Some(i as i64), ..Default::default() }).collect();
-        assert_eq!(fluege_ordnen(viele, &[], None).len(), MAX_FLUEGE);
+        let (v, gekuerzt) = fluege_ordnen(viele, &[], None);
+        assert_eq!(v.len(), MAX_FLUEGE);
+        assert!(gekuerzt, "die Oberflaeche erfaehrt, dass Fluege fehlen");
     }
 
     fn pos(ts: &str, lat: f64, lon: f64, alt: f64) -> String {

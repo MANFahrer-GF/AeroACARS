@@ -5328,7 +5328,8 @@
         "aendern": "change",
         "waehlen": "Choose flight",
         "fertig": "Done",
-        "laedt": "Loading flights …"
+        "laedt": "Loading flights …",
+        "gekuerzt": "Older flights may be missing from the list (logbook not fully loaded)."
       },
       "metadaten": "Capture data",
       "gesendet_am": "Sent on {{zeit}}",
