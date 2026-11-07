@@ -397,6 +397,25 @@ pub fn quelle_schreiben(wurzel: &Path, gruppe: &str, id: &str, format: QuellForm
     eintrag(wurzel, gruppe, id)
 }
 
+/// Schreibt fertige ZIP-Bytes atomar an den vom Piloten gewaehlten Ort
+/// (`bild_export`). Prueft die ZIP-Kennung, erzwingt die Endung `.zip`.
+pub fn export_schreiben(ziel: &Path, bytes: &[u8]) -> Result<PathBuf, Fehler> {
+    if bytes.len() < 22 || &bytes[..2] != b"PK" {
+        return Err(Fehler::Format("Das ist keine ZIP-Datei".into()));
+    }
+    let mut ziel = ziel.to_path_buf();
+    if ziel.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() != Some("zip") {
+        ziel.set_extension("zip");
+    }
+    let tmp = ziel.with_extension("zip.tmp");
+    let r = temp_schreiben(&tmp, bytes).and_then(|_| fs::rename(&tmp, &ziel));
+    if let Err(e) = r {
+        let _ = fs::remove_file(&tmp);
+        return Err(e.into());
+    }
+    Ok(ziel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -594,6 +613,20 @@ mod tests {
     }
     fn e_pfad_fehlt(w: &Path) -> bool {
         liste(w).eintraege[0].pfad.is_none()
+    }
+
+    #[test]
+    fn export_nur_zip_atomar_mit_endung() {
+        let t = tempfile::tempdir().unwrap();
+        let mut zip = b"PK\x03\x04".to_vec();
+        zip.extend_from_slice(&[0; 30]);
+        let p = export_schreiben(&t.path().join("bilder"), &zip).unwrap();
+        assert_eq!(p.file_name().unwrap(), "bilder.zip");
+        assert_eq!(fs::read(&p).unwrap(), zip);
+        assert_eq!(dateien(t.path()), ["bilder.zip"], "kein Temp-Rest");
+        assert!(matches!(export_schreiben(&t.path().join("x.zip"), b"kein zip hier, nur Text drin!"), Err(Fehler::Format(_))));
+        assert!(!t.path().join("x.zip").exists());
+        assert!(export_schreiben(&t.path().join("nix").join("x.zip"), &zip).is_err());
     }
 
     #[test]

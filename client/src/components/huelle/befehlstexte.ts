@@ -38,6 +38,21 @@ export const BEFEHLSTEXTE: Record<string, Eintrag> = {
     en: { frage: "Pack the selected aircraft package and send it to the GSG live server?", knopf: "Send" },
     it: { frage: "Comprimere il pacchetto aereo scelto e inviarlo al server live GSG?", knopf: "Invia" },
   },
+  bild_export: {
+    de: { frage: "Die gewählten Bilder als ZIP-Datei „{{dateiname}}“ an einem Ort speichern, den du gleich auswählst?", knopf: "Speichern" },
+    en: { frage: "Save the selected images as the ZIP file “{{dateiname}}” to a place you choose next?", knopf: "Save" },
+    it: { frage: "Salvare le immagini scelte come file ZIP «{{dateiname}}» in un posto che sceglierai subito dopo?", knopf: "Salva" },
+  },
+  bild_loeschen: {
+    de: { frage: "Das Bild „{{bezeichnung}}“ löschen? Das Foto kommt in den Papierkorb, Vorschau und Beschreibung werden endgültig entfernt.", knopf: "Löschen" },
+    en: { frage: "Delete the image “{{bezeichnung}}”? The photo goes to the recycle bin; the preview and description are removed for good.", knopf: "Delete" },
+    it: { frage: "Eliminare l'immagine «{{bezeichnung}}»? La foto va nel cestino; l'anteprima e la descrizione vengono rimosse definitivamente.", knopf: "Elimina" },
+  },
+  bild_quellen_setzen: {
+    de: { frage: "Die Liste der Bildquellen speichern? AeroACARS beobachtet diese Ordner und übernimmt neue Bilder daraus (Kopieren oder Verschieben je Ordner). Das Tastenkürzel für die Fensteraufnahme wird mit angemeldet.", knopf: "Speichern" },
+    en: { frage: "Save the list of image sources? AeroACARS watches these folders and takes over new images from them (copy or move, per folder). The shortcut for the window capture is registered as well.", knopf: "Save" },
+    it: { frage: "Salvare l'elenco delle fonti immagine? AeroACARS osserva queste cartelle e acquisisce le nuove immagini (copia o spostamento, per cartella). Viene registrata anche la scorciatoia per l'acquisizione della finestra.", knopf: "Salva" },
+  },
   flight_forget_remote: {
     de: { frage: "Den hängenden Flug {{pirepId}} nur auf diesem Rechner vergessen? phpVMS erfährt davon nichts.", knopf: "Vergessen" },
     en: { frage: "Forget the stuck flight {{pirepId}} on this computer only? phpVMS is not told.", knopf: "Forget" },

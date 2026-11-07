@@ -178,3 +178,41 @@ fn hoppie_logon_code_lesen_nur_lokal() {
     assert!(bruecke.contains("\"hoppie_has_logon_code\" =>"), "Bruecke nicht gelesen");
     assert!(!bruecke.contains("\"hoppie_get_logon_code\" =>"), "LAN-Bruecke darf den Logon-Code nicht herausgeben");
 }
+
+/// Bilder-Tab (N-13, Faehigkeit `bilder-1`, P-11.33): genau zehn Befehle.
+/// Rust liefert nur Bausteine; was Dateien des Piloten loescht oder dauerhaft
+/// beobachtet (Papierkorb, Bildquellen samt Tastenkuerzel, Export an einen
+/// Ort ausserhalb der App) laeuft ueber die Huelle, alles andere fachlich oder
+/// lesend. `bild_lesen` und `bild_live` stehen nicht in der LAN-Bruecke: ein
+/// gekoppeltes Geraet bekaeme sonst Bild-Bytes und das Pilot-Token-Konto.
+#[test]
+fn bilder_befehle_der_faehigkeit_bilder_1() {
+    let liste = liste();
+    let soll = [
+        ("bilder_liste", "lesen"),
+        ("bild_lesen", "lesen"),
+        ("bild_quellen_finden", "lesen"),
+        ("bild_uebernehmen", "fachlich"),
+        ("bild_schreiben", "fachlich"),
+        ("bild_aufnehmen", "fachlich"),
+        ("bild_live", "fachlich"),
+        ("bild_loeschen", "system"),
+        ("bild_quellen_setzen", "system"),
+        ("bild_export", "system"),
+    ];
+    for (b, stufe) in soll {
+        assert_eq!(liste.get(b).map(String::as_str), Some(stufe), "{b}");
+    }
+    let bilder: Vec<_> = liste.keys().filter(|b| b.starts_with("bild")).collect();
+    assert_eq!(bilder.len(), soll.len(), "genau zehn Bilder-Befehle: {bilder:?}");
+    assert!(registriert().contains("bild_live"), "registriert");
+    let bruecke = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/remote/bridge.rs")).unwrap();
+    for (b, _) in soll {
+        assert!(!bruecke.contains(&format!("\"{b}\" =>")), "{b} gehoert nicht in die LAN-Bruecke");
+    }
+    // Der Kern kennt dieselben Namen wie die Huelle: Texte fuer alle drei Systembefehle.
+    let texte = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/components/huelle/befehlstexte.ts")).unwrap();
+    for b in ["bild_loeschen", "bild_quellen_setzen", "bild_export"] {
+        assert!(texte.contains(&format!("  {b}: {{")), "Huellen-Text fuer {b}");
+    }
+}

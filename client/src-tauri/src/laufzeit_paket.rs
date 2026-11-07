@@ -63,7 +63,7 @@ const PRUEFSCHLUESSEL: &[&str] = &[
 /// Touchdown und Flugprotokoll (hoechstens 16 KB). Ein Bewertungsmodul, das
 /// `zusatz` liefert und dessen Auswertung davon abhaengt, verlangt die
 /// Faehigkeit; ein aelteres Programm uebergeht das Paket (P-2.30).
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-2", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-3", "ui-befehle-4", "hilfe-formular-1", "kabine-lage-1", "zusatz-1"];
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-2", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-3", "ui-befehle-4", "hilfe-formular-1", "kabine-lage-1", "zusatz-1", "bilder-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -1451,6 +1451,11 @@ mod tests {
         assert!(liste.split(',').any(|f| f == "ui-befehle-4"), "Paket mit ui/ ohne ui-befehle-4 (paket_info)");
         // Gegenprobe: eine aeltere Oberflaeche (ui-befehle-1/-2) passt nicht mehr.
         assert!(!FAEHIGKEITEN.contains(&"ui-befehle-2") && !FAEHIGKEITEN.contains(&"ui-befehle-1"));
+        // Bilder-Tab (P-11.33): das Programm meldet `bilder-1`, das Paket verlangt es NICHT
+        // (sonst blieben aeltere Clients ganz auf der alten Generation stehen, P-2.30);
+        // der Tab blendet sich ueber die gemeldeten Faehigkeiten aus.
+        assert!(FAEHIGKEITEN.contains(&"bilder-1"), "Programm meldet bilder-1");
+        assert!(!liste.split(',').any(|f| f == "bilder-1"), "bundle.yml darf bilder-1 nicht verlangen");
         assert!(liste.split(',').any(|f| f == "grenzwerte-2"), "Paket mit den Grenzwerten dieses Stands ohne grenzwerte-2");
     }
 
