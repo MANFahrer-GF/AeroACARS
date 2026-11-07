@@ -208,7 +208,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     }, quelle, e.dateizeit_ms);
     try {
       const alt = e.sidecar?.meta;
-      // Am Tablet nimmt das Programm die alte Position selbst aus dem JPEG (`sidecar_vom_tablet`).
+      // Am Tablet schreibt das Programm die Position selbst ins JPEG (`sidecar_vom_tablet`).
       const neueDatei = !dep.ohneEingang && e.pfad && (alt?.breite !== meta.breite || alt?.laenge !== meta.laenge);
       const jpeg = neueDatei ? alsBase64(dateiMitPosition(await api.lesen(e.pfad!), meta)) : undefined;
       await sidecarAendern(e, (s) => ({ ...s, flug_von_hand: true, meta }), jpeg);

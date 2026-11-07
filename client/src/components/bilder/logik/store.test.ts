@@ -270,7 +270,7 @@ describe("Store: Flug zuordnen", () => {
     expect(t.store.lesen().liste!.eintraege[0].sidecar!.meta).toMatchObject({ pirep_id: "P2", rufzeichen: "77", abflug: "LEBL", ziel: null, breite: null, flugzeug_icao: "A20N", quelle: "logbuch" });
   });
 
-  it("am Tablet schreibt der Tab keine Bytes (das Programm nimmt die alte Position aus dem JPEG)", async () => {
+  it("am Tablet schreibt der Tab keine Bytes (das Programm setzt die Position im JPEG)", async () => {
     const t = aufbau({ ohneEingang: true });
     await t.store.laden();
     await t.store.flugSetzen(t.store.lesen().liste!.eintraege[0], { pirep_id: null, rufzeichen: null, abflug: null, ziel: null });

@@ -349,13 +349,24 @@ fn tablet_sidecar_schreiben(wurzel: &std::path::Path, gruppe: String, id: String
     let alt = speicher::eintrag(wurzel, &gruppe, &id).map_err(fehler)?;
     let exif_veraltet = position_geaendert(alt.sidecar.as_ref(), &sidecar);
     sha_behalten(&mut sidecar, alt.sidecar.as_ref());
-    // Das Tablet legt keine Bytes ab: Nach einem Flugwechsel faellt die alte Position aus dem JPEG, statt falsch stehen zu bleiben.
+    // Das Tablet legt keine Bytes ab: Nach einem Flugwechsel schreibt das Programm die neue Position ins JPEG (oder keine).
     let jpeg = if exif_veraltet && alt.pfad.is_some() {
-        Some(speicher::jpeg_ohne_exif(wurzel, &gruppe, &id).map_err(fehler)?)
+        Some(speicher::jpeg_mit_position(wurzel, &gruppe, &id, gps_aus_meta(&sidecar["meta"]).as_ref()).map_err(fehler)?)
     } else {
         None
     };
     speicher::schreiben(wurzel, SchreibAnfrage { gruppe, id, jpeg, vorschau: None, sidecar: Some(sidecar), quelle_entfernen: false, sha256: None }).map_err(fehler)
+}
+
+fn gps_aus_meta(m: &Value) -> Option<bilder_kern::jpeg::GpsPunkt> {
+    let (breite, laenge) = (m["breite"].as_f64()?, m["laenge"].as_f64()?);
+    ((-90.0..=90.0).contains(&breite) && (-180.0..=180.0).contains(&laenge)).then(|| bilder_kern::jpeg::GpsPunkt {
+        breite,
+        laenge,
+        hoehe_ft: m["hoehe_ft"].as_f64(),
+        kurs: m["kurs"].as_f64(),
+        zeit_ms: m["zeit_utc"].as_str().and_then(kontext::zeit_ms),
+    })
 }
 
 fn position_geaendert(alt: Option<&Value>, neu: &Value) -> bool {
@@ -769,12 +780,12 @@ pub(crate) async fn bild_kontext(
     // Rueckfall Logbuch fuer alles, was das Protokoll nicht abdeckt.
     let offen: Vec<i64> = ms.iter().zip(&treffer).filter(|(_, t)| t.is_none()).map(|(z, _)| *z).collect();
     // Die Flugliste reicht einen Monat hinter die Bildzeit zurueck: Die Dateizeit eines Bildes kann spaeter liegen als der Flug.
-    let bezug = ms.first().copied().unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-    let frueh = offen.iter().copied().chain(mit_fluegen.then_some(bezug - 30 * 86_400_000)).min();
-    let (pireps, logbuch_ganz) = match (&client, frueh) {
-        (Some(c), Some(frueh)) => logbuch_pireps(c, frueh, if mit_fluegen { 60 } else { 15 }).await,
+    // Die Flugliste blaettert das ganze Logbuch (hoechstens 60 Seiten): Ein Zeitfenster liesse aeltere Fluege still weg.
+    let bis: Option<Option<i64>> = if mit_fluegen { Some(None) } else { offen.iter().min().map(|z| Some(*z)) };
+    let (pireps, logbuch_ganz) = match (&client, bis) {
+        (Some(c), Some(bis)) => logbuch_pireps(c, bis, if mit_fluegen { 60 } else { 15 }).await,
         (None, Some(_)) => (Vec::new(), false),
-        _ => (Vec::new(), true),
+        (_, None) => (Vec::new(), true),
     };
     let staende: Vec<Value> = zeiten
         .iter()
@@ -811,9 +822,9 @@ pub(crate) async fn bild_kontext(
 }
 
 /// Die PIREPs des Piloten bei phpVMS, seitenweise zurueck, bis die fruehste gefragte
-/// Zeit abgedeckt ist (hoechstens `max_seiten`). Fehler beenden das Blaettern: es bleibt
-/// bei `keine`, nichts wird geraten. Zweiter Wert: Ist die Zeit wirklich abgedeckt?
-async fn logbuch_pireps(client: &api_client::Client, fruehestens_ms: i64, max_seiten: u32) -> (Vec<PirepKurz>, bool) {
+/// Zeit abgedeckt ist (`None`: bis zur letzten Seite, hoechstens `max_seiten`). Fehler beenden
+/// das Blaettern: es bleibt bei `keine`, nichts wird geraten. Zweiter Wert: wirklich abgedeckt?
+async fn logbuch_pireps(client: &api_client::Client, fruehestens_ms: Option<i64>, max_seiten: u32) -> (Vec<PirepKurz>, bool) {
     let mut alle = Vec::new();
     for seite in 1..=max_seiten {
         let Ok(v) = client.get_user_pireps_seite(seite).await else { return (alle, false) };
@@ -840,8 +851,8 @@ async fn logbuch_pireps(client: &api_client::Client, fruehestens_ms: i64, max_se
 
 /// Reicht das Geblaetterte bis zur gefragten Zeit? Letzte Seite, oder der aelteste PIREP der Seite
 /// liegt mehr als 2 Tage davor (Puffer: der PIREP wird vor dem Block-off angelegt).
-fn logbuch_abgedeckt(letzte_seite: bool, aelteste_ms: Option<i64>, fruehestens_ms: i64) -> bool {
-    letzte_seite || aelteste_ms.is_some_and(|a| a < fruehestens_ms - 2 * 86_400_000)
+fn logbuch_abgedeckt(letzte_seite: bool, aelteste_ms: Option<i64>, fruehestens_ms: Option<i64>) -> bool {
+    letzte_seite || matches!((aelteste_ms, fruehestens_ms), (Some(a), Some(f)) if a < f - 2 * 86_400_000)
 }
 
 /// Markiert das JPEG eines Bildes im Dateimanager des Systems (Finder „Im Finder
@@ -1221,10 +1232,12 @@ mod tests {
     #[test]
     fn logbuch_ist_erst_abgedeckt_wenn_es_bis_vor_die_zeit_reicht() {
         let tag = 86_400_000;
-        assert!(logbuch_abgedeckt(true, None, 10 * tag), "letzte Seite");
-        assert!(logbuch_abgedeckt(false, Some(7 * tag), 10 * tag), "mehr als 2 Tage davor");
-        assert!(!logbuch_abgedeckt(false, Some(9 * tag), 10 * tag), "nur 1 Tag davor: weiterblaettern");
-        assert!(!logbuch_abgedeckt(false, None, 10 * tag), "ohne Zeiten nichts belegt");
+        assert!(logbuch_abgedeckt(true, None, Some(10 * tag)), "letzte Seite");
+        assert!(logbuch_abgedeckt(false, Some(7 * tag), Some(10 * tag)), "mehr als 2 Tage davor");
+        assert!(!logbuch_abgedeckt(false, Some(9 * tag), Some(10 * tag)), "nur 1 Tag davor: weiterblaettern");
+        assert!(!logbuch_abgedeckt(false, None, Some(10 * tag)), "ohne Zeiten nichts belegt");
+        assert!(!logbuch_abgedeckt(false, Some(0), None), "Flugliste: nur die letzte Seite ist vollstaendig");
+        assert!(logbuch_abgedeckt(true, Some(0), None));
     }
 
     #[test]
@@ -1239,6 +1252,12 @@ mod tests {
         let jpeg = || std::fs::read(w.join("g/b1.jpg")).unwrap();
         tablet_sidecar_schreiben(&w, "g".into(), "b1".into(), json!({"bild_id": "b1", "text": "neu", "meta": {"breite": 50.0, "laenge": 8.0}})).unwrap();
         assert_eq!(jpeg(), mit, "gleiche Position: JPEG unveraendert");
+        tablet_sidecar_schreiben(&w, "g".into(), "b1".into(), sc(json!(41.0))).unwrap();
+        let p = bilder_kern::jpeg::GpsPunkt { breite: 41.0, laenge: 8.0, hoehe_ft: None, kurs: None, zeit_ms: None };
+        let mut erwartet = vec![0xFF, 0xD8];
+        erwartet.extend(bilder_kern::jpeg::gps_segment(&p));
+        erwartet.extend([0xFF, 0xDA, 0, 2, 0xFF, 0xD9]);
+        assert_eq!(jpeg(), erwartet, "anderer Flug: die neue Position steht im JPEG");
         tablet_sidecar_schreiben(&w, "g".into(), "b1".into(), sc(Value::Null)).unwrap();
         assert_eq!(jpeg(), [0xFF, 0xD8, 0xFF, 0xDA, 0, 2, 0xFF, 0xD9], "Ohne Flug: keine Position mehr im JPEG");
         let neu: Value = serde_json::from_slice(&std::fs::read(w.join("g/b1.json")).unwrap()).unwrap();
