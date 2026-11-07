@@ -2,6 +2,7 @@
 
 use crate::suche::Fundort;
 use crate::tastenkuerzel::Taste;
+use crate::yoke::YokeTaste;
 use crate::{plattform::Aufnahme, Fehler};
 
 pub const AUFNAHME_VERFUEGBAR: bool = false;
@@ -35,4 +36,20 @@ impl Hotkey {
     pub fn setzen(&self, _taste: Option<&Taste>) -> Result<(), Fehler> {
         Err(Fehler::NichtVerfuegbar("Das Tastenkuerzel gibt es nur unter Windows".into()))
     }
+}
+
+pub const YOKE_VERFUEGBAR: bool = false;
+
+pub fn yoke_lernen(_max: std::time::Duration) -> Result<Option<YokeTaste>, Fehler> {
+    Err(Fehler::NichtVerfuegbar("Der Yoke-Knopf als Ausloeser gehoert nur zu Windows".into()))
+}
+
+pub struct Yoke;
+
+pub fn yoke_starten(_bei_taste: impl Fn() + Send + 'static) -> Result<Yoke, Fehler> {
+    Err(Fehler::NichtVerfuegbar("Der Yoke-Knopf als Ausloeser gehoert nur zu Windows".into()))
+}
+
+impl Yoke {
+    pub fn setzen(&self, _taste: Option<YokeTaste>) {}
 }

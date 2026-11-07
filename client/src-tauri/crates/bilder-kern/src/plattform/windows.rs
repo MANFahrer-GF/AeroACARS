@@ -5,11 +5,14 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HWND, LPARAM, RECT};
 use windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute;
+use windows_sys::Win32::Media::Multimedia::{
+    joyGetDevCapsW, joyGetNumDevs, joyGetPosEx, JOYCAPSW, JOYERR_NOERROR, JOYINFOEX, JOY_RETURNBUTTONS,
+};
 use windows_sys::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, SRCCOPY,
@@ -30,6 +33,7 @@ use super::Aufnahme;
 use crate::suche::{self, Fundort};
 use crate::tastenkuerzel::Taste;
 use crate::verdeckung::{verdeckt, Rechteck};
+use crate::yoke::{self, Flanke, Geraet, YokeTaste};
 use crate::Fehler;
 
 pub const AUFNAHME_VERFUEGBAR: bool = true;
@@ -462,5 +466,144 @@ impl Hotkey {
         rx.recv_timeout(std::time::Duration::from_secs(3))
             .map_err(|_| Fehler::Io("Hotkey-Faden antwortet nicht".into()))?
             .map_err(Fehler::Eingabe)
+    }
+}
+
+// ------------------------------------------------------------------ Yoke
+
+pub const YOKE_VERFUEGBAR: bool = true;
+
+/// Hoechstzahl der Joystick-Nummern, die `winmm` kennt.
+const MAX_JOYSTICKS: u32 = 16;
+
+/// Knopfmaske eines Geraets (Bit 0 = Knopf 1); `None`, wenn es nicht lesbar ist
+/// (abgesteckt). `winmm` liefert hoechstens 32 Knoepfe.
+fn joy_lesen(nummer: u32) -> Option<u32> {
+    // SAFETY: Ausgabestruktur ist null-initialisiert und `dwSize` gesetzt; nur lesen.
+    unsafe {
+        let mut info: JOYINFOEX = std::mem::zeroed();
+        info.dwSize = std::mem::size_of::<JOYINFOEX>() as u32;
+        info.dwFlags = JOY_RETURNBUTTONS as u32;
+        if joyGetPosEx(nummer, &mut info) != JOYERR_NOERROR {
+            return None;
+        }
+        Some(info.dwButtons)
+    }
+}
+
+/// Alle jetzt angeschlossenen und lesbaren Geraete.
+fn joy_geraete() -> Vec<Geraet> {
+    let mut v = Vec::new();
+    // SAFETY: `joyGetDevCapsW` schreibt in eine null-initialisierte Struktur der angegebenen Groesse.
+    let n = unsafe { joyGetNumDevs() }.min(MAX_JOYSTICKS);
+    for i in 0..n {
+        if joy_lesen(i).is_none() {
+            continue;
+        }
+        // SAFETY: wie oben; gepackte Felder werden nur kopiert, nie referenziert.
+        let (mid, pid, roh) = unsafe {
+            let mut caps: JOYCAPSW = std::mem::zeroed();
+            if joyGetDevCapsW(i as usize, &mut caps, std::mem::size_of::<JOYCAPSW>() as u32) != JOYERR_NOERROR {
+                continue;
+            }
+            (caps.wMid, caps.wPid, caps.szPname)
+        };
+        let laenge = roh.iter().position(|&c| c == 0).unwrap_or(roh.len());
+        v.push(Geraet { nummer: i, name: String::from_utf16_lossy(&roh[..laenge]), hersteller_id: mid, produkt_id: pid });
+    }
+    v
+}
+
+/// Wartet hoechstens `max` auf einen neu gedrueckten Knopf an irgendeinem Geraet
+/// (Knoepfe, die beim Start schon gehalten werden, zaehlen erst nach dem Loslassen).
+/// `Ok(None)`: nichts gedrueckt oder kein Geraet angeschlossen.
+pub fn yoke_lernen(max: std::time::Duration) -> Result<Option<YokeTaste>, Fehler> {
+    let geraete = joy_geraete();
+    let mut vorher: Vec<u32> = geraete.iter().map(|g| joy_lesen(g.nummer).unwrap_or(0)).collect();
+    let ende = std::time::Instant::now() + max;
+    while !geraete.is_empty() && std::time::Instant::now() < ende {
+        std::thread::sleep(std::time::Duration::from_millis(yoke::TAKT_MS));
+        for (i, g) in geraete.iter().enumerate() {
+            let Some(maske) = joy_lesen(g.nummer) else { continue };
+            if let Some(knopf) = yoke::neuer_knopf(vorher[i], maske) {
+                return Ok(Some(YokeTaste { geraet_name: g.name.clone(), hersteller_id: g.hersteller_id, produkt_id: g.produkt_id, knopf }));
+            }
+            vorher[i] = maske;
+        }
+    }
+    Ok(None)
+}
+
+type YokeZustand = (Mutex<Option<YokeTaste>>, Condvar);
+
+/// Eigener Faden, der nur abfragt (20 Hz), solange ein Knopf belegt ist.
+pub struct Yoke {
+    zustand: Arc<YokeZustand>,
+}
+
+pub fn yoke_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Yoke, Fehler> {
+    let zustand: Arc<YokeZustand> = Arc::new((Mutex::new(None), Condvar::new()));
+    let z = Arc::clone(&zustand);
+    std::thread::Builder::new()
+        .name("bild-yoke".into())
+        .spawn(move || {
+            let start = std::time::Instant::now();
+            let mut gemerkt: Option<YokeTaste> = None;
+            let mut flanke = Flanke::default();
+            let mut nummer: Option<u32> = None;
+            let mut zuletzt_gesucht: Option<u64> = None;
+            loop {
+                let taste = {
+                    let (m, cv) = &*z;
+                    let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+                    while g.is_none() {
+                        g = cv.wait(g).unwrap_or_else(|e| e.into_inner());
+                    }
+                    g.clone()
+                };
+                let Some(taste) = taste else { continue };
+                let jetzt = start.elapsed().as_millis() as u64;
+                if gemerkt.as_ref() != Some(&taste) {
+                    gemerkt = Some(taste.clone());
+                    flanke = Flanke::default();
+                    nummer = None;
+                    zuletzt_gesucht = None;
+                }
+                // Geraet ueber Hersteller, Produkt und Name suchen, einmal je Sekunde:
+                // findet auch ein wieder angestecktes Geraet unter neuer Nummer.
+                if zuletzt_gesucht.is_none_or(|t| jetzt.saturating_sub(t) >= 1000) {
+                    zuletzt_gesucht = Some(jetzt);
+                    let neu = yoke::geraet_finden(&joy_geraete(), &taste);
+                    if neu != nummer {
+                        nummer = neu;
+                        flanke = Flanke::default();
+                    }
+                }
+                let gedrueckt = match nummer {
+                    Some(n) => match joy_lesen(n) {
+                        Some(maske) => Some(yoke::knopf_gedrueckt(maske, taste.knopf)),
+                        None => {
+                            nummer = None; // abgesteckt: nichts blockieren, bei der naechsten Suche wiederfinden
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                if flanke.pruefen(jetzt, gedrueckt) {
+                    bei_taste();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(yoke::TAKT_MS));
+            }
+        })
+        .map_err(|e| Fehler::Io(e.to_string()))?;
+    Ok(Yoke { zustand })
+}
+
+impl Yoke {
+    /// Merkt den Knopf (ersetzt den bisherigen); `None` schaltet die Abfrage ab.
+    pub fn setzen(&self, taste: Option<YokeTaste>) {
+        let (m, cv) = &*self.zustand;
+        *m.lock().unwrap_or_else(|e| e.into_inner()) = taste;
+        cv.notify_all();
     }
 }

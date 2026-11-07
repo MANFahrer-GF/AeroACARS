@@ -1683,6 +1683,7 @@ mod tests {
             "bild_hinzufuegen",
             "bild_kontext",
             "bild_ordner_zeigen",
+            "bild_taste_lernen",
             "bild_loeschen",
             "bild_quellen_setzen",
             "bild_export",

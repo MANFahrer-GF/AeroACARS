@@ -20,6 +20,7 @@
 //! * [`png`]         PNG-Kodierung der Fensteraufnahme
 //! * [`tastenkuerzel`] Tastenkuerzel-Text lesen
 //! * [`xplane_taste`] die wirkliche Screenshot-Taste von X-Plane (nur lesend)
+//! * [`yoke`]        Yoke-/Joystick-Knopf als Ausloeser: Flanke, Sperre, Geraet wiederfinden
 //! * [`plattform`]   Windows-Teile (Known Folder, Registry, Vordergrund,
 //!   Fensteraufnahme, Hotkey); auf anderen Systemen Ersatz ohne Wirkung
 
@@ -39,5 +40,6 @@ pub mod suche;
 pub mod tastenkuerzel;
 pub mod verdeckung;
 pub mod xplane_taste;
+pub mod yoke;
 
 pub use fehler::Fehler;

@@ -1,4 +1,4 @@
-//! Bilder-Tab (N-13, Faehigkeit `bilder-1`, P-11.30 bis P-11.34): die vierzehn
+//! Bilder-Tab (N-13, Faehigkeit `bilder-1`, P-11.30 bis P-11.34): die fuenfzehn
 //! Befehle, der dauerhafte Eingang `.eingang/`, das Ereignis `bild_quelle_neu`
 //! und das Tastenkuerzel. **Diese Kopf-Doku ist der Vertrag fuer das Paket.**
 //!
@@ -83,9 +83,22 @@
 //!   `gruppe` ist Pflicht (der Tab gibt `ohne-flug`); ohne `pfade` (Ziehen) oeffnet der Kern die Dateiauswahl;
 //!   JPG/PNG, immer kopiert, auch ohne Flug. Ergebnis wie `bild_uebernehmen`: Eingangskopie in `gruppe`
 //! * `bild_loeschen({gruppe, id, bezeichnung?})`, `bild_export({zipBase64, dateiname})`
-//! * `bild_quellen_setzen({quellen?, tastenkuerzel?, ordnerWaehlen?})`: `ordnerWaehlen: true` oeffnet nach der
+//! * `bild_quellen_setzen({quellen?, tastenkuerzel?, yokeTaste?, ordnerWaehlen?})`: `ordnerWaehlen: true` oeffnet nach der
 //!   Bestaetigung den Ordnerdialog des Systems und haengt den Ordner als Quelle `hand` an (nur kopieren);
-//!   Abbrechen aendert nichts
+//!   Abbrechen aendert nichts. `yokeTaste` ist `{geraet_name, hersteller_id, produkt_id, knopf}` (Knopf 1 bis 32)
+//!   oder `null`: fehlt der Schluessel, bleibt der Knopf; `null` loescht ihn. Der Befehl liest dazu den Rohauftrag,
+//!   weil Tauri fehlend und `null` bei `Option` nicht trennt.
+//! * `bild_taste_lernen()` -> `{geraet_name, hersteller_id, produkt_id, knopf} | null`: wartet hoechstens 10 s auf
+//!   einen neu gedrueckten Knopf an einem Yoke oder Joystick (nur Windows, `winmm`) und speichert nichts; das Ergebnis
+//!   geht danach als `yokeTaste` an `bild_quellen_setzen`. Auf anderen Systemen Fehlercode `bild_nicht_verfuegbar`.
+//!   Die Schnittstelle `winmm` sieht je Geraet hoechstens 32 Knoepfe (keine Hat-Schalter, keine Achsen). Der Windows-Teil
+//!   ist unter macOS nur uebersetzt (`cargo check --target x86_64-pc-windows-msvc`), nicht ausgefuehrt.
+//!
+//! Yoke-Knopf als Ausloeser: `bilder_liste.tastenkuerzel` traegt `yoke` (der gemerkte Knopf oder `null`) und
+//! `yoke_verfuegbar` (nur Windows). Ein eigener Faden fragt mit 20 Hz ab, solange ein Knopf belegt ist; das Geraet
+//! wird ueber `hersteller_id`, `produkt_id` und `geraet_name` gefunden (nicht ueber die Joystick-Nummer), ein
+//! abgestecktes Geraet blockiert nichts und wird wiedergefunden. Die steigende Flanke loest denselben Weg aus wie
+//! das Tastenkuerzel (Ereignis `bild_aufgenommen`, ohne Flug `kein_flug`); nach einer Ausloesung mindestens 1 s Sperre.
 //!
 //! Ereignisse (nur Wecksignale): `bild_quelle_neu` (der Eingangseintrag), `bild_aufgenommen`
 //! (`{ok, aufnahme}` oder `{ok:false, code, meldung}`, `code` z. B. `kein_flug`, `verdeckt`).
@@ -97,11 +110,12 @@
 //! (`details.retry_after`), `live_fehler` (`details.status`).
 //!
 //! Stufen (befehle.json): lesen `bilder_liste`, `bild_lesen`, `bild_quellen_finden`, `bild_status`,
-//! `bild_kontext`; fachlich `bild_uebernehmen`, `bild_schreiben`, `bild_aufnehmen`, `bild_ordner_zeigen`;
+//! `bild_kontext`; fachlich `bild_uebernehmen`, `bild_schreiben`, `bild_aufnehmen`, `bild_ordner_zeigen`,
+//! `bild_taste_lernen`;
 //! system `bild_senden`, `bild_hinzufuegen`, `bild_loeschen`, `bild_quellen_setzen`, `bild_export`.
 //! Die LAN-Bruecke reicht keinen davon durch.
 //!
-//! Auslegung: Weil es genau vierzehn Befehle sind, tragen zwei Antworten mehr als der Name sagt:
+//! Auslegung: Weil es genau fuenfzehn Befehle sind, tragen zwei Antworten mehr als der Name sagt:
 //! `bilder_liste` liefert auch Funde, Quellen mit Beobachtungszustand, den Altbestand (auf Wunsch) und das
 //! Tastenkuerzel; `bild_quellen_setzen` setzt neben den Ordnern auch das Tastenkuerzel.
 //!
@@ -217,6 +231,11 @@ fn hotkey() -> &'static Mutex<Option<plattform::Hotkey>> {
     H.get_or_init(|| Mutex::new(None))
 }
 
+fn yoke() -> &'static Mutex<Option<plattform::Yoke>> {
+    static Y: OnceLock<Mutex<Option<plattform::Yoke>>> = OnceLock::new();
+    Y.get_or_init(|| Mutex::new(None))
+}
+
 /// Letzter Fehler beim Anmelden des Tastenkuerzels (z. B. „schon belegt“).
 fn hotkey_fehler() -> &'static Mutex<Option<String>> {
     static F: OnceLock<Mutex<Option<String>>> = OnceLock::new();
@@ -241,6 +260,8 @@ fn tastenkuerzel_stand(e: &Einstellungen) -> Value {
         "verfuegbar": plattform::AUFNAHME_VERFUEGBAR,
         "aktiv": entsperren(hotkey()).is_some() && entsperren(hotkey_fehler()).is_none(),
         "fehler": entsperren(hotkey_fehler()).clone(),
+        "yoke": e.yoke,
+        "yoke_verfuegbar": plattform::YOKE_VERFUEGBAR,
     })
 }
 
@@ -312,6 +333,20 @@ pub(crate) fn bild_quellen_finden() -> Vec<Fundort> {
 }
 
 // ------------------------------------------------------------- fachlich
+
+/// Wartet hoechstens 10 s auf einen neu gedrueckten Knopf an einem Yoke oder
+/// Joystick (Windows) und liefert `{geraet_name, hersteller_id, produkt_id, knopf}`
+/// oder `null`, wenn nichts gedrueckt wurde. Speichert nichts: der Tab uebergibt
+/// das Ergebnis danach als `yokeTaste` an `bild_quellen_setzen`. Ausserhalb von
+/// Windows `bild_nicht_verfuegbar`.
+#[tauri::command]
+pub(crate) async fn bild_taste_lernen() -> Result<Value, UiError> {
+    let t = tauri::async_runtime::spawn_blocking(|| plattform::yoke_lernen(Duration::from_secs(10)))
+        .await
+        .map_err(|e| UiError::new("bild_io", e.to_string()))?
+        .map_err(fehler)?;
+    Ok(json!(t))
+}
 
 /// Arbeitet einen Fund des Eingangs ab: `kopieren`/`verschieben` nimmt die Datei
 /// aus ihrer bestaetigten Quelle (`verschieben` nur, wenn der Pilot die Quelle
@@ -742,7 +777,13 @@ pub(crate) async fn bild_quellen_setzen(
     quellen: Option<Vec<Quelle>>,
     tastenkuerzel: Option<String>,
     ordner_waehlen: Option<bool>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<Value, UiError> {
+    // `yokeTaste` fehlt (unveraendert) oder ist `null` (loeschen): Tauri unterscheidet beides bei `Option` nicht.
+    let yoke_taste = match request.body() {
+        tauri::ipc::InvokeBody::Json(v) => bilder_kern::yoke::aus_auftrag(v).map_err(fehler)?,
+        _ => None,
+    };
     let ordner = if ordner_waehlen == Some(true) {
         match ordner_dialog(&app).await? {
             Some(p) => Some(p),
@@ -751,7 +792,7 @@ pub(crate) async fn bild_quellen_setzen(
     } else {
         None
     };
-    tauri::async_runtime::spawn_blocking(move || quellen_setzen_intern(&app, quellen, tastenkuerzel, ordner))
+    tauri::async_runtime::spawn_blocking(move || quellen_setzen_intern(&app, quellen, tastenkuerzel, yoke_taste, ordner))
         .await
         .map_err(|e| UiError::new("bild_io", e.to_string()))?
 }
@@ -764,14 +805,21 @@ fn aktueller_stand(e: &Einstellungen) -> Value {
     json!({"quellen": entsperren(anzeige()).status, "tastenkuerzel": tastenkuerzel_stand(e), "abgebrochen": true})
 }
 
-fn quellen_setzen_intern(app: &AppHandle, quellen: Option<Vec<Quelle>>, tastenkuerzel: Option<String>, ordner: Option<PathBuf>) -> Result<Value, UiError> {
+fn quellen_setzen_intern(
+    app: &AppHandle,
+    quellen: Option<Vec<Quelle>>,
+    tastenkuerzel: Option<String>,
+    yoke_taste: Option<Option<bilder_kern::yoke::YokeTaste>>,
+    ordner: Option<PathBuf>,
+) -> Result<Value, UiError> {
     let datei = einstellungen_datei(app)?;
     let bisher = quellen::einstellungen_lesen(&datei);
-    let neu = quellen::einstellungen_neu(&bisher, quellen, tastenkuerzel.as_deref(), ordner.as_deref(), &wurzel(app)?, app.path().home_dir().ok().as_deref())
+    let neu = quellen::einstellungen_neu(&bisher, quellen, tastenkuerzel.as_deref(), yoke_taste, ordner.as_deref(), &wurzel(app)?, app.path().home_dir().ok().as_deref())
         .map_err(fehler)?;
     quellen::einstellungen_schreiben(&datei, &neu).map_err(fehler)?;
     beobachtung_aufsetzen(&neu.quellen);
     hotkey_anwenden(&neu.tastenkuerzel);
+    yoke_anwenden(neu.yoke.as_ref());
     Ok(json!({"quellen": entsperren(anzeige()).status, "tastenkuerzel": tastenkuerzel_stand(&neu)}))
 }
 
@@ -874,6 +922,12 @@ fn hotkey_anwenden(text: &str) {
     });
 }
 
+fn yoke_anwenden(taste: Option<&bilder_kern::yoke::YokeTaste>) {
+    if let Some(y) = entsperren(yoke()).as_ref() {
+        y.setzen(taste.cloned());
+    }
+}
+
 /// Beim Start: Einstellungen laden, Beobachtung aufsetzen, Tastenkuerzel
 /// anmelden und den Takt-Faden starten. Blockiert den Start nicht.
 pub(crate) fn starten(app: &AppHandle) {
@@ -897,6 +951,16 @@ pub(crate) fn starten(app: &AppHandle) {
                 Err(e) => *entsperren(hotkey_fehler()) = Some(e.meldung().to_string()),
             }
         }
+        if plattform::YOKE_VERFUEGBAR {
+            let app_yoke = app.clone();
+            match plattform::yoke_starten(move || taste_gedrueckt(&app_yoke)) {
+                Ok(y) => {
+                    *entsperren(yoke()) = Some(y);
+                    yoke_anwenden(einst.yoke.as_ref());
+                }
+                Err(e) => tracing::warn!(fehler = %e, "Yoke-Knopf der Bildaufnahme nicht gestartet"),
+            }
+        }
         let start = std::time::Instant::now();
         loop {
             std::thread::sleep(TAKT);
@@ -918,7 +982,7 @@ pub(crate) fn starten(app: &AppHandle) {
     });
 }
 
-/// Tastenkuerzel gedrueckt: ohne aktiven Flug nichts aufnehmen (Ereignis mit
+/// Tastenkuerzel oder Yoke-Knopf gedrueckt: ohne aktiven Flug nichts aufnehmen (Ereignis mit
 /// `kein_flug`), sonst sofort aufnehmen (der Moment zaehlt). Ergebnis als
 /// Ereignis `bild_aufgenommen`; das Paket ordnet zu und schreibt das JPEG.
 fn taste_gedrueckt(app: &AppHandle) {

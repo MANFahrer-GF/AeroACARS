@@ -69,6 +69,9 @@ pub struct Einstellungen {
     pub quellen: Vec<Quelle>,
     #[serde(default = "vorgabe_taste")]
     pub tastenkuerzel: String,
+    /// Yoke-/Joystick-Knopf als zweiter Ausloeser (nur Windows), sonst `None`.
+    #[serde(default)]
+    pub yoke: Option<crate::yoke::YokeTaste>,
 }
 
 fn vorgabe_taste() -> String {
@@ -77,7 +80,7 @@ fn vorgabe_taste() -> String {
 
 impl Default for Einstellungen {
     fn default() -> Self {
-        Self { quellen: Vec::new(), tastenkuerzel: vorgabe_taste() }
+        Self { quellen: Vec::new(), tastenkuerzel: vorgabe_taste(), yoke: None }
     }
 }
 
@@ -151,6 +154,7 @@ pub fn einstellungen_neu(
     bisher: &Einstellungen,
     quellen: Option<Vec<Quelle>>,
     taste: Option<&str>,
+    yoke: Option<Option<crate::yoke::YokeTaste>>,
     ordner: Option<&Path>,
     bilder_wurzel: &Path,
     home: Option<&Path>,
@@ -161,6 +165,7 @@ pub fn einstellungen_neu(
             Some(t) => crate::tastenkuerzel::lesen(t)?.text,
             None => bisher.tastenkuerzel.clone(),
         },
+        yoke: yoke.unwrap_or_else(|| bisher.yoke.clone()),
     };
     match ordner {
         Some(o) => {
@@ -175,6 +180,9 @@ pub fn einstellungen_neu(
 /// Prueft eine neue Einstellung, bevor sie gespeichert wird.
 pub fn einstellungen_pruefen(e: &Einstellungen, bilder_wurzel: &Path, home: Option<&Path>) -> Result<(), Fehler> {
     crate::tastenkuerzel::lesen(&e.tastenkuerzel)?;
+    if let Some(y) = &e.yoke {
+        y.pruefen()?;
+    }
     if e.quellen.len() > MAX_QUELLEN {
         return Err(Fehler::Eingabe(format!("Hoechstens {MAX_QUELLEN} Bildquellen")));
     }
@@ -909,7 +917,7 @@ pub(crate) mod tests {
         let t = tempfile::tempdir().unwrap();
         let d = t.path().join("conf").join("bilder-einstellungen.json");
         assert_eq!(einstellungen_lesen(&d), Einstellungen::default());
-        let e = Einstellungen { quellen: vec![quelle(t.path(), true)], tastenkuerzel: "Alt+F9".into() };
+        let e = Einstellungen { quellen: vec![quelle(t.path(), true)], tastenkuerzel: "Alt+F9".into(), yoke: None };
         einstellungen_schreiben(&d, &e).unwrap();
         assert_eq!(einstellungen_lesen(&d), e);
         fs::write(&d, b"{kaputt").unwrap();
@@ -1044,20 +1052,28 @@ pub(crate) mod tests {
         let (a, b) = (home.join("A"), home.join("B"));
         fs::create_dir_all(&a).unwrap();
         fs::create_dir_all(&b).unwrap();
-        let bisher = Einstellungen { quellen: vec![quelle(&a, true)], tastenkuerzel: "Alt+F9".into() };
-        let neu = einstellungen_neu(&bisher, None, None, Some(&b), &wurzel, Some(&home)).unwrap();
+        let bisher = Einstellungen { quellen: vec![quelle(&a, true)], tastenkuerzel: "Alt+F9".into(), yoke: None };
+        let neu = einstellungen_neu(&bisher, None, None, None, Some(&b), &wurzel, Some(&home)).unwrap();
         assert_eq!(neu.quellen.len(), 2);
         assert_eq!(neu.quellen[0], bisher.quellen[0], "die bisherige Quelle bleibt unveraendert");
         assert_eq!(neu.quellen[1].art.as_deref(), Some(ART_HAND));
         assert!(!neu.quellen[1].original_entfernen);
         assert_eq!(neu.tastenkuerzel, "Alt+F9");
         // ohne alles: unveraendert; Taste allein; Liste ersetzt plus Ordner
-        assert_eq!(einstellungen_neu(&bisher, None, None, None, &wurzel, Some(&home)).unwrap(), bisher);
-        assert_eq!(einstellungen_neu(&bisher, None, Some("Ctrl+F5"), None, &wurzel, Some(&home)).unwrap().tastenkuerzel, "Ctrl+F5");
-        let ersetzt = einstellungen_neu(&bisher, Some(vec![]), None, Some(&b), &wurzel, Some(&home)).unwrap();
+        assert_eq!(einstellungen_neu(&bisher, None, None, None, None, &wurzel, Some(&home)).unwrap(), bisher);
+        assert_eq!(einstellungen_neu(&bisher, None, Some("Ctrl+F5"), None, None, &wurzel, Some(&home)).unwrap().tastenkuerzel, "Ctrl+F5");
+        let ersetzt = einstellungen_neu(&bisher, Some(vec![]), None, None, Some(&b), &wurzel, Some(&home)).unwrap();
         assert_eq!(ersetzt.quellen.len(), 1);
-        assert!(einstellungen_neu(&bisher, None, None, Some(&home), &wurzel, Some(&home)).is_err());
-        assert!(einstellungen_neu(&bisher, None, Some("S"), None, &wurzel, Some(&home)).is_err());
+        assert!(einstellungen_neu(&bisher, None, None, None, Some(&home), &wurzel, Some(&home)).is_err());
+        assert!(einstellungen_neu(&bisher, None, Some("S"), None, None, &wurzel, Some(&home)).is_err());
+        // Yoke-Knopf: fehlt = unveraendert, Some(Some) setzt, Some(None) loescht, ungueltig scheitert
+        let y = crate::yoke::YokeTaste { geraet_name: "Yoke".into(), hersteller_id: 1, produkt_id: 2, knopf: 3 };
+        let mit = einstellungen_neu(&bisher, None, None, Some(Some(y.clone())), None, &wurzel, Some(&home)).unwrap();
+        assert_eq!(mit.yoke, Some(y.clone()));
+        assert_eq!(einstellungen_neu(&mit, None, None, None, None, &wurzel, Some(&home)).unwrap().yoke, Some(y.clone()));
+        assert_eq!(einstellungen_neu(&mit, None, None, Some(None), None, &wurzel, Some(&home)).unwrap().yoke, None);
+        let kaputt = crate::yoke::YokeTaste { knopf: 0, ..y };
+        assert!(einstellungen_neu(&bisher, None, None, Some(Some(kaputt)), None, &wurzel, Some(&home)).is_err());
     }
 
     #[test]

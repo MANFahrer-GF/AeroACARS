@@ -1052,6 +1052,7 @@ pub fn run() {
             bilder::bild_hinzufuegen,
             bilder::bild_kontext,
             bilder::bild_ordner_zeigen,
+            bilder::bild_taste_lernen,
             bilder::bild_loeschen,
             bilder::bild_quellen_setzen,
             bilder::bild_export,
