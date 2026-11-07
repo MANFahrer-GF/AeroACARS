@@ -3,7 +3,7 @@
 // bild_export) geht `invoke` selbst ueber `shell_request` an die Huelle (lib/ipc.ts
 // `aufrufZiel`); hier steht nie ein eigener shell_request. Oberste Argumente camelCase,
 // Felder verschachtelter Objekte snake_case.
-import { invoke } from "../../../lib/ipc";
+import { bildBytesHolen, invoke, isTauri } from "../../../lib/ipc";
 import { fundLesen, kontextLesen, listeLesen, quelleLesen, yokeLesen } from "./normalisieren";
 import type { YokeTaste, BildMeta, BilderListe, Fundort, Kontext, QuellenStatus, SendeAntwort, Sidecar, Quelle, Kontingent } from "./typen";
 
@@ -73,7 +73,7 @@ export const bildAktionen: BildAktionen = {
     return listeLesen(await invoke("bilder_liste", { mitAltbestand }));
   },
   async lesen(pfad) {
-    return alsBytes(await invoke("bild_lesen", { pfad }));
+    return isTauri ? alsBytes(await invoke("bild_lesen", { pfad })) : bildBytesHolen(pfad);
   },
   quellenFinden: () => invoke<Fundort[]>("bild_quellen_finden"),
   async quellenSetzen(a) {

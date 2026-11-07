@@ -871,6 +871,17 @@ export async function listen<T = unknown>(
   return ab;
 }
 
+/** Browser: Bytes eines Bildes vom Sim-PC (`POST /api/bild`), roh statt JSON. */
+export async function bildBytesHolen(pfad: string): Promise<Uint8Array> {
+  const res = await fetch("/api/bild", {
+    method: "POST",
+    headers: { "X-AeroACARS-Token": currentToken() ?? "", "Content-Type": "application/json" },
+    body: JSON.stringify({ pfad }),
+  });
+  if (!res.ok) throw fehlerAus(res.status, "bild_lesen", await res.json().catch(() => undefined));
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 /**
  * Open a portable external URL. In Tauri this routes through the opener plugin
  * (native browser); in a LAN browser it opens a new tab. Centralised here so

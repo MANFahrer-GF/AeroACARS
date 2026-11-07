@@ -11,7 +11,7 @@ import { Symbol } from "./Symbole";
 import { useBildUrl } from "./useBildUrl";
 
 export function DetailSpalte({
-  e, gewaehlt, flugBilder, aktivePirep, mitSenden, onSenden, onOrdner, onLoeschen, onText, onFavorit, onFlugAendern, onKarteOeffnen, onMarke, onZu,
+  e, gewaehlt, flugBilder, aktivePirep, mitSenden, mitOrdner, onSenden, onOrdner, onLoeschen, onText, onFavorit, onFlugAendern, onKarteOeffnen, onMarke, onZu,
 }: {
   e: Eintrag | null;
   gewaehlt: boolean;
@@ -19,6 +19,8 @@ export function DetailSpalte({
   aktivePirep: string | null;
   /** Mit einer Auswahl sendet die Leiste unten; zwei Knoepfe waeren zwei Wege fuer dasselbe. */
   mitSenden: boolean;
+  /** Den Dateimanager gibt es nur am Sim-PC. */
+  mitOrdner: boolean;
   onSenden: () => void;
   onOrdner: () => void;
   onLoeschen: () => void;
@@ -51,7 +53,7 @@ export function DetailSpalte({
       <div className="bt-detail__aktionen">
         {mitSenden && <Button variant="primary" onClick={onSenden} iconLeft={Symbol.senden}>{t("bilder.detail.aktionen.senden")}</Button>}
         <div className="bt-detail__aktionen-reihe">
-          <Button variant="quiet" onClick={onOrdner} iconLeft={Symbol.ordner}>{t("bilder.detail.aktionen.ordner")}</Button>
+          {mitOrdner && <Button variant="quiet" onClick={onOrdner} iconLeft={Symbol.ordner}>{t("bilder.detail.aktionen.ordner")}</Button>}
           <Button variant="danger" onClick={onLoeschen} iconLeft={Symbol.papierkorb}>{t("bilder.detail.aktionen.loeschen")}</Button>
         </div>
       </div>

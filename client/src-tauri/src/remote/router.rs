@@ -275,6 +275,8 @@ pub fn build_router(ctx: RemoteContext, spa_dir: PathBuf) -> Router {
         // logs. The token transport itself must stay as-is; do not "fix"
         // this by logging and redacting.
         .route("/ws", get(ws_handler))
+        // Bilder-Tab am Tablet: JPEGs roh, ungepackt und ausserhalb von `api`.
+        .route("/api/bild", post(bild_handler))
         // SPA + static assets (also the unmatched-route fallback). Served
         // from the EMBEDDED assets; a deep-link with no asset falls back to
         // index.html so the client router handles it.
@@ -375,6 +377,37 @@ async fn auth_handler(
 // ----------------------------------------------------------------------
 // POST /api/cmd/{name}
 // ----------------------------------------------------------------------
+
+/// Bytes eines Bildes fuer das Tablet: dieselbe Pruefung wie `/api/cmd`, der Pfad
+/// geht durch den Kern und bleibt im Bilderordner.
+async fn bild_handler(
+    State(ctx): State<RemoteContext>,
+    ConnectInfo(crate::remote::PeerAddr(peer)): ConnectInfo<crate::remote::PeerAddr>,
+    headers: HeaderMap,
+    raw: Bytes,
+) -> Response {
+    if let Some(r) = reject_non_private(peer) {
+        return r;
+    }
+    if !header_token_ok(&ctx, &headers) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let Ok(anfrage) = serde_json::from_slice::<BildAnfrage>(&raw) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let app = ctx.app.clone();
+    let bytes = tokio::task::spawn_blocking(move || crate::bilder::bild_bytes(&app, &anfrage.pfad)).await;
+    match bytes {
+        Ok(Ok(b)) => (StatusCode::OK, [(header::CONTENT_TYPE, "image/jpeg")], b).into_response(),
+        Ok(Err(e)) => (StatusCode::UNPROCESSABLE_ENTITY, Json(e)).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct BildAnfrage {
+    pfad: String,
+}
 
 async fn cmd_handler(
     State(ctx): State<RemoteContext>,

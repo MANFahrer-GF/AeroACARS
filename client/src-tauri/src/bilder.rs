@@ -138,7 +138,10 @@
 //! `bild_taste_lernen`;
 //! system `bild_senden` (aus dem Hauptfenster ohne Huelle-Fenster: der Senden-Dialog ist die Bestaetigung,
 //! Thomas 07.11.), `bild_hinzufuegen`, `bild_loeschen`, `bild_quellen_setzen`, `bild_export`.
-//! Die LAN-Bruecke reicht keinen davon durch.
+//! LAN-Bruecke (Thomas 07.11.): `bilder_liste`, `bild_status`, `bild_kontext`, `bild_aufnehmen` und `bild_schreiben`
+//! (dort nur der Sidecar) haben Arme, `bild_lesen` die Route `POST /api/bild` (Token-Kopf, Antwort rohe Bytes),
+//! `bild_senden` laeuft ueber `shell_request` ohne Huelle-Fenster, die anderen Systembefehle mit. Den Eingang arbeitet
+//! nur der Sim-PC ab; Quellen, Tasten, Hinzufuegen, Export und Dateimanager gibt es am Tablet nicht.
 //!
 //! Auslegung: Weil es genau fuenfzehn Befehle sind, tragen zwei Antworten mehr als der Name sagt:
 //! `bilder_liste` liefert auch Funde, Quellen mit Beobachtungszustand, den Altbestand (auf Wunsch) und das
@@ -320,8 +323,11 @@ pub(crate) fn bilder_liste(app: AppHandle, mit_altbestand: Option<bool>) -> Resu
 /// relative Pfad aus `bilder_liste`. Pfad-Ausbruch ist ausgeschlossen.
 #[tauri::command(async)]
 pub(crate) fn bild_lesen(app: AppHandle, pfad: String) -> Result<tauri::ipc::Response, UiError> {
-    let bytes = speicher::lesen(&wurzel(&app)?, &pfad).map_err(fehler)?;
-    Ok(tauri::ipc::Response::new(bytes))
+    Ok(tauri::ipc::Response::new(bild_bytes(&app, &pfad)?))
+}
+
+pub(crate) fn bild_bytes(app: &AppHandle, pfad: &str) -> Result<Vec<u8>, UiError> {
+    speicher::lesen(&wurzel(app)?, pfad).map_err(fehler)
 }
 
 /// Windows: Game Bar, Bilder-Ordner (mit OneDrive), Steam, NVIDIA. X-Plane:

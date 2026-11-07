@@ -48,6 +48,8 @@ export interface StoreAbhaengig {
   neueId: () => string;
   warten: (ms: number) => Promise<void>;
   jetzt: () => number;
+  /** Am Tablet nur neu laden: Den Eingang arbeitet der Sim-PC ab. */
+  ohneEingang?: boolean;
 }
 
 const ANFANG: BilderZustand = {
@@ -113,6 +115,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
 
   let eingangLaeufe = 0;
   async function eingang(): Promise<void> {
+    if (dep.ohneEingang) return laden();
     eingangLaeufe++;
     setzen({ arbeitet: true });
     try {
@@ -340,15 +343,19 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     await laden(false);
   }
 
+  /** `bild_io`: Der Simulator hat nicht innerhalb der Zeitgrenze (5 s) geantwortet oder die vorige Aufnahme haengt noch. */
+  function aufnahmeGescheitert(code: string, text: string): void {
+    const art = code === "kein_flug" ? "kein_flug" : code === "bild_io" ? "aufnahme_zeit" : "aufnahme_fehler";
+    meldung("fehler", `bilder.meldung.${art}`, { fehler: text });
+  }
+
   async function aufnehmen(): Promise<void> {
     setzen({ meldung: null });
     try {
       await api.aufnehmen();
       await eingang();
     } catch (e) {
-      // `bild_io`: Der Simulator hat nicht innerhalb der Zeitgrenze (5 s) geantwortet oder die vorige Aufnahme haengt noch.
-      const art = fehlerCode(e) === "kein_flug" ? "kein_flug" : fehlerCode(e) === "bild_io" ? "aufnahme_zeit" : "aufnahme_fehler";
-      meldung("fehler", `bilder.meldung.${art}`, { fehler: fehlerText(e) });
+      aufnahmeGescheitert(fehlerCode(e), fehlerText(e));
     }
   }
 
@@ -383,7 +390,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     abonnieren: (h: () => void) => { hoerer.add(h); return () => { hoerer.delete(h); }; },
     laden, pilotSetzen, einschalten, geoStufeSetzen, eingang, textSetzen, favoritSetzen, flugSetzen, loeschen, senden, fortsetzen, kontingentHolen,
     yokeFestlegen, yokeEntfernen, quellenFinden, quelleUmschalten, quelleEntfernen, quelleVorschlagen, ordnerWaehlen, tastenkuerzelSetzen, hinzufuegen,
-    altbestandAnzeigen, altbestandUebernehmen, aufnehmen, ordnerZeigen, exportieren,
+    altbestandAnzeigen, altbestandUebernehmen, aufnehmen, aufnahmeGescheitert, ordnerZeigen, exportieren,
     meldungLoeschen: () => setzen({ meldung: null }),
   };
 }

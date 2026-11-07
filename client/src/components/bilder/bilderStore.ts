@@ -1,6 +1,6 @@
 // Der eine Store des Bilder-Tabs mit den echten Abhaengigkeiten, plus React-Haken.
 import { useSyncExternalStore } from "react";
-import { invoke } from "../../lib/ipc";
+import { invoke, isTauri } from "../../lib/ipc";
 import { bildAktionen } from "./logik/api";
 import { kodieren } from "./logik/leinwand";
 import { erzeugeStore, type BilderZustand } from "./logik/store";
@@ -15,6 +15,7 @@ export const bilderStore = erzeugeStore({
   neueId: () => crypto.randomUUID(),
   warten: (ms) => new Promise((r) => setTimeout(r, ms)),
   jetzt: () => Date.now(),
+  ohneEingang: !isTauri,
 });
 
 export function useBilder(): BilderZustand {

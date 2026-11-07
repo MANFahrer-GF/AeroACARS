@@ -2,7 +2,7 @@
 // Paketinhalt; das Programm liefert nur die Befehle der Faehigkeit `bilder-1`.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "../../lib/ipc";
+import { isTauri, listen } from "../../lib/ipc";
 import { Button, Modal, Notice } from "../ui";
 import { DetailSpalte } from "./DetailSpalte";
 import { EinschaltenKarte, WegeKarte } from "./Erststart";
@@ -195,7 +195,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     fluege: fluegeAnzahl === 1 ? t("bilder.kopf.anzahl_flug_eins") : t("bilder.kopf.anzahl_fluege", { n: fluegeAnzahl }),
     platz: bytesText(liste?.belegt_bytes ?? 0, sprache),
   };
-  const altbestandAnzahl = Math.max(liste?.altbestand.length ?? 0, (liste?.quellen ?? []).reduce((sum, q) => sum + q.altbestand, 0));
+  const altbestandAnzahl = isTauri ? Math.max(liste?.altbestand.length ?? 0, (liste?.quellen ?? []).reduce((sum, q) => sum + q.altbestand, 0)) : 0;
   const einschaltenKarte = z.eingeschaltet === false && !spaeter;
   const beobachtete = (liste?.quellen ?? []).filter((q) => q.aktiv && q.beobachtet);
   const meldung = z.meldung;
@@ -228,9 +228,9 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
           {liste?.aufnahme_verfuegbar && simulator === "msfs" && (
             <Button size="sm" variant="primary" iconLeft={Symbol.kamera} onClick={() => void bilderStore.aufnehmen()}>{t("bilder.kopf.aufnehmen")}</Button>
           )}
-          <Button size="sm" iconLeft={Symbol.plus} aria-label={t("bilder.kopf.hinzufuegen")} title={t("bilder.kopf.hinzufuegen")} onClick={() => void bilderStore.hinzufuegen()} />
-          <Button size="sm" iconLeft={Symbol.regler} aria-label={t("bilder.kopf.quellen")} title={t("bilder.kopf.quellen")} aria-pressed={quellenOffen} onClick={() => { setQuellenOffen((o) => !o); if (!quellenOffen) void bilderStore.quellenFinden(); }} />
-          {!erststart && <Button size="sm" iconLeft={Symbol.ordner} aria-label={t("bilder.kopf.ordner_zeigen")} title={t("bilder.kopf.ordner_zeigen")} disabled={!offen} onClick={() => void ordnerZeigen()} />}
+          {isTauri && <Button size="sm" iconLeft={Symbol.plus} aria-label={t("bilder.kopf.hinzufuegen")} title={t("bilder.kopf.hinzufuegen")} onClick={() => void bilderStore.hinzufuegen()} />}
+          {isTauri && <Button size="sm" iconLeft={Symbol.regler} aria-label={t("bilder.kopf.quellen")} title={t("bilder.kopf.quellen")} aria-pressed={quellenOffen} onClick={() => { setQuellenOffen((o) => !o); if (!quellenOffen) void bilderStore.quellenFinden(); }} />}
+          {isTauri && !erststart && <Button size="sm" iconLeft={Symbol.ordner} aria-label={t("bilder.kopf.ordner_zeigen")} title={t("bilder.kopf.ordner_zeigen")} disabled={!offen} onClick={() => void ordnerZeigen()} />}
         </div>
       </header>
 
@@ -333,6 +333,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             aktivePirep={aktiverFlug?.pirep_id ?? null}
             mitSenden={auswahl.size === 0}
             onSenden={sendenDetail}
+            mitOrdner={isTauri}
             onOrdner={() => void ordnerZeigen()}
             onLoeschen={() => offen && void loeschen([offen.id])}
             onText={(text) => offen && void bilderStore.textSetzen(offen, text)}
@@ -361,7 +362,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
           {zus.sendet > 0 && <span className="bt-leiste__info">{t("bilder.leiste.sendet", { count: zus.sendet })}</span>}
           <div className="bt-leiste__rechts">
             <Button variant="quiet" onClick={() => setAuswahl(new Set())}>{t("bilder.leiste.aufheben")}</Button>
-            <Button iconLeft={Symbol.herunter} onClick={() => void bilderStore.exportieren([...auswahl])}>{t("bilder.leiste.exportieren")}</Button>
+            {isTauri && <Button iconLeft={Symbol.herunter} onClick={() => void bilderStore.exportieren([...auswahl])}>{t("bilder.leiste.exportieren")}</Button>}
             <Button variant="danger" iconLeft={Symbol.papierkorb} onClick={() => void loeschen([...auswahl])}>{t("bilder.leiste.papierkorb")}</Button>
             <Button variant="primary" iconLeft={Symbol.senden} disabled={auswahl.size > GRENZEN.max_je_sendung || !reichtKontingent(auswahl.size, z.kontingent)} onClick={() => sendenMit([...auswahl])}>
               {auswahl.size === 1 ? t("bilder.leiste.senden_eins") : t("bilder.leiste.senden_n", { count: auswahl.size })}

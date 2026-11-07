@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   aufrufe: [] as Array<{ cmd: string; args?: Record<string, unknown> }>,
   zeilen: [] as unknown[],
   einwilligung: true,
+  tablet: false,
   taste: null as null | { simulator: string; text: string },
   kuerzel: null as null | { text: string; verfuegbar: boolean; aktiv: boolean; fehler: null },
   lerne: null as unknown,
@@ -17,7 +18,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/ipc", () => ({
-  isTauri: true,
+  get isTauri() { return !h.tablet; },
   formatIpcError: (e: unknown) => String(e),
   listen: async (n: string, cb: (e: { payload: unknown }) => void) => { h.hoerer.set(n, [...(h.hoerer.get(n) ?? []), cb]); return () => undefined; },
   invoke: async (cmd: string, args?: Record<string, unknown>) => {
@@ -44,6 +45,7 @@ import { bilderStore } from "./bilderStore";
 import { eintrag } from "./logik/testhilfen";
 
 beforeEach(() => {
+  h.tablet = false;
   h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null; h.taste = null; h.kuerzel = null; h.lerne = null;
   URL.createObjectURL = vi.fn(() => "blob:x");
   URL.revokeObjectURL = vi.fn();
@@ -252,6 +254,15 @@ describe("Bilder-Tab", () => {
     expect(await screen.findByText(/sim\/operation\/screenshot/)).toBeInTheDocument();
   });
 
+  it("am Tablet fehlen die Aufgaben des Sim-PCs: Hinzufuegen, Quellen, Ordner, Export", async () => {
+    vorbereiten();
+    h.tablet = true;
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    await userEvent.click(boxen[0]);
+    expect(screen.getByRole("button", { name: "1 Bild senden" })).toBeInTheDocument();
+    for (const name of [/Bild hinzufügen/, /Bildquellen/, /Ordner/, /Als ZIP/]) expect(screen.queryByRole("button", { name })).toBeNull();
+  });
   it("Aufraeumen: alte gesendete Bilder lassen sich zum Aufraeumen auswaehlen", async () => {
     h.zeilen = [eintrag({ id: "alt", meta: { zeit_utc: "2020-01-01T10:00:00Z", pirep_id: "P1" }, sidecar: { sendungen: [{ sendung_id: "s", zeit_ms: 1, geo_stufe: "verdeckt", status: "gesendet" }] } }), eintrag({ id: "neu", meta: { pirep_id: "P1", zeit_utc: new Date().toISOString() } })];
     zeigen();

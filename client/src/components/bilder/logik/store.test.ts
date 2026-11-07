@@ -4,13 +4,13 @@ import { erzeugeStore } from "./store";
 import { eintrag } from "./testhilfen";
 import type { BilderListe, SendeAntwort } from "./typen";
 
-function aufbau(o: { aufnehmen?: BildAktionen["aufnehmen"]; senden?: BildAktionen["senden"]; status?: BildAktionen["status"]; eintraege?: ReturnType<typeof eintrag>[]; gespeichert?: Record<string, string> } = {}) {
+function aufbau(o: { aufnehmen?: BildAktionen["aufnehmen"]; senden?: BildAktionen["senden"]; status?: BildAktionen["status"]; eintraege?: ReturnType<typeof eintrag>[]; gespeichert?: Record<string, string>; funde?: BilderListe["funde"]; ohneEingang?: boolean } = {}) {
   const eintraege = o.eintraege ?? [eintrag({ id: "a" }), eintrag({ id: "b" }), eintrag({ id: "c" })];
   const geschrieben: Array<{ id: string; sidecar: { sendungen?: Array<{ status: string; code?: string; sendung_id: string }> } }> = [];
   const gespeichert: Record<string, string> = { ...(o.gespeichert ?? {}) };
   const aufrufe: unknown[] = [];
   const api = {
-    liste: async (): Promise<BilderListe> => ({ eintraege, belegt_bytes: 0, quellen: [], tastenkuerzel: null, aufnahme_verfuegbar: false, simulator_taste: null, funde: [], altbestand: [] }),
+    liste: async (): Promise<BilderListe> => ({ eintraege, belegt_bytes: 0, quellen: [], tastenkuerzel: null, aufnahme_verfuegbar: false, simulator_taste: null, funde: o.funde ?? [], altbestand: [] }),
     schreiben: async (a: { id: string; sidecar: never }) => {
       geschrieben.push(a as never);
       const e = eintraege.find((x) => x.id === a.id)!;
@@ -26,12 +26,21 @@ function aufbau(o: { aufnehmen?: BildAktionen["aufnehmen"]; senden?: BildAktione
     api, kodieren: async () => { throw new Error("nicht gebraucht"); },
     zustandLesen: async () => gespeichert,
     zustandSchreiben: async (k, v) => { if (v === null) delete gespeichert[k]; else gespeichert[k] = v; },
-    neueId: () => `S${++n}`, warten: async () => undefined, jetzt: () => 1000,
+    neueId: () => `S${++n}`, warten: async () => undefined, jetzt: () => 1000, ohneEingang: o.ohneEingang,
   });
   return { store, geschrieben, gespeichert, aufrufe, api };
 }
 
 const keinePhase = () => "";
+
+describe("Store: Tablet", () => {
+  it("laedt nur neu und laesst den Eingang dem Sim-PC", async () => {
+    const t = aufbau({ ohneEingang: true, funde: [{ fund_id: "f1" }] as never });
+    await t.store.eingang();
+    expect(t.store.lesen().geladen).toBe(true);
+    expect(t.store.lesen().uebernahme.fehler).toBe(0);
+  });
+});
 
 describe("Store: Senden", () => {
   it("Erfolg: gesendet, Auswahl leer, Kontingent aus der Antwort, Vermerk im Sidecar", async () => {
