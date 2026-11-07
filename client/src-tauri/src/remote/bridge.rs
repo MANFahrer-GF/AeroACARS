@@ -311,7 +311,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // allein der Sim-PC, das Tablet legt keine Bytes in den Ordner.
         "bild_schreiben" => {
             match parse_args::<BildSidecar>(body) {
-                Ok(a) => from_uierr(crate::bilder::bild_schreiben(app.clone(), a.gruppe, a.id, None, None, Some(a.sidecar), None, None)),
+                Ok(a) => from_uierr(crate::bilder::sidecar_vom_tablet(app.clone(), a.gruppe, a.id, a.sidecar)),
                 Err(e) => Err(e),
             }
         }

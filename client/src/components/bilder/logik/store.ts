@@ -162,9 +162,8 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     }
   }
 
-  function vermerk(e: Eintrag, v: SendeVermerk): Sidecar["sendungen"] {
-    const alt = (e.sidecar?.sendungen ?? []).filter((x) => x.sendung_id !== v.sendung_id);
-    return [...alt, v];
+  function vermerk(sc: Sidecar, v: SendeVermerk): Sidecar["sendungen"] {
+    return [...sc.sendungen.filter((x) => x.sendung_id !== v.sendung_id), v];
   }
 
   /** `stufe` nur beim Senden selbst; Nachfragen und Fortsetzen behalten die Stufe des vorhandenen Vermerks. */
@@ -179,7 +178,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       const vorAufruf = s.phase === "sendet";
       const status: SendeVermerk["status"] = s.phase === "gesendet" ? "gesendet" : s.phase === "fehlgeschlagen" || vorAufruf ? "abgelehnt" : "angenommen";
       const code = vorAufruf ? "discord_unklar" : s.code;
-      await sidecarAendern(e, (sc) => ({ ...sc, sendungen: vermerk(e, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe ?? sc.sendungen.find((x) => x.sendung_id === sendungId)?.geo_stufe ?? z.geoStufe, status, code }) }));
+      await sidecarAendern(e, (sc) => ({ ...sc, sendungen: vermerk(sc, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe ?? sc.sendungen.find((x) => x.sendung_id === sendungId)?.geo_stufe ?? z.geoStufe, status, code }) }));
     }
   }
 

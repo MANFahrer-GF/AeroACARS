@@ -326,6 +326,27 @@ pub(crate) fn bild_lesen(app: AppHandle, pfad: String) -> Result<tauri::ipc::Res
     Ok(tauri::ipc::Response::new(bild_bytes(&app, &pfad)?))
 }
 
+/// Fertige Bilder und Vorschauen; die Eingangskopien bleiben am Sim-PC.
+pub(crate) fn fuers_tablet(pfad: &str) -> bool {
+    pfad.ends_with(".jpg") && !pfad.ends_with(".quelle.jpg")
+}
+
+/// Der Hash haengt am Bild und an der Duplikatpruefung: Er bleibt, was immer das Tablet schickt.
+fn sha_behalten(neu: &mut Value, alt: Option<&Value>) {
+    if let Some(o) = neu.as_object_mut() {
+        match alt.and_then(|a| a.get("sha256")) {
+            Some(sha) => o.insert("sha256".into(), sha.clone()),
+            None => o.remove("sha256"),
+        };
+    }
+}
+
+pub(crate) fn sidecar_vom_tablet(app: AppHandle, gruppe: String, id: String, mut sidecar: Value) -> Result<speicher::Eintrag, UiError> {
+    let alt = speicher::eintrag(&wurzel(&app)?, &gruppe, &id).map_err(fehler)?;
+    sha_behalten(&mut sidecar, alt.sidecar.as_ref());
+    bild_schreiben(app, gruppe, id, None, None, Some(sidecar), None, None)
+}
+
 pub(crate) fn bild_bytes(app: &AppHandle, pfad: &str) -> Result<Vec<u8>, UiError> {
     speicher::lesen(&wurzel(app)?, pfad).map_err(fehler)
 }
@@ -1128,6 +1149,25 @@ fn taste_gedrueckt(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn das_tablet_liest_nur_fertige_bilder() {
+        assert!(fuers_tablet("P1/b1.jpg"));
+        assert!(fuers_tablet("P1/b1.vorschau.jpg"));
+        assert!(!fuers_tablet("eingang/b1.quelle.jpg"));
+        assert!(!fuers_tablet("eingang/b1.quelle.png"));
+        assert!(!fuers_tablet("P1/b1.json"));
+    }
+
+    #[test]
+    fn das_tablet_aendert_den_hash_nicht() {
+        let mut neu = json!({"text": "x", "sha256": "fremd"});
+        sha_behalten(&mut neu, Some(&json!({"sha256": "echt"})));
+        assert_eq!(neu, json!({"text": "x", "sha256": "echt"}));
+        let mut ohne = json!({"sha256": "fremd"});
+        sha_behalten(&mut ohne, Some(&json!({})));
+        assert_eq!(ohne, json!({}));
+    }
 
     #[test]
     fn senden_werte_aus_der_oberflaeche() {

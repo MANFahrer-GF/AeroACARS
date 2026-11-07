@@ -395,8 +395,7 @@ async fn bild_handler(
     let Ok(anfrage) = serde_json::from_slice::<BildAnfrage>(&raw) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    // Fertige Bilder und Vorschauen; die grossen Eingangskopien bleiben am Sim-PC.
-    if !anfrage.pfad.ends_with(".jpg") {
+    if !crate::bilder::fuers_tablet(&anfrage.pfad) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let app = ctx.app.clone();
