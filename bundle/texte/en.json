@@ -5220,7 +5220,7 @@
       "schon": "already set up",
       "fehlt": "Folder does not exist",
       "kuerzel": "Shortcut for capturing",
-      "kuerzel_setzen": "Save",
+      "kuerzel_setzen": "Set shortcut",
       "kuerzel_fehler": "Shortcut not registered: {{fehler}}",
       "bestaetigung": "You confirm every change to the sources in a window of the program.",
       "eigene_werkzeuge": "Your own tools work with any key as soon as their folder is added here as a picture source.",
@@ -5230,6 +5230,9 @@
         "unbelegt": "no button assigned",
         "festlegen": "Set yoke button",
         "lernt": "Press the button now …",
+        "kuerzel_lernt": "Press the keys now …",
+        "kuerzel_hinweis": "Press the keys together, with Ctrl, Alt or Shift. Esc cancels.",
+        "kuerzel_nur_taste": "Please press it together with Ctrl, Alt or Shift.",
         "hinweis_lernen": "Press the button now, you have 10 seconds.",
         "entfernen": "Remove",
         "xplane_hinweis": "In X-Plane you assign the button to sim/operation/screenshot in the simulator’s joystick settings."

@@ -515,7 +515,9 @@ fn joy_geraete() -> Vec<Geraet> {
             (caps.wMid, caps.wPid, caps.szPname)
         };
         let laenge = roh.iter().position(|&c| c == 0).unwrap_or(roh.len());
-        v.push(Geraet { nummer: i, name: String::from_utf16_lossy(&roh[..laenge]), hersteller_id: mid, produkt_id: pid });
+        let oem = registry_text(&yoke::oem_schluessel(mid, pid), "OEMName");
+        let name = yoke::name_waehlen(oem.as_deref(), &String::from_utf16_lossy(&roh[..laenge]));
+        v.push(Geraet { nummer: i, name, hersteller_id: mid, produkt_id: pid });
     }
     v
 }

@@ -5220,7 +5220,7 @@
       "schon": "già configurata",
       "fehlt": "La cartella non esiste",
       "kuerzel": "Scorciatoia per lo scatto",
-      "kuerzel_setzen": "Salva",
+      "kuerzel_setzen": "Imposta scorciatoia",
       "kuerzel_fehler": "Scorciatoia non registrata: {{fehler}}",
       "bestaetigung": "Confermi ogni modifica alle fonti in una finestra del programma.",
       "eigene_werkzeuge": "I tuoi strumenti funzionano con qualsiasi tasto, non appena la loro cartella è inserita qui come fonte di immagini.",
@@ -5230,6 +5230,9 @@
         "unbelegt": "nessun pulsante assegnato",
         "festlegen": "Imposta pulsante yoke",
         "lernt": "Premi ora il pulsante …",
+        "kuerzel_lernt": "Premi ora i tasti …",
+        "kuerzel_hinweis": "Premi i tasti insieme, con Ctrl, Alt o Shift. Esc annulla.",
+        "kuerzel_nur_taste": "Premilo insieme a Ctrl, Alt o Shift.",
         "hinweis_lernen": "Premi ora il pulsante, hai 10 secondi.",
         "entfernen": "Rimuovi",
         "xplane_hinweis": "In X-Plane assegni il pulsante a sim/operation/screenshot nelle impostazioni del joystick del simulatore."

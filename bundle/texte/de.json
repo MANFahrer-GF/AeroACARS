@@ -5220,7 +5220,7 @@
       "schon": "schon eingerichtet",
       "fehlt": "Ordner nicht vorhanden",
       "kuerzel": "Tastenkürzel für die Aufnahme",
-      "kuerzel_setzen": "Speichern",
+      "kuerzel_setzen": "Tastenkürzel festlegen",
       "kuerzel_fehler": "Kürzel nicht angemeldet: {{fehler}}",
       "bestaetigung": "Jede Änderung der Quellen bestätigst du in einem Fenster des Programms.",
       "eigene_werkzeuge": "Eigene Werkzeuge funktionieren mit jeder Taste, sobald ihr Ordner hier als Bildquelle eingetragen ist.",
@@ -5230,6 +5230,9 @@
         "unbelegt": "kein Knopf belegt",
         "festlegen": "Yoke-Taste festlegen",
         "lernt": "Jetzt den Knopf drücken …",
+        "kuerzel_lernt": "Jetzt die Tasten drücken …",
+        "kuerzel_hinweis": "Tasten zusammen drücken, mit Strg, Alt oder Shift. Esc bricht ab.",
+        "kuerzel_nur_taste": "Bitte zusammen mit Strg, Alt oder Shift drücken.",
         "hinweis_lernen": "Jetzt den Knopf drücken, du hast 10 Sekunden.",
         "entfernen": "Entfernen",
         "xplane_hinweis": "In X-Plane belegst du den Knopf in den Joystick-Einstellungen des Simulators mit sim/operation/screenshot."
