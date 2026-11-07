@@ -30,6 +30,9 @@ members = [
     # v3 (Etappe 1a) — Laufzeit-Paket: Manifest, Signatur, Ablage, Rueckfall,
     # Flug-Pin. Pure Logik, kein tauri/reqwest.
     "crates/runtime-bundle",
+    # v3 (N-13, Faehigkeit bilder-1): Bilder-Tab — verwalteter Ordner, Quellen,
+    # Beobachtung, Multipart, Windows-Teile. Kein tauri, kein reqwest.
+    "crates/bilder-kern",
 ]
 resolver = "2"
 
@@ -117,6 +120,7 @@ landing-scoring = { path = "crates/landing-scoring" }
 hoppie-protocol = { path = "crates/hoppie-protocol" }
 cabin-announcements = { path = "crates/cabin-announcements" }
 runtime-bundle = { path = "crates/runtime-bundle" }
+bilder-kern = { path = "crates/bilder-kern" }
 paket-endpunkte = { path = "crates/paket-endpunkte" }
 bewertung-host = { path = "crates/bewertung-host" }
 
@@ -278,6 +282,10 @@ aeroacars-mqtt.workspace = true
 landing-scoring.workspace = true
 cabin-announcements.workspace = true
 runtime-bundle.workspace = true
+# v3 (N-13, bilder-1): Bilder-Tab, Logik ohne Tauri.
+bilder-kern.workspace = true
+# Papierkorb des Systems fuer `bild_loeschen` (P-11.31: Loeschen heisst Papierkorb).
+trash = "5"
 # v1.3.0 (#Hoppie-PDC-CPDLC): Hoppie-ACARS-Netzwerk-Protokoll + GOLD-
 # Elementtabelle. Wiring lebt in src/hoppie/.
 hoppie-protocol.workspace = true
