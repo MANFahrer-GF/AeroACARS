@@ -33,7 +33,7 @@ export function basisLesen(roh: unknown): MetaBasis {
   setzen("abflug", text(r.abflug));
   setzen("ziel", text(r.ziel));
   setzen("simulator", text(r.simulator));
-  setzen("naechster_flugplatz", text(r.naechster_flugplatz));
+  setzen("naechster_flugplatz", text(r.naechster_flugplatz) ?? text(obj(r.naechster_flugplatz).icao)); // Rust: {icao, abstand_m}
   return b;
 }
 
