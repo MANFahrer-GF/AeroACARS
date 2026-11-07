@@ -1859,7 +1859,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Neuer Reiter „Bilder“: Screenshots aus deinen Flügen werden nach Flug geordnet gesammelt, tragen Position und Flugdaten und lassen sich ausgewählt, mit Text und auf Wunsch mit verdeckter Position, in den Discord-Kanal der GSG senden. Du schaltest das Senden einmal selbst ein; nichts geht automatisch. Außerdem zeigt die Karte jetzt auf Wunsch eine Weltkugel."
+    "neu_text": "Neuer Reiter „Bilder“: Screenshots aus deinen Flügen werden nach Flug geordnet gesammelt, tragen Position und Flugdaten und lassen sich ausgewählt, mit Text und auf Wunsch mit verdeckter Position, in den Discord-Kanal der GSG senden. Du schaltest das Senden einmal selbst ein; nichts geht automatisch. Außerdem zeigt die Karte jetzt auf Wunsch eine Weltkugel. Ein gelandeter Flug wird jetzt auch abgegeben, wenn du danach im Simulator schon etwas anderes geladen hast; das Fenster zum Wiederaufnehmen bietet dafür „Flug abgeben“."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
@@ -2630,7 +2630,10 @@
     "compare_zfw": "ZFW",
     "compare_total_weight": "Gesamtgewicht",
     "wartet_titel": "Warte auf den Simulator",
-    "wartet_lange": "Das dauert ungewöhnlich lange. Ist der Simulator pausiert, im Slew-Modus oder läuft Zeitbeschleunigung? Bis dahin zeichnet AeroACARS nichts auf."
+    "wartet_lange": "Das dauert ungewöhnlich lange. Ist der Simulator pausiert, im Slew-Modus oder läuft Zeitbeschleunigung? Bis dahin zeichnet AeroACARS nichts auf.",
+    "abgeben": "Flug abgeben",
+    "abgeben_hinweis": "Der Flug ist gelandet und geparkt. Du kannst ihn jetzt mit den Werten der Ankunft abgeben, egal was gerade im Simulator geladen ist.",
+    "abgeben_fehler": "Der Flug konnte nicht abgegeben werden"
   },
   "simrate": {
     "titel": "Sim-Rate steht auf {{rate}}×",

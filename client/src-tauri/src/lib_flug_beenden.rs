@@ -114,6 +114,39 @@ fn aircraft_position_for_gates(stats: &FlightStats) -> Option<(f64, f64)> {
         .or_else(|| usable(stats.landing_lat.zip(stats.landing_lon)))
 }
 
+/// Woran misst das Abgabe-Tor die Lage des Flugzeugs?
+///
+/// Geparkt (BlocksOn/Arrived) mit bekanntem Aufsetzpunkt: am Aufsetzpunkt —
+/// und die Live-Lage des Simulators wird gar nicht gefragt. Nach dem Parken
+/// darf der Pilot im Simulator etwas anderes laden; dann zeigt die Live-Lage
+/// (und, nach „Trotzdem fortsetzen", auch `last_known_*`) auf einen fremden
+/// Ort. DAL667 (07.11.2026): gelandet in KSFO, danach eine 777 in Rio bzw.
+/// Dubai — die Abgabe haette 7030 nm gemessen und `not_at_arrival` gemeldet.
+/// Der Aufsetzpunkt ist persistiert, wird nur beim Durchstarten geleert und
+/// liegt auf einer Bahn des Landeplatzes. Die v0.19.3-Geschichte (geparkt
+/// in EDDF, Sim weg, Abgabe fuer EDDM) bleibt abgewiesen: Aufsetzpunkt EDDF.
+///
+/// Sonst wie bisher: Live-Lage, wenn brauchbar, dann `aircraft_position_for_gates`.
+fn abgabe_tor_position(
+    stats: &FlightStats,
+    live: Option<(f64, f64)>,
+) -> Option<(f64, f64)> {
+    let geparkt = matches!(
+        stats.phase,
+        FlightPhase::BlocksOn | FlightPhase::Arrived | FlightPhase::PirepSubmitted
+    );
+    let aufsetzpunkt = stats
+        .landing_lat
+        .zip(stats.landing_lon)
+        .filter(|(la, lo)| la.is_finite() && lo.is_finite() && !(la.abs() < 0.02 && lo.abs() < 0.02));
+    if geparkt {
+        if let Some(p) = aufsetzpunkt {
+            return Some(p);
+        }
+    }
+    live.or_else(|| aircraft_position_for_gates(stats))
+}
+
 async fn compute_distance_to_airport(
     app: &AppHandle,
     state: &tauri::State<'_, AppState>,
@@ -135,6 +168,9 @@ async fn compute_distance_to_airport(
     // The last position the FSM actually accepted is right there in the stats.
     // Use it. If we have neither, we cannot place the aircraft — return None, and
     // the caller skips the gate rather than blocking on a guess.
+    let live = current_snapshot(app)
+        .filter(snapshot_position_is_usable)
+        .map(|s| (s.lat, s.lon));
     let (nav_pos, pos) = {
         let guard = state.active_flight.lock().expect("active_flight lock");
         let flight = guard.as_ref();
@@ -142,17 +178,15 @@ async fn compute_distance_to_airport(
             let cache = f.navdata.lock().expect("navdata lock");
             cache.reference_pos(&key)
         });
-        let last = flight.and_then(|f| {
+        // Quelle siehe `abgabe_tor_position` (DAL667).
+        let pos = flight.and_then(|f| {
             let s = f.stats.lock().expect("flight stats");
-            aircraft_position_for_gates(&s)
+            abgabe_tor_position(&s, live)
         });
-        (nav, last)
+        (nav, pos)
     };
-    let live = current_snapshot(app).filter(snapshot_position_is_usable);
-    let (lat, lon) = match (live, pos) {
-        (Some(s), _) => (s.lat, s.lon),
-        (None, Some(p)) => p,
-        (None, None) => return None,
+    let Some((lat, lon)) = pos else {
+        return None;
     };
 
     let by_runway_nm = runway::distance_to_airport_m(&key, lat, lon).map(|m| m / 1852.0);
@@ -428,6 +462,14 @@ async fn flight_end(
                 }
             }
         }
+    }
+
+    // Zeigt der Simulator nach dem Parken etwas anderes (Banner nach
+    // Neustart, Pause), den Wechsel jetzt fuer die Notiz vermerken — bevor
+    // irgendetwas die Flugdaten liest (Codex-Pruefung DAL667).
+    let aktiver = state.active_flight.lock().expect("active_flight lock").clone();
+    if let Some(f) = aktiver {
+        wechsel_vor_der_abgabe_vermerken(&app, &f, current_snapshot(&app).as_ref());
     }
 
     // Pull the arrival ICAO so we can resolve its coords without holding
@@ -799,6 +841,7 @@ async fn flight_end(
         } else if abgabe_sperre(&stats) == Some(AbgabeSperre::LandungFehlt) {
             notes = landung_fehlt_notiz(sprung_begruendung.as_deref(), &notes);
         }
+        notes = nach_ankunft_notiz(&stats, &notes);
         // Prepend a divert banner to the notes so the VA admin sees
         // immediately on the PIREP page that this wasn't a normal
         // arrival. Format mirrors what most ACARS clients write

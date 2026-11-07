@@ -310,6 +310,18 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// in `nach_dem_stand`. Sonst nichts an `lib.rs`; die Logik steht in `src/bilder.rs`
 /// und `crates/bilder-kern`. Tests `tests/befehlsliste.rs::bilder_befehle_der_faehigkeit_bilder_1`,
 /// `bilder::tests::*`, `bilder-kern` (`cargo test -p bilder-kern`).
+/// — plus DAL667 08.11. (Abgabe nach Arrived): Abgabe-Versuch oben in der
+/// Streamer-Schleife vor allen `continue`, `auto_file_entscheiden`,
+/// `sprung_vermerken`/`sprung_nach_der_landung` (Sprung nach dem Parken sperrt
+/// nicht), `abgabe_tor_position` (geparkt am Aufsetzpunkt), Snapshot im
+/// Landungsdatensatz nur per `live_snapshot_gehoert_zum_flug`, Notiz
+/// `nach_ankunft_notiz`. Tests `nachreichen_tests::sprung_*`,
+/// `auto_file_entscheidet_*`, `abgabe_tor_*`, `live_snapshot_*`, `auto_file_kette_*`.
+/// Dazu: Streamer haelt den Flug nach einem Wechsel nach dem Parken an
+/// (`flug_nach_ankunft_eingefroren`), Lebenszeichen auch ohne guten Snapshot,
+/// `abweichung_als_sprung` + `wechsel_vor_der_abgabe_vermerken` in beiden
+/// Abgabewegen. Tests `nach_dem_parken_*`, `abweichung_als_sprung_*`,
+/// `beide_abgabewege_*`, `lebenszeichen_ohne_guten_snapshot`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -320,4 +332,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "302437f816e09bb91cfab71a5e770b6c4e870c0f9ec0d47b48d56e258518908d";
+const HASH_VOR_DER_ZERLEGUNG: &str = "4bc07ef6d3a901b2704dcf75e8b422869ae39764deef14188fdb42cc26de5fdc";

@@ -1136,6 +1136,11 @@ function App() {
           activeFlight={activeFlight}
           onAdopted={setActiveFlight}
           onCancelled={() => setActiveFlight(null)}
+          onFiledSuccess={(outcome) => {
+            setActiveFlight(null);
+            setAbschluss(outcome);
+            setTab("flug");
+          }}
         />
       )}
 

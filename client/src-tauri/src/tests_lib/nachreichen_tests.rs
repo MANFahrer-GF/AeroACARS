@@ -151,9 +151,21 @@
             1,
             "Fenster passt nicht mehr auf den Auto-File-Zweig"
         );
+        // Die Entscheidung (Sperre, Kabine, Merker) steht seit DAL667 in
+        // `auto_file_entscheiden` und ist dort mit Verhaltenstests belegt
+        // (`auto_file_entscheidet_unabhaengig_von_pause_und_sprung`). Hier
+        // nur: Sie wird VOR der Abgabe gefragt.
         let sprung = zweig
-            .find("abgabe_sperre(&st)")
-            .expect("Auto-File fragt die Abgabe-Sperre nicht mehr");
+            .find("auto_file_entscheiden(&mut st")
+            .expect("Auto-File fragt die Entscheidung nicht mehr");
+        let ent_start = SRC
+            .find(concat!("\nfn auto_file_", "entscheiden("))
+            .expect("auto_file_entscheiden nicht gefunden — Test anpassen, nicht loeschen");
+        let ent = &SRC[ent_start..ent_start + SRC[ent_start..].find("\n}\n").unwrap()];
+        assert!(
+            ent.contains("abgabe_sperre(st)"),
+            "Auto-File fragt die Abgabe-Sperre nicht mehr"
+        );
         let abgabe = zweig
             .find("flight_end(app_af.clone()")
             .expect("Auto-File-Aufruf nicht mehr gefunden");
@@ -188,15 +200,21 @@
     /// Wo ein Sprung erkannt wird, muss er auch in die LISTE — sonst
     /// ueberschreibt der zweite Sprung den ersten still, und die Notiz
     /// nennt nur den letzten (Cloud-QS 23.09.2026, dritte Runde).
+    ///
+    /// Seit DAL667 (07.11.2026) laeuft jede Erkennung ueber
+    /// `sprung_vermerken`, das zusaetzlich Zeitpunkt und „nach der Ankunft"
+    /// stempelt. Ein Erkennungsweg, der das Feld wieder direkt setzt, haette
+    /// keinen Stempel und sperrte einen fertigen Flug — darum: genau EINE
+    /// Setzstelle, und alle drei Erkennungswege rufen den Helfer. Das
+    /// Verhalten selbst belegt `sprung_vermerken_haengt_an_und_stempelt`.
     #[test]
     fn jede_erkennung_haengt_den_sprung_an_die_liste() {
         const SRC: &str = crate::quelle_gesamt::PRODUKTION;
         let nadel = concat!("stats.resume_discontinuity = ", "Some(");
         let stellen: Vec<usize> = SRC.match_indices(nadel).map(|(i, _)| i).collect();
-        // Keine feste Zahl: Es kommen Erkennungsstellen dazu (23.09.2026
-        // die Bestaetigung „Trotzdem fortsetzen"). Was zaehlt, ist, dass
-        // JEDE davon anhaengt — und dass keine verschwindet.
-        assert!(stellen.len() >= 3, "Erkennungsstellen: {stellen:?}");
+        assert_eq!(stellen.len(), 1, "Sprung wird an mehr als einer Stelle gesetzt: {stellen:?}");
+        let aufrufe = SRC.matches(concat!("sprung_", "vermerken(&mut stats, ")).count();
+        assert!(aufrufe >= 3, "nicht alle Erkennungswege rufen sprung_vermerken: {aufrufe}");
         for i in &stellen {
             let rest = &SRC[*i..];
             // Eng: bis zum Ende der naechsten Anweisung. Ein weites Fenster
@@ -321,6 +339,8 @@
             danach_am_boden: true,
             luecke_secs: Some(600),
             nur_bestaetigt: false,
+            am: None,
+            nach_ankunft: false,
         });
         assert_eq!(abgabe_sperre(&stats), Some(AbgabeSperre::Sprung));
     }
@@ -357,21 +377,33 @@
             "Takt-Aufruf ohne Arrived-Bedingung: {davor}"
         );
 
+        // DAL667 (07.11.2026): Der Takt-Aufruf steht VOR dem ersten
+        // `continue` der Streamer-Schleife. Hinter Pause, `was_just_resumed`
+        // oder „kein Snapshot" erreichte ihn der Takt nie, und der gelandete
+        // Flug wurde nicht abgegeben.
+        let schleife = SRC
+            .find(concat!("\nfn spawn_position_", "streamer("))
+            .and_then(|s| SRC[s..].find("        loop {").map(|l| s + l))
+            .expect("Streamer-Schleife nicht gefunden — Test anpassen, nicht loeschen");
+        let erstes_continue = schleife
+            + SRC[schleife..].find("continue;").expect("kein continue in der Schleife");
+        assert!(
+            schleife < i && i < erstes_continue,
+            "der Abgabe-Versuch muss vor dem ersten `continue` der Streamer-Schleife stehen"
+        );
+
+        // Merker: Die Reihenfolge Pruefen → Setzen steht in
+        // `auto_file_entscheiden` (Verhalten: `auto_file_entscheidet_*`),
+        // und `auto_file_versuchen` gibt erst danach ab.
         let start = SRC
             .find(concat!("\nfn auto_file_", "versuchen("))
             .expect("auto_file_versuchen nicht gefunden");
         let koerper = &SRC[start..start + SRC[start..].find("\n}\n").unwrap()];
-        let pruefen = koerper
-            .find("if st.auto_file_gestartet")
-            .expect("Merker wird nicht mehr geprueft");
-        let setzen = koerper
-            .find("st.auto_file_gestartet = true")
-            .expect("Merker wird nicht mehr gesetzt");
+        let entscheiden = koerper
+            .find("auto_file_entscheiden(")
+            .expect("Entscheidung wird nicht mehr gefragt");
         let abgabe = koerper.find("flight_end(").expect("Abgabe fehlt");
-        assert!(
-            pruefen < setzen && setzen < abgabe,
-            "Merker-Reihenfolge stimmt nicht"
-        );
+        assert!(entscheiden < abgabe, "Merker-Reihenfolge stimmt nicht");
     }
 
     /// Das Aktivitaetsprotokoll schreibt die GUELTIGE Phase, nicht die der
@@ -598,3 +630,275 @@
         assert!(!protokoll_ist_eingereicht(&dir.join("gibtsnicht.jsonl")));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // ── DAL667 (07.11.2026): Abgabe eines gelandeten Flugs ───────────────
+    //
+    // Gelandet und geparkt in KSFO, danach im MSFS-Menue eine 777 in Rio
+    // geladen, nach App-Neustart „Trotzdem fortsetzen" in Dubai. Der Flug
+    // wurde nie abgegeben und spaeter storniert.
+
+    fn gelandet_in_ksfo() -> super::FlightStats {
+        let mut st = super::FlightStats::new();
+        st.phase = super::FlightPhase::Arrived;
+        st.landing_rate_fpm = Some(-180.0);
+        st.landing_at = Some(chrono::Utc::now() - chrono::Duration::minutes(75));
+        st.landing_lat = Some(37.6155);
+        st.landing_lon = Some(-122.3900);
+        st.last_known_lat = Some(37.6155);
+        st.last_known_lon = Some(-122.3900);
+        st
+    }
+
+    fn sprung_nach_dubai() -> super::ResumeDiscontinuity {
+        super::ResumeDiscontinuity {
+            drift_nm: 7030.0,
+            altitude_delta_ft: 0.0,
+            fuel_delta_kg: 0.0,
+            both_grounded: true,
+            ziel_vorher_nm: Some(0.5),
+            ziel_nachher_nm: Some(7030.0),
+            danach_am_boden: true,
+            luecke_secs: Some(4200),
+            nur_bestaetigt: true,
+            am: None,
+            nach_ankunft: false,
+        }
+    }
+
+    #[test]
+    fn sprung_vermerken_haengt_an_und_stempelt() {
+        use super::{sprung_vermerken, FlightPhase};
+        let jetzt = chrono::Utc::now();
+        let mut st = gelandet_in_ksfo();
+        sprung_vermerken(&mut st, sprung_nach_dubai(), jetzt);
+        assert_eq!(st.resume_spruenge.len(), 1);
+        let d = st.resume_discontinuity.expect("juengster Sprung fehlt");
+        assert_eq!(d.am, Some(jetzt));
+        assert!(d.nach_ankunft, "geparkt mit gemessener Landung → nach der Ankunft");
+
+        // Im Reiseflug ist es ein Sprung des Flugs, nicht nach der Ankunft.
+        let mut reise = super::FlightStats::new();
+        reise.phase = FlightPhase::Cruise;
+        sprung_vermerken(&mut reise, sprung_nach_dubai(), jetzt);
+        assert!(!reise.resume_discontinuity.unwrap().nach_ankunft);
+
+        // Geparkt, aber die Landung wurde nie gemessen (GAF 9655): kein Freibrief.
+        let mut ungemessen = gelandet_in_ksfo();
+        ungemessen.landing_rate_fpm = None;
+        sprung_vermerken(&mut ungemessen, sprung_nach_dubai(), jetzt);
+        assert!(!ungemessen.resume_discontinuity.unwrap().nach_ankunft);
+    }
+
+    #[test]
+    fn sprung_nach_dem_parken_sperrt_die_abgabe_nicht() {
+        use super::{abgabe_sperre, nach_ankunft_notiz, sperrender_sprung, sprung_vermerken, spruenge_fuer_notiz};
+        let mut st = gelandet_in_ksfo();
+        sprung_vermerken(&mut st, sprung_nach_dubai(), chrono::Utc::now());
+        assert_eq!(abgabe_sperre(&st), None, "DAL667: fertiger Flug, keine Sperre");
+        assert!(!sperrender_sprung(&st), "kein Sprung-Banner fuer einen Wechsel nach dem Parken");
+        assert!(spruenge_fuer_notiz(&st).is_empty(), "kein Vermerk UNTERBROCHENER FLUG");
+        let notiz = nach_ankunft_notiz(&st, "Rest");
+        assert!(notiz.starts_with("NACH DER ANKUNFT:"), "{notiz}");
+        assert!(notiz.ends_with("Rest"), "{notiz}");
+        // Ohne Wechsel bleibt die Notiz unberuehrt.
+        assert_eq!(nach_ankunft_notiz(&gelandet_in_ksfo(), "Rest"), "Rest");
+    }
+
+    #[test]
+    fn sprung_vor_der_landung_sperrt_weiter() {
+        use super::{abgabe_sperre, sprung_vermerken, AbgabeSperre, FlightPhase};
+        let t0 = chrono::Utc::now();
+
+        // MSC1588: Sprung im Reiseflug, danach „Arrived" mit gemessener Landung.
+        let mut st = gelandet_in_ksfo();
+        st.phase = FlightPhase::Cruise;
+        st.landing_at = None;
+        st.landing_rate_fpm = None;
+        sprung_vermerken(&mut st, sprung_nach_dubai(), t0 - chrono::Duration::minutes(30));
+        st.phase = FlightPhase::Arrived;
+        st.landing_at = Some(t0);
+        st.landing_rate_fpm = Some(-150.0);
+        assert_eq!(abgabe_sperre(&st), Some(AbgabeSperre::Sprung));
+
+        // Ein Sprung nach der Landung verdeckt einen davor nicht.
+        sprung_vermerken(&mut st, sprung_nach_dubai(), t0 + chrono::Duration::minutes(10));
+        assert_eq!(abgabe_sperre(&st), Some(AbgabeSperre::Sprung));
+
+        // Stempel „nach der Ankunft", aber danach noch einmal gelandet: davor.
+        let mut neu = gelandet_in_ksfo();
+        sprung_vermerken(&mut neu, sprung_nach_dubai(), t0);
+        neu.landing_at = Some(t0 + chrono::Duration::minutes(40));
+        assert_eq!(abgabe_sperre(&neu), Some(AbgabeSperre::Sprung));
+
+        // Aus einer aelteren Fassung gespeichert (ohne Stempel): sperrt.
+        let mut alt = gelandet_in_ksfo();
+        alt.resume_discontinuity = Some(sprung_nach_dubai());
+        assert_eq!(abgabe_sperre(&alt), Some(AbgabeSperre::Sprung));
+    }
+
+    #[test]
+    fn auto_file_entscheidet_unabhaengig_von_pause_und_sprung() {
+        use super::{auto_file_entscheiden, sprung_vermerken, AbgabeSperre, FlightPhase};
+        let jetzt = chrono::Utc::now();
+
+        // DAL667: geparkt, Simulator pausiert, danach ein anderes Flugzeug.
+        let mut st = gelandet_in_ksfo();
+        st.paused_since = Some(jetzt);
+        sprung_vermerken(&mut st, sprung_nach_dubai(), jetzt);
+        assert_eq!(auto_file_entscheiden(&mut st, false, jetzt.timestamp()), Some(Ok(())));
+        assert!(st.auto_file_gestartet, "Merker gesetzt");
+        assert_eq!(
+            auto_file_entscheiden(&mut st, false, jetzt.timestamp()),
+            None,
+            "ein zweiter Takt gibt nicht noch einmal ab"
+        );
+
+        // MSC1588 bleibt beim Piloten.
+        let mut msc = gelandet_in_ksfo();
+        msc.phase = FlightPhase::Cruise;
+        sprung_vermerken(&mut msc, sprung_nach_dubai(), jetzt - chrono::Duration::minutes(90));
+        msc.phase = FlightPhase::Arrived;
+        assert_eq!(
+            auto_file_entscheiden(&mut msc, false, jetzt.timestamp()),
+            Some(Err((false, Some(AbgabeSperre::Sprung))))
+        );
+        assert!(!msc.auto_file_gestartet);
+    }
+
+    #[test]
+    fn abgabe_tor_misst_geparkt_am_aufsetzpunkt() {
+        use super::{abgabe_tor_position, FlightPhase};
+        let rio = Some((-22.8100, -43.2506));
+        let mut st = gelandet_in_ksfo();
+        // Nach „Trotzdem fortsetzen" schreibt der Takt Dubai in `last_known_*`.
+        st.last_known_lat = Some(25.2528);
+        st.last_known_lon = Some(55.3644);
+        assert_eq!(abgabe_tor_position(&st, rio), Some((37.6155, -122.3900)));
+        assert_eq!(abgabe_tor_position(&st, None), Some((37.6155, -122.3900)));
+
+        // Geparkt ohne Aufsetzpunkt: wie bisher, Live vor gespeichert.
+        st.landing_lat = None;
+        assert_eq!(abgabe_tor_position(&st, rio), rio);
+        assert_eq!(abgabe_tor_position(&st, None), Some((25.2528, 55.3644)));
+
+        // Nicht geparkt: wie bisher die Live-Lage.
+        let mut rollen = gelandet_in_ksfo();
+        rollen.phase = FlightPhase::TaxiIn;
+        assert_eq!(abgabe_tor_position(&rollen, rio), rio);
+    }
+
+    #[test]
+    fn live_snapshot_nur_wenn_er_zum_flug_gehoert() {
+        use super::{live_snapshot_gehoert_zum_flug, sprung_vermerken};
+        let st = gelandet_in_ksfo();
+        assert!(live_snapshot_gehoert_zum_flug(&st, false));
+        assert!(!live_snapshot_gehoert_zum_flug(&st, true), "was_just_resumed");
+        let mut pause = gelandet_in_ksfo();
+        pause.paused_since = Some(chrono::Utc::now());
+        assert!(!live_snapshot_gehoert_zum_flug(&pause, false), "Simulator pausiert");
+        let mut gewechselt = gelandet_in_ksfo();
+        sprung_vermerken(&mut gewechselt, sprung_nach_dubai(), chrono::Utc::now());
+        assert!(!live_snapshot_gehoert_zum_flug(&gewechselt, false), "anderes Flugzeug nach dem Parken");
+    }
+
+    /// Nach einem Wechsel nach dem Parken haelt der Streamer den Flug an —
+    /// sonst gehen die Werte des neuen Flugzeugs als Spur hinaus (DAL667,
+    /// Recorder-Sitzung 3081: sechs Dubai-Positionen der 777).
+    #[test]
+    fn nach_dem_parken_gewechselt_wird_nicht_weiter_aufgezeichnet() {
+        use super::{flug_nach_ankunft_eingefroren, sprung_vermerken, FlightPhase};
+        let mut st = gelandet_in_ksfo();
+        assert!(!flug_nach_ankunft_eingefroren(&st), "ohne Wechsel laeuft alles normal");
+        sprung_vermerken(&mut st, sprung_nach_dubai(), chrono::Utc::now());
+        assert!(flug_nach_ankunft_eingefroren(&st));
+        // Ein Sprung im Flug haelt die Aufzeichnung nicht an (dort fragt der Pilot).
+        let mut reise = gelandet_in_ksfo();
+        reise.phase = FlightPhase::Cruise;
+        sprung_vermerken(&mut reise, sprung_nach_dubai(), chrono::Utc::now());
+        assert!(!flug_nach_ankunft_eingefroren(&reise));
+
+        // Und der Streamer fragt es am Tor des Lebenszeichen-Zweigs.
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
+        let tor = SRC
+            .find(concat!("|| flug_nach_ankunft_", "eingefroren(&flight.stats"))
+            .expect("Streamer haelt den Flug nach einem Wechsel nicht an");
+        let mut ab = tor.saturating_sub(200);
+        while !SRC.is_char_boundary(ab) {
+            ab -= 1;
+        }
+        let vorher = &SRC[ab..tor];
+        assert!(vorher.contains("was_just_resumed"), "nicht am Lebenszeichen-Tor: {vorher}");
+    }
+
+    /// Codex-Pruefung DAL667, Befund 2: „Flug abgeben" aus dem Banner (nach
+    /// Neustart, anderes Flugzeug weit weg) vermerkt den Wechsel. Die
+    /// Berechnung ist dieselbe wie bei „Trotzdem fortsetzen".
+    #[test]
+    fn abweichung_als_sprung_erkennt_den_wechsel() {
+        use super::{abweichung_als_sprung, sprung_vermerken, abgabe_sperre, nach_ankunft_notiz};
+        let mut st = gelandet_in_ksfo();
+        st.last_known_alt_ft = Some(13.0);
+        st.last_known_gs_kt = Some(0.0);
+        st.last_known_at = Some(chrono::Utc::now() - chrono::Duration::minutes(60));
+        let jetzt = chrono::Utc::now();
+        let mut dubai = sim_core::SimSnapshot::default();
+        dubai.lat = 25.2481;
+        dubai.lon = 55.3644;
+        dubai.altitude_msl_ft = 4.0;
+        dubai.on_ground = true;
+        dubai.fuel_total_kg = 63191.0;
+        let d = abweichung_als_sprung(&st, &dubai, jetzt).expect("Wechsel nach Dubai nicht erkannt");
+        assert!(d.nur_bestaetigt);
+        assert!(d.drift_nm > 6000.0, "{}", d.drift_nm);
+        // Am selben Stand passt die Lage: kein Vermerk.
+        let mut gate = dubai.clone();
+        gate.lat = 37.6155;
+        gate.lon = -122.3900;
+        gate.fuel_total_kg = 0.0;
+        assert!(abweichung_als_sprung(&st, &gate, jetzt).is_none());
+        // Vermerkt sperrt er nicht und steht in der Notiz.
+        sprung_vermerken(&mut st, d, jetzt);
+        assert_eq!(abgabe_sperre(&st), None);
+        assert!(nach_ankunft_notiz(&st, "").starts_with("NACH DER ANKUNFT:"));
+    }
+
+    /// Befund 2, Verdrahtung: beide Abgabewege vermerken vor dem Lesen.
+    #[test]
+    fn beide_abgabewege_vermerken_den_wechsel() {
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
+        let aufruf = concat!("wechsel_vor_der_abgabe_", "vermerken(&app, ");
+        for (kopf, lesen) in [
+            (concat!("\nasync fn ", "flight_end("), "validate_for_filing("),
+            ("\nasync fn flight_end_manual(", "pirep_bewertete_teile("),
+        ] {
+            let start = SRC.find(kopf).unwrap_or_else(|| panic!("{kopf} nicht gefunden"));
+            let koerper = &SRC[start..];
+            let v = koerper.find(aufruf).unwrap_or_else(|| panic!("{kopf}: kein Vermerk"));
+            let l = koerper.find(lesen).unwrap_or_else(|| panic!("{kopf}: {lesen} fehlt"));
+            assert!(v < l, "{kopf}: Vermerk muss vor {lesen} stehen");
+        }
+    }
+
+    /// Befund 1: Das Lebenszeichen im angehaltenen Zustand braucht keinen
+    /// guten Snapshot — frisch nach einem Neustart gibt es keinen, und ohne
+    /// Lebenszeichen raeumt phpVMS den PIREP ab.
+    #[test]
+    fn lebenszeichen_ohne_guten_snapshot() {
+        use super::{build_heartbeat_body, FlightPhase};
+        let mut st = gelandet_in_ksfo();
+        st.takeoff_at = Some(chrono::Utc::now() - chrono::Duration::hours(7));
+        st.landing_at = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+        let body = build_heartbeat_body(&sim_core::SimSnapshot::default(), &st, FlightPhase::Arrived);
+        assert_eq!(body.flight_time, Some(360), "Flugzeit aus den Flugdaten");
+
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
+        let tor = SRC
+            .find(concat!("|| flug_nach_ankunft_", "eingefroren(&flight.stats"))
+            .expect("Tor nicht gefunden");
+        let zweig = &SRC[tor..tor + SRC[tor..].find("continue;").unwrap()];
+        assert!(
+            !zweig.contains("if let Some(hb) = last_good_snap"),
+            "Lebenszeichen haengt wieder an einem guten Snapshot"
+        );
+    }
+

@@ -1404,11 +1404,14 @@ fn build_client_health_report(stats: &FlightStats) -> Option<aeroacars_mqtt::Cli
     let disconnect_sim_liveness = stats
         .disconnect_sim_liveness
         .map(|l| l.as_wire_str().to_string());
-    let impossible_resume_jump = stats.resume_discontinuity.map(|_| true);
+    // Nur Spruenge VOR der Landung stellen den Flug in Frage; ein Wechsel
+    // nach dem Parken (DAL667) ist kein Integritaetsbefund.
+    let juengster = spruenge_fuer_notiz(stats).last().copied();
+    let impossible_resume_jump = juengster.map(|_| true);
     // Bei einer blossen Bestaetigung („Trotzdem fortsetzen") sind Sprit-
     // und Hoehendelta konstruktionsbedingt 0 — keine Messwerte, also nicht
     // melden (Cloud-QS 23.09.2026, dritte Runde).
-    let gemessen = stats.resume_discontinuity.filter(|d| !d.nur_bestaetigt);
+    let gemessen = juengster.filter(|d| !d.nur_bestaetigt);
     let resume_fuel_delta_kg = gemessen.map(|d| d.fuel_delta_kg as f32);
     let resume_altitude_delta_ft = gemessen.map(|d| d.altitude_delta_ft as f32);
 

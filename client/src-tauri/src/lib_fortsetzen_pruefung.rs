@@ -120,6 +120,17 @@ struct ResumeDiscontinuity {
     /// sie dem Pruefer Messwerte vor, die keine sind (Cloud-QS 23.09.2026).
     #[serde(default)]
     nur_bestaetigt: bool,
+    /// Wann der Sprung vermerkt wurde. `None` bei Fluegen aus einer
+    /// aelteren Fassung — die gelten weiter als Sprung vor der Landung.
+    #[serde(default)]
+    am: Option<DateTime<Utc>>,
+    /// Stand der Flug beim Vermerk schon geparkt (BlocksOn/Arrived) und war
+    /// die Landung gemessen? Dann sprang nicht der Flug, sondern der
+    /// Simulator NACH dem Flug — der Pilot hat etwas anderes geladen
+    /// (DAL667, 07.11.2026: nach dem Parken in KSFO eine 777 in Rio).
+    /// Gesetzt nur ueber `sprung_vermerken`.
+    #[serde(default)]
+    nach_ankunft: bool,
 }
 
 /// Taugt eine Position als Messpunkt fuer Pause/Wiederaufnahme?
@@ -169,7 +180,67 @@ fn compute_resume_discontinuity(
         danach_am_boden: cur.on_ground,
         luecke_secs,
         nur_bestaetigt: false,
+        am: None,
+        nach_ankunft: false,
     }
+}
+
+/// Die eine Stelle, an der ein Sprung in die Flugdaten kommt — alle drei
+/// Erkennungswege (Neustart, Pause, „Trotzdem fortsetzen") rufen hier.
+/// Stempelt Zeitpunkt und „nach der Ankunft", damit `abgabe_sperre` einen
+/// Sprung vor der Landung (MSC1588, gesperrt) von einem Simulatorwechsel
+/// nach dem Parken (DAL667, nicht gesperrt) unterscheiden kann.
+fn sprung_vermerken(stats: &mut FlightStats, mut d: ResumeDiscontinuity, jetzt: DateTime<Utc>) {
+    d.am = Some(jetzt);
+    d.nach_ankunft = matches!(
+        stats.phase,
+        FlightPhase::BlocksOn | FlightPhase::Arrived | FlightPhase::PirepSubmitted
+    ) && landung_wurde_gemessen(stats);
+    stats.resume_discontinuity = Some(d);
+    stats.resume_spruenge.push(d);
+}
+
+/// Sprang der Simulator erst NACH der gemessenen Landung? Nur dann haelt
+/// der Sprung die Abgabe nicht auf. Beides muss stimmen: der Stempel beim
+/// Vermerk UND der Zeitpunkt nach der (letzten) Landung — setzt der Flug
+/// danach noch einmal auf, liegt der Sprung wieder davor und sperrt.
+/// Fehlt etwas (aeltere Fassung, keine Landung), gilt er als Sprung davor.
+fn sprung_nach_der_landung(d: &ResumeDiscontinuity, stats: &FlightStats) -> bool {
+    d.nach_ankunft
+        && landung_wurde_gemessen(stats)
+        && matches!((d.am, stats.landing_at), (Some(am), Some(landung)) if am > landung)
+}
+
+/// Alle vermerkten Spruenge: die Liste, fuer Fluege aus einer aelteren
+/// Fassung (leere Liste) das alte Einzelfeld.
+fn alle_spruenge(stats: &FlightStats) -> Vec<ResumeDiscontinuity> {
+    if !stats.resume_spruenge.is_empty() {
+        stats.resume_spruenge.clone()
+    } else {
+        stats.resume_discontinuity.into_iter().collect()
+    }
+}
+
+/// Nach einem Simulatorwechsel nach dem Parken ist der Flug fertig: Der
+/// Streamer haelt ihn an wie nach einem Neustart (nur Lebenszeichen mit dem
+/// letzten guten Stand), statt die Werte des neu geladenen Flugzeugs als
+/// Positionen, Sprit und `last_known_*` in den Flug zu schreiben. DAL667
+/// (07.11.2026): Nach „Trotzdem fortsetzen" gingen sechs Positionen der 777
+/// in Dubai hinaus und erzeugten auf live die Recorder-Sitzung 3081.
+fn flug_nach_ankunft_eingefroren(stats: &FlightStats) -> bool {
+    matches!(
+        stats.phase,
+        FlightPhase::BlocksOn | FlightPhase::Arrived | FlightPhase::PirepSubmitted
+    ) && alle_spruenge(stats)
+        .iter()
+        .any(|d| sprung_nach_der_landung(d, stats))
+}
+
+/// Gibt es einen Sprung, der die Abgabe sperrt (also nicht nach der Landung)?
+fn sperrender_sprung(stats: &FlightStats) -> bool {
+    alle_spruenge(stats)
+        .iter()
+        .any(|d| !sprung_nach_der_landung(d, stats))
 }
 
 /// Liess sich die Strecke zwischen den beiden Punkten in der Zeit, in der
@@ -285,40 +356,39 @@ fn landung_wurde_gemessen(stats: &FlightStats) -> bool {
     stats.canonical_landing_rate_fpm().is_some() || stats.landing_score.is_some()
 }
 
-/// Haelt fest, dass der Pilot den Knopf „Trotzdem fortsetzen" gedrueckt
-/// hat, obwohl die Lage im Simulator nicht zum gespeicherten Flug passte.
-///
-/// ⚠ NUR von dort aufrufen. Der Countdown im Resume-Banner bestaetigt von
-/// selbst, und wer danach den Simulator neu laedt, steht beim ersten
-/// Snapshot regelmaessig am Boden — ohne diese Bedingung bekaeme jeder
-/// ehrliche Neustart einen Sprung-Vermerk (Cloud-QS 23.09.2026).
-fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap: &SimSnapshot) {
+/// Passt die Lage im Simulator nicht zum gespeicherten Flug, als Sprung
+/// (`nur_bestaetigt`, nur der Abstand ist ein Messwert). `None`, wenn sie
+/// passt oder eine Seite kein echter Wert ist (Menue, Ladebildschirm).
+/// Rein, ohne App — gemeinsam fuer „Trotzdem fortsetzen" und die Abgabe
+/// nach einem Wechsel (DAL667).
+fn abweichung_als_sprung(
+    stats: &FlightStats,
+    snap: &SimSnapshot,
+    jetzt: DateTime<Utc>,
+) -> Option<ResumeDiscontinuity> {
     let (referenz, darf_weitergeflogen, ziel, luecke_secs) = {
-        let stats = flight.stats.lock().expect("flight stats");
         (
             // Dauerhafter Punkt: `last_lat/lon` ist nach einem Resume leer,
             // `paused_last_known` ueberlebt keinen Neustart — sonst fehlte
             // der Vermerk genau nach Absturz + „Trotzdem fortsetzen".
-            lage_referenz(&stats),
-            darf_weitergeflogen_sein(&stats),
+            lage_referenz(stats),
+            darf_weitergeflogen_sein(stats),
             stats.planned_arr_ref_pos,
             stats.resume_luecke_secs,
         )
     };
     // Dieselbe Regel wie das Banner: Was dort ohne Klick weiterlaufen
     // duerfte, ist kein Sprung.
-    let Some(referenz) = referenz else {
-        return;
-    };
-    if lage_abweichung(&referenz, snap, Utc::now(), darf_weitergeflogen).is_none() {
-        return;
+    let referenz = referenz?;
+    if lage_abweichung(&referenz, snap, jetzt, darf_weitergeflogen).is_none() {
+        return None;
     }
     let (plat, plon) = (referenz.lat, referenz.lon);
     // Menue-Scheinposition (LAT 0 / LON 90) auf einer der beiden Seiten
     // ist kein Sprung, sondern ein Messfehler (Log-Durchsicht 26.09.2026).
     // Die Hoehe der Referenz kennen wir hier nicht — sie ist die aktuelle.
     if !snapshot_plausibel(snap) || !position_plausibel(plat, plon, snap.altitude_msl_ft) {
-        return;
+        return None;
     }
     let vorher = PausedSnapshot {
         lat: plat,
@@ -331,12 +401,39 @@ fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
     };
     let mut d = compute_resume_discontinuity(&vorher, snap, ziel, luecke_secs);
     d.nur_bestaetigt = true;
-    {
+    Some(d)
+}
+
+/// Haelt fest, dass der Pilot den Knopf „Trotzdem fortsetzen" gedrueckt
+/// hat, obwohl die Lage im Simulator nicht zum gespeicherten Flug passte.
+///
+/// ⚠ NUR von dort aufrufen. Der Countdown im Resume-Banner bestaetigt von
+/// selbst, und wer danach den Simulator neu laedt, steht beim ersten
+/// Snapshot regelmaessig am Boden — ohne diese Bedingung bekaeme jeder
+/// ehrliche Neustart einen Sprung-Vermerk (Cloud-QS 23.09.2026).
+fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap: &SimSnapshot) {
+    let d = {
+        let stats = flight.stats.lock().expect("flight stats");
+        abweichung_als_sprung(&stats, snap, Utc::now())
+    };
+    let Some(d) = d else {
+        return;
+    };
+    let nach_ankunft = {
         let mut stats = flight.stats.lock().expect("flight stats");
-        stats.resume_discontinuity = Some(d);
-        stats.resume_spruenge.push(d);
-    }
+        sprung_vermerken(&mut stats, d, Utc::now());
+        stats.resume_discontinuity.is_some_and(|d| d.nach_ankunft)
+    };
     save_active_flight(app, flight);
+    // Die Aussage muss zum Zustand passen: Nach der Ankunft sperrt der
+    // Vermerk die Abgabe nicht (DAL667).
+    let folge = if nach_ankunft {
+        "Der Flug war schon gelandet und geparkt — er wird mit den Werten \
+         der Ankunft abgegeben, der Wechsel steht in der Notiz."
+    } else {
+        "Der Flug läuft weiter, aber die App reicht ihn nicht mehr von selbst \
+         ein — du entscheidest am Ende."
+    };
     log_activity_and_record(
         app,
         &flight.pirep_id,
@@ -344,8 +441,7 @@ fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
         "Trotz erkannter Abweichung fortgesetzt".to_string(),
         Some(format!(
             "Der Simulator passte beim Fortsetzen nicht zum gespeicherten Flug \
-             (Position {:.1} nm, am Boden: {}). Der Flug läuft weiter, aber die \
-             App reicht ihn nicht mehr von selbst ein — du entscheidest am Ende.",
+             (Position {:.1} nm, am Boden: {}). {folge}",
             d.drift_nm, snap.on_ground
         )),
     );
@@ -354,6 +450,51 @@ fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
         drift_nm = d.drift_nm,
         on_ground = snap.on_ground,
         "Resume trotz Abweichung bestaetigt — als Sprung vermerkt"
+    );
+}
+
+/// Vor der Abgabe eines gelandeten Flugs: Zeigt der Simulator gerade etwas
+/// anderes (Banner offen nach Neustart, oder pausiert), den Wechsel fuer die
+/// Notiz vermerken — sonst gaebe „Flug abgeben" aus dem Banner einen Flug
+/// ab, ohne dass die VA erfaehrt, dass danach ein anderes Flugzeug geladen
+/// war (Codex-Pruefung DAL667). Nur geparkt mit gemessener Landung, damit
+/// der Vermerk sicher „nach der Ankunft" ist und nicht sperrt; nur einmal.
+fn wechsel_vor_der_abgabe_vermerken(app: &AppHandle, flight: &ActiveFlight, snap: Option<&SimSnapshot>) {
+    let Some(snap) = snap else {
+        return;
+    };
+    let d = {
+        let stats = flight.stats.lock().expect("flight stats");
+        let geparkt = matches!(
+            stats.phase,
+            FlightPhase::BlocksOn | FlightPhase::Arrived | FlightPhase::PirepSubmitted
+        ) && landung_wurde_gemessen(&stats);
+        let banner_oder_pause =
+            flight.was_just_resumed.load(Ordering::SeqCst) || stats.paused_since.is_some();
+        if !geparkt || !banner_oder_pause || flug_nach_ankunft_eingefroren(&stats) {
+            return;
+        }
+        abweichung_als_sprung(&stats, snap, Utc::now())
+    };
+    let Some(d) = d else {
+        return;
+    };
+    {
+        let mut stats = flight.stats.lock().expect("flight stats");
+        sprung_vermerken(&mut stats, d, Utc::now());
+    }
+    save_active_flight(app, flight);
+    log_activity_and_record(
+        app,
+        &flight.pirep_id,
+        ActivityLevel::Warn,
+        "Abgabe nach Simulatorwechsel".to_string(),
+        Some(format!(
+            "Der Flug war gelandet und geparkt; im Simulator ist inzwischen etwas \
+             anderes geladen (Position {:.1} nm entfernt). Abgegeben werden die \
+             Werte der Ankunft, der Wechsel steht in der Notiz.",
+            d.drift_nm
+        )),
     );
 }
 
@@ -381,22 +522,9 @@ fn auto_file_versuchen(app: &AppHandle, flight: &Arc<ActiveFlight>, beim_wechsel
     let ansagen_an = kabinenansagen::einstellungen(app).an;
     let entscheidung = {
         let mut st = flight.stats.lock().expect("flight stats");
-        if st.auto_file_gestartet {
-            return;
-        }
-        let is_divert = st.divert_hint.is_some();
-        let sperre = abgabe_sperre(&st);
-        if is_divert || sperre.is_some() {
-            Err((is_divert, sperre))
-        } else if kabinenansagen::kabine_haelt_abgabe(&mut st, ansagen_an, Utc::now().timestamp()) {
-            // 1a: Erst die Kabine zu Ende spielen lassen (Tueren entschaerfen,
-            // Aussteigen), hoechstens 90 s — sonst fiel „Aussteigen“ in 8 von
-            // 17 Fluegen weg, und das Protokoll sagte es nicht. Der Takt ruft
-            // hier in `Arrived` jede Sekunde wieder auf.
-            return;
-        } else {
-            st.auto_file_gestartet = true;
-            Ok(())
+        match auto_file_entscheiden(&mut st, ansagen_an, Utc::now().timestamp()) {
+            Some(e) => e,
+            None => return,
         }
     };
     match entscheidung {
@@ -475,12 +603,48 @@ fn auto_file_versuchen(app: &AppHandle, flight: &Arc<ActiveFlight>, beim_wechsel
     }
 }
 
+/// Die Entscheidung des Auto-File, ohne App und ohne Nebenlaeufigkeit —
+/// damit sie sich pruefen laesst. `None`: diesmal nichts tun (schon
+/// gestartet, oder die Kabine spielt noch). `Err((divert, sperre))`: der
+/// Pilot entscheidet im Banner. `Ok`: einreichen; der Merker ist gesetzt.
+///
+/// ⚠ Pause, `was_just_resumed` und ein fehlender Snapshot kommen hier
+/// bewusst NICHT vor: Ein gelandeter, geparkter Flug ist fertig, egal was
+/// der Simulator danach tut (DAL667, 07.11.2026). Deshalb ruft der Streamer
+/// diese Pruefung in `Arrived` vor jedem seiner Tore auf.
+fn auto_file_entscheiden(
+    st: &mut FlightStats,
+    ansagen_an: bool,
+    jetzt: i64,
+) -> Option<Result<(), (bool, Option<AbgabeSperre>)>> {
+    if st.auto_file_gestartet {
+        return None;
+    }
+    let is_divert = st.divert_hint.is_some();
+    let sperre = abgabe_sperre(st);
+    if is_divert || sperre.is_some() {
+        Some(Err((is_divert, sperre)))
+    } else if kabinenansagen::kabine_haelt_abgabe(st, ansagen_an, jetzt) {
+        // 1a: Erst die Kabine zu Ende spielen lassen (Tueren entschaerfen,
+        // Aussteigen), hoechstens 90 s — sonst fiel „Aussteigen“ in 8 von
+        // 17 Fluegen weg, und das Protokoll sagte es nicht. Der Takt ruft
+        // hier in `Arrived` jede Sekunde wieder auf.
+        None
+    } else {
+        st.auto_file_gestartet = true;
+        Some(Ok(()))
+    }
+}
+
 /// Die eine Stelle, an der entschieden wird, ob der Pilot gefragt werden
 /// muss. Beide Abgabewege (Auto-File im Streamer, File-First in
 /// `flight_cancel`) fragen hier — sonst wandert die Regel wieder
 /// auseinander.
 fn abgabe_sperre(stats: &FlightStats) -> Option<AbgabeSperre> {
-    if stats.resume_discontinuity.is_some() {
+    // Ein Simulatorwechsel NACH der gemessenen Landung sperrt nicht — der
+    // Flug ist fertig, seine Werte stehen (DAL667, 07.11.2026). Jeder
+    // Sprung davor sperrt weiter (MSC1588).
+    if sperrender_sprung(stats) {
         return Some(AbgabeSperre::Sprung);
     }
     if flug_war_unterbrochen(stats) && !landung_wurde_gemessen(stats) {
@@ -598,12 +762,32 @@ fn landung_fehlt_notiz(begruendung: Option<&str>, notes: &str) -> String {
 
 /// Die Spruenge fuer die Notiz: die Liste, und fuer Fluege aus einer
 /// aelteren Fassung (leere Liste) das alte Einzelfeld.
+///
+/// Nur die Spruenge VOR der Landung — nur sie stellen den Flug in Frage
+/// und tragen „Vom Piloten bewusst eingereicht". Ein Wechsel nach dem
+/// Parken steht in `nach_ankunft_notiz` (DAL667).
 fn spruenge_fuer_notiz(stats: &FlightStats) -> Vec<ResumeDiscontinuity> {
-    if !stats.resume_spruenge.is_empty() {
-        stats.resume_spruenge.clone()
-    } else {
-        stats.resume_discontinuity.into_iter().collect()
+    alle_spruenge(stats)
+        .into_iter()
+        .filter(|d| !sprung_nach_der_landung(d, stats))
+        .collect()
+}
+
+/// Notizzeile fuer einen Simulatorwechsel nach dem Parken: sichtbar fuer
+/// die VA, aber ohne den Flug in Frage zu stellen. Leer, wenn es keinen gab.
+fn nach_ankunft_notiz(stats: &FlightStats, notes: &str) -> String {
+    let n = alle_spruenge(stats)
+        .iter()
+        .filter(|d| sprung_nach_der_landung(d, stats))
+        .count();
+    if n == 0 {
+        return notes.to_string();
     }
+    format!(
+        "NACH DER ANKUNFT: Der Simulator wechselte nach Landung und Parken \
+         den Zustand (anderes Flugzeug oder anderer Ort). Abgegeben wurden \
+         die Werte der Ankunft; der Flug selbst ist davon nicht betroffen.\n{notes}"
+    )
 }
 
 /// Welche Regel hat angeschlagen? Fuer Protokoll und PIREP-Notiz — eine

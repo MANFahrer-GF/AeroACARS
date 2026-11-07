@@ -1859,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Nuova scheda “Immagini”: gli screenshot dei tuoi voli vengono raccolti per volo, portano posizione e dati di volo e si possono inviare, scelti uno a uno con un testo e, se vuoi, con la posizione nascosta, al canale Discord del GSG. Attivi l’invio una volta tu stesso; nulla parte in automatico. La mappa può ora mostrare anche un globo."
+    "neu_text": "Nuova scheda “Immagini”: gli screenshot dei tuoi voli vengono raccolti per volo, portano posizione e dati di volo e si possono inviare, scelti uno a uno con un testo e, se vuoi, con la posizione nascosta, al canale Discord del GSG. Attivi l’invio una volta tu stesso; nulla parte in automatico. La mappa può ora mostrare anche un globo. Un volo atterrato viene ora inviato anche se nel simulatore hai già caricato qualcos’altro; la finestra di ripresa offre per questo “Invia volo”."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -2616,7 +2616,10 @@
     "compare_zfw": "ZFW",
     "compare_total_weight": "Peso totale",
     "wartet_titel": "In attesa del simulatore",
-    "wartet_lange": "Ci vuole più del solito. Il simulatore è in pausa, in modalità slew o con accelerazione del tempo? Fino ad allora AeroACARS non registra nulla."
+    "wartet_lange": "Ci vuole più del solito. Il simulatore è in pausa, in modalità slew o con accelerazione del tempo? Fino ad allora AeroACARS non registra nulla.",
+    "abgeben": "Invia volo",
+    "abgeben_hinweis": "Il volo è atterrato ed è parcheggiato. Puoi inviarlo ora con i valori dell'arrivo, qualunque cosa sia caricata nel simulatore in questo momento.",
+    "abgeben_fehler": "Non è stato possibile inviare il volo"
   },
   "simrate": {
     "titel": "La velocità di simulazione è {{rate}}×",

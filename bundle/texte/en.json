@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "New “Pictures” tab: screenshots from your flights are collected by flight, carry position and flight data, and can be sent, selected one by one with a text and optionally a hidden position, to the GSG Discord channel. You turn sending on yourself once; nothing goes out automatically. The map can now also show a globe."
+    "neu_text": "New “Pictures” tab: screenshots from your flights are collected by flight, carry position and flight data, and can be sent, selected one by one with a text and optionally a hidden position, to the GSG Discord channel. You turn sending on yourself once; nothing goes out automatically. The map can now also show a globe. A landed flight is now filed even if you have already loaded something else in the simulator; the resume window offers “File flight” for this."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -2630,7 +2630,10 @@
     "compare_zfw": "ZFW",
     "compare_total_weight": "Total weight",
     "wartet_titel": "Waiting for the simulator",
-    "wartet_lange": "This is taking unusually long. Is the simulator paused, in slew mode, or running at a higher sim rate? AeroACARS records nothing until then."
+    "wartet_lange": "This is taking unusually long. Is the simulator paused, in slew mode, or running at a higher sim rate? AeroACARS records nothing until then.",
+    "abgeben": "File flight",
+    "abgeben_hinweis": "The flight has landed and is parked. You can file it now with the values from the arrival, whatever is loaded in the simulator right now.",
+    "abgeben_fehler": "The flight could not be filed"
   },
   "simrate": {
     "titel": "Sim rate is {{rate}}×",

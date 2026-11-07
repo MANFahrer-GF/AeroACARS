@@ -43,6 +43,8 @@
             danach_am_boden: false,
             luecke_secs: None,
             nur_bestaetigt: false,
+            am: None,
+            nach_ankunft: false,
         });
         let report = build_client_health_report(&stats).expect("must be Some");
         assert_eq!(report.disconnect_sim_liveness.as_deref(), Some("unknown"));
@@ -69,6 +71,8 @@
             danach_am_boden: true,
             luecke_secs: Some(660),
             nur_bestaetigt: true,
+            am: None,
+            nach_ankunft: false,
         });
         let report = build_client_health_report(&stats).expect("must be Some");
         assert_eq!(report.impossible_resume_jump, Some(true));
