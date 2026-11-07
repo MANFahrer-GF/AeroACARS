@@ -160,7 +160,9 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   async function senden_ausfuehren(text: string, stufe: typeof z.geoStufe) {
     setSendenOffen(false);
     nurFuerDialog.current = false;
-    const rest = await bilderStore.senden([...auswahl], text, stufe, phaseText);
+    // Dieselbe Reihenfolge wie in der Vorschau des Dialogs.
+    const ids = [...gewaehlteBilder].sort((a, b) => (bildZeitIso(a) ?? "").localeCompare(bildZeitIso(b) ?? "")).map((e) => e.id);
+    const rest = await bilderStore.senden(ids, text, stufe, phaseText);
     setAuswahl(rest);
   }
 

@@ -3,7 +3,7 @@ import { GRENZEN, TABELLE, tabelleLesen } from "./grenzen";
 import { bildMetaBauen, datenStufe } from "./meta";
 import { entscheide, gruppeFuer, massePassen } from "./uebernahmeRegel";
 import { serienBilden } from "./serien";
-import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppieren, platzJeFlug, seitenweise } from "./gruppen";
+import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppieren, platzJeFlug, seitenweise, wurdeGesendet } from "./gruppen";
 import { bereinigen, offenNachHaken, umschalten } from "./auswahl";
 import { kontingentAnzeige, reichtKontingent, retrySekunden } from "./kontingent";
 import { infoZeile, sendeMeta, vorschauBauen } from "./nachrichtVorschau";
@@ -167,6 +167,16 @@ describe("Auswahl und Kontingent", () => {
     expect(offenNachHaken("b", "b", new Set(["a", "c"]), true)).toBe("c");
     expect(offenNachHaken("b", "b", new Set(), true)).toBe("b");
     expect(offenNachHaken("a", "b", new Set(["c"]), true)).toBe("a");
+  });
+
+  it("erst der endgueltige Status zaehlt als gesendet, die Suche findet das Datum", () => {
+    const e = (status: string) => eintrag({ sidecar: { sendungen: [{ status }] } } as never);
+    expect(wurdeGesendet(e("angenommen"))).toBe(false);
+    expect(wurdeGesendet(e("gesendet"))).toBe(true);
+    const bild = eintrag({ meta: { zeit_utc: "2026-11-07T10:00:00.000Z" } });
+    expect(filtern([bild], { ...KEIN_FILTER, suche: "07.11.2026" })).toHaveLength(1);
+    expect(filtern([bild], { ...KEIN_FILTER, suche: "2026-11-07" })).toHaveLength(1);
+    expect(filtern([bild], { ...KEIN_FILTER, suche: "08.11.2026" })).toHaveLength(0);
   });
 
   it("umschalten und bereinigen", () => {

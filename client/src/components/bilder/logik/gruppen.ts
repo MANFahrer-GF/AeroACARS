@@ -37,12 +37,16 @@ export function anzeigbar(e: Eintrag): boolean {
 export const flugSchluessel = (e: Eintrag): string => e.sidecar?.meta?.pirep_id ?? "";
 
 export const wurdeGesendet = (e: Eintrag): boolean =>
-  (e.sidecar?.sendungen ?? []).some((s) => s.status === "gesendet" || s.status === "angenommen");
+  (e.sidecar?.sendungen ?? []).some((s) => s.status === "gesendet");
 
 /** Suchtext eines Bildes (klein geschrieben). */
 function haystack(e: Eintrag): string {
   const m = e.sidecar?.meta;
-  return [e.sidecar?.text, m?.rufzeichen, m?.abflug, m?.ziel, m?.flugzeug_titel, m?.flugzeug_icao, m?.naechster_flugplatz, m?.pirep_id, m?.simulator, m?.phase]
+  const zeit = m?.zeit_utc;
+  const tag = zeit ? new Date(zeit) : null;
+  // Datum wie in der Anzeige und als ISO: der Platzhalter verspricht die Suche nach dem Datum.
+  const datum = tag && !Number.isNaN(tag.getTime()) ? [zeit?.slice(0, 10), tag.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }), tag.toLocaleDateString("en-GB"), tag.toLocaleDateString("it-IT")] : [];
+  return [...datum, e.sidecar?.text, m?.rufzeichen, m?.abflug, m?.ziel, m?.flugzeug_titel, m?.flugzeug_icao, m?.naechster_flugplatz, m?.pirep_id, m?.simulator, m?.phase]
     .filter((x): x is string => typeof x === "string")
     .join(" ")
     .toLowerCase();
