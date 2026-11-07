@@ -222,7 +222,7 @@ fn bilder_befehle_der_faehigkeit_bilder_1() {
     // `/api/bild`; was am Sim-PC bleibt, steht weiter in der Verweigerungsliste.
     let am_tablet = ["bilder_liste", "bild_status", "bild_kontext", "bild_aufnehmen", "bild_schreiben"];
     for (b, _) in soll {
-        if am_tablet.contains(b) {
+        if am_tablet.contains(&b) {
             assert!(bruecke.contains(&format!("\"{b}\" =>")), "{b} fehlt in der LAN-Bruecke");
         } else {
             assert!(!bruecke.contains(&format!("\"{b}\" =>")), "{b} gehoert nicht in die LAN-Bruecke");
