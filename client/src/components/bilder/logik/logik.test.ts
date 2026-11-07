@@ -62,10 +62,10 @@ describe("Uebernahmeregel", () => {
     expect(entscheide(fund({ art: "standard", sim_vordergrund: null }), [])).toEqual({ tat: "uebernehmen", modus: "verschieben" });
     expect(entscheide(fund({ art: "standard", sim_vordergrund: false }), [])).toEqual({ tat: "uebernehmen", modus: "verschieben" });
   });
-  it("aufgespuert: nur mit Simulator im Vordergrund, nur kopiert", () => {
+  it("aufgespuert: verworfen nur, wenn der Simulator belegt nicht vorn war (am Mac unbekannt), nur kopiert", () => {
     expect(entscheide(fund({ art: "aufgespuert", sim_vordergrund: true }), [])).toEqual({ tat: "uebernehmen", modus: "kopieren" });
     expect(entscheide(fund({ art: "aufgespuert", sim_vordergrund: false }), [])).toEqual({ tat: "verwerfen", grund: "vordergrund" });
-    expect(entscheide(fund({ art: "aufgespuert", sim_vordergrund: null }), [])).toEqual({ tat: "verwerfen", grund: "vordergrund" });
+    expect(entscheide(fund({ art: "aufgespuert", sim_vordergrund: null }), [])).toEqual({ tat: "uebernehmen", modus: "kopieren" });
   });
   it("aufgespuert: Pixelmasse muessen zum Simulatorfenster passen, fehlt das Fenster, wird nicht abgelehnt", () => {
     const f = fund({ art: "aufgespuert", sim_vordergrund: true, sim_fenster: { breite: 2560, hoehe: 1440 } });

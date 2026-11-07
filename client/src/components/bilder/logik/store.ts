@@ -279,7 +279,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     quellenSetzen(aktuelleQuellen().map((q) => (q.pfad === pfad ? { ...q, ...aendern } : q)));
   const quelleEntfernen = (pfad: string) => quellenSetzen(aktuelleQuellen().filter((q) => q.pfad !== pfad));
   const quelleVorschlagen = (f: Fundort) =>
-    quellenSetzen([...aktuelleQuellen().filter((q) => q.pfad !== f.pfad), { pfad: f.pfad, aktiv: true, original_entfernen: false, art: "aufgespuert" }]);
+    quellenSetzen([...aktuelleQuellen().filter((q) => q.pfad !== f.pfad), { pfad: f.pfad, aktiv: true, original_entfernen: false, art: f.art }]);
   async function ordnerWaehlen(): Promise<void> {
     try {
       const r = await api.quellenSetzen({ ordnerWaehlen: true });

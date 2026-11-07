@@ -26,7 +26,8 @@ export function massePassen(fund: Pick<Fund, "px_breite" | "px_hoehe" | "sim_fen
 export function entscheide(fund: Fund, quellen: Quelle[]): Entscheidung {
   if (!fund.uebernehmbar) return { tat: "verwerfen", grund: "format" };
   if (fund.art === "aufgespuert") {
-    if (fund.sim_vordergrund !== true) return { tat: "verwerfen", grund: "vordergrund" };
+    // Nur ein belegtes „nein“ verwirft: Der Mac kann den Vordergrund nicht ermitteln (Wert leer).
+    if (fund.sim_vordergrund === false) return { tat: "verwerfen", grund: "vordergrund" };
     if (!massePassen(fund)) return { tat: "verwerfen", grund: "masse" };
   }
   if (fund.art === "standard") return { tat: "uebernehmen", modus: "verschieben" };
