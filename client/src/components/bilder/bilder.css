@@ -265,7 +265,7 @@ button.bt-chip:hover { color: var(--text); }
 .bt-leiste__warn { color: var(--sem-danger); font-size: var(--fs-300); }
 
 /* ---------- Bildquellen ---------- */
-.bt-quellen { flex: none; max-height: 36vh; overflow-y: auto; padding: var(--sp-3) 20px; border-bottom: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; gap: var(--sp-3); }
+.bt-quellen { flex: none; max-height: 100%; overflow-y: auto; padding: var(--sp-3) 20px; border-bottom: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; gap: var(--sp-3); }
 .bt-quellen__kopf { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .bt-quellen__kopf h2 { margin: 0; font-size: var(--fs-400); }
 .bt-quellen__zeile { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-1) var(--sp-3); align-items: center; padding: var(--sp-2); border: 1px solid var(--line); border-radius: var(--r-md); }

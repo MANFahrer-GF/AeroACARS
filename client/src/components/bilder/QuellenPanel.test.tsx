@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { QuellenPanel } from "./QuellenPanel";
@@ -36,4 +38,10 @@ describe("Tastenkuerzel festlegen", () => {
     fireEvent.keyDown(window, { key: "S", code: "KeyS", ctrlKey: true });
     expect(tastenkuerzelSetzen).not.toHaveBeenCalled();
   });
+});
+
+// jsdom rechnet kein CSS: gemessen im Browser (459 von 459 px bei 1440x720); die Regel ist hier der Beleg.
+it("das Panel klappt ganz auf, die Liste darunter gibt den Platz ab", () => {
+  const css = fs.readFileSync(path.join(__dirname, "bilder.css"), "utf-8");
+  expect(css).toMatch(/\.bt-quellen \{ flex: none; max-height: 100%; overflow-y: auto;/);
 });
