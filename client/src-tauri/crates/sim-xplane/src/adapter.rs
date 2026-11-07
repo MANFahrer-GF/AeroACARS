@@ -2453,7 +2453,13 @@ mod plugin2_loopback_tests {
         let ende3 = |st: &FakeStand| st.anfragen.iter().filter(|a| *a == "ENDE-ABO 3").count();
         let vorher = ende3(&stand.lock());
         drop(spiegel);
-        assert!(warte(Duration::from_secs(5), || ende3(&stand.lock()) > vorher));
+        assert!(
+            warte(Duration::from_secs(5), || ende3(&stand.lock()) > vorher),
+            "kein ENDE-ABO 3 nach dem Schliessen; Zustand {:?}, Sitzung offen {}, letzte Anfragen {:?}",
+            ad.state(),
+            ad.shared.p2.lock().offen,
+            stand.lock().anfragen.iter().rev().take(10).collect::<Vec<_>>()
+        );
 
         // 3. Plugin verstummt → nach 3 s Rueckfall auf RREF, ohne Nullen.
         let n_vorher = freqs.lock().len();
