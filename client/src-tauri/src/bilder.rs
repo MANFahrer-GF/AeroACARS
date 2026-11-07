@@ -1000,8 +1000,17 @@ fn papierkorb(p: &std::path::Path) -> Result<(), trash::Error> {
 /// Entfernt ein Bild mit allen Teilen: JPEG (und eine uebrige Eingangskopie) in
 /// den Papierkorb, Vorschau und Sidecar endgueltig. Nie nur ein Teil. Der
 /// Hüllen-Dialog zeigt `bezeichnung`, falls das Paket sie mitgibt.
+///
+/// Nimmt auch die erste Form `{gruppe, id}` an (Generation 74): Paket und
+/// Programm wechseln unabhaengig, und beide melden `bilder-1`.
 #[tauri::command(async)]
-pub(crate) fn bild_loeschen(app: AppHandle, bilder: Vec<BildZiel>) -> Result<Vec<String>, UiError> {
+pub(crate) fn bild_loeschen(
+    app: AppHandle,
+    bilder: Option<Vec<BildZiel>>,
+    gruppe: Option<String>,
+    id: Option<String>,
+) -> Result<Vec<String>, UiError> {
+    let bilder = loesch_ziele(bilder, gruppe, id)?;
     let weg = |p: &std::path::Path| papierkorb(p).map_err(|e| std::io::Error::other(e.to_string()));
     let wurzel = wurzel(&app)?;
     let mut entfernt = Vec::new();
@@ -1016,6 +1025,19 @@ pub(crate) fn bild_loeschen(app: AppHandle, bilder: Vec<BildZiel>) -> Result<Vec
 pub(crate) struct BildZiel {
     gruppe: String,
     id: String,
+}
+
+/// `bilder` (seit dem Papierkorb fuer die Auswahl) oder `gruppe` + `id` (ein Bild).
+fn loesch_ziele(
+    bilder: Option<Vec<BildZiel>>,
+    gruppe: Option<String>,
+    id: Option<String>,
+) -> Result<Vec<BildZiel>, UiError> {
+    match (bilder, gruppe, id) {
+        (Some(b), _, _) => Ok(b),
+        (None, Some(gruppe), Some(id)) => Ok(vec![BildZiel { gruppe, id }]),
+        _ => Err(UiError::new("bild_eingabe", "bild_loeschen braucht `bilder` oder `gruppe` und `id`")),
+    }
 }
 
 /// Speichert die bestaetigte Liste der Bildquellen (und, wenn angegeben, das
@@ -1280,6 +1302,21 @@ fn taste_gedrueckt(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    /// Die Oberflaeche aus Generation 74 schickt `{gruppe, id}`, die neue
+    /// `{bilder: [...]}`; beide loeschen (Windows-Test Thomas 08.11.2026:
+    /// „missing required key bilder“).
+    #[test]
+    fn bild_loeschen_nimmt_beide_formen() {
+        let alt = super::loesch_ziele(None, Some("g".into()), Some("a".into())).unwrap();
+        assert_eq!(alt.iter().map(|b| (b.gruppe.as_str(), b.id.as_str())).collect::<Vec<_>>(), vec![("g", "a")]);
+        let neu: Vec<super::BildZiel> =
+            serde_json::from_value(serde_json::json!([{"gruppe": "g", "id": "a"}, {"gruppe": "g", "id": "b"}])).unwrap();
+        let neu = super::loesch_ziele(Some(neu), None, None).unwrap();
+        assert_eq!(neu.len(), 2);
+        assert!(super::loesch_ziele(None, Some("g".into()), None).is_err());
+        assert!(super::loesch_ziele(None, None, None).is_err());
+    }
+
     use super::*;
 
     #[test]
