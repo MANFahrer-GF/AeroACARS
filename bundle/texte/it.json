@@ -5329,7 +5329,8 @@
         "waehlen": "Scegli il volo",
         "fertig": "Fatto",
         "laedt": "Caricamento voli …",
-        "gekuerzt": "Voli più vecchi potrebbero mancare nell'elenco (registro non caricato completamente)."
+        "gekuerzt": "Sono elencati solo i voli più vicini nel tempo all'immagine.",
+        "unvollstaendig": "Voli più vecchi potrebbero mancare nell'elenco (registro non caricato completamente)."
       },
       "metadaten": "Dati dello scatto",
       "gesendet_am": "Inviata il {{zeit}}",

@@ -162,7 +162,7 @@ export function kontextLesen(roh: unknown): Kontext {
         .filter((p): p is [number, number] => p !== null)
     : null;
   const fluege = Array.isArray(r.fluege) ? r.fluege.map(flugLesen).filter((f): f is FlugEintrag => f !== null) : undefined;
-  return { staende: staende.map(standLesen), spur, ...(fluege ? { fluege, fluegeGekuerzt: r.fluege_gekuerzt === true } : {}) };
+  return { staende: staende.map(standLesen), spur, ...(fluege ? { fluege, fluegeGekuerzt: r.fluege_gekuerzt === true, logbuchUnvollstaendig: r.logbuch_unvollstaendig === true } : {}) };
 }
 
 function flugLesen(roh: unknown): FlugEintrag | null {

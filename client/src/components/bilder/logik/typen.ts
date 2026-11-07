@@ -179,8 +179,10 @@ export interface Kontext {
   staende: KontextStand[];
   spur: Array<[number, number]> | null;
   fluege?: FlugEintrag[];
-  /** Es koennen Fluege fehlen (Logbuch nicht erreicht oder Liste gekuerzt). */
+  /** Die Liste zeigt nur die zeitlich naechsten Fluege. */
   fluegeGekuerzt?: boolean;
+  /** Das Logbuch wurde nicht ganz gelesen (keine Verbindung, Fehler, Seitengrenze). */
+  logbuchUnvollstaendig?: boolean;
 }
 
 /** Antwort des Servers je Bild (P-7.25). */

@@ -5329,7 +5329,8 @@
         "waehlen": "Choose flight",
         "fertig": "Done",
         "laedt": "Loading flights …",
-        "gekuerzt": "Older flights may be missing from the list (logbook not fully loaded)."
+        "gekuerzt": "Only the flights closest in time to the picture are listed.",
+        "unvollstaendig": "Older flights may be missing from the list (logbook not fully loaded)."
       },
       "metadaten": "Capture data",
       "gesendet_am": "Sent on {{zeit}}",

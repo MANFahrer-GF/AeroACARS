@@ -780,8 +780,8 @@ pub(crate) async fn bild_kontext(
     // Rueckfall Logbuch fuer alles, was das Protokoll nicht abdeckt.
     let offen: Vec<i64> = ms.iter().zip(&treffer).filter(|(_, t)| t.is_none()).map(|(z, _)| *z).collect();
     // Die Flugliste reicht einen Monat hinter die Bildzeit zurueck: Die Dateizeit eines Bildes kann spaeter liegen als der Flug.
-    // Die Flugliste blaettert das ganze Logbuch (hoechstens 60 Seiten): Ein Zeitfenster liesse aeltere Fluege still weg.
-    let bis: Option<Option<i64>> = if mit_fluegen { Some(None) } else { offen.iter().min().map(|z| Some(*z)) };
+    // Die Flugliste blaettert, bis die zeitlich naechsten Fluege sicher dabei sind (hoechstens 60 Seiten).
+    let bis = if mit_fluegen { Some(Bis::Fluege(ms.first().copied())) } else { offen.iter().min().map(|z| Bis::Zeit(*z)) };
     let (pireps, logbuch_ganz) = match (&client, bis) {
         (Some(c), Some(bis)) => logbuch_pireps(c, bis, if mit_fluegen { 60 } else { 15 }).await,
         (None, Some(_)) => (Vec::new(), false),
@@ -815,8 +815,9 @@ pub(crate) async fn bild_kontext(
     if mit_fluegen {
         let (liste, gekuerzt) = kontext::fluege_ordnen(protokoll_fluege, &pireps, ms.first().copied());
         antwort["fluege"] = liste.iter().map(kontext::FlugEintrag::als_json).collect();
-        // Die Oberflaeche sagt, wenn Fluege fehlen koennen: Logbuch nicht erreicht, Notbremse beim Blaettern, Liste gekuerzt.
-        antwort["fluege_gekuerzt"] = json!(gekuerzt || !logbuch_ganz);
+        // Die Oberflaeche sagt, warum Fluege fehlen koennen: Liste auf die naechsten gekuerzt, oder Logbuch nicht ganz gelesen.
+        antwort["fluege_gekuerzt"] = json!(gekuerzt);
+        antwort["logbuch_unvollstaendig"] = json!(!logbuch_ganz);
     }
     Ok(antwort)
 }
@@ -824,35 +825,106 @@ pub(crate) async fn bild_kontext(
 /// Die PIREPs des Piloten bei phpVMS, seitenweise zurueck, bis die fruehste gefragte
 /// Zeit abgedeckt ist (`None`: bis zur letzten Seite, hoechstens `max_seiten`). Fehler beenden
 /// das Blaettern: es bleibt bei `keine`, nichts wird geraten. Zweiter Wert: wirklich abgedeckt?
-async fn logbuch_pireps(client: &api_client::Client, fruehestens_ms: Option<i64>, max_seiten: u32) -> (Vec<PirepKurz>, bool) {
+async fn logbuch_pireps(client: &api_client::Client, bis: Bis, max_seiten: u32) -> (Vec<PirepKurz>, bool) {
+    let schluessel = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        (client.connection().base_url(), &client.connection().api_key_kennung()).hash(&mut h);
+        h.finish()
+    };
     let mut alle = Vec::new();
     for seite in 1..=max_seiten {
-        let Ok(v) = client.get_user_pireps_seite(seite).await else { return (alle, false) };
-        if v.is_empty() {
+        let s = match logbuch_seite_gemerkt(schluessel, seite) {
+            Some(s) => s,
+            None => {
+                let Ok(v) = client.get_user_pireps_seite(seite).await else { return (alle, false) };
+                let s = LogbuchSeite {
+                    aelteste: v.iter().filter_map(|p| p.created_at.as_deref().and_then(kontext::zeit_ms)).min(),
+                    letzte: v.len() < 20,
+                    pireps: v
+                        .into_iter()
+                        .map(|p| PirepKurz {
+                            pirep_id: p.id,
+                            block_off_ms: p.block_off_time.as_deref().and_then(kontext::zeit_ms),
+                            block_on_ms: p.block_on_time.as_deref().and_then(kontext::zeit_ms),
+                            flugnummer: p.flight_number,
+                            abflug: p.dpt_airport_id,
+                            ziel: p.arr_airport_id,
+                            flugzeug_icao: p.aircraft_icao,
+                        })
+                        .collect(),
+                };
+                logbuch_seite_merken(schluessel, seite, s.clone());
+                s
+            }
+        };
+        if s.pireps.is_empty() {
             return (alle, true);
         }
-        let aelteste = v.iter().filter_map(|p| p.created_at.as_deref().and_then(kontext::zeit_ms)).min();
-        let letzte_seite = v.len() < 20;
-        alle.extend(v.into_iter().map(|p| PirepKurz {
-            pirep_id: p.id,
-            block_off_ms: p.block_off_time.as_deref().and_then(kontext::zeit_ms),
-            block_on_ms: p.block_on_time.as_deref().and_then(kontext::zeit_ms),
-            flugnummer: p.flight_number,
-            abflug: p.dpt_airport_id,
-            ziel: p.arr_airport_id,
-            flugzeug_icao: p.aircraft_icao,
-        }));
-        if logbuch_abgedeckt(letzte_seite, aelteste, fruehestens_ms) {
+        alle.extend(s.pireps);
+        if logbuch_abgedeckt(s.letzte, s.aelteste, bis, &alle) {
             return (alle, true);
         }
     }
     (alle, false)
 }
 
-/// Reicht das Geblaetterte bis zur gefragten Zeit? Letzte Seite, oder der aelteste PIREP der Seite
-/// liegt mehr als 2 Tage davor (Puffer: der PIREP wird vor dem Block-off angelegt).
-fn logbuch_abgedeckt(letzte_seite: bool, aelteste_ms: Option<i64>, fruehestens_ms: Option<i64>) -> bool {
-    letzte_seite || matches!((aelteste_ms, fruehestens_ms), (Some(a), Some(f)) if a < f - 2 * 86_400_000)
+#[derive(Clone)]
+struct LogbuchSeite {
+    pireps: Vec<PirepKurz>,
+    aelteste: Option<i64>,
+    letzte: bool,
+}
+
+/// Gelesene Logbuchseiten, fuenf Minuten je Anmeldung: Wer mehrere Bilder nacheinander zuordnet, wartet nur einmal.
+type SeitenSpeicher = Mutex<Option<(u64, std::time::Instant, Vec<LogbuchSeite>)>>;
+static LOGBUCH_SEITEN: OnceLock<SeitenSpeicher> = OnceLock::new();
+const LOGBUCH_FRISCH: Duration = Duration::from_secs(300);
+
+fn logbuch_seite_gemerkt(schluessel: u64, seite: u32) -> Option<LogbuchSeite> {
+    let g = LOGBUCH_SEITEN.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref() {
+        Some((k, seit, seiten)) if *k == schluessel && seit.elapsed() < LOGBUCH_FRISCH => seiten.get(seite as usize - 1).cloned(),
+        _ => None,
+    }
+}
+
+fn logbuch_seite_merken(schluessel: u64, seite: u32, s: LogbuchSeite) {
+    let mut g = LOGBUCH_SEITEN.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    let frisch = matches!(g.as_ref(), Some((k, seit, _)) if *k == schluessel && seit.elapsed() < LOGBUCH_FRISCH);
+    if !frisch || seite == 1 {
+        *g = Some((schluessel, std::time::Instant::now(), Vec::new()));
+    }
+    if let Some((_, _, seiten)) = g.as_mut() {
+        // Nur lueckenlos ab Seite 1: Seite n gilt nur hinter den Seiten davor
+        if seiten.len() + 1 == seite as usize {
+            seiten.push(s);
+        }
+    }
+}
+
+/// Wie weit das Logbuch gelesen wird.
+#[derive(Clone, Copy)]
+enum Bis {
+    /// Bis vor diese Zeit (Rueckfall fuer die Staende).
+    Zeit(i64),
+    /// Flugliste: bis die [`kontext::MAX_FLUEGE`] zeitlich naechsten Fluege zur Bildzeit sicher dabei sind.
+    Fluege(Option<i64>),
+}
+
+/// Reicht das Geblaetterte? Immer auf der letzten Seite. Fuer eine Zeit, wenn der aelteste PIREP der Seite
+/// mehr als 2 Tage davor liegt (der PIREP wird vor dem Block-off angelegt). Fuer die Flugliste, wenn
+/// [`kontext::MAX_FLUEGE`] Fluege vor der Bildzeit (ohne Bildzeit: ueberhaupt) da sind: jeder aeltere
+/// liegt dann weiter weg als alle diese und gehoerte nicht mehr zu den naechsten.
+fn logbuch_abgedeckt(letzte_seite: bool, aelteste_ms: Option<i64>, bis: Bis, gelesen: &[PirepKurz]) -> bool {
+    letzte_seite
+        || match bis {
+            Bis::Zeit(f) => aelteste_ms.is_some_and(|a| a < f - 2 * 86_400_000),
+            Bis::Fluege(zeit) => {
+                let davor = gelesen.iter().filter(|p| zeit.is_none_or(|z| p.block_on_ms.or(p.block_off_ms).is_some_and(|t| t < z))).count();
+                davor >= kontext::MAX_FLUEGE
+            }
+        }
 }
 
 /// Markiert das JPEG eines Bildes im Dateimanager des Systems (Finder „Im Finder
@@ -1230,14 +1302,36 @@ mod tests {
     }
 
     #[test]
+    fn logbuchseiten_gelten_nur_fuer_dieselbe_anmeldung_und_lueckenlos() {
+        let s = |id: &str| LogbuchSeite { pireps: vec![PirepKurz { pirep_id: id.into(), ..Default::default() }], aelteste: None, letzte: false };
+        logbuch_seite_merken(7, 1, s("a"));
+        logbuch_seite_merken(7, 3, s("c"));
+        logbuch_seite_merken(7, 2, s("b"));
+        assert_eq!(logbuch_seite_gemerkt(7, 1).unwrap().pireps[0].pirep_id, "a");
+        assert_eq!(logbuch_seite_gemerkt(7, 2).unwrap().pireps[0].pirep_id, "b");
+        assert!(logbuch_seite_gemerkt(7, 3).is_none(), "Seite 3 kam vor Seite 2: nicht gemerkt");
+        assert!(logbuch_seite_gemerkt(8, 1).is_none(), "andere Anmeldung sieht nichts");
+        logbuch_seite_merken(8, 1, s("x"));
+        assert!(logbuch_seite_gemerkt(7, 1).is_none(), "Anmeldungswechsel leert den Speicher");
+    }
+
+    #[test]
     fn logbuch_ist_erst_abgedeckt_wenn_es_bis_vor_die_zeit_reicht() {
         let tag = 86_400_000;
-        assert!(logbuch_abgedeckt(true, None, Some(10 * tag)), "letzte Seite");
-        assert!(logbuch_abgedeckt(false, Some(7 * tag), Some(10 * tag)), "mehr als 2 Tage davor");
-        assert!(!logbuch_abgedeckt(false, Some(9 * tag), Some(10 * tag)), "nur 1 Tag davor: weiterblaettern");
-        assert!(!logbuch_abgedeckt(false, None, Some(10 * tag)), "ohne Zeiten nichts belegt");
-        assert!(!logbuch_abgedeckt(false, Some(0), None), "Flugliste: nur die letzte Seite ist vollstaendig");
-        assert!(logbuch_abgedeckt(true, Some(0), None));
+        let z = |t: i64| Bis::Zeit(t);
+        assert!(logbuch_abgedeckt(true, None, z(10 * tag), &[]), "letzte Seite");
+        assert!(logbuch_abgedeckt(false, Some(7 * tag), z(10 * tag), &[]), "mehr als 2 Tage davor");
+        assert!(!logbuch_abgedeckt(false, Some(9 * tag), z(10 * tag), &[]), "nur 1 Tag davor: weiterblaettern");
+        assert!(!logbuch_abgedeckt(false, None, z(10 * tag), &[]), "ohne Zeiten nichts belegt");
+        // Flugliste: erst wenn MAX_FLUEGE Fluege vor der Bildzeit gelesen sind
+        let flug = |t: i64| PirepKurz { pirep_id: t.to_string(), block_on_ms: Some(t), ..Default::default() };
+        let vorher: Vec<_> = (0..kontext::MAX_FLUEGE as i64).map(flug).collect();
+        let mut zu_wenig: Vec<_> = vorher[1..].to_vec();
+        zu_wenig.extend((0..50).map(|i| flug(10 * tag + i)));
+        assert!(logbuch_abgedeckt(false, None, Bis::Fluege(Some(5 * tag)), &vorher));
+        assert!(!logbuch_abgedeckt(false, None, Bis::Fluege(Some(5 * tag)), &zu_wenig), "Fluege nach dem Bild zaehlen nicht");
+        assert!(logbuch_abgedeckt(false, None, Bis::Fluege(None), &vorher), "ohne Bildzeit: die neuesten reichen");
+        assert!(logbuch_abgedeckt(true, None, Bis::Fluege(Some(5 * tag)), &[]));
     }
 
     #[test]

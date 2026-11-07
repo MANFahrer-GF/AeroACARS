@@ -309,9 +309,10 @@ describe("Store: Flug zuordnen", () => {
     const k = await t.store.flugKandidaten("2026-11-07T10:00:00Z");
     expect(k.fluege.map((f) => f.pirep_id)).toEqual(["P9"]);
     expect(k.gekuerzt).toBe(false);
+    expect(k.unvollstaendig).toBe(false);
     expect(frage).toEqual({ zeiten: ["2026-11-07T10:00:00Z"], fluege: true });
     const aus = aufbau({ kontext: async () => { throw new Error("offline"); } });
-    expect(await aus.store.flugKandidaten(null)).toEqual({ fluege: [], gekuerzt: true });
+    expect(await aus.store.flugKandidaten(null)).toEqual({ fluege: [], gekuerzt: false, unvollstaendig: true });
   });
 });
 

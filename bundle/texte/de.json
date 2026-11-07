@@ -5329,7 +5329,8 @@
         "waehlen": "Flug wählen",
         "fertig": "Fertig",
         "laedt": "Flüge werden geladen …",
-        "gekuerzt": "Ältere Flüge fehlen vielleicht in der Liste (Logbuch nicht vollständig geladen)."
+        "gekuerzt": "Es stehen nur die Flüge, die zeitlich am nächsten am Bild liegen.",
+        "unvollstaendig": "Ältere Flüge fehlen vielleicht in der Liste (Logbuch nicht vollständig geladen)."
       },
       "metadaten": "Aufnahmedaten",
       "gesendet_am": "Gesendet am {{zeit}}",

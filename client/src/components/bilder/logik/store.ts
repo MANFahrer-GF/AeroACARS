@@ -173,12 +173,12 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   const favoritSetzen = (e: Eintrag, favorit: boolean) => sidecarAendern(e, (s) => ({ ...s, favorit }));
 
   /** Die Fluege, denen sich ein Bild dieser Zeit zuordnen laesst; der naechste steht vorn. */
-  async function flugKandidaten(zeit: string | null): Promise<{ fluege: FlugEintrag[]; gekuerzt: boolean }> {
+  async function flugKandidaten(zeit: string | null): Promise<{ fluege: FlugEintrag[]; gekuerzt: boolean; unvollstaendig: boolean }> {
     try {
       const k = await api.kontext({ zeiten: zeit ? [zeit] : [], fluege: true });
-      return { fluege: k.fluege ?? [], gekuerzt: k.fluegeGekuerzt === true };
+      return { fluege: k.fluege ?? [], gekuerzt: k.fluegeGekuerzt === true, unvollstaendig: k.logbuchUnvollstaendig === true };
     } catch {
-      return { fluege: [], gekuerzt: true }; // Die Liste fehlt: Der Tab sagt es, statt still weniger anzubieten
+      return { fluege: [], gekuerzt: false, unvollstaendig: true }; // Die Liste fehlt: Der Tab sagt es, statt still weniger anzubieten
     }
   }
 

@@ -61,7 +61,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const [zuordnen, setZuordnen] = useState<string[] | null>(null);
   const [zuordnenWahl, setZuordnenWahl] = useState("");
   const [kandidaten, setKandidaten] = useState<FlugEintrag[] | null>(null);
-  const [kandidatenGekuerzt, setKandidatenGekuerzt] = useState(false);
+  const [kandidatenHinweis, setKandidatenHinweis] = useState<"gekuerzt" | "unvollstaendig" | null>(null);
   const kandidatenLauf = useRef(0);
   const [ziehen, setZiehen] = useState(false);
 
@@ -201,13 +201,13 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     setZuordnenWahl(wahl);
     setZuordnen(ids);
     setKandidaten(null);
-    setKandidatenGekuerzt(false);
+    setKandidatenHinweis(null);
     const lauf = ++kandidatenLauf.current;
     const bild = alle.find((e) => e.id === ids[0]);
     void bilderStore.flugKandidaten(bild ? bildZeitIso(bild) : null).then((k) => {
       if (lauf !== kandidatenLauf.current) return;
       setKandidaten(k.fluege);
-      setKandidatenGekuerzt(k.gekuerzt);
+      setKandidatenHinweis(k.unvollstaendig ? "unvollstaendig" : k.gekuerzt ? "gekuerzt" : null);
     });
   }
 
@@ -450,7 +450,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
           {flugOptionen.map((o) => <option key={o.pirep_id ?? ""} value={o.pirep_id ?? ""}>{o.label}</option>)}
         </select>
         {kandidaten === null && <span className="bt-hinweis">{t("bilder.detail.flug.laedt")}</span>}
-        {kandidaten !== null && kandidatenGekuerzt && <span className="bt-hinweis" data-warn="an">{t("bilder.detail.flug.gekuerzt")}</span>}
+        {kandidaten !== null && kandidatenHinweis && <span className="bt-hinweis" data-warn={kandidatenHinweis === "unvollstaendig" ? "an" : undefined}>{t(`bilder.detail.flug.${kandidatenHinweis}`)}</span>}
       </Modal>
     </div>
   );
