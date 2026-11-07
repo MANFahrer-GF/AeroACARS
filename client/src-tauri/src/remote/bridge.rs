@@ -1170,10 +1170,13 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 // Bilder (Thomas 07.11.2026): Der Senden-Dialog auf dem Tablet ist die
                 // Bestaetigung, eine zweite am Sim-PC waere mitten im Flug ein fremdes
                 // Fenster. Alles andere bleibt bei der Huelle, auch das Update.
-                Ok(a) if a.befehl == "bild_senden" => {
-                    from_uierr(crate::bilder::bild_senden_aus_werten(app.clone(), a.werte.unwrap_or_default()).await)
+                Ok(a) => {
+                    if a.befehl == "bild_senden" {
+                        from_uierr(crate::bilder::bild_senden_aus_werten(app.clone(), a.werte.unwrap_or_default()).await)
+                    } else {
+                        from_uierr(crate::huelle::bestaetigen_lassen(app.clone(), a.befehl, a.werte).await)
+                    }
                 }
-                Ok(a) => from_uierr(crate::huelle::bestaetigen_lassen(app.clone(), a.befehl, a.werte).await),
                 Err(e) => Err(e),
             }
         }
