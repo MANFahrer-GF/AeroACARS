@@ -483,7 +483,8 @@ fn datei_uebernehmen(
 ) -> Result<Uebernahme, Fehler> {
     let echt = basis.join(rel);
     let format = BildFormat::aus_endung(&echt).ok_or_else(|| Fehler::Format("Nur PNG- und JPEG-Dateien".into()))?;
-    let (mut f, md0) = sicher::datei_oeffnen_mit(basis, rel, &zwischen_haken)?;
+    let (mut f, _) = sicher::datei_oeffnen_mit(basis, rel, &zwischen_haken)?;
+    let kennung0 = sicher::Kennung::von_handle(&f);
     let groesse = handle_vollstaendig(&mut f, format)?;
     handle_stabil(&f, stabil_pause)?;
     let md = f.metadata()?;
@@ -502,7 +503,7 @@ fn datei_uebernehmen(
     let mut original_entfernt = false;
     if modus == Modus::Verschieben {
         // Nur entfernen, wenn der Pfad noch genau die kopierte Datei ist.
-        let gleich = fs::symlink_metadata(&echt).is_ok_and(|m| !m.file_type().is_symlink() && sicher::gleiche_datei(&md0, &m));
+        let gleich = sicher::Kennung::gleich(kennung0, sicher::Kennung::von_pfad(&echt));
         let r = if gleich { fs::remove_file(&echt).map_err(|e| e.to_string()) } else { Err("Die Datei wurde ausgetauscht".to_string()) };
         if let Err(e) = r {
             let _ = fs::remove_file(&ziel);

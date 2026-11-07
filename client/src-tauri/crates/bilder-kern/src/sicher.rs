@@ -52,15 +52,69 @@ pub fn echten_ordner_sichern(pfad: &Path, was: &str) -> Result<(), Fehler> {
     }
 }
 
-pub(crate) fn gleiche_datei(vorher: &Metadata, handle: &Metadata) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        vorher.dev() == handle.dev() && vorher.ino() == handle.ino()
+/// Identitaet einer Datei auf dem Datentraeger: Unix `dev`/`ino`, Windows
+/// Volume-Seriennummer und File-Index. Laenge und Aenderungszeit genuegen nicht
+/// (eine ersetzte Datei kann beides teilen).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Kennung {
+    datentraeger: u64,
+    datei: u64,
+}
+
+impl Kennung {
+    pub(crate) fn neu(datentraeger: u64, datei: u64) -> Self {
+        Self { datentraeger, datei }
     }
-    #[cfg(not(unix))]
-    {
-        vorher.len() == handle.len() && vorher.modified().ok() == handle.modified().ok()
+
+    /// Nur zwei bekannte, gleiche Kennungen gelten als dieselbe Datei; ist eine
+    /// unbekannt, ist es nie dieselbe (dann wird nichts geloescht).
+    pub(crate) fn gleich(a: Option<Kennung>, b: Option<Kennung>) -> bool {
+        matches!((a, b), (Some(x), Some(y)) if x == y)
+    }
+
+    /// Kennung des geoeffneten Handles.
+    pub(crate) fn von_handle(f: &File) -> Option<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            f.metadata().ok().map(|m| Self::neu(m.dev(), m.ino()))
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
+            // SAFETY: `f` haelt ein gueltiges Handle; die Struktur wird vollstaendig gefuellt oder verworfen.
+            let mut i: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+            if unsafe { GetFileInformationByHandle(f.as_raw_handle() as _, &mut i) } == 0 {
+                return None;
+            }
+            Some(Self::neu(u64::from(i.dwVolumeSerialNumber), (u64::from(i.nFileIndexHigh) << 32) | u64::from(i.nFileIndexLow)))
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = f;
+            None
+        }
+    }
+
+    /// Kennung dessen, worauf `pfad` jetzt zeigt (ohne einem Link zu folgen).
+    pub(crate) fn von_pfad(pfad: &Path) -> Option<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let m = fs::symlink_metadata(pfad).ok()?;
+            if m.file_type().is_symlink() {
+                return None;
+            }
+            Some(Self::neu(m.dev(), m.ino()))
+        }
+        #[cfg(not(unix))]
+        {
+            if fs::symlink_metadata(pfad).ok()?.file_type().is_symlink() {
+                return None;
+            }
+            Self::von_handle(&lesend_ohne_folgen(pfad).ok()?)
+        }
     }
 }
 
@@ -112,8 +166,9 @@ pub fn datei_oeffnen_mit(basis: &Path, rel: &Path, zwischen: &dyn Fn()) -> Resul
             return Err(Fehler::Pfad(format!("Pfad ungueltig: {}", rel.display())));
         }
     }
+    letzte.ok_or_else(|| Fehler::Pfad("Pfad ungueltig".into()))?;
+    let vorher = Kennung::von_pfad(&p);
     zwischen();
-    let vorher = letzte.ok_or_else(|| Fehler::Pfad("Pfad ungueltig".into()))?;
     let f = lesend_ohne_folgen(&p).map_err(|e| {
         if fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
             Fehler::Pfad(format!("Link im Pfad nicht erlaubt: {}", rel.display()))
@@ -122,7 +177,7 @@ pub fn datei_oeffnen_mit(basis: &Path, rel: &Path, zwischen: &dyn Fn()) -> Resul
         }
     })?;
     let md = f.metadata()?;
-    if md.file_type().is_symlink() || !md.is_file() || !gleiche_datei(&vorher, &md) {
+    if md.file_type().is_symlink() || !md.is_file() || !Kennung::gleich(vorher, Kennung::von_handle(&f)) {
         return Err(Fehler::Pfad(format!("Datei hat sich waehrend der Pruefung veraendert: {}", rel.display())));
     }
     Ok((f, md))
@@ -180,6 +235,39 @@ mod tests {
         std::os::unix::fs::symlink(t.path().join("echt"), t.path().join("link")).unwrap();
         assert!(lesend_ohne_folgen(&t.path().join("echt")).is_ok());
         assert!(lesend_ohne_folgen(&t.path().join("link")).is_err(), "ein Link wird nicht geoeffnet");
+    }
+
+    /// Fund 1: gleiche Laenge und gleiche Aenderungszeit machen eine ersetzte
+    /// Datei nicht zur selben (unter Windows war das die ganze Pruefung).
+    #[test]
+    fn ersetzte_datei_mit_gleicher_laenge_und_zeit_ist_nicht_dieselbe() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("a.png");
+        fs::write(&p, b"AAAA").unwrap();
+        let zeit = fs::metadata(&p).unwrap().modified().unwrap();
+        let geoeffnet = lesend_ohne_folgen(&p).unwrap();
+        let vorher = Kennung::von_handle(&geoeffnet);
+        assert!(Kennung::gleich(vorher, Kennung::von_pfad(&p)), "unveraendert = dieselbe");
+        // Ersetzen: andere Datei, gleiche Laenge, gleiche Zeit.
+        let neu = t.path().join("neu.tmp");
+        fs::write(&neu, b"BBBB").unwrap();
+        fs::File::options().write(true).open(&neu).unwrap().set_modified(zeit).unwrap();
+        drop(geoeffnet);
+        fs::remove_file(&p).unwrap();
+        fs::rename(&neu, &p).unwrap();
+        let jetzt = fs::metadata(&p).unwrap();
+        assert_eq!((jetzt.len(), jetzt.modified().unwrap()), (4, zeit), "Laenge und Zeit stimmen ueberein");
+        assert!(!Kennung::gleich(vorher, Kennung::von_pfad(&p)), "trotzdem eine andere Datei");
+    }
+
+    #[test]
+    fn kennungen_sind_nur_bei_voller_uebereinstimmung_gleich() {
+        let a = Some(Kennung::neu(7, 100));
+        assert!(Kennung::gleich(a, Some(Kennung::neu(7, 100))));
+        assert!(!Kennung::gleich(a, Some(Kennung::neu(7, 101))), "anderer File-Index");
+        assert!(!Kennung::gleich(a, Some(Kennung::neu(8, 100))), "anderes Volume");
+        assert!(!Kennung::gleich(a, None), "unbekannt = nie gleich");
+        assert!(!Kennung::gleich(None, None), "zweimal unbekannt ist auch nicht gleich");
     }
 
     #[test]
