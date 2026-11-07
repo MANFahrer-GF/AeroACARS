@@ -118,6 +118,22 @@ describe("Store: Stufe im Vermerk und Yoke-Taste", () => {
     expect(v).toHaveLength(1);
     expect(v[0]).toMatchObject({ status: "gesendet", geo_stufe: "sichtbar" });
   });
+  it("Yoke-Taste: das Lernen endet vor der Bestaetigung, eine alte Meldung verschwindet beim neuen Versuch", async () => {
+    const t = aufbau();
+    let waehrendBestaetigung: boolean | null = null;
+    let meldungDabei: unknown = "offen";
+    let gelernt: unknown = null;
+    t.api.tasteLernen = async () => gelernt as never;
+    t.api.quellenSetzen = async () => { waehrendBestaetigung = t.store.lesen().yokeLernt; meldungDabei = t.store.lesen().meldung; return { quellen: [], abgebrochen: false }; };
+    await t.store.laden();
+    await t.store.yokeFestlegen();
+    expect(t.store.lesen().meldung?.schluessel).toBe("bilder.meldung.yoke_abgelaufen");
+    gelernt = { geraet_name: "Yoke", hersteller_id: 1, produkt_id: 2, knopf: 7 };
+    await t.store.yokeFestlegen();
+    expect(waehrendBestaetigung).toBe(false);
+    expect(meldungDabei).toBeNull();
+  });
+
   it("Yoke-Taste: lernen, speichern mit yokeTaste, Zeit abgelaufen meldet, entfernen mit null", async () => {
     const t = aufbau();
     const gesetzt: unknown[] = [];

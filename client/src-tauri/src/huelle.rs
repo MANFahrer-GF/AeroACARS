@@ -30,6 +30,26 @@ use crate::UiError;
 /// Label des Huelle-Fensters (capabilities/huelle.json).
 pub(crate) const FENSTER: &str = "huelle";
 
+/// Haelt das Fenster verborgen, solange ein Systemdialog offen ist: Es liegt immer
+/// im Vordergrund und verdeckte sonst dessen Knoepfe.
+pub(crate) struct Verborgen(Option<tauri::WebviewWindow>);
+
+pub(crate) fn fuer_systemdialog(app: &tauri::AppHandle) -> Verborgen {
+    let w = app.get_webview_window(FENSTER);
+    if let Some(w) = &w {
+        let _ = w.hide();
+    }
+    Verborgen(w)
+}
+
+impl Drop for Verborgen {
+    fn drop(&mut self) {
+        if let Some(w) = &self.0 {
+            let _ = w.show();
+        }
+    }
+}
+
 /// Tage fuer das automatische Loeschen alter Flugprotokolle (wie bisher
 /// `AUTO_DELETE_LOGS_DAYS` in der Oberflaeche).
 pub(crate) const FLUGPROTOKOLLE_TAGE: u32 = 30;
@@ -471,6 +491,13 @@ pub(crate) fn beim_start_anwenden(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jeder_systemdialog_der_bilder_verbirgt_das_fenster() {
+        let q = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bilder.rs")).unwrap();
+        assert_eq!(q.matches("app.dialog().file()").count(), q.matches("fuer_systemdialog(").count());
+        assert_eq!(q.matches("fuer_systemdialog(").count(), 3, "Ordner, Dateien, ZIP");
+    }
 
     /// Die Auftraege sind ein gemeinsamer Zustand: Tests, die ihn leeren,
     /// laufen nicht neben anderen.

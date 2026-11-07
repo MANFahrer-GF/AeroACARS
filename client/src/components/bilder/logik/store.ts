@@ -285,16 +285,19 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   }
   async function yokeFestlegen(): Promise<void> {
     if (z.yokeLernt) return;
-    setzen({ yokeLernt: true });
+    setzen({ yokeLernt: true, meldung: null }); // eine alte Meldung gilt fuer den neuen Versuch nicht mehr
     try {
-      const t = await api.tasteLernen();
+      let t: Awaited<ReturnType<typeof api.tasteLernen>>;
+      try {
+        t = await api.tasteLernen();
+      } finally {
+        setzen({ yokeLernt: false }); // Das Lernen endet hier, nicht erst mit der Bestaetigung
+      }
       if (t === null) { meldung("fehler", "bilder.meldung.yoke_abgelaufen"); return; }
       await api.quellenSetzen({ yokeTaste: t });
       await laden();
     } catch (e) {
       if (fehlerCode(e) !== "huelle_abgelehnt") meldung("fehler", "bilder.meldung.yoke_fehler", { fehler: fehlerText(e) });
-    } finally {
-      setzen({ yokeLernt: false });
     }
   }
   async function yokeEntfernen(): Promise<void> {
@@ -337,6 +340,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   }
 
   async function aufnehmen(): Promise<void> {
+    setzen({ meldung: null });
     try {
       await api.aufnehmen();
       await eingang();

@@ -184,8 +184,16 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     return null;
   })();
 
+  // Sobald ein Flug laeuft, ist die Meldung von vorher falsch.
+  const keinFlugVeraltet = !!aktiverFlug && z.meldung?.schluessel === "bilder.meldung.kein_flug";
+  useEffect(() => { if (keinFlugVeraltet) bilderStore.meldungLoeschen(); }, [keinFlugVeraltet]);
+
   const erststart = alle.length === 0;
-  const zahlen = { bilder: alle.length, fluege: fluegeAnzahl, platz: bytesText(liste?.belegt_bytes ?? 0, sprache) };
+  const zahlen = {
+    bilder: alle.length === 1 ? t("bilder.kopf.anzahl_bild_eins") : t("bilder.kopf.anzahl_bilder", { n: alle.length }),
+    fluege: fluegeAnzahl === 1 ? t("bilder.kopf.anzahl_flug_eins") : t("bilder.kopf.anzahl_fluege", { n: fluegeAnzahl }),
+    platz: bytesText(liste?.belegt_bytes ?? 0, sprache),
+  };
   const altbestandAnzahl = Math.max(liste?.altbestand.length ?? 0, (liste?.quellen ?? []).reduce((sum, q) => sum + q.altbestand, 0));
   const einschaltenKarte = z.eingeschaltet === false && !spaeter;
   const beobachtete = (liste?.quellen ?? []).filter((q) => q.aktiv && q.beobachtet);
@@ -253,7 +261,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             {" · "}
             {simulator === "msfs" ? (kuerzelText ? t("bilder.band.taste_msfs", { kuerzel: kuerzelText }) : t("bilder.band.taste_msfs_neutral")) : xplaneTaste ? t("bilder.band.taste_xplane_bekannt", { taste: xplaneTaste }) : t("bilder.band.taste_xplane")}
           </span>
-          <span className="bt-band__rechts">{t("bilder.band.neue", { count: neueImFlug })}</span>
+          <span className="bt-band__rechts">{neueImFlug === 1 ? t("bilder.band.neue_eins") : t("bilder.band.neue", { count: neueImFlug })}</span>
         </div>
       ) : (
         <div className="bt-band bt-band--ruhe">

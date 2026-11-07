@@ -64,7 +64,7 @@ describe("Bilder-Tab", () => {
     expect(screen.getByText(/Ohne Flug ·/)).toBeInTheDocument();
     expect(screen.getAllByText("Keine Flugdaten").length).toBeGreaterThan(0);
     expect(screen.queryByText(/^0 ft$/)).toBeNull();
-    expect(screen.getByText(/3 Bilder · 1 Flüge/)).toBeInTheDocument();
+    expect(screen.getByText(/3 Bilder · 1 Flug ·/)).toBeInTheDocument();
   });
 
   it("Auswahl-Checkbox ist vom Oeffnen getrennt (Gegenprobe: Oeffnen waehlt nicht aus)", async () => {

@@ -4,13 +4,32 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui";
+import { kuerzelLesen } from "./logik/kuerzel";
 import type { BilderStore } from "./logik/store";
 import type { BilderListe, Fundort } from "./logik/typen";
 
 export function QuellenPanel({ liste, vorschlaege, store, onZu, simulator, yokeLernt }: { liste: BilderListe; vorschlaege: Fundort[] | null; store: BilderStore; onZu: () => void; simulator: "xplane" | "msfs" | null; yokeLernt: boolean }) {
   const { t } = useTranslation();
-  const [kuerzel, setKuerzel] = useState(liste.tastenkuerzel?.text ?? "");
-  useEffect(() => { setKuerzel(liste.tastenkuerzel?.text ?? ""); }, [liste.tastenkuerzel?.text]);
+  const [kuerzelLernt, setKuerzelLernt] = useState(false);
+  const [nurTaste, setNurTaste] = useState(false);
+  // Wie beim Yoke-Knopf: Tasten druecken statt tippen. Esc bricht ab, nach 10 s endet das Warten.
+  useEffect(() => {
+    if (!kuerzelLernt) return;
+    const zu = window.setTimeout(() => setKuerzelLernt(false), 10000);
+    const taste = (ev: KeyboardEvent) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (ev.key === "Escape") { setKuerzelLernt(false); return; }
+      const k = kuerzelLesen(ev);
+      setNurTaste(k === "modifikator");
+      if (k && k !== "modifikator") {
+        setKuerzelLernt(false);
+        void store.tastenkuerzelSetzen(k.kuerzel);
+      }
+    };
+    window.addEventListener("keydown", taste, true);
+    return () => { window.clearTimeout(zu); window.removeEventListener("keydown", taste, true); };
+  }, [kuerzelLernt, store]);
   const xplane = liste.quellen.filter((q) => q.art === "standard");
   const beobachtet = xplane.filter((q) => q.beobachtet && q.aktiv);
   const eingerichtet = new Set(liste.quellen.map((q) => q.pfad));
@@ -85,9 +104,10 @@ export function QuellenPanel({ liste, vorschlaege, store, onZu, simulator, yokeL
       {simulator === "xplane" && <div className="bt-hinweis">{t("bilder.quellen.yoke.xplane_hinweis")}</div>}
       {liste.tastenkuerzel?.verfuegbar && (
         <div className="bt-quellen__kuerzel">
-          <label htmlFor="bt-kuerzel">{t("bilder.quellen.kuerzel")}</label>
-          <input id="bt-kuerzel" value={kuerzel} onChange={(ev) => setKuerzel(ev.target.value)} />
-          <Button size="sm" disabled={kuerzel === liste.tastenkuerzel.text || kuerzel.trim() === ""} onClick={() => void store.tastenkuerzelSetzen(kuerzel.trim())}>{t("bilder.quellen.kuerzel_setzen")}</Button>
+          <span>{t("bilder.quellen.kuerzel")}:</span>
+          <span className="bt-acars">{liste.tastenkuerzel.text}</span>
+          <Button size="sm" disabled={kuerzelLernt} onClick={() => { setNurTaste(false); setKuerzelLernt(true); }}>{kuerzelLernt ? t("bilder.quellen.yoke.kuerzel_lernt") : t("bilder.quellen.kuerzel_setzen")}</Button>
+          <span role="status" className="bt-hinweis">{kuerzelLernt ? t(nurTaste ? "bilder.quellen.yoke.kuerzel_nur_taste" : "bilder.quellen.yoke.kuerzel_hinweis") : ""}</span>
           {liste.tastenkuerzel.fehler && <span className="bt-quellen__zusatz--fehler">{t("bilder.quellen.kuerzel_fehler", { fehler: liste.tastenkuerzel.fehler })}</span>}
         </div>
       )}

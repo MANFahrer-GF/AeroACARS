@@ -159,8 +159,10 @@ export function erzeugeUebernehmer(dep: UebernehmerAbhaengig) {
             melden(z, f.fund_id, e);
           }
         }
+        // Die Eingangskopie einer Aufnahme steht auch in `eintraege`; sie gehoert dem Fund und ist nach ihm umgezogen.
+        const vonFunden = new Set(liste.funde.map((f) => f.pfad));
         for (const e of liste.eintraege) {
-          if (e.vollstaendig || !e.quelle_pfad || (versuche.get(e.id) ?? 0) >= MAX_VERSUCHE) continue;
+          if (e.vollstaendig || !e.quelle_pfad || vonFunden.has(e.quelle_pfad) || (versuche.get(e.id) ?? 0) >= MAX_VERSUCHE) continue;
           try {
             await einRest(e, z);
           } catch (err) {
