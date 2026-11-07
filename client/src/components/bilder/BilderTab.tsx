@@ -185,6 +185,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   })();
 
   const erststart = alle.length === 0;
+  const zahlen = { bilder: alle.length, fluege: fluegeAnzahl, platz: bytesText(liste?.belegt_bytes ?? 0, sprache) };
   const altbestandAnzahl = Math.max(liste?.altbestand.length ?? 0, (liste?.quellen ?? []).reduce((sum, q) => sum + q.altbestand, 0));
   const einschaltenKarte = z.eingeschaltet === false && !spaeter;
   const beobachtete = (liste?.quellen ?? []).filter((q) => q.aktiv && q.beobachtet);
@@ -196,10 +197,8 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     <div className="bt" style={{ ["--tile-w" as string]: `${GRENZEN.tile_breite_px}px` }}>
       <header className="bt-kopf">
         <h1>{t("bilder.titel")}</h1>
-        <span className="bt-kopf__zahlen">
-          {alle.length > 0
-            ? t("bilder.kopf.zusammenfassung", { bilder: alle.length, fluege: fluegeAnzahl, platz: bytesText(liste?.belegt_bytes ?? 0, sprache) })
-            : t("bilder.kopf.keine")}
+        <span className="bt-kopf__zahlen" title={alle.length > 0 ? t("bilder.kopf.zusammenfassung", zahlen) : undefined}>
+          {alle.length > 0 ? t("bilder.kopf.zusammenfassung_kurz", zahlen) : t("bilder.kopf.keine")}
         </span>
         <div className="bt-kopf__rechts">
           {!erststart && <div className="bt-chips" role="group" aria-label={t("bilder.liste.filter.alle")}>
@@ -216,13 +215,12 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             {Symbol.suche}
             <input type="search" value={filter.suche} placeholder={t("bilder.kopf.suche_platzhalter")} aria-label={t("bilder.liste.suche_label")} onChange={(ev) => { setFilter({ ...filter, suche: ev.target.value }); setSeite(0); }} />
           </label>}
-          {!erststart && aufnahmeText && <span className="bt-chip">{Symbol.kamera}{aufnahmeText}</span>}
+          {!erststart && aufnahmeText && <span className="bt-chip bt-chip--aufnahme" title={aufnahmeText}>{Symbol.kamera}{simulator === "xplane" && xplaneTaste ? t("bilder.kopf.aufnahme_xplane_kurz", { taste: xplaneTaste }) : aufnahmeText}</span>}
           {liste?.aufnahme_verfuegbar && simulator === "msfs" && (
             <Button size="sm" variant="primary" iconLeft={Symbol.kamera} onClick={() => void bilderStore.aufnehmen()}>{t("bilder.kopf.aufnehmen")}</Button>
           )}
           <Button size="sm" iconLeft={Symbol.plus} aria-label={t("bilder.kopf.hinzufuegen")} title={t("bilder.kopf.hinzufuegen")} onClick={() => void bilderStore.hinzufuegen()} />
           <Button size="sm" iconLeft={Symbol.regler} aria-label={t("bilder.kopf.quellen")} title={t("bilder.kopf.quellen")} aria-pressed={quellenOffen} onClick={() => { setQuellenOffen((o) => !o); if (!quellenOffen) void bilderStore.quellenFinden(); }} />
-          {!erststart && <Button size="sm" iconLeft={Symbol.herunter} aria-label={t("bilder.leiste.exportieren")} title={t("bilder.leiste.exportieren")} disabled={auswahl.size === 0} onClick={() => void bilderStore.exportieren([...auswahl])} />}
           {!erststart && <Button size="sm" iconLeft={Symbol.ordner} aria-label={t("bilder.kopf.ordner_zeigen")} title={t("bilder.kopf.ordner_zeigen")} disabled={!offen} onClick={() => void ordnerZeigen()} />}
         </div>
       </header>
@@ -252,7 +250,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
               ? t("bilder.band.beobachtet", { sim: simKind ? simulatorName(simKind) : "", pfad: beobachtete.map((q) => q.pfad.split(/[\\/]/).slice(-2).join("/")).join(", ") }).replace(/^ · /, "")
               : t("bilder.band.keine_quelle")}
             {" · "}
-            {simulator === "msfs" ? (kuerzelText ? t("bilder.band.taste_msfs", { kuerzel: kuerzelText }) : t("bilder.band.taste_msfs_neutral")) : t("bilder.band.taste_xplane")}
+            {simulator === "msfs" ? (kuerzelText ? t("bilder.band.taste_msfs", { kuerzel: kuerzelText }) : t("bilder.band.taste_msfs_neutral")) : xplaneTaste ? t("bilder.band.taste_xplane_bekannt", { taste: xplaneTaste }) : t("bilder.band.taste_xplane")}
           </span>
           <span className="bt-band__rechts">{t("bilder.band.neue", { count: neueImFlug })}</span>
         </div>
@@ -353,6 +351,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
           {zus.sendet > 0 && <span className="bt-leiste__info">{t("bilder.leiste.sendet", { count: zus.sendet })}</span>}
           <div className="bt-leiste__rechts">
             <Button variant="quiet" onClick={() => setAuswahl(new Set())}>{t("bilder.leiste.aufheben")}</Button>
+            <Button iconLeft={Symbol.herunter} onClick={() => void bilderStore.exportieren([...auswahl])}>{t("bilder.leiste.exportieren")}</Button>
             <Button variant="danger" iconLeft={Symbol.papierkorb} onClick={() => void loeschen([...auswahl])}>{t("bilder.leiste.papierkorb")}</Button>
             <Button variant="primary" iconLeft={Symbol.senden} disabled={auswahl.size > GRENZEN.max_je_sendung || !reichtKontingent(auswahl.size, z.kontingent)} onClick={() => sendenMit([...auswahl])}>
               {auswahl.size === 1 ? t("bilder.leiste.senden_eins") : t("bilder.leiste.senden_n", { count: auswahl.size })}

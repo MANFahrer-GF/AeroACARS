@@ -5175,9 +5175,11 @@
       "ziehen": "Trascina qui i file",
       "aufnahme_msfs": "Scatto con {{kuerzel}} (MSFS)",
       "aufnahme_xplane": "Scatto: {{taste}} in X-Plane",
+      "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
       "aufnahme_aus": "Lo scatto con scorciatoia non è possibile su questo sistema. Usa le fonti delle immagini.",
       "nur_im_flug": "Scatto e importazione funzionano solo durante un volo AeroACARS.",
       "zusammenfassung": "{{bilder}} immagini · {{fluege}} voli · {{platz}} su questo computer",
+      "zusammenfassung_kurz": "{{bilder}} immagini · {{fluege}} voli · {{platz}}",
       "keine": "Ancora nessuna immagine su questo computer",
       "ordner_zeigen": "Mostra la cartella delle immagini nel file manager",
       "quellen": "Fonti delle immagini",
@@ -5440,6 +5442,7 @@
       "jetzt": "Invia ora",
       "zeilen": {
         "groesse": "Dimensione",
+        "groesse_text_eins": "1 immagine, {{groesse}} dopo il ridimensionamento a {{px}} px",
         "groesse_text": "{{count}} immagini, {{groesse}} dopo il ridimensionamento a {{px}} px",
         "weg": "Percorso",
         "weg_text": "Questo computer, server GSG (live), Discord. L’accesso a Discord si trova solo sul server.",
@@ -5517,6 +5520,7 @@
       "beobachtet": "{{sim}} · la cartella {{pfad}} è osservata",
       "keine_quelle": "Nessuna fonte di immagini osservata",
       "taste_xplane": "Il tasto del simulatore mette qui l’immagine",
+      "taste_xplane_bekannt": "{{taste}} nel simulatore salva qui l’immagine",
       "taste_msfs": "{{kuerzel}} cattura la finestra del simulatore",
       "neue": "{{count}} nuove immagini in questo volo",
       "taste_msfs_neutral": "Il tasto di scatto AeroACARS cattura la finestra del simulatore"

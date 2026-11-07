@@ -31,7 +31,7 @@
 }
 .bt-kopf h1 { margin: 0; font-size: var(--fs-500); font-weight: var(--fw-bold); }
 .bt-kopf__zahlen { font-size: var(--fs-300); color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
-.bt-kopf__rechts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); margin-left: auto; min-width: 0; }
+.bt-kopf__rechts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); flex: 1 1 100%; min-width: 0; }
 .bt-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .bt-chip {
   display: inline-flex;
@@ -55,7 +55,7 @@ button.bt-chip:hover { color: var(--text); }
 .bt-chip--ok { background: var(--sem-ok-bg); border-color: transparent; color: var(--sem-ok); }
 .bt-chip--warn { background: var(--sem-warn-bg); border-color: transparent; color: var(--sem-warn); }
 .bt-suche {
-  flex: 0 1 190px;
+  flex: 1 1 190px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -140,6 +140,8 @@ button.bt-chip:hover { color: var(--text); }
 .bt-kachel img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .bt-kachel__laedt { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-dim); font-size: var(--fs-200); background: var(--surface-3); }
 .bt-kachel__oeffnen { position: absolute; inset: 0; background: none; border: 0; padding: 0; cursor: pointer; color: transparent; font-size: 0; }
+/* Die globale Regel `button:hover:not(:disabled)` deckt sonst das Bild ab */
+.bt-kachel__oeffnen:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
 .bt-kachel__oeffnen:focus-visible { outline: 2px solid var(--acc); outline-offset: -3px; }
 .bt-kachel__leiste {
   position: absolute; left: 0; right: 0; bottom: 0;
@@ -309,7 +311,7 @@ button.bt-chip:hover { color: var(--text); }
 .bt-nachricht__bilder { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
 .bt-nachricht__bild { position: relative; flex: 0 0 150px; aspect-ratio: 16 / 10; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--line); background: var(--surface-3); }
 .bt-nachricht__bild img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.bt-nachricht__unter { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 7px; background: rgba(10, 13, 16, 0.78); color: #e9eff5; font-size: 10px; font-family: var(--font-acars); letter-spacing: var(--ls-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt-nachricht__unter { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 7px; background: rgba(10, 13, 16, 0.78); color: #e9eff5; font-size: 10px; font-family: var(--font-acars); letter-spacing: var(--ls-mono); line-height: 1.35; }
 .bt-nachricht__geo { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-300); align-items: flex-start; }
 .bt-spoiler { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 4px; background: var(--tick); color: var(--text); font: inherit; border: 0; cursor: pointer; }
 .bt-spoiler svg { width: 12px; height: 12px; }
@@ -346,12 +348,14 @@ button.bt-chip:hover { color: var(--text); }
 .bt-karte__umschalter--kopf button[aria-pressed="true"] { background: var(--acc-quiet); color: var(--text); }
 
 /* Kopf einzeilig, solange es die Breite hergibt (Entwurf: eine Zeile bei 1440 px) */
-@media (min-width: 1200px) {
+@media (min-width: 1400px) {
   .bt-kopf { flex-wrap: nowrap; }
-  .bt-kopf__rechts { flex-wrap: nowrap; min-width: 0; }
+  .bt-kopf__rechts { flex: 0 1 auto; flex-wrap: nowrap; margin-left: auto; min-width: 0; }
   .bt-kopf__rechts > * { flex: none; }
-  .bt-kopf__rechts > .bt-suche { flex: 1 1 120px; min-width: 100px; max-width: 190px; }
-  .bt-kopf__rechts > .bt-chip { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; display: block; line-height: 20px; }
-  .bt-kopf__rechts > .bt-chip svg { display: inline-block; vertical-align: -2px; margin-right: 5px; }
+  .bt-kopf__rechts > .bt-suche { flex: 0 0 190px; }
   .bt-kopf__zahlen { flex: 0 1 auto; }
 }
+
+/* Gegen die globale Regel `button:hover:not(:disabled)`: Links bleiben flach, der aktive Filter bleibt markiert */
+.bt-link:hover:not(:disabled) { background: none; }
+.bt-chip--an:hover:not(:disabled) { background: var(--acc-quiet); }

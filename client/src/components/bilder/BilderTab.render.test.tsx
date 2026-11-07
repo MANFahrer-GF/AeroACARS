@@ -1,4 +1,6 @@
 // Rendertests des Bilder-Tabs: echte Komponenten, gestellte `invoke`-Antworten.
+import fs from "node:fs";
+import path from "node:path";
 import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -199,7 +201,7 @@ describe("Bilder-Tab", () => {
     vorbereiten();
     h.taste = { simulator: "xplane", text: "F12" };
     const { unmount } = zeigen();
-    expect(await screen.findByText("Aufnahme: F12 in X-Plane")).toBeInTheDocument();
+    expect(await screen.findByTitle("Aufnahme: F12 in X-Plane")).toHaveTextContent("F12 in X-Plane");
     unmount();
     h.taste = null;
     zeigen();
@@ -257,4 +259,10 @@ describe("Bilder-Tab", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Zum Aufräumen auswählen" }));
     expect(await screen.findByText("1 ausgewählt")).toBeInTheDocument();
   });
+});
+
+// jsdom rechnet kein CSS: die Regel selbst ist hier der Beleg, gemessen im Browser (Kachel wurde beim Ueberfahren deckend).
+it("Ueberfahren einer Kachel deckt das Bild nicht ab", () => {
+  const css = fs.readFileSync(path.join(__dirname, "bilder.css"), "utf-8");
+  expect(css).toMatch(/\.bt-kachel__oeffnen:hover:not\(:disabled\) \{ background: rgba\(255, 255, 255, 0\.06\); \}/);
 });

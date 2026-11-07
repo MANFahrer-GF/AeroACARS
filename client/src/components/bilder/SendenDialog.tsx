@@ -128,7 +128,7 @@ function SendenInhalt({
         </fieldset>
 
         <div className="bt-zeilen">
-          <div className="bt-zeile"><span className="bt-zeile__k">{t("bilder.senden.zeilen.groesse")}</span><span>{t("bilder.senden.zeilen.groesse_text", { count: bilder.length, groesse, px: GRENZEN.max_kante_px })}</span></div>
+          <div className="bt-zeile"><span className="bt-zeile__k">{t("bilder.senden.zeilen.groesse")}</span><span>{t(bilder.length === 1 ? "bilder.senden.zeilen.groesse_text_eins" : "bilder.senden.zeilen.groesse_text", { count: bilder.length, groesse, px: GRENZEN.max_kante_px })}</span></div>
           <div className="bt-zeile"><span className="bt-zeile__k">{t("bilder.senden.zeilen.weg")}</span><span>{t("bilder.senden.zeilen.weg_text")}</span></div>
           <div className="bt-zeile"><span className="bt-zeile__k">{t("bilder.senden.zeilen.fehlschlag")}</span><span>{t("bilder.senden.zeilen.fehlschlag_text")}</span></div>
         </div>

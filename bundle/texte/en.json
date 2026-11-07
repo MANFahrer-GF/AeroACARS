@@ -5175,9 +5175,11 @@
       "ziehen": "Drag files here",
       "aufnahme_msfs": "Capture with {{kuerzel}} (MSFS)",
       "aufnahme_xplane": "Capture: {{taste}} in X-Plane",
+      "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
       "aufnahme_aus": "Capturing with a shortcut is not possible on this system. Use the picture sources.",
       "nur_im_flug": "Capturing and importing only work during an AeroACARS flight.",
       "zusammenfassung": "{{bilder}} pictures · {{fluege}} flights · {{platz}} on this computer",
+      "zusammenfassung_kurz": "{{bilder}} pictures · {{fluege}} flights · {{platz}}",
       "keine": "No pictures on this computer yet",
       "ordner_zeigen": "Show the pictures folder in the file manager",
       "quellen": "Picture sources",
@@ -5440,6 +5442,7 @@
       "jetzt": "Send now",
       "zeilen": {
         "groesse": "Size",
+        "groesse_text_eins": "1 picture, {{groesse}} after resizing to {{px}} px",
         "groesse_text": "{{count}} pictures, {{groesse}} after resizing to {{px}} px",
         "weg": "Route",
         "weg_text": "This computer, GSG server (live), Discord. The access to Discord only exists on the server.",
@@ -5517,6 +5520,7 @@
       "beobachtet": "{{sim}} · folder {{pfad}} is being watched",
       "keine_quelle": "No picture source being watched",
       "taste_xplane": "The simulator’s own key puts the picture here",
+      "taste_xplane_bekannt": "{{taste}} in the simulator saves the picture here",
       "taste_msfs": "{{kuerzel}} captures the simulator window",
       "neue": "{{count}} new pictures in this flight",
       "taste_msfs_neutral": "The AeroACARS capture key captures the simulator window"

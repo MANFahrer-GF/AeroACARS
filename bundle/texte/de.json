@@ -5175,9 +5175,11 @@
       "ziehen": "Dateien hierher ziehen",
       "aufnahme_msfs": "Aufnahme mit {{kuerzel}} (MSFS)",
       "aufnahme_xplane": "Aufnahme: {{taste}} in X-Plane",
+      "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
       "aufnahme_aus": "Aufnahme per Tastenkürzel ist auf diesem System nicht möglich. Nutze die Bildquellen.",
       "nur_im_flug": "Aufnahme und Übernahme laufen nur in einem AeroACARS-Flug.",
       "zusammenfassung": "{{bilder}} Bilder · {{fluege}} Flüge · {{platz}} auf diesem Rechner",
+      "zusammenfassung_kurz": "{{bilder}} Bilder · {{fluege}} Flüge · {{platz}}",
       "keine": "Noch keine Bilder auf diesem Rechner",
       "ordner_zeigen": "Bilder-Ordner im Dateimanager zeigen",
       "quellen": "Bildquellen",
@@ -5440,6 +5442,7 @@
       "jetzt": "Jetzt senden",
       "zeilen": {
         "groesse": "Größe",
+        "groesse_text_eins": "1 Bild, {{groesse}} nach Verkleinerung auf {{px}} px",
         "groesse_text": "{{count}} Bilder, {{groesse}} nach Verkleinerung auf {{px}} px",
         "weg": "Weg",
         "weg_text": "Dieser Rechner, GSG-Server (live), Discord. Der Zugang zu Discord liegt nur auf dem Server.",
@@ -5517,6 +5520,7 @@
       "beobachtet": "{{sim}} · Ordner {{pfad}} wird beobachtet",
       "keine_quelle": "Keine Bildquelle beobachtet",
       "taste_xplane": "Die Taste des Simulators legt das Bild hier ab",
+      "taste_xplane_bekannt": "{{taste}} im Simulator legt das Bild hier ab",
       "taste_msfs": "{{kuerzel}} nimmt das Simulator-Fenster auf",
       "neue": "{{count}} neue Bilder in diesem Flug",
       "taste_msfs_neutral": "Die AeroACARS-Aufnahmetaste nimmt das Simulator-Fenster auf"
