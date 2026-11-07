@@ -18,7 +18,7 @@ export function useKachelTexte() {
   const phase = (e: Eintrag): string => {
     const m = e.sidecar?.meta;
     if (m?.phase) return t(`bilder.detail.phase.${m.phase}`, { defaultValue: m.phase });
-    return m?.pirep_id ? "" : t("bilder.kachel.ohne_flug");
+    return ""; // „Ohne Flug“ sagt schon die Gruppe; die Pille wuerde „Keine Flugdaten“ abschneiden
   };
   const hoehe = (e: Eintrag): string => {
     const h = e.sidecar?.meta?.hoehe_ft;
