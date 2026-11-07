@@ -210,6 +210,8 @@ jobs:
           # Beta an Piloten: Fehlerberichte wie im Release (release.yml).
           AEROACARS_SENTRY_DSN: ${{ inputs.beta && secrets.AEROACARS_SENTRY_DSN || '' }}
           VITE_SENTRY_DSN_CLIENT: ${{ inputs.beta && secrets.VITE_SENTRY_DSN_CLIENT || '' }}
+          # Dev-Build testet seine eigene Oberflaeche, nicht das freigegebene Paket.
+          AEROACARS_NUR_EINGEBAUT: ${{ !inputs.beta && '1' || '0' }}
           # Pruefsumme des Plugin-Pakets (leer ohne beta = Dev-Build, Warnung).
           AEROACARS_XPLANE_PLUGIN_SHA256: ${{ needs.plugin-zip.outputs.sha256 }}
         run: npx tauri build --bundles nsis --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
@@ -298,6 +300,8 @@ jobs:
           # Beta an Piloten: Fehlerberichte wie im Release (release.yml).
           AEROACARS_SENTRY_DSN: ${{ inputs.beta && secrets.AEROACARS_SENTRY_DSN || '' }}
           VITE_SENTRY_DSN_CLIENT: ${{ inputs.beta && secrets.VITE_SENTRY_DSN_CLIENT || '' }}
+          # Dev-Build testet seine eigene Oberflaeche, nicht das freigegebene Paket.
+          AEROACARS_NUR_EINGEBAUT: ${{ !inputs.beta && '1' || '0' }}
           # Pruefsumme des Plugin-Pakets (leer ohne beta = Dev-Build, Warnung).
           AEROACARS_XPLANE_PLUGIN_SHA256: ${{ needs.plugin-zip.outputs.sha256 }}
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
