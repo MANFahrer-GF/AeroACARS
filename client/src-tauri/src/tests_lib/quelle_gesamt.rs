@@ -306,7 +306,7 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `abfangen_verdrahtung_tests::steigende_bahn_*`, `fallende_bahn_*`,
 /// `boden_korrektur_ist_begrenzt`, `korrektur_macht_aus_*`, `echtes_durchstarten_*`.
 /// — plus Bilder-Tab 07.11. (N-13, Faehigkeit `bilder-1`): `mod bilder;`, die zehn
-/// Befehle `bilder::*` im `generate_handler!` und EINE Zeile `bilder::starten(app)`
+/// Befehle `bilder::*` (zwoelf: `bild_status`, `bild_senden`, `bild_hinzufuegen` statt `bild_live`) im `generate_handler!` und EINE Zeile `bilder::starten(app)`
 /// in `nach_dem_stand`. Sonst nichts an `lib.rs`; die Logik steht in `src/bilder.rs`
 /// und `crates/bilder-kern`. Tests `tests/befehlsliste.rs::bilder_befehle_der_faehigkeit_bilder_1`,
 /// `bilder::tests::*`, `bilder-kern` (`cargo test -p bilder-kern`).
@@ -320,4 +320,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "03875bee8502a62f893e21216fac55fc3a49bc8c768cfae60dc09dd4fb999519";
+const HASH_VOR_DER_ZERLEGUNG: &str = "2fc4b1fcf773eba3f3b59ce445e8f6c96d6c29c9dfdd6ac6a71c427b7ee678a4";

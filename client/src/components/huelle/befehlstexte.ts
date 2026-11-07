@@ -25,6 +25,10 @@ export interface Eintrag {
   en: Text;
   it: Text;
   aus?: Record<Sprache, Text>;
+  /** `bild_quellen_setzen` mit `ordnerWaehlen: true`: Frage zum Ordnerdialog. */
+  ordner?: Record<Sprache, Text>;
+  /** `bild_hinzufuegen` ohne `pfade`: der Kern öffnet gleich die Dateiauswahl. */
+  auswahl?: Record<Sprache, Text>;
 }
 
 export const BEFEHLSTEXTE: Record<string, Eintrag> = {
@@ -43,6 +47,16 @@ export const BEFEHLSTEXTE: Record<string, Eintrag> = {
     en: { frage: "Save the selected images as the ZIP file “{{dateiname}}” to a place you choose next?", knopf: "Save" },
     it: { frage: "Salvare le immagini scelte come file ZIP «{{dateiname}}» in un posto che sceglierai subito dopo?", knopf: "Salva" },
   },
+  bild_hinzufuegen: {
+    de: { frage: "{{anzahl}} Datei(en) als Kopie in den Bilderordner von AeroACARS aufnehmen? Die Originale bleiben unverändert.", knopf: "Hinzufügen" },
+    en: { frage: "Add {{anzahl}} file(s) to the AeroACARS image folder as copies? The originals stay untouched.", knopf: "Add" },
+    it: { frage: "Aggiungere {{anzahl}} file come copie alla cartella immagini di AeroACARS? Gli originali restano invariati.", knopf: "Aggiungi" },
+    auswahl: {
+      de: { frage: "Bilder (JPG, PNG), die du gleich auswählst, als Kopie in den Bilderordner von AeroACARS aufnehmen? Die Originale bleiben unverändert.", knopf: "Auswählen" },
+      en: { frage: "Add images (JPG, PNG) that you choose next to the AeroACARS image folder as copies? The originals stay untouched.", knopf: "Choose" },
+      it: { frage: "Aggiungere come copie alla cartella immagini di AeroACARS le immagini (JPG, PNG) che sceglierai subito dopo? Gli originali restano invariati.", knopf: "Scegli" },
+    },
+  },
   bild_loeschen: {
     de: { frage: "Das Bild „{{bezeichnung}}“ löschen? Das Foto kommt in den Papierkorb, Vorschau und Beschreibung werden endgültig entfernt.", knopf: "Löschen" },
     en: { frage: "Delete the image “{{bezeichnung}}”? The photo goes to the recycle bin; the preview and description are removed for good.", knopf: "Delete" },
@@ -52,6 +66,16 @@ export const BEFEHLSTEXTE: Record<string, Eintrag> = {
     de: { frage: "Die Liste der Bildquellen speichern? AeroACARS beobachtet diese Ordner und übernimmt neue Bilder daraus (Kopieren oder Verschieben je Ordner). Das Tastenkürzel für die Fensteraufnahme wird mit angemeldet.", knopf: "Speichern" },
     en: { frage: "Save the list of image sources? AeroACARS watches these folders and takes over new images from them (copy or move, per folder). The shortcut for the window capture is registered as well.", knopf: "Save" },
     it: { frage: "Salvare l'elenco delle fonti immagine? AeroACARS osserva queste cartelle e acquisisce le nuove immagini (copia o spostamento, per cartella). Viene registrata anche la scorciatoia per l'acquisizione della finestra.", knopf: "Salva" },
+    ordner: {
+      de: { frage: "Einen Ordner als Bildquelle hinzufügen? Du wählst ihn gleich im Systemdialog aus. AeroACARS kopiert neue Bilder daraus, das Original bleibt; schon vorhandene Bilder werden nicht übernommen.", knopf: "Ordner wählen" },
+      en: { frage: "Add a folder as an image source? You choose it next in the system dialog. AeroACARS copies new images from it and leaves the originals; images already there are not taken over.", knopf: "Choose folder" },
+      it: { frage: "Aggiungere una cartella come fonte immagini? La sceglierai subito nella finestra di sistema. AeroACARS copia le nuove immagini e lascia gli originali; quelle già presenti non vengono acquisite.", knopf: "Scegli cartella" },
+    },
+  },
+  bild_senden: {
+    de: { frage: "{{anzahl}} Bild(er) jetzt an den Discord-Kanal der GSG senden? Ein gesendetes Bild lässt sich nicht zurückholen.", knopf: "Senden" },
+    en: { frage: "Send {{anzahl}} image(s) to the GSG Discord channel now? A sent image cannot be taken back.", knopf: "Send" },
+    it: { frage: "Inviare ora {{anzahl}} immagine/i al canale Discord del GSG? Un'immagine inviata non si può ritirare.", knopf: "Invia" },
   },
   flight_forget_remote: {
     de: { frage: "Den hängenden Flug {{pirepId}} nur auf diesem Rechner vergessen? phpVMS erfährt davon nichts.", knopf: "Vergessen" },
@@ -201,13 +225,23 @@ function einsetzen(vorlage: string, werte: Record<string, unknown> | undefined):
   });
 }
 
+/** Besondere Fassung der Frage, wenn die Werte es verlangen (Ordnerdialog, Dateiauswahl). */
+function variante(befehl: string, werte: Record<string, unknown> | undefined, e: Eintrag, s: Sprache): Text {
+  if (befehl === "bild_quellen_setzen" && werte?.ordnerWaehlen === true && e.ordner) return e.ordner[s];
+  if (befehl === "bild_hinzufuegen" && !(Array.isArray(werte?.pfade) && werte.pfade.length > 0) && e.auswahl) return e.auswahl[s];
+  return e[s];
+}
+
 /** Frage und Knopf für einen Auftrag, oder `null` für einen unbekannten Befehl. */
 export function dialogText(befehl: string, werte: Record<string, unknown> | undefined, roh: string | undefined): Text | null {
   const e = Object.prototype.hasOwnProperty.call(BEFEHLSTEXTE, befehl) ? BEFEHLSTEXTE[befehl] : undefined;
   if (!e) return null;
   const s = sprache(roh);
-  const t = werte?.enabled === false && e.aus ? e.aus[s] : e[s];
-  return { frage: einsetzen(t.frage, werte), knopf: t.knopf };
+  const t = werte?.enabled === false && e.aus ? e.aus[s] : variante(befehl, werte, e, s);
+  // `anzahl`: wie viele Bilder bzw. Dateien der Aufruf trägt (aus den echten Werten).
+  const liste = Array.isArray(werte?.bilder) ? werte.bilder : Array.isArray(werte?.pfade) ? werte.pfade : undefined;
+  const mit = liste ? { ...werte, anzahl: liste.length } : werte;
+  return { frage: einsetzen(t.frage, mit), knopf: t.knopf };
 }
 
 /** Schlüssel, deren Wert geheim ist (Tauri übergibt camelCase: `apiKey`, `code`). */

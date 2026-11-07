@@ -1,40 +1,100 @@
-//! Bilder-Tab (N-13, Faehigkeit `bilder-1`, P-11.30 bis P-11.34): die zehn
-//! Befehle, das Ereignis `bild_quelle_neu` und das Tastenkuerzel.
+//! Bilder-Tab (N-13, Faehigkeit `bilder-1`, P-11.30 bis P-11.34): die dreizehn
+//! Befehle, der dauerhafte Eingang `.eingang/`, das Ereignis `bild_quelle_neu`
+//! und das Tastenkuerzel. **Diese Kopf-Doku ist der Vertrag fuer das Paket.**
 //!
-//! Grundsatz (P-11.33): Dieser Teil liefert nur Plattform-Bausteine. Aktiver
-//! Flug, Zuordnung, Metadaten, Verkleinern, EXIF und Filter sind Sache des
-//! Laufzeit-Pakets. Die Logik steht in `crates/bilder-kern` (ohne Tauri
-//! testbar); die Befehle hier sind duenne Adapter.
+//! Grundsatz (P-11.33): Dieser Teil liefert nur Plattform-Bausteine. Zuordnung,
+//! Metadaten, Verkleinern, EXIF und Filter sind Sache des Laufzeit-Pakets. Die
+//! Logik steht in `crates/bilder-kern` (ohne Tauri testbar); die Befehle hier
+//! sind duenne Adapter. Was der Kern nicht dem Paket ueberlassen darf, erzwingt
+//! er selbst: Pfade nur in bestaetigten Quellen und ohne Linkfolgen, Funde nur
+//! aus einem aktiven AeroACARS-Flug, Loeschen und Senden nur nach Bestaetigung
+//! der Huelle.
 //!
-//! Byte-Vertrag der Befehle:
-//! * `bild_lesen` gibt die Bytes **roh** zurueck (`ArrayBuffer`, kein JSON-Feld).
-//! * Bytes an den Kern (`bild_schreiben`, `bild_live`, `bild_export`) gehen als
-//!   **Base64** (Standard-Alphabet) in den JSON-Argumenten; so funktionieren sie
-//!   auch ueber `shell_request` (Hülle) unveraendert.
+//! # Eingang (dauerhaft)
+//! Jeder Fund im aktiven Flug (neue Datei in einer Quelle, Aufnahme per
+//! Tastenkuerzel oder `bild_aufnehmen`) wird **zuerst** als
+//! `<bilder>/.eingang/<fund_id>.json` abgelegt, mit dem Stand zur Entdeckung.
+//! Ausserhalb eines Flugs entsteht kein Fund (die Datei bleibt unangetastet).
+//! `bilder_liste` liefert die offenen Funde als `funde` (aelteste zuerst). Die
+//! Ereignisse `bild_quelle_neu` und `bild_aufgenommen` sind nur Wecksignale:
+//! ohne sie, auch bei geschlossenem Tab oder neu gestartetem Client, ist der
+//! Eingang vollstaendig. Das Paket arbeitet ihn strikt nacheinander ab.
+//! Eintrag (flach): `fund_id`, `art` (`datei`|`aufnahme`), `entdeckt_ms`,
+//! `pfad` (Quelldatei, nur `datei`), `quelle` (Quellordner), `quelle_art`
+//! (`standard`|`aufgespuert`|`hand`|frei), `quelle_pfad` (Eingangskopie
+//! `<gruppe>/<id>.quelle.png`, nur `aufnahme`), `dateizeit_ms`, `erstellt_ms`,
+//! `groesse`, `format`, `uebernehmbar`, `bild_breite`, `bild_hoehe` (Pixel),
+//! `sha256` (der Originaldatei), `sim_vordergrund` und der *Stand* zur
+//! Entdeckung (Felder von `bild_meta`, P-11.32) flach daneben.
 //!
-//! Argumente (Tauri-Standard: oberste Ebene camelCase, Felder verschachtelter
-//! Objekte wie im Vertrag snake_case):
-//! * `bilder_liste({mitAltbestand?})` -> `{eintraege, belegt_bytes, quellen, tastenkuerzel, aufnahme_verfuegbar, altbestand?}`
+//! *Stand* (gleiche Namen im Eingang und in `bild_kontext`): `pirep_id`, `phase`,
+//! `rufzeichen`, `abflug`, `ziel`, `zeit_utc`, `breite`, `laenge`, `hoehe_ft`,
+//! `gs_kt`, `kurs`, `flugzeug_titel`, `flugzeug_icao`, `simulator`,
+//! `naechster_flugplatz` (`{icao, abstand_m}`). Fehlende Werte fehlen (`null`),
+//! nichts wird geraten. `breite`/`laenge` sind die Position, nicht die Bildmasse.
+//!
+//! # Befehle
+//! Byte-Vertrag: `bild_lesen` gibt Bytes **roh** zurueck (`ArrayBuffer`);
+//! `bild_schreiben` und `bild_export` nehmen Base64 (Standard-Alphabet);
+//! `bild_senden` nimmt **keine Bytes mehr** (der Kern liest die Dateien selbst).
+//! Argumente: oberste Ebene camelCase, Felder verschachtelter Objekte snake_case.
+//!
+//! lesen
+//! * `bilder_liste({mitAltbestand?})` -> `{eintraege, belegt_bytes, funde, quellen, tastenkuerzel, aufnahme_verfuegbar, altbestand?}`;
+//!   `quellen[]` tragen `art` (`standard`, `aufgespuert`, `hand`, sonst frei) und `wird_geprueft`
 //! * `bild_lesen({pfad})` -> ArrayBuffer (`pfad` relativ aus der Liste)
 //! * `bild_quellen_finden()` -> `[{pfad, art, simulator, existiert, vorschlag_modus}]`
-//! * `bild_uebernehmen({pfad, modus, gruppe, id?})` -> Eingangskopie `<gruppe>/<id>.quelle.png|jpg`
-//! * `bild_schreiben({gruppe, id, jpegBase64?, vorschauBase64?, sidecar?, quelleEntfernen?})` -> Eintrag
-//! * `bild_aufnehmen({gruppe?})` -> `{id, gruppe, quelle_pfad, breite, hoehe, ...}`
-//! * `bild_live({art: "senden"|"status", sendungId?, text?, geoStufe?, bilder?: [{bild_id, jpeg_base64, meta}]})`
-//! * `bild_loeschen({gruppe, id, bezeichnung?})`, `bild_quellen_setzen({quellen: [{pfad, aktiv, original_entfernen, art}], tastenkuerzel?})`,
-//!   `bild_export({zipBase64, dateiname})`
-//! * Ereignisse: `bild_quelle_neu` (Fund), `bild_aufgenommen` (`{ok, aufnahme|code, meldung}`, nach dem Tastenkuerzel)
+//! * `bild_status({sendungId?})` -> Stand einer Sendung und Kontingent (`GET /api/bilder/status`)
+//! * `bild_kontext({zeiten?: [iso], pirepId?, mitSpur?})` -> `{ergebnisse: [{zeit, quelle, abstand_s?, ...Stand}], spur?, pirep_id?}`;
+//!   je Zeit der zeitlich naechste Stand aus `flight_logs/<pirep>.jsonl` (`quelle: "protokoll"`, hoechstens
+//!   120 s Abstand), sonst die PIREP-Block-Zeiten aus phpVMS (`"logbuch"`: `pirep_id`, `rufzeichen`, `abflug`,
+//!   `ziel`, `flugzeug_icao`, sonst nichts), sonst `"keine"`; `naechster_flugplatz` aus dem OurAirports-Stand der
+//!   aktiven Generation. `mitSpur`: ausgeduennte Spur des Flugs `[{zeit_utc, breite, laenge, hoehe_ft}]`
+//!   (hoechstens 600 Punkte; im aktiven Flug stattdessen `flight_get_track`)
 //!
-//! Stufen (befehle.json): lesen `bilder_liste`, `bild_lesen`,
-//! `bild_quellen_finden`; fachlich `bild_uebernehmen`, `bild_schreiben`,
-//! `bild_aufnehmen`, `bild_live`; system `bild_loeschen`, `bild_quellen_setzen`,
-//! `bild_export`. Die LAN-Bruecke reicht keinen davon durch.
+//! fachlich
+//! * `bild_uebernehmen({fundId, modus, gruppe?, id?})` -> `Uebernahme`: `modus` `kopieren`|`verschieben`|`verwerfen`.
+//!   Prueft, dass der Fund im aktiven Flug entstand (er steht im Eingang); die Uebernahme selbst darf nach
+//!   Flugende laufen. Ergebnis: Eingangskopie `<gruppe>/<id>.quelle.png|jpg` (`gruppe` Pflicht), der Eintrag
+//!   wird entfernt. `verwerfen` entfernt nur den Eintrag und fasst die Quelldatei nie an (eine eigene
+//!   Aufnahme-Kopie wird mit entfernt). Es gibt kein `bild_verwerfen`.
+//! * `bild_schreiben({gruppe, id, jpegBase64?, vorschauBase64?, sidecar?, quelleEntfernen?, sha256?})` -> Eintrag;
+//!   `sha256` (kanonischer Hash der EXIF-freien Bytes, 64 Hex) wird im Sidecar festgehalten; ein im Bilderordner
+//!   schon vorhandener Hash anderer Bild-id wird atomar mit Code `duplikat` abgelehnt (Meldung nennt `gruppe/id`)
+//! * `bild_aufnehmen({gruppe?})` -> Fund (wie ein Eintrag); nur im aktiven Flug (`kein_flug`)
 //!
-//! Auslegung: Weil es genau zehn Befehle sind, tragen zwei Antworten mehr als
-//! der Name sagt: `bilder_liste` liefert auch die bestaetigten Quellen mit
-//! Beobachtungszustand, den Altbestand (auf Wunsch) und das Tastenkuerzel;
-//! `bild_quellen_setzen` setzt neben den Ordnern auch das Tastenkuerzel (beides
-//! ist eine Systemeinstellung und laeuft ueber denselben Hüllen-Dialog).
+//! system (Huellen-Dialog)
+//! * `bild_senden({sendungId, text?, geoStufe?, bilder: [{gruppe, bild_id, meta}]})` -> Antwort des Servers (`POST /api/bilder`).
+//!   Der Kern liest `<gruppe>/<bild_id>.jpg`, entfernt **alle APP1-Segmente** (EXIF, XMP) mit einem begrenzten
+//!   JPEG-Segment-Parser und baut die Anfrage. Gleiche Datei = gleiche Upload-Bytes (kein `konflikt` bei
+//!   Wiederholung). Die Huelle zeigt nur die Bildanzahl.
+//! * `bild_hinzufuegen({gruppe, pfade?})` -> `{abgebrochen, ergebnisse: [{pfad, ok, uebernahme | code, meldung}]}`;
+//!   ohne `pfade` oeffnet der Kern die Dateiauswahl; JPG/PNG, immer kopiert, auch ohne Flug
+//! * `bild_loeschen({gruppe, id, bezeichnung?})`, `bild_export({zipBase64, dateiname})`
+//! * `bild_quellen_setzen({quellen?, tastenkuerzel?, ordnerWaehlen?})`: `ordnerWaehlen: true` oeffnet nach der
+//!   Bestaetigung den Ordnerdialog des Systems und haengt den Ordner als Quelle `hand` an (nur kopieren);
+//!   Abbrechen aendert nichts
+//!
+//! Ereignisse (nur Wecksignale): `bild_quelle_neu` (der Eingangseintrag), `bild_aufgenommen`
+//! (`{ok, aufnahme}` oder `{ok:false, code, meldung}`, `code` z. B. `kein_flug`, `verdeckt`).
+//!
+//! Fehlercodes des Kerns: `bild_name`, `bild_pfad`, `bild_nicht_gefunden`, `bild_format`, `bild_unfertig`,
+//! `bild_quelle`, `bild_verboten`, `bild_zu_gross`, `bild_eingabe`, `bild_nicht_verfuegbar`, `bild_io`,
+//! `kein_flug`, `verdeckt`, `duplikat`; beim Senden `live_nicht_angemeldet`, `live_nicht_erreichbar`,
+//! `live_antwort_fehlt` (Zustellung unklar: erst `bild_status` mit derselben `sendungId`), `live_kontingent`
+//! (`details.retry_after`), `live_fehler` (`details.status`).
+//!
+//! Stufen (befehle.json): lesen `bilder_liste`, `bild_lesen`, `bild_quellen_finden`, `bild_status`,
+//! `bild_kontext`; fachlich `bild_uebernehmen`, `bild_schreiben`, `bild_aufnehmen`; system `bild_senden`,
+//! `bild_hinzufuegen`, `bild_loeschen`, `bild_quellen_setzen`, `bild_export`. Die LAN-Bruecke reicht keinen
+//! davon durch.
+//!
+//! Auslegung: Weil es genau dreizehn Befehle sind, tragen zwei Antworten mehr als der Name sagt:
+//! `bilder_liste` liefert auch Funde, Quellen mit Beobachtungszustand, den Altbestand (auf Wunsch) und das
+//! Tastenkuerzel; `bild_quellen_setzen` setzt neben den Ordnern auch das Tastenkuerzel.
+//!
+//! Beobachtung: jede Quelle hat ihren eigenen Stand (siehe `bilder_kern::beobachter`); die Grundlage einer
+//! neuen Quelle laeuft im Hintergrund, `bild_quellen_setzen` wartet nie auf einen haengenden Ordner.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -104,15 +164,38 @@ fn anzeige() -> &'static Mutex<Anzeige> {
     A.get_or_init(|| Mutex::new(Anzeige::default()))
 }
 
-/// Beobachtung auf die bestaetigte Liste setzen und das Anzeige-Abbild erneuern.
-fn beobachtung_aufsetzen(quellen: &[Quelle]) {
-    let vordergrund = plattform::sim_vordergrund();
+/// Anzeige-Abbild aus dem Beobachter erneuern (nur Anzeige-Sperren, nie Ordnerzugriffe).
+fn anzeige_erneuern() {
     let (status, alt) = {
-        let mut b = entsperren(beobachter());
-        b.aufsetzen(quellen, vordergrund);
+        let b = entsperren(beobachter());
         (b.status(), b.altbestand())
     };
     *entsperren(anzeige()) = Anzeige { status, alt };
+}
+
+/// Beobachtung auf die bestaetigte Liste setzen. Kehrt sofort zurueck: die
+/// Grundlage (Altbestand) neuer Quellen erhebt je Quelle ein eigener Faden, ein
+/// haengendes Netzlaufwerk haelt also weder das Speichern noch die anderen
+/// Quellen auf. Bis dahin steht die Quelle auf `wird_geprueft`.
+fn beobachtung_aufsetzen(quellen: &[Quelle]) {
+    let vordergrund = plattform::sim_vordergrund();
+    let neue = entsperren(beobachter()).einsetzen(quellen);
+    anzeige_erneuern();
+    for slot in neue {
+        let _ = std::thread::Builder::new().name("bilder-grundlage".into()).spawn(move || {
+            slot.grundlage(vordergrund);
+            anzeige_erneuern();
+        });
+    }
+}
+
+/// Laeuft ein AeroACARS-Flug? Nur dann nimmt der Kern auf und uebernimmt.
+fn flug_aktiv(app: &AppHandle) -> bool {
+    app.state::<crate::AppState>().active_flight.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+}
+
+fn kein_flug() -> UiError {
+    fehler(Fehler::KeinFlug("Ohne AeroACARS-Flug wird nichts aufgenommen oder uebernommen".into()))
 }
 
 fn hotkey() -> &'static Mutex<Option<plattform::Hotkey>> {
@@ -214,7 +297,8 @@ pub(crate) fn bild_uebernehmen(
     id: Option<String>,
 ) -> Result<quellen::Uebernahme, UiError> {
     let einst = quellen::einstellungen_lesen(&einstellungen_datei(&app)?);
-    quellen::uebernehmen(&wurzel(&app)?, &einst.quellen, &pfad, modus, &gruppe, id.as_deref(), Duration::from_millis(400)).map_err(fehler)
+    let lage = quellen::Lage { flug_aktiv: flug_aktiv(&app), stabil_pause: Duration::from_millis(400) };
+    quellen::uebernehmen(&wurzel(&app)?, &einst.quellen, &pfad, modus, &gruppe, id.as_deref(), lage).map_err(fehler)
 }
 
 /// Schreibt JPEG, Vorschau und Sidecar eines Bildes atomar in den verwalteten
@@ -245,7 +329,11 @@ static AUFNAHME_LAEUFT: AtomicBool = AtomicBool::new(false);
 
 /// Nimmt das Simulatorfenster auf (Windows) und legt es als Eingangskopie
 /// (PNG) in `gruppe` ab. Auf anderen Systemen: Fehler `bild_nicht_verfuegbar`.
+/// Ohne aktiven Flug: `kein_flug`, auch vom Knopf.
 fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
+    if !flug_aktiv(app) {
+        return Err(kein_flug());
+    }
     if AUFNAHME_LAEUFT.swap(true, Ordering::SeqCst) {
         return Err(UiError::new("bild_beschaeftigt", "Eine Aufnahme laeuft schon"));
     }
@@ -279,6 +367,17 @@ pub(crate) async fn bild_aufnehmen(app: AppHandle, gruppe: Option<String>) -> Re
         .map_err(|e| UiError::new("bild_io", e.to_string()))?
 }
 
+/// Nutzlast des Ereignisses `bild_aufgenommen`. Ohne aktiven Flug wird die
+/// Aufnahme gar nicht erst versucht (`aufnehmen` laeuft nicht) und `kein_flug`
+/// gemeldet.
+fn aufgenommen_nutzlast(flug_aktiv: bool, aufnehmen: impl FnOnce() -> Result<Value, UiError>) -> Value {
+    let ergebnis = if flug_aktiv { aufnehmen() } else { Err(kein_flug()) };
+    match ergebnis {
+        Ok(v) => json!({"ok": true, "aufnahme": v}),
+        Err(e) => json!({"ok": false, "code": e.code, "meldung": e.message}),
+    }
+}
+
 /// Ein Bild der Sendung: die zu sendenden JPEG-Bytes (nach Verkleinern, ohne
 /// EXIF; das macht das Paket) und das Metadaten-Dokument.
 #[derive(Debug, Deserialize)]
@@ -288,39 +387,45 @@ pub(crate) struct LiveBildEin {
     meta: Value,
 }
 
-/// Eine Anfrage an `POST /api/bilder` (`art: "senden"`) oder
-/// `GET /api/bilder/status` (`art: "status"`, `sendung_id` optional). Das
-/// Pilot-Token haengt der Kern an; es erreicht die Oberflaeche nie. Die
-/// Antwort des Servers geht unveraendert zurueck.
+/// Sendet Bilder an `POST /api/bilder` (P-7.25). Stufe **system**: ein
+/// gesendetes Bild laesst sich nicht zurueckholen, darum bestaetigt die Huelle
+/// (mit der Zahl der Bilder). Das Pilot-Token haengt der Kern an; es erreicht
+/// die Oberflaeche nie. Die Antwort des Servers geht unveraendert zurueck.
 ///
 /// Fehlercodes: `live_nicht_angemeldet` (kein Token, 401/403),
 /// `live_nicht_erreichbar` (Verbindung kam nicht zustande: Senden wartet),
 /// `live_antwort_fehlt` (Verbindung stand, Antwort blieb aus: Zustellung
-/// unklar, erst `status` mit derselben `sendung_id` fragen),
+/// unklar, erst `bild_status` mit derselben `sendung_id` fragen),
 /// `live_kontingent` (429, `details.retry_after`), `live_fehler` (alles andere,
 /// `details.status`).
 #[tauri::command]
-pub(crate) async fn bild_live(
-    art: String,
-    sendung_id: Option<String>,
+pub(crate) async fn bild_senden(
+    sendung_id: String,
     text: Option<String>,
     geo_stufe: Option<String>,
-    bilder: Option<Vec<LiveBildEin>>,
+    bilder: Vec<LiveBildEin>,
 ) -> Result<Value, UiError> {
-    let anfrage = match art.as_str() {
-        "senden" => {
-            let bilder = bilder
-                .unwrap_or_default()
-                .into_iter()
-                .map(|b| Ok(LiveBild { jpeg: b64(&b.jpeg_base64, "jpeg_base64")?, bild_id: b.bild_id, meta: b.meta }))
-                .collect::<Result<Vec<_>, UiError>>()?;
-            let sendung = sendung_id.ok_or_else(|| UiError::new("bild_eingabe", "sendung_id fehlt"))?;
-            let teile = live::senden_teile(&sendung, text.as_deref(), geo_stufe.as_deref().unwrap_or("verdeckt"), &bilder).map_err(fehler)?;
-            LiveAnfrage::Senden(teile)
-        }
-        "status" => LiveAnfrage::Status(sendung_id),
-        _ => return Err(UiError::new("bild_eingabe", "art muss „senden“ oder „status“ sein")),
-    };
+    let anfrage = senden_anfrage(&sendung_id, text.as_deref(), geo_stufe.as_deref(), bilder)?;
+    live_mit_token(anfrage).await
+}
+
+/// Stand einer Sendung und Kontingent (`GET /api/bilder/status`); ohne
+/// `sendung_id` nur das Kontingent. Lesend, braucht keine Bestaetigung.
+#[tauri::command]
+pub(crate) async fn bild_status(sendung_id: Option<String>) -> Result<Value, UiError> {
+    live_mit_token(LiveAnfrage::Status(sendung_id)).await
+}
+
+fn senden_anfrage(sendung_id: &str, text: Option<&str>, geo_stufe: Option<&str>, bilder: Vec<LiveBildEin>) -> Result<LiveAnfrage, UiError> {
+    let bilder = bilder
+        .into_iter()
+        .map(|b| Ok(LiveBild { jpeg: b64(&b.jpeg_base64, "jpeg_base64")?, bild_id: b.bild_id, meta: b.meta }))
+        .collect::<Result<Vec<_>, UiError>>()?;
+    let teile = live::senden_teile(sendung_id, text, geo_stufe.unwrap_or("verdeckt"), &bilder).map_err(fehler)?;
+    Ok(LiveAnfrage::Senden(teile))
+}
+
+async fn live_mit_token(anfrage: LiveAnfrage) -> Result<Value, UiError> {
     let token = crate::live_zugang::pilot_token().ok_or_else(|| UiError::new("live_nicht_angemeldet", "Noch nicht bei live angemeldet"))?;
     live_anfrage(crate::live_zugang::live_basis(), &token, anfrage).await
 }
@@ -398,22 +503,111 @@ pub(crate) fn bild_loeschen(app: AppHandle, gruppe: String, id: String) -> Resul
 /// Speichert die bestaetigte Liste der Bildquellen (und, wenn angegeben, das
 /// Tastenkuerzel) und setzt Beobachtung und Tastenkuerzel neu auf. Gibt den
 /// Stand wie `bilder_liste` zurueck (`quellen`, `tastenkuerzel`).
-#[tauri::command(async)]
-pub(crate) fn bild_quellen_setzen(app: AppHandle, quellen: Vec<Quelle>, tastenkuerzel: Option<String>) -> Result<Value, UiError> {
-    let datei = einstellungen_datei(&app)?;
-    let bisher = quellen::einstellungen_lesen(&datei);
-    let neu = Einstellungen {
-        quellen,
-        tastenkuerzel: match tastenkuerzel {
-            Some(t) => tastenkuerzel::lesen(&t).map_err(fehler)?.text,
-            None => bisher.tastenkuerzel,
-        },
+///
+/// `quellen` ersetzt die Liste; fehlt es, bleibt sie. Mit `ordner_waehlen: true`
+/// oeffnet der Kern nach der Bestaetigung der Huelle den Ordnerdialog des
+/// Systems und haengt den gewaehlten Ordner als Quelle der Art `hand` an
+/// (nur kopieren, je Quelle spaeter einschaltbar). Abbrechen aendert nichts.
+/// Der Altbestand einer neuen Quelle wird nie gemeldet; ein fehlender oder
+/// haengender Ordner (Netzlaufwerk) blockiert nichts.
+#[tauri::command]
+pub(crate) async fn bild_quellen_setzen(
+    app: AppHandle,
+    quellen: Option<Vec<Quelle>>,
+    tastenkuerzel: Option<String>,
+    ordner_waehlen: Option<bool>,
+) -> Result<Value, UiError> {
+    let ordner = if ordner_waehlen == Some(true) {
+        match ordner_dialog(&app).await? {
+            Some(p) => Some(p),
+            None => return Ok(aktueller_stand(&einstellungen_lesen_app(&app)?)), // abgebrochen: nichts aendert sich
+        }
+    } else {
+        None
     };
-    quellen::einstellungen_pruefen(&neu, &wurzel(&app)?, app.path().home_dir().ok().as_deref()).map_err(fehler)?;
+    tauri::async_runtime::spawn_blocking(move || quellen_setzen_intern(&app, quellen, tastenkuerzel, ordner))
+        .await
+        .map_err(|e| UiError::new("bild_io", e.to_string()))?
+}
+
+fn einstellungen_lesen_app(app: &AppHandle) -> Result<Einstellungen, UiError> {
+    Ok(quellen::einstellungen_lesen(&einstellungen_datei(app)?))
+}
+
+fn aktueller_stand(e: &Einstellungen) -> Value {
+    json!({"quellen": entsperren(anzeige()).status, "tastenkuerzel": tastenkuerzel_stand(e), "abgebrochen": true})
+}
+
+fn quellen_setzen_intern(app: &AppHandle, quellen: Option<Vec<Quelle>>, tastenkuerzel: Option<String>, ordner: Option<PathBuf>) -> Result<Value, UiError> {
+    let datei = einstellungen_datei(app)?;
+    let bisher = quellen::einstellungen_lesen(&datei);
+    let neu = quellen::einstellungen_neu(&bisher, quellen, tastenkuerzel.as_deref(), ordner.as_deref(), &wurzel(app)?, app.path().home_dir().ok().as_deref())
+        .map_err(fehler)?;
     quellen::einstellungen_schreiben(&datei, &neu).map_err(fehler)?;
     beobachtung_aufsetzen(&neu.quellen);
     hotkey_anwenden(&neu.tastenkuerzel);
     Ok(json!({"quellen": entsperren(anzeige()).status, "tastenkuerzel": tastenkuerzel_stand(&neu)}))
+}
+
+/// Ordnerdialog des Systems; `None`, wenn der Pilot abbricht.
+async fn ordner_dialog(app: &AppHandle) -> Result<Option<PathBuf>, UiError> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_folder(move |p| {
+        let _ = tx.send(p);
+    });
+    match rx.await.ok().flatten() {
+        Some(p) => Ok(Some(p.into_path().map_err(|e| UiError::new("bild_pfad", format!("Ordner ungueltig: {e}")))?)),
+        None => Ok(None),
+    }
+}
+
+/// Fuegt vom Piloten gewaehlte oder hineingezogene Dateien (JPG/PNG) als
+/// Eingangskopien in `gruppe` ein: immer **kopiert**, nie verschoben, auch
+/// ausserhalb der Quellen und ausserhalb eines Flugs. Ohne `pfade` (Ziehen)
+/// oeffnet der Kern die Dateiauswahl des Systems. Das Paket liest danach die
+/// Eingangskopien mit `bild_lesen` und schreibt das JPEG mit `bild_schreiben`.
+#[tauri::command]
+pub(crate) async fn bild_hinzufuegen(app: AppHandle, gruppe: String, pfade: Option<Vec<String>>) -> Result<Value, UiError> {
+    let pfade = match pfade.filter(|p| !p.is_empty()) {
+        Some(p) => p,
+        None => match dateien_dialog(&app).await? {
+            Some(p) if !p.is_empty() => p,
+            _ => return Ok(json!({"abgebrochen": true, "ergebnisse": []})),
+        },
+    };
+    let wurzel = wurzel(&app)?;
+    tauri::async_runtime::spawn_blocking(move || hinzufuegen_ergebnis(&wurzel, &pfade, &gruppe))
+        .await
+        .map_err(|e| UiError::new("bild_io", e.to_string()))?
+}
+
+fn hinzufuegen_ergebnis(wurzel: &std::path::Path, pfade: &[String], gruppe: &str) -> Result<Value, UiError> {
+    let r = quellen::hinzufuegen_mehrere(wurzel, pfade, gruppe, Duration::from_millis(400)).map_err(fehler)?;
+    let ergebnisse: Vec<Value> = r
+        .into_iter()
+        .map(|(pfad, e)| match e {
+            Ok(u) => json!({"pfad": pfad, "ok": true, "uebernahme": u}),
+            Err(f) => json!({"pfad": pfad, "ok": false, "code": f.code(), "meldung": f.meldung()}),
+        })
+        .collect();
+    Ok(json!({"abgebrochen": false, "ergebnisse": ergebnisse}))
+}
+
+/// Dateiauswahl des Systems (JPG, PNG); `None`, wenn der Pilot abbricht.
+async fn dateien_dialog(app: &AppHandle) -> Result<Option<Vec<String>>, UiError> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().add_filter("JPG, PNG", &["jpg", "jpeg", "png"]).pick_files(move |p| {
+        let _ = tx.send(p);
+    });
+    let Some(liste) = rx.await.ok().flatten() else { return Ok(None) };
+    let mut v = Vec::new();
+    for f in liste {
+        let p = f.into_path().map_err(|e| UiError::new("bild_pfad", format!("Datei ungueltig: {e}")))?;
+        v.push(p.to_string_lossy().into_owned());
+    }
+    Ok(Some(v))
 }
 
 /// Speichert fertige ZIP-Bytes an einem Ort, den der Pilot im Speichern-Dialog
@@ -459,6 +653,12 @@ fn hotkey_anwenden(text: &str) {
 pub(crate) fn starten(app: &AppHandle) {
     let app = app.clone();
     let _ = std::thread::Builder::new().name("bilder-start".into()).spawn(move || {
+        // Liegengebliebenes Loeschen (Absturz mittendrin) abschliessen oder zurueckrollen.
+        if let Ok(w) = wurzel(&app) {
+            for id in speicher::loeschreste_abschliessen(&w) {
+                tracing::info!(id = %id, "Bilder: liegengebliebenes Loeschen abgeschlossen");
+            }
+        }
         let einst = einstellungen_datei(&app).map(|d| quellen::einstellungen_lesen(&d)).unwrap_or_default();
         beobachtung_aufsetzen(&einst.quellen);
         if plattform::AUFNAHME_VERFUEGBAR {
@@ -475,10 +675,11 @@ pub(crate) fn starten(app: &AppHandle) {
         loop {
             std::thread::sleep(TAKT);
             let vordergrund = plattform::sim_vordergrund();
-            let (funde, status) = {
-                let mut b = entsperren(beobachter());
-                (b.takt(start.elapsed().as_millis() as u64, vordergrund), b.status())
-            };
+            // Sperre nur zum Holen der Quellen: die Ordnerabfragen laufen ohne sie,
+            // ein haengender Ordner haelt hoechstens diesen Faden auf.
+            let (slots, vg) = entsperren(beobachter()).takt_vorbereiten(vordergrund);
+            let funde = bilder_kern::beobachter::takt_ausfuehren(&slots, start.elapsed().as_millis() as u64, vg);
+            let status = entsperren(beobachter()).status();
             entsperren(anzeige()).status = status;
             for f in funde {
                 if let Err(e) = app.emit(EREIGNIS_QUELLE_NEU, &f) {
@@ -489,15 +690,13 @@ pub(crate) fn starten(app: &AppHandle) {
     });
 }
 
-/// Tastenkuerzel gedrueckt: sofort aufnehmen (der Moment zaehlt), Ergebnis als
+/// Tastenkuerzel gedrueckt: ohne aktiven Flug nichts aufnehmen (Ereignis mit
+/// `kein_flug`), sonst sofort aufnehmen (der Moment zaehlt). Ergebnis als
 /// Ereignis `bild_aufgenommen`; das Paket ordnet zu und schreibt das JPEG.
 fn taste_gedrueckt(app: &AppHandle) {
     let app = app.clone();
     let _ = std::thread::Builder::new().name("bild-aufnahme".into()).spawn(move || {
-        let nutzlast = match aufnehmen_intern(&app, EINGANG) {
-            Ok(v) => json!({"ok": true, "aufnahme": v}),
-            Err(e) => json!({"ok": false, "code": e.code, "meldung": e.message}),
-        };
+        let nutzlast = aufgenommen_nutzlast(flug_aktiv(&app), || aufnehmen_intern(&app, EINGANG));
         let _ = app.emit(EREIGNIS_AUFGENOMMEN, nutzlast);
     });
 }
@@ -608,5 +807,52 @@ mod tests {
         assert_eq!(fehler(Fehler::Pfad("x".into())).code, "bild_pfad");
         assert_eq!(fehler(Fehler::Quelle("x".into())).code, "bild_quelle");
         assert_eq!(fehler(Fehler::NichtVerfuegbar("x".into())).code, "bild_nicht_verfuegbar");
+    }
+
+    #[test]
+    fn ohne_aktiven_flug_wird_nicht_aufgenommen_und_kein_flug_gemeldet() {
+        let aufgerufen = std::cell::Cell::new(false);
+        let n = aufgenommen_nutzlast(false, || {
+            aufgerufen.set(true);
+            Ok(json!({"id": "x"}))
+        });
+        assert!(!aufgerufen.get(), "die Aufnahme darf ohne Flug nicht einmal beginnen");
+        assert_eq!(n["ok"], false);
+        assert_eq!(n["code"], "kein_flug");
+        assert!(n["meldung"].as_str().is_some_and(|m| !m.is_empty()));
+        // Gegenprobe: mit Flug laeuft sie und meldet ihr Ergebnis; ein Fehler behaelt seinen Code
+        let n = aufgenommen_nutzlast(true, || Ok(json!({"id": "x"})));
+        assert_eq!((n["ok"].as_bool(), n["aufnahme"]["id"].as_str()), (Some(true), Some("x")));
+        let n = aufgenommen_nutzlast(true, || Err(UiError::new("verdeckt", "Fenster davor")));
+        assert_eq!((n["ok"].as_bool(), n["code"].as_str()), (Some(false), Some("verdeckt")));
+    }
+
+    #[test]
+    fn senden_anfrage_baut_den_vertrag_und_prueft_die_bytes() {
+        let bild = |b64s: &str| LiveBildEin { bild_id: B1.into(), jpeg_base64: b64s.into(), meta: json!({"fassung": 1}) };
+        // /9j/2Q== = FF D8 FF D9
+        let a = senden_anfrage(S, Some("Hallo"), None, vec![bild("/9j/2Q==")]).unwrap();
+        let LiveAnfrage::Senden(teile) = a else { panic!("Senden erwartet") };
+        assert_eq!(teile, teile_fuer_test());
+        assert_eq!(senden_anfrage(S, None, None, vec![bild("!!")]).err().map(|e| e.code), Some("bild_eingabe".to_string()));
+    }
+
+    fn teile_fuer_test() -> Vec<live::Teil> {
+        teile()
+    }
+
+    #[test]
+    fn hinzufuegen_ergebnis_meldet_jede_datei_mit_code() {
+        let t = tempfile::tempdir().unwrap();
+        let png = t.path().join("a.png");
+        std::fs::write(&png, bilder_kern::png::aus_bgra(4, 4, &[7u8; 64]).unwrap()).unwrap();
+        let txt = t.path().join("b.txt");
+        std::fs::write(&txt, b"x").unwrap();
+        let v = hinzufuegen_ergebnis(&t.path().join("bilder"), &[png.to_string_lossy().into_owned(), txt.to_string_lossy().into_owned()], "ohne-flug").unwrap();
+        assert_eq!(v["abgebrochen"], false);
+        assert_eq!(v["ergebnisse"][0]["ok"], true);
+        assert!(v["ergebnisse"][0]["uebernahme"]["quelle_pfad"].as_str().unwrap().starts_with("ohne-flug/"));
+        assert_eq!((v["ergebnisse"][1]["ok"].as_bool(), v["ergebnisse"][1]["code"].as_str()), (Some(false), Some("bild_format")));
+        assert!(txt.exists() && png.exists(), "Originale bleiben");
     }
 }

@@ -157,6 +157,8 @@ serde_json.workspace = true
 [dependencies]
 paket-endpunkte.workspace = true
 flate2 = "1"
+# Bilder-Tab: Tests von `bilder.rs` legen Dateien in einem Wegwerfordner an.
+tempfile = "3"
 # Hilfe (P-9.22): Kopf x-diagnose-meta (base64 von JSON); dieselbe Fassung wie aeroacars-mqtt.
 base64 = "0.22"
 bewertung-host.workspace = true
@@ -319,6 +321,8 @@ workspace = true
 # v0.7.0 — Replay-Acceptance-Tests gegen historische JSONL-Fixtures
 # (Touchdown-Forensik v2). Fixtures sind .jsonl.gz, brauchen flate2.
 flate2 = "1"
+# Bilder-Tab: Tests von `bilder.rs` legen Dateien in einem Wegwerfordner an.
+tempfile = "3"
 # v3 Etappe 4: Ersatzmodul im Test „Kabinenablauf ohne Release geaendert“.
 wat = "1"
 # Test `naechster_start_*`: ein signiertes Probe-Paket in der Ablage.
