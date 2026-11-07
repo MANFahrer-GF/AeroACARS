@@ -1859,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Nuova scheda “Immagini”: gli screenshot dei tuoi voli vengono raccolti per volo, portano posizione e dati di volo e si possono inviare, scelti uno a uno con un testo e, se vuoi, con la posizione nascosta, al canale Discord del GSG. Attivi l’invio una volta tu stesso; nulla parte in automatico. La mappa può ora mostrare anche un globo. Un volo atterrato viene ora inviato anche se nel simulatore hai già caricato qualcos’altro; la finestra di ripresa offre per questo “Invia volo”."
+    "neu_text": "Nuova scheda “Immagini”: gli screenshot dei tuoi voli vengono raccolti per volo, portano posizione e dati di volo e si possono inviare, scelti uno a uno con un testo e, se vuoi, con la posizione nascosta, al canale Discord del GSG. Attivi l’invio una volta tu stesso; nulla parte in automatico. La mappa può ora mostrare anche un globo. Per un volo atterrato, la finestra di ripresa offre ora “Invia volo”."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

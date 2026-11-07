@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "New “Pictures” tab: screenshots from your flights are collected by flight, carry position and flight data, and can be sent, selected one by one with a text and optionally a hidden position, to the GSG Discord channel. You turn sending on yourself once; nothing goes out automatically. The map can now also show a globe. A landed flight is now filed even if you have already loaded something else in the simulator; the resume window offers “File flight” for this."
+    "neu_text": "New “Pictures” tab: screenshots from your flights are collected by flight, carry position and flight data, and can be sent, selected one by one with a text and optionally a hidden position, to the GSG Discord channel. You turn sending on yourself once; nothing goes out automatically. The map can now also show a globe. For a landed flight, the resume window now offers “File flight”."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

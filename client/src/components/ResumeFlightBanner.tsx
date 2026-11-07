@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import type { ActiveFlightInfo, FlightEndOutcome, ResumableFlight, SimStatus } from "../types";
@@ -406,20 +406,20 @@ export function ResumeFlightBanner({
     }
   }
 
+  // Hinweis ueber, Knopf IN der jeweiligen Aktionszeile — nicht als eigene
+  // Zeile (Sichtpruefung 08.11.: zwei Knopfzeilen uebereinander).
+  const abgebenHinweis = abgebbar ? (
+    <p className="active-flight__paused-instructions">{t("resume.abgeben_hinweis")}</p>
+  ) : null;
   const abgebenKnopf = abgebbar ? (
-    <>
-      <p className="active-flight__paused-instructions">{t("resume.abgeben_hinweis")}</p>
-      <div className="active-flight__paused-actions">
-        <button
-          type="button"
-          className="button button--primary"
-          onClick={() => void doFile()}
-          disabled={mode.kind === "auto_resumed" && mode.busy}
-        >
-          {t("resume.abgeben")}
-        </button>
-      </div>
-    </>
+    <button
+      type="button"
+      className="button button--primary"
+      onClick={() => void doFile()}
+      disabled={mode.kind === "auto_resumed" && mode.busy}
+    >
+      {t("resume.abgeben")}
+    </button>
   ) : null;
 
   if (mode.kind === "idle") return null;
@@ -479,8 +479,9 @@ export function ResumeFlightBanner({
         </p>
         <LetzterPunkt flight={activeFlight} />
         <ComparisonGrid activeFlight={activeFlight} />
-        {abgebenKnopf}
+        {abgebenHinweis}
         <RecheckActions
+          vorne={abgebenKnopf}
           busy={mode.busy}
           vomBoden={activeFlight?.resume_vom_boden_moeglich === true}
           onConfirm={() => {
@@ -519,8 +520,9 @@ export function ResumeFlightBanner({
         </div>
         <p className="active-flight__paused-instructions">{t("resume.warte_text")}</p>
         <LetzterPunkt flight={mode.flight} />
-        {abgebenKnopf}
+        {abgebenHinweis}
         <div className="active-flight__paused-actions">
+          {abgebenKnopf}
           <button
             type="button"
             className="resume-modal__danger"
@@ -581,9 +583,10 @@ export function ResumeFlightBanner({
         )
       )}
 
-      {abgebenKnopf}
+      {abgebenHinweis}
 
       <div className="resume-modal__actions">
+        {abgebenKnopf}
         <button
           type="button"
           className="button button--primary resume-modal__primary"
@@ -987,12 +990,15 @@ function haversineNm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 // ─── RecheckActions (im Pause-Banner-Action-Look) ────────────────────
 
 function RecheckActions({
+  vorne,
   busy,
   vomBoden,
   onConfirm,
   onVomBoden,
   onCancel,
 }: {
+  /** Zusaetzlicher Knopf vorn in der Zeile („Flug abgeben", DAL667). */
+  vorne?: ReactNode;
   busy: boolean;
   /** Auf einem anderen Platz am Boden neu geladen (GAF 278): MSFS kann viele
    *  Flüge nicht in der Luft laden — dann von dort weiterfliegen. */
@@ -1036,6 +1042,7 @@ function RecheckActions({
         <p className="active-flight__paused-instructions">{t("resume.vom_boden_hinweis")}</p>
       )}
       <div className="active-flight__paused-actions">
+        {vorne}
         {vomBoden ? (
           <button
             type="button"
