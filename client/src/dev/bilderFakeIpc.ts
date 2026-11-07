@@ -1,7 +1,7 @@
 // Attrappe der IPC-Schicht fuer die Vorschau des Bilder-Tabs (nur vite.bilder.config.mjs).
 // `?fall=` normal (Entwurf: vier Gruppen), fehler, leer (erster Start, ungesendet), leerein,
 // ohneflug, kontingent0, unklar, offline, viele (60 Bilder), fund (neuer Fund im Eingang).
-export const isTauri = true;
+export const isTauri = !window.location.search.includes("tablet=1");
 export const formatIpcError = (e: unknown) => String(e);
 export async function openExternal(url: string) { window.open(url, "_blank"); }
 

@@ -15,7 +15,7 @@ import tabelle from "../../../../../bundle/tabellen/bilder.json";
 describe("Tabelle aus dem Paket", () => {
   it("liest Grenzen und Metadatenliste", () => {
     expect(GRENZEN.max_je_sendung).toBe(5);
-    expect(GRENZEN.max_kante_px).toBe(1600);
+    expect(GRENZEN.max_kante_px).toBe(2560);
     expect(TABELLE.metadaten.map((m) => m.feld)).toContain("naechster_flugplatz");
     expect(TABELLE.geoVorgabe).toBe("verdeckt");
   });
