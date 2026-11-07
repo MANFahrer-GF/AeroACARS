@@ -212,6 +212,9 @@ fn nach_dem_schliessen(selbst: bool, offen: bool) -> Nachher {
 /// andere Fenster gehen weiter ueber [`bestaetigen_lassen`]. Die Stufe in befehle.json bleibt „system“:
 /// sonst riefe ein neues Paket den Befehl direkt und aeltere Clients (deren
 /// Rechte im Programm stehen) verweigerten das Update ganz.
+///
+/// Bilder (Thomas 07.11.2026: zweimal klicken ist unnoetig): `bild_senden` bestaetigt der
+/// Pilot schon im Senden-Dialog; dieselben Grenzen wie beim Update.
 #[tauri::command]
 pub(crate) async fn shell_request(
     app: AppHandle,
@@ -221,6 +224,9 @@ pub(crate) async fn shell_request(
 ) -> Result<Value, UiError> {
     if fenster.label() == crate::fenster::HAUPTFENSTER && ohne_rueckfrage(&befehl) {
         tracing::info!(befehl = %befehl, "Huelle: ohne Rueckfrage ausgefuehrt");
+        if befehl == "bild_senden" {
+            return crate::bilder::bild_senden_aus_werten(app, werte.unwrap_or_default()).await;
+        }
         return update_installieren(app).await.map(|()| Value::Null);
     }
     bestaetigen_lassen(app, befehl, werte).await
@@ -228,7 +234,7 @@ pub(crate) async fn shell_request(
 
 /// Systembefehle, die aus dem eigenen Fenster ohne Huelle-Fenster laufen.
 fn ohne_rueckfrage(befehl: &str) -> bool {
-    befehl == "update_installieren"
+    matches!(befehl, "update_installieren" | "bild_senden")
 }
 
 /// Auftrag ablegen und im Fenster der Huelle bestaetigen lassen.
@@ -504,11 +510,13 @@ mod tests {
     static SPERRE: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn nur_das_update_laeuft_ohne_rueckfrage() {
+    fn nur_update_und_bildversand_laufen_ohne_rueckfrage() {
         assert!(ohne_rueckfrage("update_installieren"));
+        assert!(ohne_rueckfrage("bild_senden"), "der Senden-Dialog ist die Bestaetigung");
+        assert_eq!(stufe("bild_senden"), Some("system"));
         // Stufe bleibt „system“ — aeltere Clients brauchen den Weg ueber die Huelle.
         assert_eq!(stufe("update_installieren"), Some("system"));
-        for (befehl, s) in [("flight_logs_delete_all", "system"), ("activity_log_clear", "system")] {
+        for (befehl, s) in [("flight_logs_delete_all", "system"), ("activity_log_clear", "system"), ("bild_loeschen", "system")] {
             assert_eq!(stufe(befehl), Some(s));
             assert!(!ohne_rueckfrage(befehl), "{befehl}");
         }

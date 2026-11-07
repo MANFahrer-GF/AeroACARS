@@ -125,7 +125,8 @@
 //! Stufen (befehle.json): lesen `bilder_liste`, `bild_lesen`, `bild_quellen_finden`, `bild_status`,
 //! `bild_kontext`; fachlich `bild_uebernehmen`, `bild_schreiben`, `bild_aufnehmen`, `bild_ordner_zeigen`,
 //! `bild_taste_lernen`;
-//! system `bild_senden`, `bild_hinzufuegen`, `bild_loeschen`, `bild_quellen_setzen`, `bild_export`.
+//! system `bild_senden` (aus dem Hauptfenster ohne Huelle-Fenster: der Senden-Dialog ist die Bestaetigung,
+//! Thomas 07.11.), `bild_hinzufuegen`, `bild_loeschen`, `bild_quellen_setzen`, `bild_export`.
 //! Die LAN-Bruecke reicht keinen davon durch.
 //!
 //! Auslegung: Weil es genau fuenfzehn Befehle sind, tragen zwei Antworten mehr als der Name sagt:
@@ -554,6 +555,21 @@ fn aufgenommen_nutzlast(flug_aktiv: bool, aufnehmen: impl FnOnce() -> Result<Val
         Ok(v) => json!({"ok": true, "aufnahme": v}),
         Err(e) => json!({"ok": false, "code": e.code, "meldung": e.message}),
     }
+}
+
+/// Werte von `bild_senden`, wenn der Befehl ueber `shell_request` kommt (ohne zweite Rueckfrage).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendenWerte {
+    sendung_id: String,
+    text: Option<String>,
+    geo_stufe: Option<String>,
+    bilder: Vec<BildKennungEin>,
+}
+
+pub(crate) async fn bild_senden_aus_werten(app: AppHandle, werte: Value) -> Result<Value, UiError> {
+    let w: SendenWerte = serde_json::from_value(werte).map_err(|e| UiError::new("bild_eingabe", e.to_string()))?;
+    bild_senden(app, w.sendung_id, w.text, w.geo_stufe, w.bilder).await
 }
 
 /// Ein Bild der Sendung als Kennung: der Kern liest `<gruppe>/<bild_id>.jpg`
@@ -1058,6 +1074,13 @@ fn taste_gedrueckt(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn senden_werte_aus_der_oberflaeche() {
+        let w: SendenWerte = serde_json::from_value(json!({"sendungId": S, "text": "Hallo", "geoStufe": "verdeckt", "bilder": [{"gruppe": "P1", "bild_id": B1, "meta": {"fassung": 1}}]})).unwrap();
+        assert_eq!((w.sendung_id.as_str(), w.text.as_deref(), w.geo_stufe.as_deref(), w.bilder.len()), (S, Some("Hallo"), Some("verdeckt"), 1));
+        assert!(serde_json::from_value::<SendenWerte>(json!({"text": "ohne Kennung"})).is_err());
+    }
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const S: &str = "11111111-2222-4333-8444-555555555555";
