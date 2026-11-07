@@ -27,6 +27,8 @@ pub enum Fehler {
     KeinFlug(String),
     /// Ein Bild mit demselben kanonischen Hash liegt schon im Bilderordner.
     Duplikat(String),
+    /// Die Datei ist nicht mehr die, die der Fund beschreibt (gleicher Name, anderer Inhalt).
+    Veraltet(String),
     /// Ein anderes Fenster liegt ueber dem Simulator: keine Bildschirmkopie.
     Verdeckt(String),
     Io(String),
@@ -48,6 +50,7 @@ impl Fehler {
             Fehler::KeinFlug(_) => "kein_flug",
             Fehler::Verdeckt(_) => "verdeckt",
             Fehler::Duplikat(_) => "duplikat",
+            Fehler::Veraltet(_) => "bild_veraltet",
             Fehler::Io(_) => "bild_io",
         }
     }
@@ -67,6 +70,7 @@ impl Fehler {
             | Fehler::KeinFlug(s)
             | Fehler::Verdeckt(s)
             | Fehler::Duplikat(s)
+            | Fehler::Veraltet(s)
             | Fehler::Io(s) => s,
         }
     }

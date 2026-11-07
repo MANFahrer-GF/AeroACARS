@@ -425,17 +425,53 @@ pub struct Uebernahme {
     pub original_entfernt: bool,
 }
 
+/// Was ein Fund der Ordnerbeobachtung ueber die Datei festhielt: die Uebernahme
+/// nimmt nur diese Datei, nicht eine unter demselben Namen neu geschriebene.
+#[derive(Debug, Clone, Copy)]
+pub struct Erwartet<'a> {
+    pub groesse: u64,
+    pub sha256: Option<&'a str>,
+}
+
+/// Schreibt durch und hasht dieselben Bytes (der Hash gilt genau fuer das Kopierte).
+struct HashSchreiber<W: Write> {
+    inner: W,
+    hash: sha2::Sha256,
+}
+
+impl<W: Write> Write for HashSchreiber<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        sha2::Digest::update(&mut self.hash, &buf[..n]);
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+fn veraltet() -> Fehler {
+    Fehler::Veraltet("Die Datei wurde seit dem Fund veraendert oder ersetzt; bitte verwerfen, sie wird neu gemeldet".into())
+}
+
 /// Kopiert die Bytes des geoeffneten Handles `src` in eine neue Datei `ziel`
-/// (zuerst Temp, dann Umbenennen).
-fn kopieren_atomar(src: &mut fs::File, dir: &Path, ziel: &Path, erwartet: u64) -> Result<(), Fehler> {
+/// (zuerst Temp, dann Umbenennen). Mit `sha256` muss der kopierte Inhalt diesen
+/// Hash haben, sonst `bild_veraltet` und nichts bleibt liegen.
+fn kopieren_atomar(src: &mut fs::File, dir: &Path, ziel: &Path, erwartet: u64, sha256: Option<&str>) -> Result<(), Fehler> {
     let tmp = dir.join(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
     let r = (|| -> Result<(), Fehler> {
         src.seek(SeekFrom::Start(0))?;
-        let mut dst = sicher::neu_anlegen(&tmp)?;
+        let mut dst = HashSchreiber { inner: sicher::neu_anlegen(&tmp)?, hash: sha2::Digest::new() };
         let n = std::io::copy(&mut src.take(MAX_DATEI + 1), &mut dst)?;
-        dst.sync_all()?;
+        dst.inner.sync_all()?;
         if n != erwartet {
             return Err(Fehler::Unfertig("Datei hat sich waehrend des Kopierens veraendert".into()));
+        }
+        if let Some(soll) = sha256 {
+            let ist: String = sha2::Digest::finalize(dst.hash).iter().map(|x| format!("{x:02x}")).collect();
+            if !ist.eq_ignore_ascii_case(soll) {
+                return Err(veraltet());
+            }
         }
         fs::rename(&tmp, ziel)?;
         Ok(())
@@ -472,6 +508,7 @@ fn zwischen_haken() {
 
 /// Der gemeinsame Teil von [`uebernehmen`] und [`hinzufuegen`]: `basis/rel` ist
 /// aufgeloest und gehoert in die Quelle bzw. ist die gewaehlte Datei.
+#[allow(clippy::too_many_arguments)]
 fn datei_uebernehmen(
     wurzel: &Path,
     basis: &Path,
@@ -480,12 +517,16 @@ fn datei_uebernehmen(
     gruppe: &str,
     id: &str,
     stabil_pause: Duration,
+    fund: Option<Erwartet>,
 ) -> Result<Uebernahme, Fehler> {
     let echt = basis.join(rel);
     let format = BildFormat::aus_endung(&echt).ok_or_else(|| Fehler::Format("Nur PNG- und JPEG-Dateien".into()))?;
     let (mut f, _) = sicher::datei_oeffnen_mit(basis, rel, &zwischen_haken)?;
     let kennung0 = sicher::Kennung::von_handle(&f);
     let groesse = handle_vollstaendig(&mut f, format)?;
+    if fund.is_some_and(|e| e.groesse != groesse) {
+        return Err(veraltet());
+    }
     handle_stabil(&f, stabil_pause)?;
     let md = f.metadata()?;
     if md.len() != groesse {
@@ -499,7 +540,7 @@ fn datei_uebernehmen(
     if ziel.exists() {
         return Err(Fehler::Name(format!("Bild-id {id} hat in {gruppe} schon eine Eingangskopie")));
     }
-    kopieren_atomar(&mut f, &dir, &ziel, groesse)?;
+    kopieren_atomar(&mut f, &dir, &ziel, groesse, fund.and_then(|e| e.sha256))?;
     let mut original_entfernt = false;
     if modus == Modus::Verschieben {
         // Nur entfernen, wenn der Pfad noch genau die kopierte Datei ist.
@@ -568,9 +609,10 @@ pub fn uebernehmen(
     if !lage.flug_aktiv {
         return Err(Fehler::KeinFlug("Ohne AeroACARS-Flug wird nichts uebernommen".into()));
     }
-    uebernehmen_pfad(wurzel, quellen, pfad, modus, gruppe, id, lage.stabil_pause)
+    uebernehmen_pfad(wurzel, quellen, pfad, modus, gruppe, id, lage.stabil_pause, None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn uebernehmen_pfad(
     wurzel: &Path,
     quellen: &[Quelle],
@@ -579,6 +621,7 @@ fn uebernehmen_pfad(
     gruppe: &str,
     id: Option<&str>,
     stabil_pause: Duration,
+    fund: Option<Erwartet>,
 ) -> Result<Uebernahme, Fehler> {
     if modus == Modus::Verwerfen {
         return Err(Fehler::Eingabe("Verwerfen hat keine Datei zu uebernehmen".into()));
@@ -595,7 +638,7 @@ fn uebernehmen_pfad(
         return Err(Fehler::Verboten("Aus dieser Quelle darf nicht verschoben werden, nur kopiert".into()));
     }
     let rel = echt.strip_prefix(&qk).map_err(|_| Fehler::Quelle("Pfad liegt nicht in der Quelle".into()))?;
-    datei_uebernehmen(wurzel, &qk, rel, modus, gruppe, &id, stabil_pause)
+    datei_uebernehmen(wurzel, &qk, rel, modus, gruppe, &id, stabil_pause, fund)
 }
 
 /// Ergebnis von [`uebernehmen_fund`].
@@ -647,7 +690,7 @@ pub fn uebernehmen_fund(
         "aufnahme" => aufnahme_umhaengen(wurzel, &fund, modus, gruppe, id)?,
         _ => {
             let pfad = fund.pfad.as_deref().ok_or_else(|| Fehler::Eingabe("Fund ohne Pfad".into()))?;
-            uebernehmen_pfad(wurzel, quellen, pfad, modus, gruppe, id, stabil_pause)?
+            uebernehmen_pfad(wurzel, quellen, pfad, modus, gruppe, id, stabil_pause, Some(Erwartet { groesse: fund.groesse, sha256: fund.sha256.as_deref() }))?
         }
     };
     crate::eingang::entfernen(wurzel, fund_id)?;
@@ -703,7 +746,7 @@ pub fn hinzufuegen(wurzel: &Path, pfad: &str, gruppe: &str, id: Option<&str>, st
     let (Some(eltern), Some(name)) = (echt.parent(), echt.file_name()) else {
         return Err(Fehler::Quelle("Dateipfad ungueltig".into()));
     };
-    datei_uebernehmen(wurzel, eltern, Path::new(name), Modus::Kopieren, gruppe, &id, stabil_pause)
+    datei_uebernehmen(wurzel, eltern, Path::new(name), Modus::Kopieren, gruppe, &id, stabil_pause, None)
 }
 
 #[cfg(test)]
@@ -1095,16 +1138,18 @@ pub(crate) mod tests {
 
     fn fund_ablegen(wurzel: &Path, id: &str, pfad: &Path, pirep: &str) {
         use crate::eingang::{ablegen, EingangsFund};
+        use sha2::Digest;
+        let bytes = fs::read(pfad).unwrap();
         let f = crate::beobachter::Fund {
             pfad: pfad.to_string_lossy().into(),
             dateizeit_ms: Some(1),
             erstellt_ms: None,
-            groesse: 10,
+            groesse: bytes.len() as u64,
             format: BildFormat::Png,
             uebernehmbar: true,
             px_breite: Some(100),
             px_hoehe: Some(50),
-            sha256: Some("ab".into()),
+            sha256: Some(sha2::Sha256::digest(&bytes).iter().map(|x| format!("{x:02x}")).collect()),
             quelle: pfad.parent().unwrap().to_string_lossy().into(),
             art: Some("hand".into()),
             sim_vordergrund: Some(true),
@@ -1126,6 +1171,34 @@ pub(crate) mod tests {
         assert!(crate::eingang::liste(&wurzel).is_empty(), "abgearbeitet = Eintrag entfernt");
         // der Eintrag war einmalig
         assert!(matches!(uebernehmen_fund(&wurzel, &q, "f1", Modus::Kopieren, Some("g"), Some("b2"), PAUSE), Err(Fehler::NichtGefunden(_))));
+    }
+
+    /// Fund 2: derselbe Name, neuer Inhalt (gleiche oder andere Laenge) wird als
+    /// veraltet abgelehnt; nichts wird kopiert, verschoben oder entfernt.
+    #[test]
+    fn ueberschriebene_datei_wird_als_veraltet_abgelehnt_und_bleibt_unangetastet() {
+        for (neu, name) in [(png_bytes(100, 50), "gleich"), (png_bytes(200, 100), "andere-laenge")] {
+            let (_t, wurzel, src, q) = aufbau(true);
+            let a = src.join("a.png");
+            let mut alt = png_bytes(100, 50);
+            if name == "gleich" {
+                // gleiche Laenge, anderer Inhalt: ein Bildbyte kippen
+                let i = alt.len() - 14;
+                alt[i] ^= 0xFF;
+            }
+            fs::write(&a, &alt).unwrap();
+            fund_ablegen(&wurzel, "f1", &a, "P1");
+            fs::write(&a, &neu).unwrap(); // wurde ueberschrieben, bevor der Pilot uebernimmt
+            let r = uebernehmen_fund(&wurzel, &q, "f1", Modus::Verschieben, Some("g"), Some("b1"), PAUSE);
+            assert!(matches!(r, Err(Fehler::Veraltet(_))), "{name}: {r:?}");
+            assert_eq!(r.unwrap_err().code(), "bild_veraltet");
+            assert_eq!(fs::read(&a).unwrap(), neu, "{name}: Datei bleibt, wird nicht verschoben");
+            assert!(!wurzel.join("g/b1.quelle.png").exists(), "{name}: nichts kopiert");
+            assert_eq!(crate::eingang::liste(&wurzel).len(), 1, "{name}: Eintrag bleibt zum Verwerfen");
+            // unveraendert klappt es weiter
+            fund_ablegen(&wurzel, "f1", &a, "P1");
+            assert!(uebernehmen_fund(&wurzel, &q, "f1", Modus::Verschieben, Some("g"), Some("b1"), PAUSE).is_ok());
+        }
     }
 
     #[test]

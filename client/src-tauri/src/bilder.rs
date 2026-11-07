@@ -105,6 +105,9 @@
 //!
 //! Fehlercodes des Kerns: `bild_name`, `bild_pfad`, `bild_nicht_gefunden`, `bild_format`, `bild_unfertig`,
 //! `bild_quelle`, `bild_verboten`, `bild_zu_gross`, `bild_eingabe`, `bild_nicht_verfuegbar`, `bild_io`,
+//! `bild_veraltet` (nur `bild_uebernehmen` eines Funds `datei`: Groesse oder SHA-256 der Datei passen nicht mehr zum
+//! Fund, weil sie unter demselben Namen ueberschrieben wurde; nichts wurde kopiert oder entfernt, der Eintrag bleibt,
+//! `verwerfen` geht, die Datei wird danach als neuer Fund gemeldet), `bild_beschaeftigt`,
 //! `kein_flug`, `verdeckt`, `duplikat`; beim Senden `live_nicht_angemeldet`, `live_nicht_erreichbar`,
 //! `live_antwort_fehlt` (Zustellung unklar: erst `bild_status` mit derselben `sendungId`), `live_kontingent`
 //! (`details.retry_after`), `live_fehler` (`details.status`).
