@@ -84,8 +84,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     const imFlug = aktiverFlug ? neueste.find((e) => flugSchluessel(e) === aktiverFlug.pirep_id) : undefined;
     setOffenId((imFlug ?? neueste[0]).id);
   }, [alle, anfangGeoeffnet, aktiverFlug]);
-  // Ein einzeln gewaehltes Bild zeigt seine Details, auch ohne es zu oeffnen.
-  const offen = alle.find((e) => e.id === offenId) ?? (auswahl.size === 1 ? alle.find((e) => auswahl.has(e.id)) ?? null : null);
+  const offen = alle.find((e) => e.id === offenId) ?? null;
   useEffect(() => { if (offenId && !offen && liste) setOffenId(null); }, [offenId, offen, liste]);
   const flugBilder = useMemo(() => (offen ? alle.filter((e) => flugSchluessel(e) === flugSchluessel(offen) && flugSchluessel(e) !== "") : []), [alle, offen]);
 
@@ -118,7 +117,11 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const gewaehlteBilder = alle.filter((e) => auswahl.has(e.id));
   const zus = zusammenfassung(z.sendestand, auswahl);
 
-  const toggle = useCallback((id: string) => setAuswahl((a) => umschalten(a, id)), []);
+  const toggle = useCallback((id: string) => {
+    setAuswahl((a) => umschalten(a, id));
+    // Ist nichts offen, zeigt das eben gewaehlte Bild seine Details.
+    if (!auswahl.has(id)) setOffenId((o) => o ?? id);
+  }, [auswahl]);
 
   /** Hauptaktion der Detailspalte: das offene Bild. Mit Auswahl sendet nur die Leiste. */
   function sendenDetail() {

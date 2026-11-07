@@ -208,6 +208,11 @@ button.bt-chip:hover { color: var(--text); }
 .bt-detail__zu { display: none; align-self: flex-end; }
 .bt-detail__bild { position: relative; border-radius: var(--r-lg); overflow: hidden; border: 1px solid var(--line); aspect-ratio: 16 / 10; background: var(--surface-3); flex: none; }
 .bt-detail__bild img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.bt-detail__stern { position: absolute; top: 8px; right: 8px; width: 36px; height: 36px; border: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 13, 16, 0.72); color: #e9eff5; cursor: pointer; }
+.bt-detail__stern svg { width: 18px; height: 18px; }
+.bt-detail__stern[data-an="an"] { color: var(--sem-warn); }
+.bt-detail__stern[data-an="an"] svg { fill: currentColor; }
+.bt-detail__stern:hover:not(:disabled) { background: rgba(10, 13, 16, 0.9); }
 .bt-detail__kopf { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .bt-detail__zeit { font-size: var(--fs-500); font-weight: 700; }
 .bt-detail__zusatz { margin-left: auto; font-size: var(--fs-300); color: var(--text-dim); }

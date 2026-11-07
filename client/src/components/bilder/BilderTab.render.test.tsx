@@ -263,6 +263,9 @@ describe("Bilder-Tab", () => {
     expect(await screen.findByText(/Wähle ein Bild/)).toBeInTheDocument();
     await userEvent.click(boxen[0]);
     await waitFor(() => expect(document.querySelector(".bt-detail__zusatz")?.textContent).toBe("ausgewählt"));
+    await userEvent.click(screen.getByRole("button", { name: "Detail schließen", hidden: true }));
+    expect(await screen.findByText(/Wähle ein Bild/)).toBeInTheDocument();
+    expect(screen.getByText("1 ausgewählt")).toBeInTheDocument();
   });
   it("am Tablet fehlen die Aufgaben des Sim-PCs: Hinzufuegen, Quellen, Ordner, Export", async () => {
     vorbereiten();
