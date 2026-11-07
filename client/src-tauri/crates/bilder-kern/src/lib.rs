@@ -15,7 +15,7 @@
 //! * [`png`]         PNG-Kodierung der Fensteraufnahme
 //! * [`tastenkuerzel`] Tastenkuerzel-Text lesen
 //! * [`plattform`]   Windows-Teile (Known Folder, Registry, Vordergrund,
-//!                   Fensteraufnahme, Hotkey); auf anderen Systemen Ersatz ohne Wirkung
+//!   Fensteraufnahme, Hotkey); auf anderen Systemen Ersatz ohne Wirkung
 
 pub mod beobachter;
 pub mod fehler;

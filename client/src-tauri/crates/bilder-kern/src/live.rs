@@ -156,7 +156,9 @@ pub(crate) mod tests {
     }
 
     /// Zerlegt einen Multipart-Koerper unabhaengig vom Aufbau (nur Test).
-    pub(crate) fn zerlegen(grenze: &str, body: &[u8]) -> Vec<(String, Option<String>, Option<String>, Vec<u8>)> {
+    type Zerlegt = Vec<(String, Option<String>, Option<String>, Vec<u8>)>;
+
+    pub(crate) fn zerlegen(grenze: &str, body: &[u8]) -> Zerlegt {
         let trenn = format!("--{grenze}");
         let text = body;
         let mut teile = Vec::new();

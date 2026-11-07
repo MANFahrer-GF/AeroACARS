@@ -371,12 +371,27 @@ pub(crate) async fn live_anfrage(basis: &str, token: &str, anfrage: LiveAnfrage)
 
 // --------------------------------------------------------------- system
 
+/// Papierkorb des Systems. macOS: `NSFileManager` statt der Vorgabe „Finder“
+/// (die per AppleScript laeuft und beim ersten Mal die Rueckfrage „AeroACARS
+/// moechte den Finder steuern“ ausloest, mitten aus der Huelle heraus); dafuer
+/// fehlt dort mancherorts „Zuruecklegen“ im Finder, die Datei liegt aber im Papierkorb.
+fn papierkorb(p: &std::path::Path) -> Result<(), trash::Error> {
+    #[allow(unused_mut)]
+    let mut ctx = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    ctx.delete(p)
+}
+
 /// Entfernt ein Bild mit allen Teilen: JPEG (und eine uebrige Eingangskopie) in
 /// den Papierkorb, Vorschau und Sidecar endgueltig. Nie nur ein Teil. Der
 /// Hüllen-Dialog zeigt `bezeichnung`, falls das Paket sie mitgibt.
 #[tauri::command(async)]
 pub(crate) fn bild_loeschen(app: AppHandle, gruppe: String, id: String) -> Result<Vec<String>, UiError> {
-    let weg = |p: &std::path::Path| trash::delete(p).map_err(|e| std::io::Error::other(e.to_string()));
+    let weg = |p: &std::path::Path| papierkorb(p).map_err(|e| std::io::Error::other(e.to_string()));
     speicher::loeschen(&wurzel(&app)?, &gruppe, &id, &weg).map_err(fehler)
 }
 

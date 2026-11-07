@@ -164,7 +164,7 @@ impl Stand {
     #[allow(clippy::too_many_arguments)]
     fn scanne_dir(&mut self, dir: &Path, tiefe: usize, baseline: bool, jetzt: SystemTime, jetzt_ms: u64, vg: Option<bool>, alt: &mut Vec<AltEintrag>) {
         let mtime = fs::metadata(dir).and_then(|m| m.modified()).ok();
-        let frisch = mtime.map_or(true, |t| jetzt.duration_since(t).map_or(true, |d| d < FRISCH));
+        let frisch = mtime.is_none_or(|t| jetzt.duration_since(t).map_or(true, |d| d < FRISCH));
         if !baseline && !frisch {
             if let Some(v) = self.verz.get(dir) {
                 if v.mtime == mtime {

@@ -31,7 +31,8 @@ use crate::Fehler;
 
 pub const AUFNAHME_VERFUEGBAR: bool = true;
 
-/// Prozessnamen der Simulatoren (klein geschrieben).
+/// Prozessnamen der Simulatoren (klein geschrieben). Dieselben Namen wie
+/// `sim-core::process_probe` (dort nicht oeffentlich, auch dort ungemessen).
 const SIM_PROZESSE: [&str; 3] = ["flightsimulator.exe", "flightsimulator2024.exe", "x-plane.exe"];
 
 /// `PW_RENDERFULLCONTENT` aus winuser.h (windows-sys kennt die Konstante nicht).
