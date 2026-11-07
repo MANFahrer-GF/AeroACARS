@@ -449,7 +449,10 @@ export function erzeugeStore(dep: StoreAbhaengig) {
         const e = z.liste?.eintraege.find((x) => x.id === id);
         if (!e?.pfad) continue;
         const zeit = e.sidecar?.meta?.zeit_utc?.replace(/[:.]/g, "-") ?? e.id;
-        dateien.push({ name: `${zeit}-${e.id.slice(0, 8)}.jpg`, daten: await api.lesen(e.pfad), zeit_ms: e.dateizeit_ms ?? undefined });
+        // Die Position im JPEG folgt dem Sidecar: Ein Flugwechsel am Tablet laesst das JPEG ohne Position zurueck.
+        const roh = await api.lesen(e.pfad);
+        const daten = e.sidecar?.meta ? dateiMitPosition(roh, e.sidecar.meta) : roh;
+        dateien.push({ name: `${zeit}-${e.id.slice(0, 8)}.jpg`, daten, zeit_ms: e.dateizeit_ms ?? undefined });
         dateien.push({ name: `${zeit}-${e.id.slice(0, 8)}.json`, daten: new TextEncoder().encode(JSON.stringify(e.sidecar, null, 2)) });
       }
       if (dateien.length === 0) return;

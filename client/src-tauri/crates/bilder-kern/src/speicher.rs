@@ -624,6 +624,11 @@ fn loeschen_mit(
     Ok(entfernt)
 }
 
+/// Die Bytes des JPEG eines Bildes ohne EXIF: fuer einen Flugwechsel, bei dem keine neue Position ins JPEG kommt.
+pub fn jpeg_ohne_exif(wurzel: &Path, gruppe: &str, id: &str) -> Result<Vec<u8>, Fehler> {
+    crate::jpeg::app1_entfernen(&fs::read(jpeg_pfad(wurzel, gruppe, id)?)?)
+}
+
 /// Der Pfad des JPEG eines Bildes fuer „Im Ordner zeigen“: nur ein echtes, vorhandenes
 /// JPEG im verwalteten Ordner (kein Link auf dem Weg), Ausbruch ausgeschlossen wie bei [`lesen`].
 pub fn jpeg_pfad(wurzel: &Path, gruppe: &str, id: &str) -> Result<PathBuf, Fehler> {
@@ -1128,6 +1133,18 @@ mod tests {
         let ok = hs.into_iter().map(|h| h.join().unwrap()).filter(|b| *b).count();
         assert_eq!(ok, 1, "atomar: nur ein Bild mit diesem Hash");
         assert_eq!(liste(&w).eintraege.len(), 1);
+    }
+
+    #[test]
+    fn jpeg_ohne_exif_liest_das_bild_ueber_gruppe_und_id() {
+        let t = tempfile::tempdir().unwrap();
+        let w = t.path().join("bilder");
+        let mut mit = vec![0xFF, 0xD8, 0xFF, 0xE1, 0, 8];
+        mit.extend_from_slice(b"Exif\0\0");
+        mit.extend_from_slice(&[0xFF, 0xDA, 0, 2, 0xFF, 0xD9]);
+        schreiben(&w, SchreibAnfrage { jpeg: Some(mit), ..anfrage("g", "b1") }).unwrap();
+        assert_eq!(jpeg_ohne_exif(&w, "g", "b1").unwrap(), [0xFF, 0xD8, 0xFF, 0xDA, 0, 2, 0xFF, 0xD9]);
+        assert!(matches!(jpeg_ohne_exif(&w, "g", "nix"), Err(Fehler::NichtGefunden(_))));
     }
 
     #[test]

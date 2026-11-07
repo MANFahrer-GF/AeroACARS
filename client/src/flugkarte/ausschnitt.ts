@@ -113,7 +113,7 @@ function karteSteuern(map: maplibregl.Map, opt: AusschnittOptionen): Ausschnitt 
       map.setProjection({ type: e.kugel ? "globe" : "mercator" });
     } catch { /* alte Fassung ohne Projektionen: Karte bleibt flach */ }
     if (e.fokus) {
-      map.jumpTo({ center: [e.fokus.lon, e.fokus.lat], zoom: e.kugel ? 3 : opt.zoom ?? 8 });
+      map.jumpTo({ center: [e.fokus.lon, e.fokus.lat], zoom: e.kugel ? 0.3 : opt.zoom ?? 8 });
     } else {
       const pts = [...(e.spur ?? []).map(([la, lo]) => [lo, la]), ...e.marken.map((m) => [m.lon, m.lat])];
       if (pts.length > 0) {

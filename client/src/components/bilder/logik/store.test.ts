@@ -294,6 +294,18 @@ describe("Store: Flug zuordnen", () => {
   });
 });
 
+describe("Store: Export", () => {
+  it("das JPEG im ZIP traegt die Position aus dem Sidecar, auch wenn die Datei keine mehr hat", async () => {
+    let zip = new Uint8Array();
+    const t = aufbau();
+    (t.api as unknown as { exportieren: BildAktionen["exportieren"] }).exportieren = async (a) => { zip = Uint8Array.from(atob(a.zipBase64), (c) => c.charCodeAt(0)); return null; };
+    await t.store.laden();
+    await t.store.exportieren(["a"]);
+    const text = new TextDecoder("latin1").decode(zip);
+    expect(text).toContain("Exif");
+  });
+});
+
 describe("Store: Sendung bis zum Ende verfolgen", () => {
   const bild = (status: "angenommen" | "gesendet" | "abgelehnt", id = "a") => ({ bild_id: id, status, code: status === "abgelehnt" ? "zu_gross" : undefined });
   it("spaet abgelehnt: das Bild kommt in die Auswahl zurueck, gesendete nicht", async () => {

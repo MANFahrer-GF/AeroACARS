@@ -346,11 +346,13 @@ pub(crate) fn sidecar_vom_tablet(app: AppHandle, gruppe: String, id: String, mut
     let exif_veraltet = position_geaendert(alt.sidecar.as_ref(), &sidecar);
     sha_behalten(&mut sidecar, alt.sidecar.as_ref());
     // Das Tablet legt keine Bytes ab: Nach einem Flugwechsel faellt die alte Position aus dem JPEG, statt falsch stehen zu bleiben.
-    let jpeg = match alt.pfad.as_deref().filter(|_| exif_veraltet) {
-        Some(p) => Some(bilder_kern::jpeg::app1_entfernen(&std::fs::read(p).map_err(|e| UiError::new("bild_io", e.to_string()))?).map_err(fehler)?),
-        None => None,
+    let wurzel = wurzel(&app)?;
+    let jpeg = if exif_veraltet && alt.pfad.is_some() {
+        Some(speicher::jpeg_ohne_exif(&wurzel, &gruppe, &id).map_err(fehler)?)
+    } else {
+        None
     };
-    speicher::schreiben(&wurzel(&app)?, SchreibAnfrage { gruppe, id, jpeg, vorschau: None, sidecar: Some(sidecar), quelle_entfernen: false, sha256: None }).map_err(fehler)
+    speicher::schreiben(&wurzel, SchreibAnfrage { gruppe, id, jpeg, vorschau: None, sidecar: Some(sidecar), quelle_entfernen: false, sha256: None }).map_err(fehler)
 }
 
 fn position_geaendert(alt: Option<&Value>, neu: &Value) -> bool {
