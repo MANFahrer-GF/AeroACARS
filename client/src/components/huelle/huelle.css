@@ -1,9 +1,10 @@
 /* v3 (Etappe 5): Bestätigungsdialog der Hülle (HuelleFenster.tsx). */
 .huelle { padding: 24px; display: flex; flex-direction: column; gap: 12px; }
-.huelle h1 { margin: 0; font-size: 1.25rem; }
+.huelle__satz { display: flex; flex-direction: column; gap: 8px; }
+.huelle h1 { margin: 0; font-size: 1.15rem; line-height: 1.35; font-weight: 600; }
 .huelle pre { margin: 0; padding: 8px 12px; max-height: 160px; overflow: auto; background: rgba(127, 127, 127, 0.12); border-radius: 6px; }
 .huelle__knoepfe { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
-.huelle__frage { margin: 0; font-size: 1.05rem; line-height: 1.45; font-weight: 600; }
+.huelle__frage { margin: 0; font-size: 0.95rem; line-height: 1.45; opacity: 0.8; }
 .huelle__weitere { margin: 0; opacity: 0.75; font-size: 0.9rem; }
 .huelle__details { font-size: 0.85rem; opacity: 0.8; }
 .huelle__details summary { cursor: pointer; }
