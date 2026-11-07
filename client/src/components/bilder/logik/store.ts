@@ -6,6 +6,7 @@ import { alsBase64 } from "./bildverarbeitung";
 import { GRENZEN, TABELLE } from "./grenzen";
 import { zipBauen } from "./zip";
 import { fehlerCode, fehlerText } from "./normalisieren";
+import { sendeMeta } from "./nachrichtVorschau";
 import {
   antwortEinarbeiten, aufrufFehler, auswahlNachSenden, offeneIds, sendeStart, sendungIdWaehlen, standNachLaden, type Sendestand,
 } from "./sendezustand";
@@ -178,7 +179,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   }
 
   /** Senden (hoechstens `max_je_sendung`). Rueckgabe: neue Auswahl (Fehlgeschlagene bleiben). */
-  async function senden(ids: string[], text: string, stufe: GeoStufe): Promise<Set<string>> {
+  async function senden(ids: string[], text: string, stufe: GeoStufe, phaseText: (e: Eintrag) => string): Promise<Set<string>> {
     const liste = z.liste?.eintraege ?? [];
     const gewaehlt = ids.map((id) => liste.find((e) => e.id === id)).filter((e): e is Eintrag => !!e && !!e.sidecar?.meta);
     if (gewaehlt.length === 0 || gewaehlt.length > GRENZEN.max_je_sendung) return new Set(ids);
@@ -188,7 +189,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     // Sendung zuerst festhalten, damit ein Neustart mitten im Aufruf fortsetzen kann
     await vermerkeSchreiben(idListe, sendungId, stufe, z.sendestand);
     let stand = z.sendestand;
-    const anfrage = { sendungId, text, geoStufe: stufe, bilder: gewaehlt.map((e) => ({ gruppe: e.gruppe, bild_id: e.id, meta: e.sidecar!.meta! })) };
+    const anfrage = { sendungId, text, geoStufe: stufe, bilder: gewaehlt.map((e) => ({ gruppe: e.gruppe, bild_id: e.id, meta: sendeMeta(e.sidecar!.meta!, stufe, phaseText(e)) })) };
     try {
       const a = await api.senden(anfrage);
       stand = antwortEinarbeiten(stand, idListe, sendungId, a);

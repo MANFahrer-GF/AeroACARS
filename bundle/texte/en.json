@@ -5408,7 +5408,6 @@
       "titel": "Send pictures",
       "zu": "Close",
       "anzahl": "{{count}} pictures to the GSG Discord channel",
-      "max": "At most {{max}} pictures per post",
       "zu_viele": "Choose at most {{max}} pictures.",
       "text": {
         "label": "Your text (optional)",
@@ -5423,9 +5422,8 @@
         "verdeckt": "Hidden, click to reveal",
         "verdeckt_text": "The same details sit under a grey bar and only appear when clicked.",
         "aus": "Do not send",
-        "aus_text": "The position never leaves your program. The message only names you, the flight and your text.",
-        "ohne_position": "These pictures have no position, so this choice has no effect.",
-        "hinweis": "Applies to all posts until you change it here. The picture file goes to Discord without metadata; what you choose here appears in the text."
+        "aus_text": "Your position does not leave the program. The message names you, the flight, time, altitude, phase and your text.",
+        "ohne_position": "These pictures have no position, so this choice has no effect."
       },
       "vorschau": {
         "titel": "How the message will look",
@@ -5433,11 +5431,10 @@
         "gekuerzt": "Discord shortens this message.",
         "bild": "Picture {{n}}",
         "bilder_hinweis": "The pictures are attached to the message as files.",
-        "verdeckt": "Geo data hidden · click to reveal",
-        "verdeckt_hinweis": "Behind it, per picture: time, position, altitude, heading, nearest airport. Mentions in the text are not triggered.",
-        "sichtbar_hinweis": "Each picture gets a line with time, position, altitude, heading and nearest airport in the text. Mentions in the text are not triggered.",
-        "aus_hinweis": "No position data goes along. Mentions in the text are not triggered."
+        "verdeckt": "Geo data hidden · click to reveal"
       },
+      "schon_gesendet_eins": "This picture is already on Discord. Sending posts it again as a new message.",
+      "schon_gesendet_n": "Already on Discord: {{count}} of {{gesamt}} pictures. Sending posts them again as a new message.",
       "server_offline": "Server not reachable. Sending waits, nothing is lost.",
       "senden": "Send ({{count}})",
       "abbrechen": "Cancel",
@@ -5448,16 +5445,7 @@
       "kanal": "Channel “Pictures” of German Sky Group",
       "text_label_n": "Text for all {{count}} pictures",
       "text_label_eins": "Text for the picture",
-      "jetzt": "Send now",
-      "zeilen": {
-        "groesse": "Size",
-        "groesse_text_eins": "1 picture, {{groesse}} after resizing to {{px}} px",
-        "groesse_text": "{{count}} pictures, {{groesse}} after resizing to {{px}} px",
-        "weg": "Route",
-        "weg_text": "This computer, GSG server (live), Discord. The access to Discord only exists on the server.",
-        "fehlschlag": "If something fails",
-        "fehlschlag_text": "Every picture gets its own result. What did not arrive stays selected and shows the reason on its tile; “Try again” sends only what is missing, nothing arrives twice."
-      }
+      "jetzt": "Send now"
     },
     "kontingent": {
       "rest": "{{rest}} of {{grenze}} left this hour",

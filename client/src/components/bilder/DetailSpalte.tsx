@@ -11,13 +11,14 @@ import { Symbol } from "./Symbole";
 import { useBildUrl } from "./useBildUrl";
 
 export function DetailSpalte({
-  e, gewaehlt, flugBilder, aktivePirep, sendbar, onSenden, onOrdner, onLoeschen, onText, onFavorit, onFlugAendern, onKarteOeffnen, onMarke, onZu,
+  e, gewaehlt, flugBilder, aktivePirep, mitSenden, onSenden, onOrdner, onLoeschen, onText, onFavorit, onFlugAendern, onKarteOeffnen, onMarke, onZu,
 }: {
   e: Eintrag | null;
   gewaehlt: boolean;
   flugBilder: Eintrag[];
   aktivePirep: string | null;
-  sendbar: boolean;
+  /** Mit einer Auswahl sendet die Leiste unten; zwei Knoepfe waeren zwei Wege fuer dasselbe. */
+  mitSenden: boolean;
   onSenden: () => void;
   onOrdner: () => void;
   onLoeschen: () => void;
@@ -48,7 +49,7 @@ export function DetailSpalte({
         <span className="bt-detail__zusatz">{gewaehlt ? t("bilder.detail.ausgewaehlt") : t("bilder.detail.nicht_ausgewaehlt")}</span>
       </div>
       <div className="bt-detail__aktionen">
-        <Button variant="primary" onClick={onSenden} disabled={!sendbar} iconLeft={Symbol.senden}>{t("bilder.detail.aktionen.senden")}</Button>
+        {mitSenden && <Button variant="primary" onClick={onSenden} iconLeft={Symbol.senden}>{t("bilder.detail.aktionen.senden")}</Button>}
         <div className="bt-detail__aktionen-reihe">
           <Button variant="quiet" onClick={onOrdner} iconLeft={Symbol.ordner}>{t("bilder.detail.aktionen.ordner")}</Button>
           <Button variant="danger" onClick={onLoeschen} iconLeft={Symbol.papierkorb}>{t("bilder.detail.aktionen.loeschen")}</Button>

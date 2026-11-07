@@ -5408,7 +5408,6 @@
       "titel": "Invia immagini",
       "zu": "Chiudi",
       "anzahl": "{{count}} immagini al canale Discord del GSG",
-      "max": "Al massimo {{max}} immagini per invio",
       "zu_viele": "Scegli al massimo {{max}} immagini.",
       "text": {
         "label": "Il tuo testo (facoltativo)",
@@ -5423,9 +5422,8 @@
         "verdeckt": "Nascosti, da aprire",
         "verdeckt_text": "Gli stessi dati stanno sotto una barra grigia e compaiono solo al clic.",
         "aus": "Non inviare",
-        "aus_text": "La posizione non lascia mai il tuo programma. Il messaggio nomina solo te, il volo e il tuo testo.",
-        "ohne_position": "Queste immagini non hanno una posizione, la scelta non ha effetto.",
-        "hinweis": "Vale per tutti gli invii finché non lo cambi qui. Il file dell’immagine va a Discord senza metadati; ciò che scegli qui compare nel testo."
+        "aus_text": "La posizione non lascia il programma. Il messaggio indica te, il volo, ora, quota, fase e il tuo testo.",
+        "ohne_position": "Queste immagini non hanno una posizione, la scelta non ha effetto."
       },
       "vorschau": {
         "titel": "Come apparirà il messaggio",
@@ -5433,11 +5431,10 @@
         "gekuerzt": "Discord accorcia questo messaggio.",
         "bild": "Immagine {{n}}",
         "bilder_hinweis": "Le immagini sono allegate al messaggio come file.",
-        "verdeckt": "Dati geografici nascosti · clic per mostrare",
-        "verdeckt_hinweis": "Dietro ci sono, per immagine: ora, posizione, altitudine, prua, aeroporto più vicino. Le menzioni nel testo non vengono attivate.",
-        "sichtbar_hinweis": "Ogni immagine ha nel testo una riga con ora, posizione, altitudine, prua e aeroporto più vicino. Le menzioni nel testo non vengono attivate.",
-        "aus_hinweis": "Non vengono inviati dati di posizione. Le menzioni nel testo non vengono attivate."
+        "verdeckt": "Dati geografici nascosti · clic per mostrare"
       },
+      "schon_gesendet_eins": "Questa immagine è già su Discord. Inviando parte di nuovo come nuovo messaggio.",
+      "schon_gesendet_n": "Già su Discord: {{count}} di {{gesamt}} immagini. Inviando partono di nuovo come nuovo messaggio.",
       "server_offline": "Server non raggiungibile. L’invio attende, nulla va perso.",
       "senden": "Invia ({{count}})",
       "abbrechen": "Annulla",
@@ -5448,16 +5445,7 @@
       "kanal": "Canale “Immagini” della German Sky Group",
       "text_label_n": "Testo per tutte le {{count}} immagini",
       "text_label_eins": "Testo per l’immagine",
-      "jetzt": "Invia ora",
-      "zeilen": {
-        "groesse": "Dimensione",
-        "groesse_text_eins": "1 immagine, {{groesse}} dopo il ridimensionamento a {{px}} px",
-        "groesse_text": "{{count}} immagini, {{groesse}} dopo il ridimensionamento a {{px}} px",
-        "weg": "Percorso",
-        "weg_text": "Questo computer, server GSG (live), Discord. L’accesso a Discord si trova solo sul server.",
-        "fehlschlag": "Se qualcosa fallisce",
-        "fehlschlag_text": "Ogni immagine riceve il proprio esito. Ciò che non è arrivato resta selezionato e mostra il motivo sulla tessera; “Riprova” invia solo ciò che manca, nulla arriva due volte."
-      }
+      "jetzt": "Invia ora"
     },
     "kontingent": {
       "rest": "Quest’ora ancora {{rest}} su {{grenze}}",

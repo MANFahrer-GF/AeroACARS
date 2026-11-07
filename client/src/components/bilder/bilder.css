@@ -195,7 +195,7 @@ button.bt-chip:hover { color: var(--text); }
 
 /* ---------- Detailspalte ---------- */
 .bt-detail {
-  flex: 0 0 320px;
+  flex: 0 0 420px;
   border-left: 1px solid var(--line);
   background: var(--surface-2);
   overflow: auto;
@@ -311,7 +311,6 @@ button.bt-chip:hover { color: var(--text); }
 .bt-nachricht__bilder { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
 .bt-nachricht__bild { position: relative; flex: 0 0 150px; aspect-ratio: 16 / 10; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--line); background: var(--surface-3); }
 .bt-nachricht__bild img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.bt-nachricht__unter { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 7px; background: rgba(10, 13, 16, 0.78); color: #e9eff5; font-size: 10px; font-family: var(--font-acars); letter-spacing: var(--ls-mono); line-height: 1.35; }
 .bt-nachricht__geo { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-300); align-items: flex-start; }
 .bt-spoiler { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 4px; background: var(--tick); color: var(--text); font: inherit; border: 0; cursor: pointer; }
 .bt-spoiler svg { width: 12px; height: 12px; }
@@ -331,7 +330,7 @@ button.bt-chip:hover { color: var(--text); }
 
 /* ---------- Schmale Fenster: Detailspalte als Blatt ueber der Liste ---------- */
 @media (max-width: 1180px) {
-  .bt-detail { position: absolute; z-index: var(--z-dropdown); top: 0; right: 0; bottom: 0; width: min(340px, 100%); flex: none; box-shadow: var(--el-3); }
+  .bt-detail { position: absolute; z-index: var(--z-dropdown); top: 0; right: 0; bottom: 0; width: min(420px, 100%); flex: none; box-shadow: var(--el-3); }
   .bt-detail[data-leer="an"] { display: none; }
   .bt-detail__zu { display: inline-flex; }
 }

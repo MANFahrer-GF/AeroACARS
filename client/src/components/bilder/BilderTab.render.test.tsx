@@ -91,8 +91,7 @@ describe("Bilder-Tab", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("So erscheint die Nachricht")).toBeInTheDocument();
     expect(within(dialog).getByRole("radio", { name: /Verdeckt/ })).toBeChecked();
-    expect(within(dialog).getByText(/Geo-Daten verdeckt/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Diese Stunde noch 9 von 12/)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/Geo-Daten verdeckt/)).toHaveLength(2);
     await userEvent.type(within(dialog).getByLabelText(/Text für alle 2 Bilder/), "Hallo");
     await userEvent.click(within(dialog).getByRole("button", { name: "Jetzt senden" }));
     await waitFor(() => expect(h.aufrufe.some((a) => a.cmd === "bild_senden")).toBe(true));

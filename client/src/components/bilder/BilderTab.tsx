@@ -18,7 +18,7 @@ import { KEIN_FILTER, anzeigbar, bytesText, filtern, flugSchluessel, gesendeteAe
 import { reichtKontingent } from "./logik/kontingent";
 import { simulatorName, streckeText, kurzZeit } from "./logik/metaFormat";
 import type { FlugAuswahl } from "./logik/store";
-import { bildZeitIso } from "./Kacheln";
+import { bildZeitIso, useKachelTexte } from "./Kacheln";
 import { zusammenfassung } from "./logik/sendezustand";
 import "./bilder.css";
 
@@ -43,6 +43,7 @@ const BILD_ENDUNGEN = /\.(jpe?g|png)$/i;
 export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOeffnen }: BilderTabProps) {
   const simulator: "xplane" | "msfs" | null = simKind?.startsWith("xplane") ? "xplane" : simKind?.startsWith("msfs") ? "msfs" : null;
   const { t, i18n } = useTranslation();
+  const { phase: phaseText } = useKachelTexte();
   const sprache = i18n.resolvedLanguage ?? i18n.language ?? "de";
   const z = useBilder();
   const liste = z.liste;
@@ -118,9 +119,9 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
 
   const toggle = useCallback((id: string) => setAuswahl((a) => umschalten(a, id)), []);
 
-  /** Hauptaktion der Detailspalte: das offene Bild, oder die Auswahl, wenn das offene Bild dazugehoert. */
+  /** Hauptaktion der Detailspalte: das offene Bild. Mit Auswahl sendet nur die Leiste. */
   function sendenDetail() {
-    sendenMit(auswahl.size > 0 && (!offenId || auswahl.has(offenId)) ? [...auswahl] : offenId ? [offenId] : [...auswahl]);
+    if (offenId) sendenMit([offenId]);
   }
 
   function sendenMit(ziel: string[]) {
@@ -141,7 +142,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
 
   async function senden_ausfuehren(text: string, stufe: typeof z.geoStufe) {
     setSendenOffen(false);
-    const rest = await bilderStore.senden([...auswahl], text, stufe);
+    const rest = await bilderStore.senden([...auswahl], text, stufe, phaseText);
     setAuswahl(rest);
   }
 
@@ -330,7 +331,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             gewaehlt={offen ? auswahl.has(offen.id) : false}
             flugBilder={flugBilder}
             aktivePirep={aktiverFlug?.pirep_id ?? null}
-            sendbar={true}
+            mitSenden={auswahl.size === 0}
             onSenden={sendenDetail}
             onOrdner={() => void ordnerZeigen()}
             onLoeschen={() => offen && void loeschen([offen.id])}

@@ -6,7 +6,8 @@ import { serienBilden } from "./serien";
 import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppieren, platzJeFlug, seitenweise } from "./gruppen";
 import { bereinigen, umschalten } from "./auswahl";
 import { kontingentAnzeige, reichtKontingent, retrySekunden } from "./kontingent";
-import { vorschauBauen } from "./nachrichtVorschau";
+import { infoZeile, sendeMeta, vorschauBauen } from "./nachrichtVorschau";
+import { schonAufDiscord } from "./sendezustand";
 import { eintrag, fund, meta } from "./testhilfen";
 import { fundLesen, kontextLesen, listeLesen } from "./normalisieren";
 import tabelle from "../../../../../bundle/tabellen/bilder.json";
@@ -182,19 +183,36 @@ describe("Auswahl und Kontingent", () => {
   });
 });
 
+describe("Schon auf Discord", () => {
+  const v = (status: "angenommen" | "gesendet" | "abgelehnt") => ({ sendung_id: "s", zeit_ms: 1, geo_stufe: "aus" as const, status });
+  it("zaehlt nur bestaetigte Zustellungen, auch aeltere", () => {
+    expect(schonAufDiscord(undefined)).toBe(false);
+    expect(schonAufDiscord([v("abgelehnt"), v("angenommen")])).toBe(false);
+    expect(schonAufDiscord([v("gesendet"), v("abgelehnt")])).toBe(true);
+  });
+});
+
 describe("Vorschau der Nachricht (Spiegel des Servers)", () => {
   const m = meta({ rufzeichen: "GSG101", abflug: "EDDF", ziel: "LEPA" });
-  it("Kopf, Ortszeile je Stufe, Text zuletzt", () => {
-    const v = vorschauBauen("Thomas K", [m], "verdeckt", "Schoen!", 2000);
+  it("Kopf, eine Zeile je Bild, Text zuletzt; Zeit, Hoehe und Phase bleiben sichtbar", () => {
+    const voll = sendeMeta(m, "verdeckt", "Boarding");
+    const v = vorschauBauen("Thomas K", [voll], "verdeckt", "Schoen!", 2000);
     expect(v.kopf).toBe("Thomas K · GSG101 · EDDF\u2013LEPA · Airbus A320 (A320)");
-    expect(v.geo).toEqual([{ text: "10:00 UTC · 50.030° N 8.570° E · 12000 ft · 270° · EDDF", verdeckt: true, nummer: null }]);
-    expect(vorschauBauen("T", [m], "sichtbar", "", 2000).geo[0].verdeckt).toBe(false);
-    expect(vorschauBauen("T", [m], "aus", "", 2000).geo).toEqual([]);
+    expect(v.zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: "50.030° N 8.570° E · 270° · EDDF", verdeckt: true }]);
+    expect(vorschauBauen("T", [voll], "sichtbar", "", 2000).zeilen[0].verdeckt).toBe(false);
   });
-  it("ohne Position keine Ortszeile; mehrere Bilder werden nummeriert", () => {
-    expect(vorschauBauen("T", [meta({ breite: null, laenge: null })], "sichtbar", "", 2000).geo).toEqual([]);
-    const v = vorschauBauen("T", [m, m], "sichtbar", "", 2000);
-    expect(v.geo.map((g) => g.nummer)).toEqual([1, 2]);
+  it("bei „aus“ verlaesst keine Position das Programm, Zeit, Hoehe und Phase bleiben", () => {
+    const aus = sendeMeta(m, "aus", "Boarding");
+    expect([aus.breite, aus.laenge, aus.kurs, aus.naechster_flugplatz]).toEqual([null, null, null, null]);
+    expect(vorschauBauen("T", [aus], "aus", "", 2000).zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: null, verdeckt: false }]);
+  });
+  it("ohne Position bleibt die Info; mehrere Bilder werden nummeriert; ohne alles keine Zeile", () => {
+    expect(vorschauBauen("T", [meta({ breite: null, laenge: null })], "sichtbar", "", 2000).zeilen[0].ort).toBeNull();
+    expect(vorschauBauen("T", [m, m], "sichtbar", "", 2000).zeilen.map((g) => g.nummer)).toEqual([1, 2]);
+    expect(vorschauBauen("T", [meta({ breite: null, laenge: null, zeit_utc: null, hoehe_ft: null })], "sichtbar", "", 2000).zeilen).toEqual([]);
+  });
+  it("die Phase traegt keine Discord-Formatierung", () => {
+    expect(infoZeile({ ...m, phase_text: "||Reise**flug" })).toBe("10:00Z · 12000 ft · Reise flug");
   });
   it("Formatierung in festen Feldern wird entfernt", () => {
     expect(vorschauBauen("a||b**", [meta({ rufzeichen: "X||Y" })], "aus", "", 2000).kopf).not.toMatch(/[|*]/);

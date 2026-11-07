@@ -5408,7 +5408,6 @@
       "titel": "Bilder senden",
       "zu": "Schließen",
       "anzahl": "{{count}} Bilder an den Discord-Kanal der GSG",
-      "max": "Höchstens {{max}} Bilder je Sendung",
       "zu_viele": "Wähle höchstens {{max}} Bilder.",
       "text": {
         "label": "Dein Text (optional)",
@@ -5423,9 +5422,8 @@
         "verdeckt": "Verdeckt, zum Aufklappen",
         "verdeckt_text": "Dieselben Angaben stehen unter einem grauen Balken und erscheinen erst beim Klick.",
         "aus": "Nicht mitsenden",
-        "aus_text": "Die Position verlässt dein Programm nicht. Die Nachricht nennt nur dich, den Flug und deinen Text.",
-        "ohne_position": "Zu diesen Bildern gibt es keine Position, die Auswahl bleibt ohne Wirkung.",
-        "hinweis": "Gilt für alle Sendungen, bis du es hier änderst. Die Bilddatei geht ohne Metadaten nach Discord; was du hier wählst, steht im Text."
+        "aus_text": "Die Position verlässt dein Programm nicht. Die Nachricht nennt dich, den Flug, Zeit, Höhe, Phase und deinen Text.",
+        "ohne_position": "Zu diesen Bildern gibt es keine Position, die Auswahl bleibt ohne Wirkung."
       },
       "vorschau": {
         "titel": "So erscheint die Nachricht",
@@ -5433,11 +5431,10 @@
         "gekuerzt": "Discord kürzt diese Nachricht.",
         "bild": "Bild {{n}}",
         "bilder_hinweis": "Die Bilder hängen als Dateien an der Nachricht.",
-        "verdeckt": "Geo-Daten verdeckt · zum Anzeigen klicken",
-        "verdeckt_hinweis": "Dahinter steht je Bild: Zeit, Position, Höhe, Kurs, nächster Flugplatz. Erwähnungen im Text werden nicht ausgelöst.",
-        "sichtbar_hinweis": "Je Bild steht eine Zeile mit Zeit, Position, Höhe, Kurs und nächstem Flugplatz im Text. Erwähnungen im Text werden nicht ausgelöst.",
-        "aus_hinweis": "Es gehen keine Positionsdaten mit. Erwähnungen im Text werden nicht ausgelöst."
+        "verdeckt": "Geo-Daten verdeckt · zum Anzeigen klicken"
       },
+      "schon_gesendet_eins": "Dieses Bild ist schon auf Discord. Senden schickt es als neue Nachricht noch einmal.",
+      "schon_gesendet_n": "Schon auf Discord: {{count}} von {{gesamt}} Bildern. Senden schickt sie als neue Nachricht noch einmal.",
       "server_offline": "Server nicht erreichbar. Senden wartet, nichts geht verloren.",
       "senden": "Senden ({{count}})",
       "abbrechen": "Abbrechen",
@@ -5448,16 +5445,7 @@
       "kanal": "Kanal „Bilder“ der German Sky Group",
       "text_label_n": "Text für alle {{count}} Bilder",
       "text_label_eins": "Text für das Bild",
-      "jetzt": "Jetzt senden",
-      "zeilen": {
-        "groesse": "Größe",
-        "groesse_text_eins": "1 Bild, {{groesse}} nach Verkleinerung auf {{px}} px",
-        "groesse_text": "{{count}} Bilder, {{groesse}} nach Verkleinerung auf {{px}} px",
-        "weg": "Weg",
-        "weg_text": "Dieser Rechner, GSG-Server (live), Discord. Der Zugang zu Discord liegt nur auf dem Server.",
-        "fehlschlag": "Falls etwas fehlschlägt",
-        "fehlschlag_text": "Jedes Bild bekommt sein eigenes Ergebnis. Was nicht ankam, bleibt ausgewählt und zeigt den Grund an der Kachel; „Erneut versuchen“ schickt nur das Fehlende, nichts kommt doppelt an."
-      }
+      "jetzt": "Jetzt senden"
     },
     "kontingent": {
       "rest": "Diese Stunde noch {{rest}} von {{grenze}}",
