@@ -9,6 +9,8 @@
 //! * Eine Datei zaehlt erst, wenn sie ueber zwei Takte unveraendert bleibt **und**
 //!   ihr Inhalt abgeschlossen ist (PNG-Endchunk, JPEG-EOI). „Vollstaendig
 //!   geschrieben“ braucht diese Wartezeit ohnehin.
+//! * Ein gemeldeter Fund, den der Aufrufer nicht dauerhaft ablegen konnte (Datentraeger
+//!   voll), wird mit [`zurueckstellen`] wieder unbekannt und nach 10 s erneut gemeldet.
 //! * **Nur gemeldete Dateien gelten als bekannt** (mit Groesse und Aenderungszeit,
 //!   nicht nur dem Pfad). Unfertige, voruebergehend unlesbare oder zwischen
 //!   Pruefung und Lesen veraenderte Dateien bleiben unter Beobachtung (mit
@@ -172,6 +174,8 @@ pub struct Slot {
     laeuft: AtomicBool,
     /// Funde, die ein Abfrage-Faden gefunden hat und die der Takt noch abholt.
     ausgang: Mutex<Vec<Fund>>,
+    /// Funde, deren Ablage im Eingang misslang: wieder unter Beobachtung (Fund, fruehestens ab ms).
+    zurueck: Mutex<Vec<(Fund, u64)>>,
 }
 
 fn sperre<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -410,6 +414,27 @@ impl Stand {
         }
     }
 
+    /// Ein gemeldeter Fund konnte nicht dauerhaft abgelegt werden: der Pfad gilt
+    /// wieder als unbekannt und wird nach `ab_ms` erneut gelesen und gemeldet.
+    fn fund_zurueckstellen(&mut self, f: &Fund, ab_ms: u64) {
+        let p = PathBuf::from(&f.pfad);
+        let Some(b) = self.bekannt.get(&p).filter(|b| !b.alt).cloned() else { return };
+        self.bekannt.remove(&p);
+        self.wartend.insert(
+            p,
+            Wartend {
+                groesse: b.groesse,
+                zeit: b.zeit,
+                gleich: 1,
+                gerade_entdeckt: false,
+                vordergrund: f.sim_vordergrund,
+                format: f.format,
+                versuche: 0,
+                naechster_ms: ab_ms,
+            },
+        );
+    }
+
     /// Oeffnet die Datei einmal (ohne Linkfolgen), prueft am Handle, dass sie
     /// vollstaendig ist, und liest sie von dort; Hash und Masse kommen aus
     /// denselben Bytes. Jede Abweichung ist ein Fehler, nie ein stilles „nichts“.
@@ -454,6 +479,7 @@ impl Slot {
             inner: Mutex::new(Stand::neu(q)),
             laeuft: AtomicBool::new(false),
             ausgang: Mutex::new(Vec::new()),
+            zurueck: Mutex::new(Vec::new()),
         }
     }
 
@@ -487,6 +513,9 @@ impl Slot {
         // Gerade belegt (Grundlage laeuft): in diesem Takt auslassen, nie warten.
         let Ok(mut st) = self.inner.try_lock() else { return };
         st.quelle = k;
+        for (f, ab_ms) in std::mem::take(&mut *sperre(&self.zurueck)) {
+            st.fund_zurueckstellen(&f, ab_ms);
+        }
         #[cfg(test)]
         tests::haengen(&self.pfad);
         st.scannen(false, SystemTime::now(), vg);
@@ -496,6 +525,18 @@ impl Slot {
 
     pub fn ist_bereit(&self) -> bool {
         self.bereit.load(Ordering::SeqCst)
+    }
+}
+
+/// So lange bleibt ein Fund zurueckgestellt, dessen Ablage misslang (voller Datentraeger).
+const ABLAGE_WIEDER_MS: u64 = 10_000;
+
+/// Meldet, dass `fund` nicht dauerhaft abgelegt werden konnte: er wird nach
+/// [`ABLAGE_WIEDER_MS`] erneut gemeldet statt nie wieder. Blockiert nie (auch
+/// nicht bei einer haengenden Quelle); die Quelle uebernimmt es im naechsten Takt.
+pub fn zurueckstellen(slots: &[Arc<Slot>], fund: &Fund, jetzt_ms: u64) {
+    for s in slots.iter().filter(|s| s.pfad == fund.quelle) {
+        sperre(&s.zurueck).push((fund.clone(), jetzt_ms.saturating_add(ABLAGE_WIEDER_MS)));
     }
 }
 
@@ -699,6 +740,27 @@ mod tests {
         }
         assert_eq!(spaeter.len(), 1, "die zuvor haengende Quelle liefert nach");
         assert!(spaeter[0].pfad.ends_with("spaet.png"));
+    }
+
+    /// Fund 5: misslingt die Ablage im Eingang, wird die Datei erneut gemeldet.
+    #[test]
+    fn zurueckgestellter_fund_wird_nach_der_wartezeit_erneut_gemeldet_und_dann_nicht_mehr() {
+        let t = tempfile::tempdir().unwrap();
+        let mut b = Beobachter::neu();
+        b.aufsetzen(&[q(t.path())], None);
+        fs::write(t.path().join("a.png"), png_bytes(10, 10)).unwrap();
+        assert!(b.takt(0, None).is_empty());
+        let f = b.takt(1500, None);
+        assert_eq!(f.len(), 1);
+        assert!(b.takt(3000, None).is_empty(), "ohne Rueckstellung gilt sie als bekannt");
+        zurueckstellen(&b.slots, &f[0], 3000); // Ablage misslang
+        assert!(b.takt(4500, None).is_empty(), "nicht sofort wieder");
+        assert!(b.takt(12_000, None).is_empty());
+        let again = b.takt(14_000, None);
+        assert_eq!(again.len(), 1, "nach der Wartezeit erneut gemeldet");
+        assert_eq!(again[0].pfad, f[0].pfad);
+        assert_eq!(again[0].sha256, f[0].sha256);
+        assert!(takte(&mut b, 4, None).is_empty(), "wurde die Ablage bestaetigt, bleibt sie still");
     }
 
     #[test]

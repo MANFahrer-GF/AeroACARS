@@ -18,7 +18,8 @@
 //! `bilder_liste` liefert die offenen Funde als `funde` (aelteste zuerst). Die
 //! Ereignisse `bild_quelle_neu` (der Eintrag) und `bild_aufgenommen` sind nur
 //! Wecksignale: ohne sie, auch bei geschlossenem Tab oder nach einem Neustart,
-//! ist der Eingang vollstaendig. Das Paket arbeitet ihn strikt nacheinander ab.
+//! ist der Eingang vollstaendig. Das Paket arbeitet ihn strikt nacheinander ab. Gelingt das Schreiben des Eintrags
+//! nicht (z. B. Datentraeger voll), gilt die Datei nicht als gesehen: sie wird nach 10 s erneut gelesen und gemeldet.
 //!
 //! **Fund** (genau diese Felder, nichts doppelt flach): `fund_id`, `herkunft`
 //! (`datei` | `aufnahme`), `entdeckt_ms`, `pfad` (Quelldatei, nur `datei`),
@@ -452,18 +453,45 @@ fn naechster_flugplatz(lat: f64, lon: f64) -> Option<Value> {
     Some(json!({"icao": a.icao, "abstand_m": a.distance_m.round()}))
 }
 
+/// Ausgang der Ablage eines Funds aus der Ordnerbeobachtung.
+enum Ablage {
+    Abgelegt(EingangsFund),
+    /// Kein aktiver Flug: es entsteht kein Fund, die Datei bleibt unangetastet (und gilt als gesehen).
+    KeinFlug,
+    /// Das Schreiben des Eintrags misslang (z. B. Datentraeger voll): die Datei wird erneut gemeldet.
+    Misslungen,
+}
+
 /// Ein neuer Fund aus der Ordnerbeobachtung: im aktiven Flug dauerhaft in den
-/// Eingang, sonst gar nicht (die Datei bleibt unangetastet). Gibt den Eintrag
-/// zurueck, damit er als Wecksignal gemeldet werden kann.
-fn fund_in_eingang(app: &AppHandle, f: &bilder_kern::beobachter::Fund) -> Option<EingangsFund> {
-    let meta = meta_basis_jetzt(app)?;
+/// Eingang, sonst gar nicht (die Datei bleibt unangetastet).
+fn fund_in_eingang(app: &AppHandle, f: &bilder_kern::beobachter::Fund) -> Ablage {
+    let Some(meta) = meta_basis_jetzt(app) else { return Ablage::KeinFlug };
     let fenster = plattform::sim_fenstermasse().map(|(breite, hoehe)| SimFenster { breite, hoehe });
     let e = EingangsFund::aus_fund(f, uuid::Uuid::new_v4().to_string(), jetzt_ms(), fenster, meta);
     match wurzel(app).map_err(|u| Fehler::Io(u.message)).and_then(|w| eingang::ablegen(&w, &e)) {
-        Ok(()) => Some(e),
+        Ok(()) => Ablage::Abgelegt(e),
         Err(err) => {
-            tracing::warn!(fehler = %err, pfad = %f.pfad, "Bilder: Fund nicht im Eingang abgelegt");
-            None
+            tracing::warn!(fehler = %err, pfad = %f.pfad, "Bilder: Fund nicht im Eingang abgelegt, wird erneut gemeldet");
+            Ablage::Misslungen
+        }
+    }
+}
+
+/// Legt die Funde eines Takts ab und meldet die abgelegten. Ein Fund, dessen
+/// Eintrag nicht geschrieben werden konnte, wird zur Beobachtung zurueckgestellt
+/// und spaeter erneut gemeldet, statt als bekannt zu gelten.
+fn funde_abarbeiten(
+    slots: &[std::sync::Arc<bilder_kern::beobachter::Slot>],
+    funde: Vec<bilder_kern::beobachter::Fund>,
+    jetzt_ms: u64,
+    mut ablegen: impl FnMut(&bilder_kern::beobachter::Fund) -> Ablage,
+    mut melden: impl FnMut(&EingangsFund),
+) {
+    for f in funde {
+        match ablegen(&f) {
+            Ablage::Abgelegt(e) => melden(&e),
+            Ablage::KeinFlug => {}
+            Ablage::Misslungen => bilder_kern::beobachter::zurueckstellen(slots, &f, jetzt_ms),
         }
     }
 }
@@ -984,16 +1012,16 @@ pub(crate) fn starten(app: &AppHandle) {
             // Sperre nur zum Holen der Quellen: die Ordnerabfragen laufen ohne sie,
             // je Quelle in einem eigenen Faden; ein haengender Ordner haelt hoechstens 1 s auf.
             let (slots, vg) = entsperren(beobachter()).takt_vorbereiten(vordergrund);
-            let funde = bilder_kern::beobachter::takt_ausfuehren(&slots, start.elapsed().as_millis() as u64, vg);
+            let jetzt = start.elapsed().as_millis() as u64;
+            let funde = bilder_kern::beobachter::takt_ausfuehren(&slots, jetzt, vg);
             let status = entsperren(beobachter()).status();
             entsperren(anzeige()).status = status;
-            for f in funde {
-                // Zuerst dauerhaft im Eingang; das Ereignis ist nur ein Wecksignal.
-                let Some(e) = fund_in_eingang(&app, &f) else { continue };
-                if let Err(err) = app.emit(EREIGNIS_QUELLE_NEU, &e) {
+            // Zuerst dauerhaft im Eingang; das Ereignis ist nur ein Wecksignal.
+            funde_abarbeiten(&slots, funde, jetzt, |f| fund_in_eingang(&app, f), |e| {
+                if let Err(err) = app.emit(EREIGNIS_QUELLE_NEU, e) {
                     tracing::warn!(fehler = %err, "bild_quelle_neu nicht gesendet");
                 }
-            }
+            });
         }
     });
 }
@@ -1115,6 +1143,48 @@ mod tests {
         assert_eq!(fehler(Fehler::Pfad("x".into())).code, "bild_pfad");
         assert_eq!(fehler(Fehler::Quelle("x".into())).code, "bild_quelle");
         assert_eq!(fehler(Fehler::NichtVerfuegbar("x".into())).code, "bild_nicht_verfuegbar");
+    }
+
+    /// Fund 5: Ablage im Eingang misslungen (Datentraeger voll) -> die Datei wird
+    /// erneut gemeldet; ohne Flug dagegen entsteht kein Fund und sie bleibt still.
+    #[test]
+    fn misslungene_ablage_meldet_die_datei_erneut_ohne_flug_bleibt_sie_still() {
+        let t = tempfile::tempdir().unwrap();
+        let png = bilder_kern::png::aus_bgra(2, 2, &[0u8; 16]).unwrap();
+        let quelle = Quelle { pfad: t.path().to_string_lossy().into_owned(), aktiv: true, original_entfernen: false, art: None };
+        let mut b = Beobachter::neu();
+        b.aufsetzen(&[quelle], None);
+        let (slots, _) = b.takt_vorbereiten(None);
+        std::fs::write(t.path().join("a.png"), &png).unwrap();
+        let mut zeit = 0u64;
+        let mut takt = |zeit: &mut u64| {
+            let f = bilder_kern::beobachter::takt_ausfuehren(&slots, *zeit, None);
+            *zeit += 1500;
+            f
+        };
+        assert!(takt(&mut zeit).is_empty());
+        let funde = takt(&mut zeit);
+        assert_eq!(funde.len(), 1);
+        let mut gemeldet = 0;
+        funde_abarbeiten(&slots, funde, zeit, |_| Ablage::Misslungen, |_| gemeldet += 1);
+        assert_eq!(gemeldet, 0, "ohne Eintrag kein Wecksignal");
+        zeit += 10_000;
+        let wieder = takt(&mut zeit);
+        assert_eq!(wieder.len(), 1, "die Datei wird erneut gemeldet");
+        // Jetzt klappt das Schreiben: abgelegt, gemeldet, danach still.
+        let meta = json!({"pirep_id": "P1"});
+        funde_abarbeiten(&slots, wieder, zeit, |f| Ablage::Abgelegt(EingangsFund::aus_fund(f, "f1".into(), 1, None, meta.clone())), |_| gemeldet += 1);
+        assert_eq!(gemeldet, 1);
+        assert!(takt(&mut zeit).is_empty() && takt(&mut zeit).is_empty());
+        // Ohne Flug: kein Fund, nicht erneut melden (Datei bleibt unangetastet).
+        std::fs::write(t.path().join("b.png"), &png).unwrap();
+        assert!(takt(&mut zeit).is_empty());
+        let b_fund = takt(&mut zeit);
+        assert_eq!(b_fund.len(), 1);
+        funde_abarbeiten(&slots, b_fund, zeit, |_| Ablage::KeinFlug, |_| gemeldet += 1);
+        zeit += 20_000;
+        assert!(takt(&mut zeit).is_empty());
+        assert_eq!(gemeldet, 1);
     }
 
     #[test]
