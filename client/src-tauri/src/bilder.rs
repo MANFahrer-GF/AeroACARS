@@ -113,6 +113,17 @@
 //! Ereignisse (nur Wecksignale): `bild_quelle_neu` (der Eingangseintrag), `bild_aufgenommen`
 //! (`{ok, aufnahme}` oder `{ok:false, code, meldung}`, `code` z. B. `kein_flug`, `verdeckt`).
 //!
+//! Fensteraufnahme (Windows): zuerst Windows.Graphics.Capture (`aufnahme.methode: "wgc"`). Das nimmt das
+//! Simulatorfenster selbst auf, auch im Vollbild und wenn AeroACARS im Hintergrund liegt, und kopiert nichts
+//! von anderen Fenstern; das Bildmass kommt aus dem Rahmen. Nur wenn WGC nicht verfuegbar ist, scheitert oder
+//! ganz schwarz liefert, folgt der Rueckfall `printwindow`, dann `bitblt`. Der Code `verdeckt` gilt allein fuer
+//! diese Bildschirmkopie (liegt ein fremdes Fenster darueber), nie fuer `wgc`. Die Aufnahme bekommt hoechstens 5 s.
+//! Der Windows-Teil ist unter macOS nur uebersetzt (`cargo check --target x86_64-pc-windows-msvc`), nicht ausgefuehrt.
+//!
+//! Ton: Jede Aufnahme (Tastenkuerzel, Yoke-Knopf, `bild_aufnehmen`) meldet sich hoerbar, auch wenn AeroACARS
+//! im Hintergrund liegt: kurzes doppeltes Klicken bei Erfolg, tiefer Ton bei Fehlschlag (auch `kein_flug`). Die
+//! Nutzlast des Ereignisses bleibt unveraendert; ein Fehlschlag steht zusaetzlich als Warnung im Protokoll.
+//!
 //! Fehlercodes des Kerns: `bild_name`, `bild_pfad`, `bild_nicht_gefunden`, `bild_format`, `bild_unfertig`,
 //! `bild_quelle`, `bild_verboten`, `bild_zu_gross`, `bild_eingabe`, `bild_nicht_verfuegbar`, `bild_io`,
 //! `bild_veraltet` (nur `bild_uebernehmen` eines Funds `datei`: Groesse oder SHA-256 der Datei passen nicht mehr zum
@@ -541,9 +552,20 @@ fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
 #[tauri::command]
 pub(crate) async fn bild_aufnehmen(app: AppHandle, gruppe: Option<String>) -> Result<Value, UiError> {
     let gruppe = gruppe.unwrap_or_else(|| EINGANG.to_string());
-    tauri::async_runtime::spawn_blocking(move || aufnehmen_intern(&app, &gruppe))
+    let r = tauri::async_runtime::spawn_blocking(move || aufnehmen_intern(&app, &gruppe))
         .await
-        .map_err(|e| UiError::new("bild_io", e.to_string()))?
+        .map_err(|e| UiError::new("bild_io", e.to_string()))?;
+    rueckmeldung(&r);
+    r
+}
+
+/// Hoerbare Rueckmeldung zu einer Aufnahme (Klicken bei Erfolg, tiefer Ton sonst, auch
+/// `kein_flug`); bei Fehlschlag zusaetzlich ins Protokoll, bisher blieb er still.
+fn rueckmeldung(r: &Result<Value, UiError>) {
+    if let Err(e) = r {
+        tracing::warn!(code = %e.code, meldung = %e.message, "Bilder: Aufnahme fehlgeschlagen");
+    }
+    plattform::ton_abspielen(r.is_ok());
 }
 
 /// Nutzlast des Ereignisses `bild_aufgenommen`. Ohne aktiven Flug wird die
@@ -555,6 +577,21 @@ fn aufgenommen_nutzlast(flug_aktiv: bool, aufnehmen: impl FnOnce() -> Result<Val
         Ok(v) => json!({"ok": true, "aufnahme": v}),
         Err(e) => json!({"ok": false, "code": e.code, "meldung": e.message}),
     }
+}
+
+/// Wie [`rueckmeldung`], aber nach der Nutzlast des Ereignisses `bild_aufgenommen`
+/// (die dabei unveraendert bleibt): `ok` entscheidet ueber den Ton, `code` und
+/// `meldung` gehen bei Fehlschlag ins Protokoll.
+fn nutzlast_rueckmeldung(nutzlast: &Value) {
+    let ok = nutzlast["ok"].as_bool().unwrap_or(false);
+    if !ok {
+        tracing::warn!(
+            code = nutzlast["code"].as_str().unwrap_or(""),
+            meldung = nutzlast["meldung"].as_str().unwrap_or(""),
+            "Bilder: Aufnahme per Taste fehlgeschlagen"
+        );
+    }
+    plattform::ton_abspielen(ok);
 }
 
 /// Werte von `bild_senden`, wenn der Befehl ueber `shell_request` kommt (ohne zweite Rueckfrage).
@@ -1067,6 +1104,7 @@ fn taste_gedrueckt(app: &AppHandle) {
     let app = app.clone();
     let _ = std::thread::Builder::new().name("bild-aufnahme".into()).spawn(move || {
         let nutzlast = aufgenommen_nutzlast(flug_aktiv(&app), || aufnehmen_intern(&app, EINGANG));
+        nutzlast_rueckmeldung(&nutzlast);
         let _ = app.emit(EREIGNIS_AUFGENOMMEN, nutzlast);
     });
 }

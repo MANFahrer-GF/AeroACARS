@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HWND, LPARAM, RECT};
@@ -18,6 +18,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, SRCCOPY,
 };
+use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
 use windows_sys::Win32::Storage::Xps::PrintWindow;
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RRF_RT_REG_SZ};
@@ -207,7 +208,7 @@ pub fn sim_fenstermasse() -> Option<(u32, u32)> {
     Some(((r.right - r.left).max(0) as u32, (r.bottom - r.top).max(0) as u32))
 }
 
-fn ganz_schwarz(bgra: &[u8]) -> bool {
+pub(super) fn ganz_schwarz(bgra: &[u8]) -> bool {
     bgra.chunks_exact(4).step_by(997).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0)
 }
 
@@ -356,11 +357,15 @@ impl Drop for Gdi {
 }
 
 /// Nimmt das Simulatorfenster gezielt auf (nicht das Vordergrundfenster):
-/// zuerst `PrintWindow` mit `PW_RENDERFULLCONTENT`; liefert das nur Schwarz
-/// (manche DirectX-Fenster), eine Bildschirmkopie des Fensterbereichs — nur,
-/// wenn **kein sichtbares Fenster in der Z-Reihenfolge ueber dem Simulator
+/// zuerst mit Windows.Graphics.Capture (`wgc`, nimmt das Fenster selbst auf, auch
+/// im Vollbild und bei verdeckendem Fenster, ohne andere Fenster mitzunehmen).
+/// Ist das nicht verfuegbar, scheitert es oder ist das Ergebnis ganz schwarz, folgt
+/// der Rueckfall: `PrintWindow` mit `PW_RENDERFULLCONTENT`; liefert das nur
+/// Schwarz (manche DirectX-Fenster), eine Bildschirmkopie des Fensterbereichs —
+/// nur, wenn **kein sichtbares Fenster in der Z-Reihenfolge ueber dem Simulator
 /// dessen Rechteck schneidet** (Fehler `verdeckt`), denn die Kopie nimmt alles
-/// mit, was dort auf dem Bildschirm liegt.
+/// mit, was dort auf dem Bildschirm liegt. `verdeckt` gilt daher nur fuer diese
+/// Bildschirmkopie, nie fuer `wgc`.
 pub fn fenster_aufnehmen() -> Result<Aufnahme, Fehler> {
     static FADEN: AtomicBool = AtomicBool::new(false);
     super::mit_frist(super::AUFNAHME_FRIST, &FADEN, fenster_aufnehmen_roh)
@@ -368,6 +373,19 @@ pub fn fenster_aufnehmen() -> Result<Aufnahme, Fehler> {
 
 fn fenster_aufnehmen_roh() -> Result<Aufnahme, Fehler> {
     let (hwnd, r) = sim_fenster().ok_or_else(|| Fehler::NichtGefunden("Kein Simulatorfenster gefunden (FlightSimulator, X-Plane)".into()))?;
+    let wgc_grund = match super::wgc::aufnehmen(hwnd) {
+        Ok(a) => return Ok(a),
+        Err(grund) => grund,
+    };
+    // Rueckfall; scheitert auch er mit einem E/A-Fehler, steht der WGC-Grund dabei.
+    fenster_aufnehmen_gdi(hwnd, r).map_err(|e| match e {
+        Fehler::Io(m) => Fehler::Io(format!("{m} (Windows.Graphics.Capture: {wgc_grund})")),
+        andere => andere,
+    })
+}
+
+/// Rueckfall: `PrintWindow`, dann `BitBlt` (siehe `fenster_aufnehmen`).
+fn fenster_aufnehmen_gdi(hwnd: HWND, r: RECT) -> Result<Aufnahme, Fehler> {
     let (b, h) = (r.right - r.left, r.bottom - r.top);
     let mut gdi = Gdi::neu(b, h)?;
     let mut bgra = vec![0u8; (b as usize) * (h as usize) * 4];
@@ -399,6 +417,18 @@ fn fenster_aufnehmen_roh() -> Result<Aufnahme, Fehler> {
         return Err(Fehler::Io("Die Aufnahme ist schwarz (Vollbild-Ausgabe des Simulators nicht abgreifbar)".into()));
     }
     Ok(Aufnahme { breite: b as u32, hoehe: h as u32, bgra, methode })
+}
+
+/// Rueckmeldeton der Aufnahme: kurzes Klicken bei Erfolg, tiefer Ton bei Fehlschlag.
+/// Asynchron aus dem Speicher (`SND_MEMORY|SND_ASYNC`); die Bytes liegen in einem
+/// `OnceLock` und bleiben damit fuer die ganze Laufzeit gueltig, wie `ASYNC` es verlangt.
+/// Hoerbar auch, wenn AeroACARS im Hintergrund ist (der Simulator vorn).
+pub fn ton_abspielen(ok: bool) {
+    static ERFOLG: OnceLock<Vec<u8>> = OnceLock::new();
+    static FEHLSCHLAG: OnceLock<Vec<u8>> = OnceLock::new();
+    let wav = if ok { ERFOLG.get_or_init(crate::ton::erfolg_wav) } else { FEHLSCHLAG.get_or_init(crate::ton::fehlschlag_wav) };
+    // SAFETY: `wav` ist ein 'static-Puffer mit gueltigem WAV; bei SND_MEMORY ist der Zeiger der Puffer selbst.
+    unsafe { PlaySoundW(wav.as_ptr() as *const u16, null_mut(), SND_MEMORY | SND_ASYNC | SND_NODEFAULT) };
 }
 
 /// Offener Auftrag an den Hotkey-Faden: neue Taste (oder `None` = freigeben) und Antwortkanal.
