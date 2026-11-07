@@ -613,15 +613,6 @@ fn flug_offen(app_daten: &Path) -> bool {
     app_daten.join(crate::ACTIVE_FLIGHT_FILE).exists()
 }
 
-/// Testbuild (`dev-build.yml` ohne beta): bleibt beim eingebauten Stand, sonst
-/// ersetzt das freigegebene Paket die Oberflaeche, die getestet werden soll.
-const NUR_EINGEBAUT: bool = matches!(option_env!("AEROACARS_NUR_EINGEBAUT"), Some("1"));
-
-/// Ordner der Paketablage; der leere Ersatzordner fuehrt zum eingebauten Stand.
-const fn ablage_ordner(nur_eingebaut: bool) -> &'static str {
-    if nur_eingebaut { "laufzeit-paket-aus" } else { "laufzeit-paket" }
-}
-
 /// Laedt den Stand fuer diesen Lauf und gibt OurAirports an `runway.rs`.
 /// Muss vor jedem Zugriff auf die Bahntabellen laufen. Scheitert alles,
 /// gilt der eingebaute Stand — das Programm startet immer.
@@ -642,7 +633,7 @@ pub(crate) fn starten_mit(app_daten: &Path, hilfe: Option<StartHilfe>) {
 /// kein Wechsel unter einem laufenden Flug), ohne Pruefschluessel und wenn
 /// schon ein Stand gilt — dann startet das Hauptfenster sofort.
 pub(crate) fn startabruf_noetig(app_daten: &Path) -> bool {
-    !NUR_EINGEBAUT && !PRUEFSCHLUESSEL.is_empty() && STAND.get().is_none() && !flug_offen(app_daten)
+    !PRUEFSCHLUESSEL.is_empty() && STAND.get().is_none() && !flug_offen(app_daten)
 }
 
 fn starten_einmal(app_daten: &Path, hilfe: Option<StartHilfe>) {
@@ -661,7 +652,7 @@ fn starten_einmal(app_daten: &Path, hilfe: Option<StartHilfe>) {
     sim_core::msfs_paketprofil::quelle_setzen(|| &stand().msfs_profile);
     let pin = pin_des_offenen_flugs(app_daten);
     let eingebaut = eingebaut();
-    let ergebnis = Ablage::oeffnen(app_daten.join(ablage_ordner(NUR_EINGEBAUT)))
+    let ergebnis = Ablage::oeffnen(app_daten.join("laufzeit-paket"))
         .and_then(|a| a.laden(pin.as_ref().map(|(_, id)| id), &kontext(), &eingebaut));
     let (paket, herkunft) = match ergebnis {
         Ok(l) => {
@@ -815,7 +806,7 @@ impl Zaehler<'_> {
 /// angemeldet, `stand()` darf hier nicht laufen). Eigener Faden mit eigener
 /// Laufzeit: `setup` laeuft ausserhalb von tokio.
 fn beim_start_holen(app_daten: &Path, hilfe: Option<StartHilfe>) {
-    if NUR_EINGEBAUT || PRUEFSCHLUESSEL.is_empty() || STAND.get().is_some() {
+    if PRUEFSCHLUESSEL.is_empty() || STAND.get().is_some() {
         return;
     }
     let Ok(basis) = paket_endpunkte::lesen(paket_endpunkte::EINGEBAUT).map(|e| e.live) else { return };
@@ -916,7 +907,7 @@ pub(crate) fn pruefung_ueberfaellig(app_daten: &Path, jetzt: chrono::DateTime<ch
 /// `hinweis(tage)`, falls die letzte erfolgreiche Pruefung mehr als 30 Tage
 /// zurueckliegt. Der aktive Stand laeuft trotzdem weiter.
 pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf, hinweis: impl FnOnce(i64) + Send + 'static) {
-    if NUR_EINGEBAUT || PRUEFSCHLUESSEL.is_empty() {
+    if PRUEFSCHLUESSEL.is_empty() {
         return;
     }
     let _ = APP_DATEN.set(app_daten.clone());
@@ -1107,7 +1098,7 @@ fn nach_token_abrufen(mit_token_geprueft: bool, flug_offen: bool) -> bool {
 /// abruf lief womoeglich noch ohne (Thomas' Protokoll 30.10.: Abfrage
 /// ~0,7 s vor den Zugangsdaten → 401) — dann genau einmal mit Token.
 pub(crate) fn token_bereit() {
-    if NUR_EINGEBAUT || PRUEFSCHLUESSEL.is_empty() {
+    if PRUEFSCHLUESSEL.is_empty() {
         return;
     }
     let Some(daten) = APP_DATEN.get().cloned() else { return };
@@ -1438,19 +1429,6 @@ fn bewertung_selbsttest(modul: &[u8], selftest: &[u8]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-
-    /// Der Testbuild darf nie die echte Paketablage lesen, sonst fehlt ihm, was er testen soll;
-    /// Beta und Release bleiben beim Paket.
-    #[test]
-    fn testbuild_bleibt_beim_eingebauten_stand() {
-        assert_eq!(ablage_ordner(false), "laufzeit-paket");
-        assert_ne!(ablage_ordner(true), ablage_ordner(false));
-        assert!(!NUR_EINGEBAUT, "ein normaler Bau bleibt beim Paket");
-        let wf = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.github/workflows/dev-build.yml")).unwrap();
-        assert_eq!(wf.matches("AEROACARS_NUR_EINGEBAUT: ${{ !inputs.beta && '1' || '0' }}").count(), 2, "Windows und Mac");
-        let release = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.github/workflows/release.yml")).unwrap();
-        assert!(!release.contains("AEROACARS_NUR_EINGEBAUT"));
-    }
     /// Ein Paket aus dem Paket-Workflow verlangt nur, was dieses Programm
     /// kann — sonst lehnte der Client sein eigenes Paket ab (P-2.15). Mit
     /// Oberflaeche (ui/) gehoert die Befehlsliste dieses Stands dazu (P-8.11):
