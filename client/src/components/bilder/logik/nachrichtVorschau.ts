@@ -42,27 +42,36 @@ export function infoZeile(m: SendeMeta): string {
 }
 
 export interface GeoTeil {
+  /** So steht es in der Nachricht, mit den Links. */
   text: string;
+  /** So liest es der Pilot: Discord zeigt nur die Namen der Links. */
+  anzeige: string;
   /** Wird in Discord als grauer Balken gezeigt (Spoiler). */
   verdeckt: boolean;
 }
 
 export function geoZeile(m: BildMeta, stufe: GeoStufe): GeoTeil | null {
   if (stufe === "aus" || m.breite === null || m.laenge === null) return null;
-  const teile: string[] = [
-    `${Math.abs(m.breite).toFixed(3)}° ${m.breite >= 0 ? "N" : "S"} ${Math.abs(m.laenge).toFixed(3)}° ${m.laenge >= 0 ? "E" : "W"}`,
-  ];
-  if (m.kurs !== null) teile.push(`${String(Math.round(m.kurs) % 360).padStart(3, "0")}°`);
+  const teile: string[] = [];
   const platz = sauber(m.naechster_flugplatz, 8);
   if (platz) teile.push(platz);
-  return { text: teile.join(" · "), verdeckt: stufe === "verdeckt" };
+  if (m.kurs !== null) teile.push(`${String(Math.round(m.kurs) % 360).padStart(3, "0")}°`);
+  const breite = m.breite.toFixed(4);
+  const laenge = m.laenge.toFixed(4);
+  return {
+    text: [...teile, `[Google Maps](<https://www.google.com/maps?q=${breite},${laenge}>)`, `[VATSIM Radar](<https://vatsim-radar.com/?center=${laenge},${breite}&zoom=10>)`].join(" · "),
+    anzeige: [...teile, "Google Maps", "VATSIM Radar"].join(" · "),
+    verdeckt: stufe === "verdeckt",
+  };
 }
 
 export interface BildZeile {
   nummer: number | null;
   info: string;
-  /** Position, Kurs, Flugplatz; `null` bei „aus“ oder ohne Position. */
+  /** Flugplatz, Kurs, Kartenlinks; `null` bei „aus“ oder ohne Position. */
   ort: string | null;
+  /** Dasselbe, wie es die Nachricht traegt. */
+  ortRoh: string | null;
   /** Der Ort wird in Discord als grauer Balken gezeigt (Spoiler). */
   verdeckt: boolean;
 }
@@ -81,11 +90,11 @@ export function vorschauBauen(pilotName: string | null, metas: SendeMeta[], stuf
   const zeilen = metas
     .map((m, i): BildZeile => {
       const g = geoZeile(m, stufe);
-      return { nummer: metas.length > 1 ? i + 1 : null, info: infoZeile(m), ort: g?.text ?? null, verdeckt: g?.verdeckt ?? false };
+      return { nummer: metas.length > 1 ? i + 1 : null, info: infoZeile(m), ort: g?.anzeige ?? null, ortRoh: g?.text ?? null, verdeckt: g?.verdeckt ?? false };
     })
     .filter((z) => z.info || z.ort);
   const zeileRoh = (z: BildZeile) =>
-    (z.nummer ? `${z.nummer}: ` : "") + [z.info, z.ort && (z.verdeckt ? `||${z.ort}||` : z.ort)].filter(Boolean).join(" · ");
+    (z.nummer ? `${z.nummer}: ` : "") + [z.info, z.ortRoh && (z.verdeckt ? `||${z.ortRoh}||` : z.ortRoh)].filter(Boolean).join(" · ");
   const roh = [kopf, ...zeilen.map(zeileRoh), text.trim()].filter(Boolean).join("\n");
   return { kopf, zeilen, text: text.trim(), gekuerzt: roh.length > maxZeichen };
 }

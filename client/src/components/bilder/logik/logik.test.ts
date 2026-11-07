@@ -198,13 +198,13 @@ describe("Vorschau der Nachricht (Spiegel des Servers)", () => {
     const voll = sendeMeta(m, "verdeckt", "Boarding");
     const v = vorschauBauen("Thomas K", [voll], "verdeckt", "Schoen!", 2000);
     expect(v.kopf).toBe("📷 **Thomas K** · GSG101 · EDDF\u2013LEPA · Airbus A320 (A320)");
-    expect(v.zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: "50.030° N 8.570° E · 270° · EDDF", verdeckt: true }]);
+    expect(v.zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: "EDDF · 270° · Google Maps · VATSIM Radar", ortRoh: "EDDF · 270° · [Google Maps](<https://www.google.com/maps?q=50.0300,8.5700>) · [VATSIM Radar](<https://vatsim-radar.com/?center=8.5700,50.0300&zoom=10>)", verdeckt: true }]);
     expect(vorschauBauen("T", [voll], "sichtbar", "", 2000).zeilen[0].verdeckt).toBe(false);
   });
   it("bei „aus“ verlaesst keine Position das Programm, Zeit, Hoehe und Phase bleiben", () => {
     const aus = sendeMeta(m, "aus", "Boarding");
     expect([aus.breite, aus.laenge, aus.kurs, aus.naechster_flugplatz]).toEqual([null, null, null, null]);
-    expect(vorschauBauen("T", [aus], "aus", "", 2000).zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: null, verdeckt: false }]);
+    expect(vorschauBauen("T", [aus], "aus", "", 2000).zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: null, ortRoh: null, verdeckt: false }]);
   });
   it("ohne Position bleibt die Info; mehrere Bilder werden nummeriert; ohne alles keine Zeile", () => {
     expect(vorschauBauen("T", [meta({ breite: null, laenge: null })], "sichtbar", "", 2000).zeilen[0].ort).toBeNull();
