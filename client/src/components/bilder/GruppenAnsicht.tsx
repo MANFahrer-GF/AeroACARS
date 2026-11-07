@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "../ui";
 import { datumArt, datumText } from "./logik/datum";
 import type { Gruppe } from "./logik/gruppen";
-import { wurdeGesendet } from "./logik/gruppen";
+import { bytesText, wurdeGesendet } from "./logik/gruppen";
 import { streckeText } from "./logik/metaFormat";
 import type { Sendestand } from "./logik/sendezustand";
 import { standAusVermerk } from "./logik/sendezustand";
@@ -86,6 +86,7 @@ export function GruppenAnsicht({
               {g.flugzeug && <span>{g.flugzeug}</span>}
               <span style={{ color: "var(--tick)" }} aria-hidden="true">·</span>
               <span>{g.anzahl === 1 ? t("bilder.gruppe.bild_eins") : t("bilder.gruppe.bilder", { count: g.anzahl })}</span>
+              <span title={t("bilder.kopf.platz", { platz: bytesText(g.belegt_bytes, sprache) })}>{bytesText(g.belegt_bytes, sprache)}</span>
               {g.schluessel !== "" && g.schluessel === aktivePirep && <span className="bt-chip bt-chip--ok">{t("bilder.gruppe.laeuft")}</span>}
               {gesendet > 0 && <span className="bt-chip">{t("bilder.gruppe.gesendet_n", { count: gesendet })}</span>}
               {ohne && <button type="button" className="bt-gruppe__zuordnen" onClick={() => onZuordnen(g)}>{t("bilder.gruppe.zuordnen")}</button>}

@@ -3,7 +3,7 @@ import { GRENZEN, TABELLE, tabelleLesen } from "./grenzen";
 import { bildMetaBauen, datenStufe } from "./meta";
 import { entscheide, gruppeFuer, massePassen } from "./uebernahmeRegel";
 import { serienBilden } from "./serien";
-import { KEIN_FILTER, bytesText, filtern, gruppieren, platzJeFlug, seitenweise } from "./gruppen";
+import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppieren, platzJeFlug, seitenweise } from "./gruppen";
 import { bereinigen, umschalten } from "./auswahl";
 import { kontingentAnzeige, reichtKontingent, retrySekunden } from "./kontingent";
 import { vorschauBauen } from "./nachrichtVorschau";
@@ -142,6 +142,18 @@ describe("Serien, Gruppen, Filter, Seiten", () => {
     expect(m.get("")).toBe(5);
     expect(bytesText(2 * 1024 * 1024, "de")).toBe("2,0 MB");
     expect(bytesText(900)).toBe("900 B");
+  });
+});
+
+describe("Aufraeumen", () => {
+  const jetzt = Date.parse("2026-11-07T12:00:00Z");
+  const gesendet = [{ sendung_id: "s", zeit_ms: 1, geo_stufe: "verdeckt" as const, status: "gesendet" as const }];
+  it("nur gesendete UND aeltere als die Grenze aus dem Paket", () => {
+    const alt = eintrag({ id: "alt", meta: { zeit_utc: "2026-09-01T10:00:00Z" }, sidecar: { sendungen: gesendet } });
+    const altOffen = eintrag({ id: "altoffen", meta: { zeit_utc: "2026-09-01T10:00:00Z" } });
+    const jung = eintrag({ id: "jung", meta: { zeit_utc: "2026-11-01T10:00:00Z" }, sidecar: { sendungen: gesendet } });
+    const fehl = eintrag({ id: "fehl", meta: { zeit_utc: "2026-09-01T10:00:00Z" }, sidecar: { sendungen: [{ ...gesendet[0], status: "abgelehnt" as const }] } });
+    expect(gesendeteAelterAls([alt, altOffen, jung, fehl], GRENZEN.aufraeumen_tage, jetzt).map((e) => e.id)).toEqual(["alt"]);
   });
 });
 

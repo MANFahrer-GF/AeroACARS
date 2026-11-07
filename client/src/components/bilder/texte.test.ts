@@ -60,6 +60,12 @@ describe("Texte des Bilder-Tabs", () => {
       expect(flach((daten as { bilder: unknown }).bilder).filter((s) => verboten.test(s))).toEqual([]);
     }
   });
+  it("keine feste Screenshot-Taste in Texten oder Quelltext (je Pilot verschieden)", () => {
+    const fest = /Shift\s*\+\s*(Space|Leertaste)|Strg\s*\+\s*Shift\s*\+\s*S\b/i;
+    const flach = (o: unknown): string[] => (typeof o === "string" ? [o] : o && typeof o === "object" ? Object.values(o as object).flatMap(flach) : []);
+    for (const daten of Object.values(SPRACHEN)) expect(flach((daten as { bilder: unknown }).bilder).filter((s) => fest.test(s))).toEqual([]);
+    for (const q of quellen()) expect(fest.test(q)).toBe(false);
+  });
   it("Gegenprobe: ein fehlender Schluessel faellt auf", () => {
     expect(hat(de, "bilder.gibt.es.nicht")).toBe(false);
   });

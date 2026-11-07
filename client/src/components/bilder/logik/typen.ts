@@ -128,6 +128,14 @@ export interface Fund {
   basis: MetaBasis;
 }
 
+/** Aufnahme per Yoke- oder Joystick-Knopf (P-11.30). */
+export interface YokeTaste {
+  geraet_name: string;
+  hersteller_id: number | string;
+  produkt_id: number | string;
+  knopf: number | string;
+}
+
 export interface Altbestand {
   eintraege: AltEintrag[];
 }
@@ -136,8 +144,10 @@ export interface BilderListe {
   eintraege: Eintrag[];
   belegt_bytes: number;
   quellen: QuellenStatus[];
-  tastenkuerzel: { text: string; verfuegbar: boolean; aktiv: boolean; fehler: string | null } | null;
+  tastenkuerzel: { text: string; verfuegbar: boolean; aktiv: boolean; fehler: string | null; yoke_verfuegbar: boolean; yoke: YokeTaste | null } | null;
   aufnahme_verfuegbar: boolean;
+  /** Screenshot-Taste des Simulators je Pilot (aus dessen Einstellungen); null = unbekannt. */
+  simulator_taste: { simulator: string; text: string } | null;
   funde: Fund[];
   altbestand: AltEintrag[];
 }

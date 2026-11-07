@@ -14,7 +14,7 @@ import { bilderStore, useBilder } from "./bilderStore";
 import { bildUrlVergessen } from "./useBildUrl";
 import { bereinigen, umschalten } from "./logik/auswahl";
 import { GRENZEN } from "./logik/grenzen";
-import { KEIN_FILTER, anzeigbar, bytesText, filtern, flugSchluessel, gruppieren, seitenweise, type Filter, type Gruppe } from "./logik/gruppen";
+import { KEIN_FILTER, anzeigbar, bytesText, filtern, flugSchluessel, gesendeteAelterAls, gruppieren, seitenweise, type Filter, type Gruppe } from "./logik/gruppen";
 import { reichtKontingent } from "./logik/kontingent";
 import { simulatorName, streckeText, kurzZeit } from "./logik/metaFormat";
 import type { FlugAuswahl } from "./logik/store";
@@ -111,6 +111,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     return o;
   }, [aktiverFlug, alleGruppen, sprache, t]);
 
+  const aufraeumen = useMemo(() => gesendeteAelterAls(alle, GRENZEN.aufraeumen_tage, Date.now()), [alle]);
   const fluegeAnzahl = alleGruppen.filter((g) => g.schluessel !== "").length;
   const gewaehlteBilder = alle.filter((e) => auswahl.has(e.id));
   const zus = zusammenfassung(z.sendestand, auswahl);
@@ -174,10 +175,12 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     })();
   }
 
+  // Die Screenshot-Taste ist je Pilot anders: der Hinweis nennt nur, was das Programm meldet, nie eine feste Taste.
+  const xplaneTaste = liste?.simulator_taste?.text ?? null;
+  const kuerzelText = liste?.tastenkuerzel?.verfuegbar ? liste.tastenkuerzel.text : null;
   const aufnahmeText = (() => {
-    if (simulator === "xplane") return t("bilder.kopf.aufnahme_taste_sim");
-    const k = liste?.tastenkuerzel;
-    if (simulator === "msfs" && k?.verfuegbar) return t("bilder.kopf.aufnahme", { kuerzel: k.text, sim: "MSFS" });
+    if (simulator === "xplane") return xplaneTaste ? t("bilder.kopf.aufnahme_xplane", { taste: xplaneTaste }) : t("bilder.kopf.aufnahme_neutral");
+    if (simulator === "msfs") return kuerzelText ? t("bilder.kopf.aufnahme", { kuerzel: kuerzelText, sim: "MSFS" }) : null;
     return null;
   })();
 
@@ -188,7 +191,6 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const meldung = z.meldung;
   const neueImFlug = aktiverFlug ? alle.filter((e) => flugSchluessel(e) === aktiverFlug.pirep_id).length : 0;
   const serverAus = zus.nichtErreichbar;
-  const kuerzelText = liste?.tastenkuerzel?.text ?? null;
 
   return (
     <div className="bt" style={{ ["--tile-w" as string]: `${GRENZEN.tile_breite_px}px` }}>
@@ -214,7 +216,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             {Symbol.suche}
             <input type="search" value={filter.suche} placeholder={t("bilder.kopf.suche_platzhalter")} aria-label={t("bilder.liste.suche_label")} onChange={(ev) => { setFilter({ ...filter, suche: ev.target.value }); setSeite(0); }} />
           </label>}
-          {!erststart && aufnahmeText && <span className="bt-chip" title={t("bilder.kopf.aufnahme_titel_xplane")}>{Symbol.kamera}{aufnahmeText}</span>}
+          {!erststart && aufnahmeText && <span className="bt-chip">{Symbol.kamera}{aufnahmeText}</span>}
           {liste?.aufnahme_verfuegbar && simulator === "msfs" && (
             <Button size="sm" variant="primary" iconLeft={Symbol.kamera} onClick={() => void bilderStore.aufnehmen()}>{t("bilder.kopf.aufnehmen")}</Button>
           )}
@@ -250,7 +252,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
               ? t("bilder.band.beobachtet", { sim: simKind ? simulatorName(simKind) : "", pfad: beobachtete.map((q) => q.pfad.split(/[\\/]/).slice(-2).join("/")).join(", ") }).replace(/^ · /, "")
               : t("bilder.band.keine_quelle")}
             {" · "}
-            {simulator === "msfs" && kuerzelText ? t("bilder.band.taste_msfs", { kuerzel: kuerzelText }) : t("bilder.band.taste_xplane")}
+            {simulator === "msfs" ? (kuerzelText ? t("bilder.band.taste_msfs", { kuerzel: kuerzelText }) : t("bilder.band.taste_msfs_neutral")) : t("bilder.band.taste_xplane")}
           </span>
           <span className="bt-band__rechts">{t("bilder.band.neue", { count: neueImFlug })}</span>
         </div>
@@ -261,12 +263,12 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
         </div>
       )}
 
-      {quellenOffen && liste && <QuellenPanel liste={liste} vorschlaege={z.vorschlaege} store={bilderStore} onZu={() => setQuellenOffen(false)} />}
+      {quellenOffen && liste && <QuellenPanel liste={liste} vorschlaege={z.vorschlaege} store={bilderStore} simulator={simulator} yokeLernt={z.yokeLernt} onZu={() => setQuellenOffen(false)} />}
 
       {erststart ? (
         <div className="bt-erst">
           {einschaltenKarte && <EinschaltenKarte onEinschalten={() => void bilderStore.einschalten(true)} onSpaeter={() => setSpaeter(true)} />}
-          <WegeKarte kuerzel={kuerzelText} altbestand={altbestandAnzahl} arbeitet={z.arbeitet} onAlt={() => void bilderStore.altbestandAnzeigen().then(() => bilderStore.altbestandUebernehmen())} />
+          <WegeKarte xplaneTaste={xplaneTaste} msfsTaste={kuerzelText} altbestand={altbestandAnzahl} arbeitet={z.arbeitet} onAlt={() => void bilderStore.altbestandAnzeigen().then(() => bilderStore.altbestandUebernehmen())} />
         </div>
       ) : (
         <div className="bt-haupt">
@@ -281,6 +283,15 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
                 <Button disabled={z.arbeitet} onClick={() => void bilderStore.altbestandAnzeigen().then(() => bilderStore.altbestandUebernehmen())}>
                   {z.arbeitet ? t("bilder.altbestand.laeuft") : t("bilder.altbestand.uebernehmen")}
                 </Button>
+              </div>
+            )}
+            {aufraeumen.length > 0 && (
+              <div className="bt-alt">
+                <div className="bt-alt__text">
+                  <span>{t("bilder.aufraeumen.titel", { n: aufraeumen.length, tage: GRENZEN.aufraeumen_tage })}</span>
+                  <span>{t("bilder.aufraeumen.text", { platz: bytesText(aufraeumen.reduce((sum, e) => sum + e.belegt_bytes, 0), sprache) })}</span>
+                </div>
+                <Button onClick={() => setAuswahl(new Set(aufraeumen.map((e) => e.id)))}>{t("bilder.aufraeumen.auswaehlen")}</Button>
               </div>
             )}
             <GruppenAnsicht

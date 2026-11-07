@@ -34,6 +34,8 @@ export interface BilderZustand {
   /** Altbestand wurde angefordert (Liste in `liste.altbestand`). */
   altbestandGeladen: boolean;
   altbestandErgebnis: Zaehlung | null;
+  /** Die Yoke-Taste wird gerade gelernt (Hinweis „Jetzt den Knopf druecken“). */
+  yokeLernt: boolean;
   meldung: { art: "ok" | "fehler"; schluessel: string; werte?: Record<string, string | number> } | null;
 }
 
@@ -49,7 +51,7 @@ export interface StoreAbhaengig {
 
 const ANFANG: BilderZustand = {
   geladen: false, liste: null, fehler: null, sendestand: {}, kontingent: null, uebernahme: leereZaehlung(), arbeitet: false,
-  eingeschaltet: null, geoStufe: TABELLE.geoVorgabe, vorschlaege: null, altbestandGeladen: false, altbestandErgebnis: null, meldung: null,
+  eingeschaltet: null, geoStufe: TABELLE.geoVorgabe, vorschlaege: null, altbestandGeladen: false, altbestandErgebnis: null, yokeLernt: false, meldung: null,
 };
 
 export function erzeugeStore(dep: StoreAbhaengig) {
@@ -159,13 +161,14 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     return [...alt, v];
   }
 
-  async function vermerkeSchreiben(ids: string[], sendungId: string, stufe: GeoStufe, stand: Sendestand): Promise<void> {
+  /** `stufe` nur beim Senden selbst; Nachfragen und Fortsetzen behalten die Stufe des vorhandenen Vermerks. */
+  async function vermerkeSchreiben(ids: string[], sendungId: string, stufe: GeoStufe | null, stand: Sendestand): Promise<void> {
     for (const id of ids) {
       const e = z.liste?.eintraege.find((x) => x.id === id);
       const s = stand[id];
       if (!e || !s) continue;
       const status: SendeVermerk["status"] = s.phase === "gesendet" ? "gesendet" : s.phase === "fehlgeschlagen" ? "abgelehnt" : "angenommen";
-      await sidecarAendern(e, (sc) => ({ ...sc, sendungen: vermerk(e, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe, status, code: s.code }) }));
+      await sidecarAendern(e, (sc) => ({ ...sc, sendungen: vermerk(e, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe ?? sc.sendungen.find((x) => x.sendung_id === sendungId)?.geo_stufe ?? z.geoStufe, status, code: s.code }) }));
     }
   }
 
@@ -217,7 +220,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
         const ids = offen.map((o) => o.id);
         const stand = antwortEinarbeiten(z.sendestand, ids, sendungId, a);
         setzen({ sendestand: stand, kontingent: a.kontingent ?? z.kontingent });
-        await vermerkeSchreiben(ids, sendungId, "verdeckt", stand);
+        await vermerkeSchreiben(ids, sendungId, null, stand);
       } catch {
         return;
       }
@@ -236,7 +239,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
         const a = await api.status(sendungId);
         const stand = antwortEinarbeiten(z.sendestand, ids, sendungId, a);
         setzen({ sendestand: stand, kontingent: a.kontingent ?? z.kontingent });
-        await vermerkeSchreiben(ids, sendungId, "verdeckt", stand);
+        await vermerkeSchreiben(ids, sendungId, null, stand);
         void nachfragen(sendungId);
       } catch { /* kein Netz: bleibt „unterwegs“, naechster Start fragt wieder */ }
     }
@@ -273,6 +276,25 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       if (!r.abgebrochen) await laden();
     } catch (e) {
       if (fehlerCode(e) !== "huelle_abgelehnt") meldung("fehler", "bilder.meldung.quellen_fehler", { fehler: fehlerText(e) });
+    }
+  }
+  async function yokeFestlegen(): Promise<void> {
+    if (z.yokeLernt) return;
+    setzen({ yokeLernt: true });
+    try {
+      const t = await api.tasteLernen();
+      if (t === null) { meldung("fehler", "bilder.meldung.yoke_abgelaufen"); return; }
+      await api.quellenSetzen({ yokeTaste: t });
+      await laden();
+    } catch (e) {
+      if (fehlerCode(e) !== "huelle_abgelehnt") meldung("fehler", "bilder.meldung.yoke_fehler", { fehler: fehlerText(e) });
+    } finally {
+      setzen({ yokeLernt: false });
+    }
+  }
+  async function yokeEntfernen(): Promise<void> {
+    try { await api.quellenSetzen({ yokeTaste: null }); await laden(); } catch (e) {
+      if (fehlerCode(e) !== "huelle_abgelehnt") meldung("fehler", "bilder.meldung.yoke_fehler", { fehler: fehlerText(e) });
     }
   }
   async function tastenkuerzelSetzen(text: string): Promise<void> {
@@ -348,7 +370,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     lesen: () => z,
     abonnieren: (h: () => void) => { hoerer.add(h); return () => { hoerer.delete(h); }; },
     laden, pilotSetzen, einschalten, geoStufeSetzen, eingang, textSetzen, favoritSetzen, flugSetzen, loeschen, senden, fortsetzen, kontingentHolen,
-    quellenFinden, quelleUmschalten, quelleEntfernen, quelleVorschlagen, ordnerWaehlen, tastenkuerzelSetzen, hinzufuegen,
+    yokeFestlegen, yokeEntfernen, quellenFinden, quelleUmschalten, quelleEntfernen, quelleVorschlagen, ordnerWaehlen, tastenkuerzelSetzen, hinzufuegen,
     altbestandAnzeigen, altbestandUebernehmen, aufnehmen, ordnerZeigen, exportieren,
     meldungLoeschen: () => setzen({ meldung: null }),
   };

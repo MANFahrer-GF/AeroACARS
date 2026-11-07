@@ -5174,7 +5174,7 @@
       "hinzufuegen": "Aggiungi immagine",
       "ziehen": "Trascina qui i file",
       "aufnahme_msfs": "Scatto con {{kuerzel}} (MSFS)",
-      "aufnahme_xplane": "Scatto con il tasto del simulatore (X-Plane)",
+      "aufnahme_xplane": "Scatto: {{taste}} in X-Plane",
       "aufnahme_aus": "Lo scatto con scorciatoia non è possibile su questo sistema. Usa le fonti delle immagini.",
       "nur_im_flug": "Scatto e importazione funzionano solo durante un volo AeroACARS.",
       "zusammenfassung": "{{bilder}} immagini · {{fluege}} voli · {{platz}} su questo computer",
@@ -5183,8 +5183,7 @@
       "quellen": "Fonti delle immagini",
       "suche_platzhalter": "Volo, aeroporto, data …",
       "aufnahme": "Scatto: {{kuerzel}} in {{sim}}",
-      "aufnahme_taste_sim": "Scatto: tasto in X-Plane",
-      "aufnahme_titel_xplane": "In X-Plane scatta il tasto del simulatore; in MSFS qui c’è il pulsante “Scatta”"
+      "aufnahme_neutral": "Tasto screenshot del simulatore"
     },
     "quellen": {
       "titel": "Fonti delle immagini",
@@ -5220,7 +5219,18 @@
       "kuerzel": "Scorciatoia per lo scatto",
       "kuerzel_setzen": "Salva",
       "kuerzel_fehler": "Scorciatoia non registrata: {{fehler}}",
-      "bestaetigung": "Confermi ogni modifica alle fonti in una finestra del programma."
+      "bestaetigung": "Confermi ogni modifica alle fonti in una finestra del programma.",
+      "eigene_werkzeuge": "I tuoi strumenti funzionano con qualsiasi tasto, non appena la loro cartella è inserita qui come fonte di immagini.",
+      "yoke": {
+        "titel": "Pulsante di yoke o joystick",
+        "belegt": "{{geraet}}, pulsante {{knopf}}",
+        "unbelegt": "nessun pulsante assegnato",
+        "festlegen": "Imposta pulsante yoke",
+        "lernt": "Premi ora il pulsante …",
+        "hinweis_lernen": "Premi ora il pulsante, hai 10 secondi.",
+        "entfernen": "Rimuovi",
+        "xplane_hinweis": "In X-Plane assegni il pulsante a sim/operation/screenshot nelle impostazioni del joystick del simulatore."
+      }
     },
     "altbestand": {
       "titel": "{{n}} immagini più vecchie trovate",
@@ -5379,7 +5389,9 @@
       "keine_spur": "Traccia di questo volo non disponibile",
       "laedt": "Caricamento della mappa",
       "bild_marke": "Immagine {{name}}",
-      "nicht_verfuegbar": "La mappa non può essere disegnata qui (manca WebGL)."
+      "nicht_verfuegbar": "La mappa non può essere disegnata qui (manca WebGL).",
+      "flach": "Mappa piatta",
+      "kugel_lang": "Mappa come globo"
     },
     "senden": {
       "titel": "Invia immagini",
@@ -5494,7 +5506,9 @@
       "ordner_fehler": "Impossibile aprire la cartella: {{fehler}}",
       "geladen_fehler": "Impossibile caricare le immagini: {{fehler}}",
       "schliessen": "Chiudi messaggio",
-      "export_fehler": "Esportazione non possibile: {{fehler}}"
+      "export_fehler": "Esportazione non possibile: {{fehler}}",
+      "yoke_abgelaufen": "Nessun pulsante premuto, tempo scaduto.",
+      "yoke_fehler": "Pulsante yoke non salvato: {{fehler}}"
     },
     "band": {
       "aktiv": "Volo attivo",
@@ -5504,7 +5518,8 @@
       "keine_quelle": "Nessuna fonte di immagini osservata",
       "taste_xplane": "Il tasto del simulatore mette qui l’immagine",
       "taste_msfs": "{{kuerzel}} cattura la finestra del simulatore",
-      "neue": "{{count}} nuove immagini in questo volo"
+      "neue": "{{count}} nuove immagini in questo volo",
+      "taste_msfs_neutral": "Il tasto di scatto AeroACARS cattura la finestra del simulatore"
     },
     "gruppe": {
       "heute": "Oggi, {{datum}}",
@@ -5539,10 +5554,16 @@
         "msfs1": "Premi {{taste}}, anche con il simulatore in primo piano.",
         "msfs2": "AeroACARS cattura la finestra del simulatore e la mette qui.",
         "msfs3": "Il tasto si può cambiare.",
-        "ziehen": "Oppure trascina qui un’immagine da un’altra cartella. Viene assegnata al volo in corso o archiviata sotto “Senza volo”."
-      },
-      "shift": "Maiusc",
-      "leertaste": "Spazio"
+        "ziehen": "Oppure trascina qui un’immagine da un’altra cartella. Viene assegnata al volo in corso o archiviata sotto “Senza volo”.",
+        "xplane1_neutral": "Premi il tasto screenshot del simulatore, come al solito.",
+        "msfs1_neutral": "Premi il tasto di scatto AeroACARS, anche con il simulatore in primo piano.",
+        "eigene_werkzeuge": "I tuoi strumenti come Game Bar, NVIDIA o Steam funzionano con qualsiasi tasto, non appena la loro cartella è inserita come fonte di immagini."
+      }
+    },
+    "aufraeumen": {
+      "titel": "{{n}} immagini inviate hanno più di {{tage}} giorni",
+      "text": "Occupano {{platz}}. Selezionale e spostale nel cestino se ti serve spazio.",
+      "auswaehlen": "Seleziona per pulizia"
     }
   }
 }

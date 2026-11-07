@@ -7,6 +7,9 @@ const h = vi.hoisted(() => ({
   aufrufe: [] as Array<{ cmd: string; args?: Record<string, unknown> }>,
   zeilen: [] as unknown[],
   einwilligung: true,
+  taste: null as null | { simulator: string; text: string },
+  kuerzel: null as null | { text: string; verfuegbar: boolean; aktiv: boolean; fehler: null },
+  lerne: null as unknown,
   senden: null as null | ((a: Record<string, unknown>) => unknown),
   hoerer: new Map<string, Array<(e: { payload: unknown }) => void>>(),
 }));
@@ -19,12 +22,14 @@ vi.mock("../../lib/ipc", () => ({
     h.aufrufe.push({ cmd, args });
     switch (cmd) {
       case "bilder_liste":
-        return { eintraege: h.zeilen, belegt_bytes: 5_000_000, quellen: [], tastenkuerzel: null, aufnahme_verfuegbar: false, funde: [], altbestand: [] };
+        return { eintraege: h.zeilen, belegt_bytes: 5_000_000, quellen: [], tastenkuerzel: h.kuerzel, aufnahme_verfuegbar: false, simulator_taste: h.taste, funde: [], altbestand: [] };
       case "ui_state_get_all": return h.einwilligung ? { "aeroacars.bilder.einwilligung.17": "1" } : {};
       case "bild_lesen": return new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
       case "bild_senden": return h.senden ? h.senden(args!) : { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
       case "bild_status": return { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
       case "bild_schreiben": return undefined;
+      case "bild_taste_lernen": return h.lerne;
+      case "bild_quellen_setzen": return { quellen: [], abgebrochen: false };
       case "flight_get_track": return [];
       default: return undefined;
     }
@@ -37,7 +42,7 @@ import { bilderStore } from "./bilderStore";
 import { eintrag } from "./logik/testhilfen";
 
 beforeEach(() => {
-  h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null;
+  h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null; h.taste = null; h.kuerzel = null; h.lerne = null;
   URL.createObjectURL = vi.fn(() => "blob:x");
   URL.revokeObjectURL = vi.fn();
   void bilderStore.pilotSetzen(null);
@@ -188,5 +193,68 @@ describe("Bilder-Tab", () => {
     const a = h.aufrufe.find((x) => x.cmd === "bild_loeschen")!.args as { gruppe: string; id: string; bezeichnung: string };
     expect(a.id).toMatch(/^r\d$/);
     expect(a.bezeichnung).toMatch(/^Bild vom/);
+  });
+
+  it("Aufnahmehinweis: Taste aus den Einstellungen des Piloten, sonst neutral, nie eine feste Taste", async () => {
+    vorbereiten();
+    h.taste = { simulator: "xplane", text: "F12" };
+    const { unmount } = zeigen();
+    expect(await screen.findByText("Aufnahme: F12 in X-Plane")).toBeInTheDocument();
+    unmount();
+    h.taste = null;
+    zeigen();
+    expect(await screen.findByText("Screenshot-Taste des Simulators")).toBeInTheDocument();
+    expect(screen.queryByText(/Shift/)).toBeNull();
+  });
+
+  it("MSFS nennt die AeroACARS-Taste aus tastenkuerzel.text", async () => {
+    vorbereiten();
+    h.kuerzel = { text: "Alt+P", verfuegbar: true, aktiv: true, fehler: null };
+    render(<BilderTab pilotId="17" pilotName="T" aktiverFlug={null} simKind="msfs2024" onKarteOeffnen={vi.fn()} />);
+    expect(await screen.findByText("Aufnahme: Alt+P in MSFS")).toBeInTheDocument();
+  });
+
+  it("erster Start: Taste neutral ohne Meldung, Hinweis auf eigene Werkzeuge mit Bildquelle", async () => {
+    h.einwilligung = false;
+    zeigen(false);
+    expect(await screen.findByText(/Eigene Werkzeuge wie Game Bar, NVIDIA oder Steam funktionieren mit jeder Taste/)).toBeInTheDocument();
+    expect(screen.getByText("Im Simulator die Screenshot-Taste drücken, wie gewohnt.")).toBeInTheDocument();
+  });
+
+  it("Platz je Flug steht im Gruppenkopf (P-11.31)", async () => {
+    vorbereiten();
+    zeigen();
+    await screen.findByText("läuft gerade");
+    // zwei Bilder zu je 1 000 000 Byte im Flug P1: 2 Bilder = 1,9 MB (Gruppenkopf), 1 Bild = 977 KB (Ohne Flug)
+    expect(screen.getByText("1,9 MB")).toBeInTheDocument();
+    expect(screen.getByText("977 KB")).toBeInTheDocument();
+  });
+
+  it("Yoke-Taste: nur bei yoke_verfuegbar, Anzeige der Belegung, Festlegen ruft bild_taste_lernen und speichert mit yokeTaste", async () => {
+    vorbereiten();
+    h.kuerzel = { text: "Alt+P", verfuegbar: true, aktiv: true, fehler: null, yoke_verfuegbar: true, yoke: null } as never;
+    h.lerne = { geraet_name: "Honeycomb Alpha", hersteller_id: 1, produkt_id: 2, knopf: 7 };
+    render(<BilderTab pilotId="17" pilotName="T" aktiverFlug={null} simKind="msfs2024" onKarteOeffnen={vi.fn()} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Bildquellen" }));
+    expect(await screen.findByText("kein Knopf belegt")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Yoke-Taste festlegen" }));
+    await waitFor(() => expect(h.aufrufe.some((a) => a.cmd === "bild_taste_lernen")).toBe(true));
+    await waitFor(() => expect(h.aufrufe.find((a) => a.cmd === "bild_quellen_setzen" && a.args?.yokeTaste)).toBeTruthy());
+  });
+
+  it("Yoke-Bereich fehlt ohne yoke_verfuegbar; X-Plane bekommt den Hinweis auf sim/operation/screenshot", async () => {
+    vorbereiten();
+    h.kuerzel = { text: "Alt+P", verfuegbar: true, aktiv: true, fehler: null } as never;
+    zeigen();
+    await userEvent.click(await screen.findByRole("button", { name: "Bildquellen" }));
+    expect(screen.queryByRole("button", { name: "Yoke-Taste festlegen" })).toBeNull();
+    expect(await screen.findByText(/sim\/operation\/screenshot/)).toBeInTheDocument();
+  });
+
+  it("Aufraeumen: alte gesendete Bilder lassen sich zum Aufraeumen auswaehlen", async () => {
+    h.zeilen = [eintrag({ id: "alt", meta: { zeit_utc: "2020-01-01T10:00:00Z", pirep_id: "P1" }, sidecar: { sendungen: [{ sendung_id: "s", zeit_ms: 1, geo_stufe: "verdeckt", status: "gesendet" }] } }), eintrag({ id: "neu", meta: { pirep_id: "P1", zeit_utc: new Date().toISOString() } })];
+    zeigen();
+    await userEvent.click(await screen.findByRole("button", { name: "Zum Aufräumen auswählen" }));
+    expect(await screen.findByText("1 ausgewählt")).toBeInTheDocument();
   });
 });

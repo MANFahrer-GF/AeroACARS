@@ -5174,7 +5174,7 @@
       "hinzufuegen": "Bild hinzufügen",
       "ziehen": "Dateien hierher ziehen",
       "aufnahme_msfs": "Aufnahme mit {{kuerzel}} (MSFS)",
-      "aufnahme_xplane": "Aufnahme mit der Taste des Simulators (X-Plane)",
+      "aufnahme_xplane": "Aufnahme: {{taste}} in X-Plane",
       "aufnahme_aus": "Aufnahme per Tastenkürzel ist auf diesem System nicht möglich. Nutze die Bildquellen.",
       "nur_im_flug": "Aufnahme und Übernahme laufen nur in einem AeroACARS-Flug.",
       "zusammenfassung": "{{bilder}} Bilder · {{fluege}} Flüge · {{platz}} auf diesem Rechner",
@@ -5183,8 +5183,7 @@
       "quellen": "Bildquellen",
       "suche_platzhalter": "Flug, Flughafen, Datum …",
       "aufnahme": "Aufnahme: {{kuerzel}} in {{sim}}",
-      "aufnahme_taste_sim": "Aufnahme: Taste in X-Plane",
-      "aufnahme_titel_xplane": "In X-Plane löst die Simulator-Taste aus; bei MSFS steht hier der Knopf „Aufnehmen“"
+      "aufnahme_neutral": "Screenshot-Taste des Simulators"
     },
     "quellen": {
       "titel": "Bildquellen",
@@ -5220,7 +5219,18 @@
       "kuerzel": "Tastenkürzel für die Aufnahme",
       "kuerzel_setzen": "Speichern",
       "kuerzel_fehler": "Kürzel nicht angemeldet: {{fehler}}",
-      "bestaetigung": "Jede Änderung der Quellen bestätigst du in einem Fenster des Programms."
+      "bestaetigung": "Jede Änderung der Quellen bestätigst du in einem Fenster des Programms.",
+      "eigene_werkzeuge": "Eigene Werkzeuge funktionieren mit jeder Taste, sobald ihr Ordner hier als Bildquelle eingetragen ist.",
+      "yoke": {
+        "titel": "Yoke- oder Joystick-Knopf",
+        "belegt": "{{geraet}}, Knopf {{knopf}}",
+        "unbelegt": "kein Knopf belegt",
+        "festlegen": "Yoke-Taste festlegen",
+        "lernt": "Jetzt den Knopf drücken …",
+        "hinweis_lernen": "Jetzt den Knopf drücken, du hast 10 Sekunden.",
+        "entfernen": "Entfernen",
+        "xplane_hinweis": "In X-Plane belegst du den Knopf in den Joystick-Einstellungen des Simulators mit sim/operation/screenshot."
+      }
     },
     "altbestand": {
       "titel": "{{n}} ältere Bilder gefunden",
@@ -5379,7 +5389,9 @@
       "keine_spur": "Spur dieses Flugs nicht verfügbar",
       "laedt": "Karte wird geladen",
       "bild_marke": "Bild {{name}}",
-      "nicht_verfuegbar": "Die Karte kann hier nicht gezeichnet werden (WebGL fehlt)."
+      "nicht_verfuegbar": "Die Karte kann hier nicht gezeichnet werden (WebGL fehlt).",
+      "flach": "Flache Karte",
+      "kugel_lang": "Karte als Weltkugel"
     },
     "senden": {
       "titel": "Bilder senden",
@@ -5494,7 +5506,9 @@
       "ordner_fehler": "Ordner nicht zu öffnen: {{fehler}}",
       "geladen_fehler": "Bilder nicht ladbar: {{fehler}}",
       "schliessen": "Meldung schließen",
-      "export_fehler": "Export nicht möglich: {{fehler}}"
+      "export_fehler": "Export nicht möglich: {{fehler}}",
+      "yoke_abgelaufen": "Kein Knopf gedrückt, die Zeit ist abgelaufen.",
+      "yoke_fehler": "Yoke-Taste nicht gespeichert: {{fehler}}"
     },
     "band": {
       "aktiv": "Flug aktiv",
@@ -5504,7 +5518,8 @@
       "keine_quelle": "Keine Bildquelle beobachtet",
       "taste_xplane": "Die Taste des Simulators legt das Bild hier ab",
       "taste_msfs": "{{kuerzel}} nimmt das Simulator-Fenster auf",
-      "neue": "{{count}} neue Bilder in diesem Flug"
+      "neue": "{{count}} neue Bilder in diesem Flug",
+      "taste_msfs_neutral": "Die AeroACARS-Aufnahmetaste nimmt das Simulator-Fenster auf"
     },
     "gruppe": {
       "heute": "Heute, {{datum}}",
@@ -5539,10 +5554,16 @@
         "msfs1": "{{taste}} drücken, auch wenn der Simulator im Vordergrund ist.",
         "msfs2": "AeroACARS nimmt das Simulator-Fenster auf und legt es hier ab.",
         "msfs3": "Die Taste lässt sich ändern.",
-        "ziehen": "Oder ein Bild aus einem anderen Ordner hierher ziehen. Es wird dem laufenden Flug zugeordnet oder unter „Ohne Flug“ abgelegt."
-      },
-      "shift": "Shift",
-      "leertaste": "Leertaste"
+        "ziehen": "Oder ein Bild aus einem anderen Ordner hierher ziehen. Es wird dem laufenden Flug zugeordnet oder unter „Ohne Flug“ abgelegt.",
+        "xplane1_neutral": "Im Simulator die Screenshot-Taste drücken, wie gewohnt.",
+        "msfs1_neutral": "Die AeroACARS-Aufnahmetaste drücken, auch wenn der Simulator im Vordergrund ist.",
+        "eigene_werkzeuge": "Eigene Werkzeuge wie Game Bar, NVIDIA oder Steam funktionieren mit jeder Taste, sobald ihr Ordner als Bildquelle eingetragen ist."
+      }
+    },
+    "aufraeumen": {
+      "titel": "{{n}} gesendete Bilder sind älter als {{tage}} Tage",
+      "text": "Sie belegen {{platz}}. Wähle sie aus und lege sie in den Papierkorb, wenn du den Platz brauchst.",
+      "auswaehlen": "Zum Aufräumen auswählen"
     }
   }
 }

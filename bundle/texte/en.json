@@ -5174,7 +5174,7 @@
       "hinzufuegen": "Add picture",
       "ziehen": "Drag files here",
       "aufnahme_msfs": "Capture with {{kuerzel}} (MSFS)",
-      "aufnahme_xplane": "Capture with the simulator’s own key (X-Plane)",
+      "aufnahme_xplane": "Capture: {{taste}} in X-Plane",
       "aufnahme_aus": "Capturing with a shortcut is not possible on this system. Use the picture sources.",
       "nur_im_flug": "Capturing and importing only work during an AeroACARS flight.",
       "zusammenfassung": "{{bilder}} pictures · {{fluege}} flights · {{platz}} on this computer",
@@ -5183,8 +5183,7 @@
       "quellen": "Picture sources",
       "suche_platzhalter": "Flight, airport, date …",
       "aufnahme": "Capture: {{kuerzel}} in {{sim}}",
-      "aufnahme_taste_sim": "Capture: key in X-Plane",
-      "aufnahme_titel_xplane": "In X-Plane the simulator’s own key captures; in MSFS this is where the “Capture” button is"
+      "aufnahme_neutral": "Simulator screenshot key"
     },
     "quellen": {
       "titel": "Picture sources",
@@ -5220,7 +5219,18 @@
       "kuerzel": "Shortcut for capturing",
       "kuerzel_setzen": "Save",
       "kuerzel_fehler": "Shortcut not registered: {{fehler}}",
-      "bestaetigung": "You confirm every change to the sources in a window of the program."
+      "bestaetigung": "You confirm every change to the sources in a window of the program.",
+      "eigene_werkzeuge": "Your own tools work with any key as soon as their folder is added here as a picture source.",
+      "yoke": {
+        "titel": "Yoke or joystick button",
+        "belegt": "{{geraet}}, button {{knopf}}",
+        "unbelegt": "no button assigned",
+        "festlegen": "Set yoke button",
+        "lernt": "Press the button now …",
+        "hinweis_lernen": "Press the button now, you have 10 seconds.",
+        "entfernen": "Remove",
+        "xplane_hinweis": "In X-Plane you assign the button to sim/operation/screenshot in the simulator’s joystick settings."
+      }
     },
     "altbestand": {
       "titel": "{{n}} older pictures found",
@@ -5379,7 +5389,9 @@
       "keine_spur": "Track of this flight not available",
       "laedt": "Loading map",
       "bild_marke": "Picture {{name}}",
-      "nicht_verfuegbar": "The map cannot be drawn here (WebGL missing)."
+      "nicht_verfuegbar": "The map cannot be drawn here (WebGL missing).",
+      "flach": "Flat map",
+      "kugel_lang": "Map as globe"
     },
     "senden": {
       "titel": "Send pictures",
@@ -5494,7 +5506,9 @@
       "ordner_fehler": "Cannot open the folder: {{fehler}}",
       "geladen_fehler": "Pictures could not be loaded: {{fehler}}",
       "schliessen": "Close message",
-      "export_fehler": "Cannot export: {{fehler}}"
+      "export_fehler": "Cannot export: {{fehler}}",
+      "yoke_abgelaufen": "No button pressed, time ran out.",
+      "yoke_fehler": "Yoke button not saved: {{fehler}}"
     },
     "band": {
       "aktiv": "Flight active",
@@ -5504,7 +5518,8 @@
       "keine_quelle": "No picture source being watched",
       "taste_xplane": "The simulator’s own key puts the picture here",
       "taste_msfs": "{{kuerzel}} captures the simulator window",
-      "neue": "{{count}} new pictures in this flight"
+      "neue": "{{count}} new pictures in this flight",
+      "taste_msfs_neutral": "The AeroACARS capture key captures the simulator window"
     },
     "gruppe": {
       "heute": "Today, {{datum}}",
@@ -5539,10 +5554,16 @@
         "msfs1": "Press {{taste}}, even while the simulator is in front.",
         "msfs2": "AeroACARS captures the simulator window and puts it here.",
         "msfs3": "The key can be changed.",
-        "ziehen": "Or drag a picture from another folder here. It is assigned to the running flight or filed under “No flight”."
-      },
-      "shift": "Shift",
-      "leertaste": "Space"
+        "ziehen": "Or drag a picture from another folder here. It is assigned to the running flight or filed under “No flight”.",
+        "xplane1_neutral": "Press the simulator’s screenshot key, as usual.",
+        "msfs1_neutral": "Press the AeroACARS capture key, even while the simulator is in front.",
+        "eigene_werkzeuge": "Your own tools such as Game Bar, NVIDIA or Steam work with any key as soon as their folder is added as a picture source."
+      }
+    },
+    "aufraeumen": {
+      "titel": "{{n}} sent pictures are older than {{tage}} days",
+      "text": "They use {{platz}}. Select them and move them to the trash if you need the space.",
+      "auswaehlen": "Select for clean-up"
     }
   }
 }

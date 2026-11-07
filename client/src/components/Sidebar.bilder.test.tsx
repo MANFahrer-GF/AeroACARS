@@ -1,7 +1,9 @@
 // Reiter „Bilder“ nur mit gemeldeter Faehigkeit `bilder-1` (P-11.33): sonst kein Eintrag, und ein von
 // aussen gesetzter Reiter faellt auf „Flug“ zurueck.
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+const h = vi.hoisted(() => ({ tauri: true }));
+vi.mock("../lib/ipc", () => ({ get isTauri() { return h.tauri; } }));
 import { Sidebar, erlaubterReiter, reiterAusSeite } from "./Sidebar";
 
 const basis = {
@@ -16,6 +18,12 @@ describe("Reiter Bilder", () => {
     expect(screen.queryByRole("button", { name: "Bilder" })).toBeNull();
     rerender(<Sidebar {...basis} bilderAn={true} />);
     expect(screen.getByRole("button", { name: "Bilder" })).toBeInTheDocument();
+  });
+  it("im LAN-Browser (kein Programm) gibt es den Reiter nicht, auch mit gemeldeter Faehigkeit", () => {
+    h.tauri = false;
+    render(<Sidebar {...basis} bilderAn={true} />);
+    expect(screen.queryByRole("button", { name: "Bilder" })).toBeNull();
+    h.tauri = true;
   });
   it("tab=bilder faellt ohne Faehigkeit auf Flug zurueck, mit ihr bleibt er", () => {
     expect(erlaubterReiter("bilder", false)).toBe("flug");

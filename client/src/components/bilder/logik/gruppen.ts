@@ -110,6 +110,12 @@ export function seitenweise(gruppen: Gruppe[], seite: number, proSeite: number):
   return { gruppen: ergebnis, seite: s, seiten, kacheln: flach.length };
 }
 
+/** Aufraeumen (P-11.31): gesendete Bilder, die aelter als `tage` Tage sind. Loeschen bleibt eine Handlung des Piloten (Auswahl, Papierkorb). */
+export function gesendeteAelterAls(eintraege: Eintrag[], tage: number, jetzt: number): Eintrag[] {
+  const grenze = jetzt - tage * 86400000;
+  return eintraege.filter((e) => anzeigbar(e) && (e.sidecar?.sendungen ?? []).some((s) => s.status === "gesendet") && bildZeit(e) < grenze);
+}
+
 /** Belegter Platz je Flug (alle Teile auf der Platte). */
 export function platzJeFlug(eintraege: Eintrag[]): Map<string, number> {
   const m = new Map<string, number>();

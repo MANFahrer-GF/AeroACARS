@@ -346,7 +346,8 @@ function App() {
   const [bilderAn, setBilderAn] = useState(false);
   const [bildFokus, setBildFokus] = useState<BildFokus | null>(null);
   useEffect(() => {
-    if (status.kind !== "loggedIn") return;
+    // Die LAN-Bruecke reicht keinen Bilder-Befehl durch: im Browser (Tablet) gibt es Reiter und Uebernahme nicht
+    if (status.kind !== "loggedIn" || !isTauri) return;
     let weg = false;
     void invoke<{ faehigkeiten?: unknown }>("paket_info")
       .then((i) => { if (!weg) setBilderAn(Array.isArray(i?.faehigkeiten) && i.faehigkeiten.includes("bilder-1")); })

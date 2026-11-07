@@ -4,8 +4,8 @@
 // `aufrufZiel`); hier steht nie ein eigener shell_request. Oberste Argumente camelCase,
 // Felder verschachtelter Objekte snake_case.
 import { invoke } from "../../../lib/ipc";
-import { fundLesen, kontextLesen, listeLesen, quelleLesen } from "./normalisieren";
-import type { BildMeta, BilderListe, Fundort, Kontext, QuellenStatus, SendeAntwort, Sidecar, Quelle, Kontingent } from "./typen";
+import { fundLesen, kontextLesen, listeLesen, quelleLesen, yokeLesen } from "./normalisieren";
+import type { YokeTaste, BildMeta, BilderListe, Fundort, Kontext, QuellenStatus, SendeAntwort, Sidecar, Quelle, Kontingent } from "./typen";
 
 /** Ergebnis von `bild_uebernehmen` / Eintrag in `bild_hinzufuegen`. */
 export interface Uebernahme {
@@ -28,7 +28,7 @@ export interface BildAktionen {
   liste(mitAltbestand?: boolean): Promise<BilderListe>;
   lesen(pfad: string): Promise<Uint8Array>;
   quellenFinden(): Promise<Fundort[]>;
-  quellenSetzen(a: { quellen?: Quelle[]; tastenkuerzel?: string; ordnerWaehlen?: boolean }): Promise<{ quellen: QuellenStatus[]; abgebrochen: boolean }>;
+  quellenSetzen(a: { quellen?: Quelle[]; tastenkuerzel?: string; ordnerWaehlen?: boolean; yokeTaste?: YokeTaste | null }): Promise<{ quellen: QuellenStatus[]; abgebrochen: boolean }>;
   uebernehmen(a: { fundId: string; modus: "kopieren" | "verschieben" | "verwerfen"; gruppe: string }): Promise<Uebernahme | null>;
   schreiben(a: {
     gruppe: string; id: string; jpegBase64?: string; vorschauBase64?: string; sidecar?: Sidecar | Partial<Sidecar>; sha256?: string; quelleEntfernen?: boolean;
@@ -38,6 +38,8 @@ export interface BildAktionen {
   senden(a: { sendungId: string; text: string; geoStufe: string; bilder: Array<{ gruppe: string; bild_id: string; meta: BildMeta }> }): Promise<SendeAntwort>;
   status(sendungId?: string): Promise<SendeAntwort>;
   aufnehmen(): Promise<void>;
+  /** Wartet bis zu 10 s auf einen Knopfdruck; null = Zeit abgelaufen. */
+  tasteLernen(): Promise<YokeTaste | null>;
   ordnerZeigen(a: { gruppe: string; id: string }): Promise<void>;
   exportieren(a: { zipBase64: string; dateiname: string }): Promise<string | null>;
   kontext(a: { zeiten?: string[]; pirepId?: string; mitSpur?: boolean }): Promise<Kontext>;
@@ -97,6 +99,9 @@ export const bildAktionen: BildAktionen = {
   },
   async status(sendungId) {
     return sendeAntwortLesen(await invoke("bild_status", sendungId ? { sendungId } : {}));
+  },
+  async tasteLernen() {
+    return yokeLesen(await invoke("bild_taste_lernen", {}));
   },
   async aufnehmen() {
     await invoke("bild_aufnehmen", {});

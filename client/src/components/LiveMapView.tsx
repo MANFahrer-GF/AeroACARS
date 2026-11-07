@@ -2657,8 +2657,8 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         </div>
         <div className="aa-livemap__header-right">
           <div className="bt-karte__umschalter bt-karte__umschalter--kopf" role="group" aria-label={t("bilder.karte.umschalter")}>
-            <button type="button" aria-pressed={!bildKarte.kugel} onClick={() => bildKarte.setKugel(false)}>{t("bilder.karte.karte")}</button>
-            <button type="button" aria-pressed={bildKarte.kugel} onClick={() => bildKarte.setKugel(true)}>{t("bilder.karte.kugel")}</button>
+            <button type="button" aria-pressed={!bildKarte.kugel} aria-label={t("bilder.karte.flach")} onClick={() => bildKarte.setKugel(false)}>{t("bilder.karte.karte")}</button>
+            <button type="button" aria-pressed={bildKarte.kugel} aria-label={t("bilder.karte.kugel_lang")} onClick={() => bildKarte.setKugel(true)}>{t("bilder.karte.kugel")}</button>
           </div>
           <span className="aa-livemap__header-vacount">{t("livemap.header_va_count", { count: vaVisible.length })}</span>
           <span className="aa-livemap__header-clock">

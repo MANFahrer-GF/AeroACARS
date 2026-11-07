@@ -42,27 +42,28 @@ export function EinschaltenKarte({ onEinschalten, onSpaeter }: { onEinschalten: 
   );
 }
 
-export function WegeKarte({ kuerzel, altbestand, onAlt, arbeitet }: { kuerzel: string | null; altbestand: number; onAlt: () => void; arbeitet: boolean }) {
+export function WegeKarte({ xplaneTaste, msfsTaste, altbestand, onAlt, arbeitet }: { xplaneTaste: string | null; msfsTaste: string | null; altbestand: number; onAlt: () => void; arbeitet: boolean }) {
   const { t } = useTranslation();
   const schritt = (n: number, inhalt: ReactNode) => <div className="bt-schritt"><span className="bt-schritt__n">{n}</span>{inhalt}</div>;
-  const msfsTasten = (kuerzel ?? "").split("+").map((s) => s.trim()).filter(Boolean);
+  const tasten = (z: string | null) => (z ?? "").split("+").map((x) => x.trim()).filter(Boolean);
   return (
     <section className="bt-karte-box" aria-labelledby="bt-h-wie">
       <h2 id="bt-h-wie">{t("bilder.erststart.karte2.titel")}</h2>
       <div className="bt-erst__spalten">
         <div className="bt-erst__spalte">
           <span className="bt-label">{t("bilder.erststart.karte2.xplane")}</span>
-          {schritt(1, <MitTasten schluessel="bilder.erststart.karte2.xplane1" tasten={[t("bilder.erststart.shift"), t("bilder.erststart.leertaste")]} />)}
+          {schritt(1, xplaneTaste ? <MitTasten schluessel="bilder.erststart.karte2.xplane1" tasten={tasten(xplaneTaste)} /> : <span>{t("bilder.erststart.karte2.xplane1_neutral")}</span>)}
           {schritt(2, <span>{t("bilder.erststart.karte2.xplane2")}</span>)}
           {schritt(3, <span>{t("bilder.erststart.karte2.xplane3")}</span>)}
         </div>
         <div className="bt-erst__spalte">
           <span className="bt-label">{t("bilder.erststart.karte2.msfs")}</span>
-          {schritt(1, <MitTasten schluessel="bilder.erststart.karte2.msfs1" tasten={msfsTasten.length ? msfsTasten : ["–"]} />)}
+          {schritt(1, msfsTaste ? <MitTasten schluessel="bilder.erststart.karte2.msfs1" tasten={tasten(msfsTaste)} /> : <span>{t("bilder.erststart.karte2.msfs1_neutral")}</span>)}
           {schritt(2, <span>{t("bilder.erststart.karte2.msfs2")}</span>)}
           {schritt(3, <span>{t("bilder.erststart.karte2.msfs3")}</span>)}
         </div>
       </div>
+      <div className="bt-hinweis">{t("bilder.erststart.karte2.eigene_werkzeuge")}</div>
       <div className="bt-ziehen">{Symbol.hochladen}<span>{t("bilder.erststart.karte2.ziehen")}</span></div>
       {altbestand > 0 && (
         <div className="bt-alt">

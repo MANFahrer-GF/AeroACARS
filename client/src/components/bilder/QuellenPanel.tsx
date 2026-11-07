@@ -7,7 +7,7 @@ import { Button } from "../ui";
 import type { BilderStore } from "./logik/store";
 import type { BilderListe, Fundort } from "./logik/typen";
 
-export function QuellenPanel({ liste, vorschlaege, store, onZu }: { liste: BilderListe; vorschlaege: Fundort[] | null; store: BilderStore; onZu: () => void }) {
+export function QuellenPanel({ liste, vorschlaege, store, onZu, simulator, yokeLernt }: { liste: BilderListe; vorschlaege: Fundort[] | null; store: BilderStore; onZu: () => void; simulator: "xplane" | "msfs" | null; yokeLernt: boolean }) {
   const { t } = useTranslation();
   const [kuerzel, setKuerzel] = useState(liste.tastenkuerzel?.text ?? "");
   useEffect(() => { setKuerzel(liste.tastenkuerzel?.text ?? ""); }, [liste.tastenkuerzel?.text]);
@@ -28,6 +28,7 @@ export function QuellenPanel({ liste, vorschlaege, store, onZu }: { liste: Bilde
         <Button size="sm" variant="quiet" onClick={onZu} style={{ marginLeft: "auto" }}>{t("bilder.quellen.zu")}</Button>
       </div>
       <div className="bt-hinweis">{t("bilder.quellen.bestaetigung")}</div>
+      <div className="bt-hinweis">{t("bilder.quellen.eigene_werkzeuge")}</div>
       <div role="status" className="bt-notiz">
         {xplane.length > 0
           ? t(beobachtet.length > 0 ? "bilder.quellen.xplane_gefunden" : "bilder.quellen.xplane_nicht_beobachtet", { pfade: (beobachtet.length > 0 ? beobachtet : xplane).map((q) => q.pfad).join(", ") })
@@ -68,6 +69,20 @@ export function QuellenPanel({ liste, vorschlaege, store, onZu }: { liste: Bilde
           ))}
         </div>
       )}
+      {liste.tastenkuerzel?.yoke_verfuegbar && (
+        <div className="bt-quellen__kuerzel">
+          <span>{t("bilder.quellen.yoke.titel")}:</span>
+          <span className="bt-acars">
+            {liste.tastenkuerzel.yoke
+              ? t("bilder.quellen.yoke.belegt", { geraet: liste.tastenkuerzel.yoke.geraet_name || `${liste.tastenkuerzel.yoke.hersteller_id}:${liste.tastenkuerzel.yoke.produkt_id}`, knopf: liste.tastenkuerzel.yoke.knopf })
+              : t("bilder.quellen.yoke.unbelegt")}
+          </span>
+          <Button size="sm" disabled={yokeLernt} onClick={() => void store.yokeFestlegen()}>{yokeLernt ? t("bilder.quellen.yoke.lernt") : t("bilder.quellen.yoke.festlegen")}</Button>
+          {liste.tastenkuerzel.yoke && <Button size="sm" variant="danger" disabled={yokeLernt} onClick={() => void store.yokeEntfernen()}>{t("bilder.quellen.yoke.entfernen")}</Button>}
+          <span role="status" className="bt-hinweis">{yokeLernt ? t("bilder.quellen.yoke.hinweis_lernen") : ""}</span>
+        </div>
+      )}
+      {simulator === "xplane" && <div className="bt-hinweis">{t("bilder.quellen.yoke.xplane_hinweis")}</div>}
       {liste.tastenkuerzel?.verfuegbar && (
         <div className="bt-quellen__kuerzel">
           <label htmlFor="bt-kuerzel">{t("bilder.quellen.kuerzel")}</label>

@@ -118,8 +118,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
     case "bilder_liste":
       return {
         eintraege: zeilen.map(eintrag), belegt_bytes: zeilen.length * 1_832_000,
-        quellen: quellen(), tastenkuerzel: { text: q.get("sim") === "msfs" ? "Strg+Shift+S" : "Strg+Shift+S", verfuegbar: q.get("sim") === "msfs", aktiv: true, fehler: null },
-        aufnahme_verfuegbar: q.get("sim") === "msfs", funde: eingangFund(),
+        quellen: quellen(), tastenkuerzel: { text: "Strg+Shift+S", verfuegbar: q.get("sim") === "msfs", aktiv: true, fehler: null, yoke_verfuegbar: q.get("sim") === "msfs", yoke: w.__yoke ?? null },
+        aufnahme_verfuegbar: q.get("sim") === "msfs", simulator_taste: q.get("taste") === "keine" ? null : { simulator: "xplane", text: "Shift+Leertaste" }, funde: eingangFund(),
         altbestand: a.mitAltbestand ? Array.from({ length: fall === "leer" ? 142 : 0 }, (_, i) => ({ pfad: `/x/${i}.png`, dateizeit_ms: Date.now() - i * 1000, groesse: 1, format: "png", quelle: "/x" })) : [],
       } as T;
     case "bild_lesen": {
@@ -158,9 +158,10 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
       { pfad: "/Users/t/X-Plane 12/Output/screenshots", art: "xplane_standard", simulator: "xplane", existiert: true, vorschlag_modus: "verschieben" },
       { pfad: "C:\\Users\\t\\Videos\\Captures", art: "captures", simulator: "msfs", existiert: true, vorschlag_modus: "kopieren" },
     ] as T;
-    case "bild_quellen_setzen": return { quellen: quellen(), abgebrochen: !!a.ordnerWaehlen } as T;
+    case "bild_quellen_setzen": if ("yokeTaste" in a) w.__yoke = a.yokeTaste; return { quellen: quellen(), abgebrochen: !!a.ordnerWaehlen } as T;
     case "bild_loeschen": zeilen = zeilen.filter((r) => r.id !== a.id); return [] as T;
     case "bild_hinzufuegen": return { abgebrochen: true, ergebnisse: [] } as T;
+    case "bild_taste_lernen": return fall === "yokezeit" ? null : { geraet_name: "Honeycomb Alpha Yoke", hersteller_id: 1, produkt_id: 2, knopf: 7 } as T;
     case "bild_ordner_zeigen": case "bild_export": case "bild_aufnehmen": return undefined as T;
     case "flight_get_track": return Array.from({ length: 40 }, (_, i) => [8.56 + i * 0.012, 50.03 - i * 0.065]) as T;
     case "bild_kontext": return { staende: [], spur: [] } as T;

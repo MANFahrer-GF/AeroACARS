@@ -12,7 +12,7 @@ function aufbau(o: { funde?: ReturnType<typeof fund>[]; eintraege?: Eintrag[]; s
   const log: string[] = [];
   const geschrieben: Array<Parameters<BildAktionen["schreiben"]>[0]> = [];
   let imGang = 0, maxGleichzeitig = 0, schreibVersuche = 0;
-  const liste: BilderListe = { eintraege: o.eintraege ?? [], belegt_bytes: 0, quellen: [], tastenkuerzel: null, aufnahme_verfuegbar: false, funde: o.funde ?? [], altbestand: [] };
+  const liste: BilderListe = { eintraege: o.eintraege ?? [], belegt_bytes: 0, quellen: [], tastenkuerzel: null, aufnahme_verfuegbar: false, simulator_taste: null, funde: o.funde ?? [], altbestand: [] };
   const api = {
     liste: async () => liste,
     lesen: async () => {

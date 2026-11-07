@@ -306,7 +306,7 @@ export function Sidebar({
         <Item icon={I.logbook} label={t("tabs.logbook")} active={tab === "logbook"} onClick={() => setTab("logbook")} />
         <Item icon={I.landing} label={t("tabs.landing")} active={tab === "landing"} onClick={() => setTab("landing")} />
         <Item icon={I.bordbuch} label={t("tabs.bordbuch")} active={tab === "bordbuch"} onClick={() => setTab("bordbuch")} />
-        {bilderAn && (
+        {isTauri && bilderAn && (
           <Item icon={I.bilder} label={t("tabs.bilder")} active={tab === "bilder"} onClick={() => setTab("bilder")} />
         )}
         {/* Kabinenansagen (Beta): nur auf dem Sim-PC und nur eingeschaltet —

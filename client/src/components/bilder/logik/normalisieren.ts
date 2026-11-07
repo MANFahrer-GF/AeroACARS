@@ -114,6 +114,13 @@ export function quelleLesen(roh: unknown): QuellenStatus | null {
 const liste = <T>(v: unknown, f: (x: unknown) => T | null): T[] =>
   (Array.isArray(v) ? v : []).map(f).filter((x): x is T => x !== null);
 
+export function yokeLesen(roh: unknown): import("./typen").YokeTaste | null {
+  const y = obj(roh);
+  const id = (v: unknown): number | string | null => (typeof v === "number" || (typeof v === "string" && v !== "") ? v : null);
+  const knopf = id(y.knopf), hersteller = id(y.hersteller_id), produkt = id(y.produkt_id);
+  return knopf !== null && hersteller !== null && produkt !== null ? { geraet_name: text(y.geraet_name) ?? "", hersteller_id: hersteller, produkt_id: produkt, knopf } : null;
+}
+
 export function listeLesen(roh: unknown): BilderListe {
   const r = obj(roh);
   const k = obj(r.tastenkuerzel);
@@ -122,9 +129,10 @@ export function listeLesen(roh: unknown): BilderListe {
     belegt_bytes: feld(r.belegt_bytes),
     quellen: liste(r.quellen, quelleLesen),
     tastenkuerzel: text(k.text)
-      ? { text: String(k.text), verfuegbar: k.verfuegbar === true, aktiv: k.aktiv === true, fehler: text(k.fehler) }
+      ? { text: String(k.text), verfuegbar: k.verfuegbar === true, aktiv: k.aktiv === true, fehler: text(k.fehler), yoke_verfuegbar: k.yoke_verfuegbar === true, yoke: yokeLesen(k.yoke) }
       : null,
     aufnahme_verfuegbar: r.aufnahme_verfuegbar === true,
+    simulator_taste: text(obj(r.simulator_taste).text) ? { simulator: text(obj(r.simulator_taste).simulator) ?? "", text: String(obj(r.simulator_taste).text) } : null,
     funde: liste(r.funde, fundLesen),
     altbestand: liste(r.altbestand, altLesen),
   };

@@ -10,7 +10,7 @@ function aufbau(o: { senden?: BildAktionen["senden"]; status?: BildAktionen["sta
   const gespeichert: Record<string, string> = { ...(o.gespeichert ?? {}) };
   const aufrufe: unknown[] = [];
   const api = {
-    liste: async (): Promise<BilderListe> => ({ eintraege, belegt_bytes: 0, quellen: [], tastenkuerzel: null, aufnahme_verfuegbar: false, funde: [], altbestand: [] }),
+    liste: async (): Promise<BilderListe> => ({ eintraege, belegt_bytes: 0, quellen: [], tastenkuerzel: null, aufnahme_verfuegbar: false, simulator_taste: null, funde: [], altbestand: [] }),
     schreiben: async (a: { id: string; sidecar: never }) => {
       geschrieben.push(a as never);
       const e = eintraege.find((x) => x.id === a.id)!;
@@ -27,7 +27,7 @@ function aufbau(o: { senden?: BildAktionen["senden"]; status?: BildAktionen["sta
     zustandSchreiben: async (k, v) => { if (v === null) delete gespeichert[k]; else gespeichert[k] = v; },
     neueId: () => `S${++n}`, warten: async () => undefined, jetzt: () => 1000,
   });
-  return { store, geschrieben, gespeichert, aufrufe };
+  return { store, geschrieben, gespeichert, aufrufe, api };
 }
 
 describe("Store: Senden", () => {
@@ -99,6 +99,40 @@ describe("Store: Senden", () => {
     await t.store.senden(["a"], "", "verdeckt");
     await new Promise((r) => setTimeout(r, 20));
     expect(t.store.lesen().sendestand.a.phase).toBe("gesendet");
+  });
+});
+
+describe("Store: Stufe im Vermerk und Yoke-Taste", () => {
+  it("die Status-Nachfrage aendert die Geo-Stufe der Sendung nicht (Vorgabe im Store ist eine andere)", async () => {
+    let n = 0;
+    const t = aufbau({
+      senden: async (a) => ({ bilder: a.bilder.map((b) => ({ bild_id: b.bild_id, status: "angenommen" as const })), kontingent: null }),
+      status: async () => ({ bilder: [{ bild_id: "a", status: ++n < 1 ? "angenommen" : "gesendet" }], kontingent: null }),
+    });
+    await t.store.laden();
+    await t.store.senden(["a"], "", "sichtbar");
+    await new Promise((r) => setTimeout(r, 20));
+    await t.store.geoStufeSetzen("aus");
+    const v = t.store.lesen().liste!.eintraege.find((e) => e.id === "a")!.sidecar!.sendungen!;
+    expect(v).toHaveLength(1);
+    expect(v[0]).toMatchObject({ status: "gesendet", geo_stufe: "sichtbar" });
+  });
+  it("Yoke-Taste: lernen, speichern mit yokeTaste, Zeit abgelaufen meldet, entfernen mit null", async () => {
+    const t = aufbau();
+    const gesetzt: unknown[] = [];
+    let gelernt: unknown = { geraet_name: "Yoke", hersteller_id: 1, produkt_id: 2, knopf: 7 };
+    t.api.tasteLernen = async () => gelernt as never;
+    t.api.quellenSetzen = async (a) => { gesetzt.push(a); return { quellen: [], abgebrochen: false }; };
+    await t.store.laden();
+    await t.store.yokeFestlegen();
+    expect(gesetzt).toEqual([{ yokeTaste: { geraet_name: "Yoke", hersteller_id: 1, produkt_id: 2, knopf: 7 } }]);
+    expect(t.store.lesen().yokeLernt).toBe(false);
+    gelernt = null;
+    await t.store.yokeFestlegen();
+    expect(gesetzt).toHaveLength(1);
+    expect(t.store.lesen().meldung?.schluessel).toBe("bilder.meldung.yoke_abgelaufen");
+    await t.store.yokeEntfernen();
+    expect(gesetzt.at(-1)).toEqual({ yokeTaste: null });
   });
 });
 
