@@ -1,8 +1,8 @@
 // Bilder-Tab (N-13): Aufbau nach dem Entwurf „AeroACARS Bilder-Tab“. Alles hier ist
 // Paketinhalt; das Programm liefert nur die Befehle der Faehigkeit `bilder-1`.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "../../lib/ipc";
+import { isTauri, listen } from "../../lib/ipc";
 import { Button, Modal, Notice } from "../ui";
 import { DetailSpalte } from "./DetailSpalte";
 import { EinschaltenKarte, WegeKarte } from "./Erststart";
@@ -12,13 +12,13 @@ import { SendenDialog } from "./SendenDialog";
 import { Symbol } from "./Symbole";
 import { bilderStore, useBilder } from "./bilderStore";
 import { bildUrlVergessen } from "./useBildUrl";
-import { bereinigen, umschalten } from "./logik/auswahl";
+import { bereinigen, offenNachHaken, umschalten } from "./logik/auswahl";
 import { GRENZEN } from "./logik/grenzen";
 import { KEIN_FILTER, anzeigbar, bytesText, filtern, flugSchluessel, gesendeteAelterAls, gruppieren, seitenweise, type Filter, type Gruppe } from "./logik/gruppen";
 import { reichtKontingent } from "./logik/kontingent";
 import { simulatorName, streckeText, kurzZeit } from "./logik/metaFormat";
 import type { FlugAuswahl } from "./logik/store";
-import { bildZeitIso } from "./Kacheln";
+import { bildZeitIso, useKachelTexte } from "./Kacheln";
 import { zusammenfassung } from "./logik/sendezustand";
 import "./bilder.css";
 
@@ -39,10 +39,13 @@ export interface BilderTabProps {
 }
 
 const BILD_ENDUNGEN = /\.(jpe?g|png)$/i;
+/** Ab dieser Breite steht das Detail als feste Spalte, darunter als Blatt ueber der Liste (bilder.css). */
+const breiteSpalte = () => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 1181px)").matches;
 
 export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOeffnen }: BilderTabProps) {
   const simulator: "xplane" | "msfs" | null = simKind?.startsWith("xplane") ? "xplane" : simKind?.startsWith("msfs") ? "msfs" : null;
   const { t, i18n } = useTranslation();
+  const { phase: phaseText } = useKachelTexte();
   const sprache = i18n.resolvedLanguage ?? i18n.language ?? "de";
   const z = useBilder();
   const liste = z.liste;
@@ -78,7 +81,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     if (anfangGeoeffnet || alle.length === 0) return;
     setAnfangGeoeffnet(true);
     // In schmalen Fenstern liegt die Detailspalte als Blatt ueber der Liste: nicht ungefragt aufschlagen
-    if (typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 1181px)").matches) return;
+    if (!breiteSpalte()) return;
     const neueste = [...alle].sort((a, b) => (bildZeitIso(b) ?? "").localeCompare(bildZeitIso(a) ?? ""));
     const imFlug = aktiverFlug ? neueste.find((e) => flugSchluessel(e) === aktiverFlug.pirep_id) : undefined;
     setOffenId((imFlug ?? neueste[0]).id);
@@ -116,11 +119,26 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const gewaehlteBilder = alle.filter((e) => auswahl.has(e.id));
   const zus = zusammenfassung(z.sendestand, auswahl);
 
-  const toggle = useCallback((id: string) => setAuswahl((a) => umschalten(a, id)), []);
+  const toggle = useCallback((id: string) => {
+    const neu = umschalten(auswahl, id);
+    setAuswahl(neu);
+    setOffenId((o) => offenNachHaken(o, id, neu, breiteSpalte()));
+  }, [auswahl]);
 
-  /** Hauptaktion der Detailspalte: das offene Bild, oder die Auswahl, wenn das offene Bild dazugehoert. */
+  // „Senden“ in der Detailspalte waehlt das Bild nur fuer den Dialog: ein Abbruch laesst keinen Haken zurueck.
+  const nurFuerDialog = useRef(false);
+  function sendenAbbrechen() {
+    setSendenOffen(false);
+    setEinschaltenOffen(false);
+    if (nurFuerDialog.current) setAuswahl(new Set());
+    nurFuerDialog.current = false;
+  }
+
+  /** Hauptaktion der Detailspalte: das offene Bild. Mit Auswahl sendet nur die Leiste. */
   function sendenDetail() {
-    sendenMit(auswahl.size > 0 && (!offenId || auswahl.has(offenId)) ? [...auswahl] : offenId ? [offenId] : [...auswahl]);
+    if (!offenId) return;
+    nurFuerDialog.current = true;
+    sendenMit([offenId]);
   }
 
   function sendenMit(ziel: string[]) {
@@ -141,7 +159,8 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
 
   async function senden_ausfuehren(text: string, stufe: typeof z.geoStufe) {
     setSendenOffen(false);
-    const rest = await bilderStore.senden([...auswahl], text, stufe);
+    nurFuerDialog.current = false;
+    const rest = await bilderStore.senden([...auswahl], text, stufe, phaseText);
     setAuswahl(rest);
   }
 
@@ -184,9 +203,17 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
     return null;
   })();
 
+  // Sobald ein Flug laeuft, ist die Meldung von vorher falsch.
+  const keinFlugVeraltet = !!aktiverFlug && z.meldung?.schluessel === "bilder.meldung.kein_flug";
+  useEffect(() => { if (keinFlugVeraltet) bilderStore.meldungLoeschen(); }, [keinFlugVeraltet]);
+
   const erststart = alle.length === 0;
-  const zahlen = { bilder: alle.length, fluege: fluegeAnzahl, platz: bytesText(liste?.belegt_bytes ?? 0, sprache) };
-  const altbestandAnzahl = Math.max(liste?.altbestand.length ?? 0, (liste?.quellen ?? []).reduce((sum, q) => sum + q.altbestand, 0));
+  const zahlen = {
+    bilder: alle.length === 1 ? t("bilder.kopf.anzahl_bild_eins") : t("bilder.kopf.anzahl_bilder", { n: alle.length }),
+    fluege: fluegeAnzahl === 1 ? t("bilder.kopf.anzahl_flug_eins") : t("bilder.kopf.anzahl_fluege", { n: fluegeAnzahl }),
+    platz: bytesText(liste?.belegt_bytes ?? 0, sprache),
+  };
+  const altbestandAnzahl = isTauri ? Math.max(liste?.altbestand.length ?? 0, (liste?.quellen ?? []).reduce((sum, q) => sum + q.altbestand, 0)) : 0;
   const einschaltenKarte = z.eingeschaltet === false && !spaeter;
   const beobachtete = (liste?.quellen ?? []).filter((q) => q.aktiv && q.beobachtet);
   const meldung = z.meldung;
@@ -219,9 +246,9 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
           {liste?.aufnahme_verfuegbar && simulator === "msfs" && (
             <Button size="sm" variant="primary" iconLeft={Symbol.kamera} onClick={() => void bilderStore.aufnehmen()}>{t("bilder.kopf.aufnehmen")}</Button>
           )}
-          <Button size="sm" iconLeft={Symbol.plus} aria-label={t("bilder.kopf.hinzufuegen")} title={t("bilder.kopf.hinzufuegen")} onClick={() => void bilderStore.hinzufuegen()} />
-          <Button size="sm" iconLeft={Symbol.regler} aria-label={t("bilder.kopf.quellen")} title={t("bilder.kopf.quellen")} aria-pressed={quellenOffen} onClick={() => { setQuellenOffen((o) => !o); if (!quellenOffen) void bilderStore.quellenFinden(); }} />
-          {!erststart && <Button size="sm" iconLeft={Symbol.ordner} aria-label={t("bilder.kopf.ordner_zeigen")} title={t("bilder.kopf.ordner_zeigen")} disabled={!offen} onClick={() => void ordnerZeigen()} />}
+          {isTauri && <Button size="sm" iconLeft={Symbol.plus} aria-label={t("bilder.kopf.hinzufuegen")} title={t("bilder.kopf.hinzufuegen")} onClick={() => void bilderStore.hinzufuegen()} />}
+          {isTauri && <Button size="sm" iconLeft={Symbol.regler} aria-label={t("bilder.kopf.quellen")} title={t("bilder.kopf.quellen")} aria-pressed={quellenOffen} onClick={() => { setQuellenOffen((o) => !o); if (!quellenOffen) void bilderStore.quellenFinden(); }} />}
+          {isTauri && !erststart && <Button size="sm" iconLeft={Symbol.ordner} aria-label={t("bilder.kopf.ordner_zeigen")} title={t("bilder.kopf.ordner_zeigen")} disabled={!offen} onClick={() => void ordnerZeigen()} />}
         </div>
       </header>
 
@@ -253,7 +280,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             {" · "}
             {simulator === "msfs" ? (kuerzelText ? t("bilder.band.taste_msfs", { kuerzel: kuerzelText }) : t("bilder.band.taste_msfs_neutral")) : xplaneTaste ? t("bilder.band.taste_xplane_bekannt", { taste: xplaneTaste }) : t("bilder.band.taste_xplane")}
           </span>
-          <span className="bt-band__rechts">{t("bilder.band.neue", { count: neueImFlug })}</span>
+          <span className="bt-band__rechts">{neueImFlug === 1 ? t("bilder.band.neue_eins") : t("bilder.band.neue", { count: neueImFlug })}</span>
         </div>
       ) : (
         <div className="bt-band bt-band--ruhe">
@@ -277,7 +304,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
               <div className="bt-alt">
                 <div className="bt-alt__text">
                   <span>{t("bilder.altbestand.titel", { n: altbestandAnzahl })}</span>
-                  <span>{z.altbestandErgebnis ? t("bilder.altbestand.ergebnis", { mit: z.altbestandErgebnis.mit_daten, flug: z.altbestandErgebnis.nur_flug, ohne: z.altbestandErgebnis.ohne_daten }) : t("bilder.altbestand.text")}</span>
+                  {z.altbestandErgebnis && <span>{t("bilder.altbestand.ergebnis", { mit: z.altbestandErgebnis.mit_daten, flug: z.altbestandErgebnis.nur_flug, ohne: z.altbestandErgebnis.ohne_daten })}</span>}
                 </div>
                 <Button disabled={z.arbeitet} onClick={() => void bilderStore.altbestandAnzeigen().then(() => bilderStore.altbestandUebernehmen())}>
                   {z.arbeitet ? t("bilder.altbestand.laeuft") : t("bilder.altbestand.uebernehmen")}
@@ -290,7 +317,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
                   <span>{t("bilder.aufraeumen.titel", { n: aufraeumen.length, tage: GRENZEN.aufraeumen_tage })}</span>
                   <span>{t("bilder.aufraeumen.text", { platz: bytesText(aufraeumen.reduce((sum, e) => sum + e.belegt_bytes, 0), sprache) })}</span>
                 </div>
-                <Button onClick={() => setAuswahl(new Set(aufraeumen.map((e) => e.id)))}>{t("bilder.aufraeumen.auswaehlen")}</Button>
+                <Button onClick={() => { const neu = new Set(aufraeumen.map((e) => e.id)); setAuswahl(neu); setOffenId((o) => offenNachHaken(o, aufraeumen[aufraeumen.length - 1].id, neu, breiteSpalte())); }}>{t("bilder.aufraeumen.auswaehlen")}</Button>
               </div>
             )}
             <GruppenAnsicht
@@ -322,8 +349,9 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             gewaehlt={offen ? auswahl.has(offen.id) : false}
             flugBilder={flugBilder}
             aktivePirep={aktiverFlug?.pirep_id ?? null}
-            sendbar={true}
+            mitSenden={auswahl.size === 0}
             onSenden={sendenDetail}
+            mitOrdner={isTauri}
             onOrdner={() => void ordnerZeigen()}
             onLoeschen={() => offen && void loeschen([offen.id])}
             onText={(text) => offen && void bilderStore.textSetzen(offen, text)}
@@ -352,7 +380,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
           {zus.sendet > 0 && <span className="bt-leiste__info">{t("bilder.leiste.sendet", { count: zus.sendet })}</span>}
           <div className="bt-leiste__rechts">
             <Button variant="quiet" onClick={() => setAuswahl(new Set())}>{t("bilder.leiste.aufheben")}</Button>
-            <Button iconLeft={Symbol.herunter} onClick={() => void bilderStore.exportieren([...auswahl])}>{t("bilder.leiste.exportieren")}</Button>
+            {isTauri && <Button iconLeft={Symbol.herunter} onClick={() => void bilderStore.exportieren([...auswahl])}>{t("bilder.leiste.exportieren")}</Button>}
             <Button variant="danger" iconLeft={Symbol.papierkorb} onClick={() => void loeschen([...auswahl])}>{t("bilder.leiste.papierkorb")}</Button>
             <Button variant="primary" iconLeft={Symbol.senden} disabled={auswahl.size > GRENZEN.max_je_sendung || !reichtKontingent(auswahl.size, z.kontingent)} onClick={() => sendenMit([...auswahl])}>
               {auswahl.size === 1 ? t("bilder.leiste.senden_eins") : t("bilder.leiste.senden_n", { count: auswahl.size })}
@@ -371,11 +399,11 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
         serverAus={serverAus}
         onGeo={(s) => void bilderStore.geoStufeSetzen(s)}
         onSenden={(text, stufe) => void senden_ausfuehren(text, stufe)}
-        onZu={() => setSendenOffen(false)}
+        onZu={sendenAbbrechen}
       />
 
-      <Modal open={einschaltenOffen} onClose={() => setEinschaltenOffen(false)} size="md" title={t("bilder.einschalten.titel")} closeLabel={t("bilder.senden.zu")}>
-        <EinschaltenKarte onEinschalten={() => { void bilderStore.einschalten(true).then(() => { setEinschaltenOffen(false); setSendenOffen(true); void bilderStore.kontingentHolen(); }); }} onSpaeter={() => setEinschaltenOffen(false)} />
+      <Modal open={einschaltenOffen} onClose={sendenAbbrechen} size="md" title={t("bilder.einschalten.titel")} closeLabel={t("bilder.senden.zu")}>
+        <EinschaltenKarte onEinschalten={() => { void bilderStore.einschalten(true).then(() => { setEinschaltenOffen(false); setSendenOffen(true); void bilderStore.kontingentHolen(); }); }} onSpaeter={sendenAbbrechen} />
       </Modal>
 
       <Modal

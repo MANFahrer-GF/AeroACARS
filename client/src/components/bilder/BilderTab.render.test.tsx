@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   aufrufe: [] as Array<{ cmd: string; args?: Record<string, unknown> }>,
   zeilen: [] as unknown[],
   einwilligung: true,
+  tablet: false,
   taste: null as null | { simulator: string; text: string },
   kuerzel: null as null | { text: string; verfuegbar: boolean; aktiv: boolean; fehler: null },
   lerne: null as unknown,
@@ -17,7 +18,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/ipc", () => ({
-  isTauri: true,
+  get isTauri() { return !h.tablet; },
   formatIpcError: (e: unknown) => String(e),
   listen: async (n: string, cb: (e: { payload: unknown }) => void) => { h.hoerer.set(n, [...(h.hoerer.get(n) ?? []), cb]); return () => undefined; },
   invoke: async (cmd: string, args?: Record<string, unknown>) => {
@@ -44,6 +45,7 @@ import { bilderStore } from "./bilderStore";
 import { eintrag } from "./logik/testhilfen";
 
 beforeEach(() => {
+  h.tablet = false;
   h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null; h.taste = null; h.kuerzel = null; h.lerne = null;
   URL.createObjectURL = vi.fn(() => "blob:x");
   URL.revokeObjectURL = vi.fn();
@@ -64,7 +66,7 @@ describe("Bilder-Tab", () => {
     expect(screen.getByText(/Ohne Flug ·/)).toBeInTheDocument();
     expect(screen.getAllByText("Keine Flugdaten").length).toBeGreaterThan(0);
     expect(screen.queryByText(/^0 ft$/)).toBeNull();
-    expect(screen.getByText(/3 Bilder · 1 Flüge/)).toBeInTheDocument();
+    expect(screen.getByText(/3 Bilder · 1 Flug ·/)).toBeInTheDocument();
   });
 
   it("Auswahl-Checkbox ist vom Oeffnen getrennt (Gegenprobe: Oeffnen waehlt nicht aus)", async () => {
@@ -91,8 +93,7 @@ describe("Bilder-Tab", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("So erscheint die Nachricht")).toBeInTheDocument();
     expect(within(dialog).getByRole("radio", { name: /Verdeckt/ })).toBeChecked();
-    expect(within(dialog).getByText(/Geo-Daten verdeckt/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Diese Stunde noch 9 von 12/)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/Geo-Daten verdeckt/)).toHaveLength(2);
     await userEvent.type(within(dialog).getByLabelText(/Text für alle 2 Bilder/), "Hallo");
     await userEvent.click(within(dialog).getByRole("button", { name: "Jetzt senden" }));
     await waitFor(() => expect(h.aufrufe.some((a) => a.cmd === "bild_senden")).toBe(true));
@@ -104,14 +105,52 @@ describe("Bilder-Tab", () => {
     await waitFor(() => expect(screen.queryByText(/^\d+ ausgewählt$/)).toBeNull());
   });
 
+  it("ein Haken zeigt dieses Bild rechts, Detail und Leiste reden vom selben Bild", async () => {
+    vorbereiten();
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    await waitFor(() => expect(document.querySelector(".bt-detail__zusatz")?.textContent).toBe("nicht ausgewählt"));
+    const frei = boxen.findIndex((_, i) => screen.getAllByRole("button", { name: /Details:/ })[i].getAttribute("aria-pressed") !== "true");
+    await userEvent.click(boxen[frei]);
+    await waitFor(() => expect(document.querySelector(".bt-detail__zusatz")?.textContent).toBe("ausgewählt"));
+    expect(screen.getAllByRole("button", { name: /Details:/ })[frei].getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("am Blatt ueber der Liste oeffnet ein Haken nichts, damit die naechsten Kacheln frei bleiben", async () => {
+    vorbereiten();
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    await userEvent.click(boxen[0]);
+    await userEvent.click(boxen[1]);
+    expect(await screen.findByText("2 ausgewählt")).toBeInTheDocument();
+    expect(document.querySelector(".bt-detail__zusatz")).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("Abbrechen nach „Senden“ in der Detailspalte laesst keinen Haken zurueck, die Leiste behaelt ihre Auswahl", async () => {
+    vorbereiten();
+    zeigen();
+    await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    await userEvent.click(within(document.querySelector(".bt-detail") as HTMLElement).getByRole("button", { name: /senden/i }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Abbrechen" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByText("1 ausgewählt")).toBeNull();
+    await userEvent.click((await screen.findAllByRole("checkbox", { name: /Auswählen/ }))[0]);
+    await userEvent.click(screen.getByRole("button", { name: "1 Bild senden" }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Abbrechen" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("1 ausgewählt")).toBeInTheDocument();
+  });
+
   it("die Leiste sendet die AUSWAHL, auch wenn ein anderes Bild in der Detailspalte offen ist", async () => {
     vorbereiten();
     h.senden = (a) => ({ bilder: (a.bilder as Array<{ bild_id: string }>).map((b) => ({ bild_id: b.bild_id, status: "gesendet" })), kontingent: null });
     zeigen();
     const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
-    const offen = screen.getAllByRole("button", { name: /Details:/ }).find((b) => b.getAttribute("aria-pressed") === "true");
-    expect(offen).toBeTruthy();
-    for (const b of [boxen[0], boxen[2]]) await userEvent.click(b); // das offene Bild (neuestes im Flug) ist NICHT dabei
+    for (const b of [boxen[0], boxen[2]]) await userEvent.click(b);
+    await userEvent.click(screen.getAllByRole("button", { name: /Details:/ })[1]); // ein Bild ohne Haken ansehen
+    expect(document.querySelector(".bt-detail__zusatz")?.textContent).toBe("nicht ausgewählt");
     await userEvent.click(screen.getByRole("button", { name: "2 Bilder senden" }));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Jetzt senden" }));
     await waitFor(() => expect(h.aufrufe.some((a) => a.cmd === "bild_senden")).toBe(true));
@@ -253,6 +292,28 @@ describe("Bilder-Tab", () => {
     expect(await screen.findByText(/sim\/operation\/screenshot/)).toBeInTheDocument();
   });
 
+  it("Kopf nennt die Zahlen ohne doppelte Woerter, ein einzeln gewaehltes Bild zeigt seine Details", async () => {
+    vorbereiten();
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    expect(document.querySelector(".bt-kopf__zahlen")?.textContent).not.toMatch(/Bilder Bilder|Flüge Flüge|Flug Flüge/);
+    await userEvent.click(screen.getByRole("button", { name: "Detail schließen", hidden: true }));
+    expect(await screen.findByText(/Wähle ein Bild/)).toBeInTheDocument();
+    await userEvent.click(boxen[0]);
+    await waitFor(() => expect(document.querySelector(".bt-detail__zusatz")?.textContent).toBe("ausgewählt"));
+    await userEvent.click(screen.getByRole("button", { name: "Detail schließen", hidden: true }));
+    expect(await screen.findByText(/Wähle ein Bild/)).toBeInTheDocument();
+    expect(screen.getByText("1 ausgewählt")).toBeInTheDocument();
+  });
+  it("am Tablet fehlen die Aufgaben des Sim-PCs: Hinzufuegen, Quellen, Ordner, Export", async () => {
+    vorbereiten();
+    h.tablet = true;
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    await userEvent.click(boxen[0]);
+    expect(screen.getByRole("button", { name: "1 Bild senden" })).toBeInTheDocument();
+    for (const name of [/Bild hinzufügen/, /Bildquellen/, /Ordner/, /Als ZIP/]) expect(screen.queryByRole("button", { name })).toBeNull();
+  });
   it("Aufraeumen: alte gesendete Bilder lassen sich zum Aufraeumen auswaehlen", async () => {
     h.zeilen = [eintrag({ id: "alt", meta: { zeit_utc: "2020-01-01T10:00:00Z", pirep_id: "P1" }, sidecar: { sendungen: [{ sendung_id: "s", zeit_ms: 1, geo_stufe: "verdeckt", status: "gesendet" }] } }), eintrag({ id: "neu", meta: { pirep_id: "P1", zeit_utc: new Date().toISOString() } })];
     zeigen();

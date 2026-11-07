@@ -64,7 +64,7 @@ export function bildKarteAnzeigen(root: HTMLElement, opt: AusschnittOptionen): A
     opt.beiFehler?.(e);
     return { aktualisieren() { /* keine Karte */ }, aufraeumen() { /* nichts aufzuraeumen */ } };
   }
-  map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+  // Die Kartenquelle steht unter dem Ausschnitt (BilderKarte): ein Hinweis im Bild deckt ihn im kleinen Feld zu.
   opt.beiKarte?.(map);
   if (opt.beiKlick) map.on("click", () => opt.beiKlick?.());
   return karteSteuern(map, opt);

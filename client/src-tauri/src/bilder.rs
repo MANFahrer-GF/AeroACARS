@@ -73,7 +73,7 @@
 //!   Bilderordner schon vorhandener Hash einer anderen Bild-id wird atomar mit Code `duplikat` abgelehnt (Meldung
 //!   `gruppe/id` des vorhandenen Bildes) und die Eingangskopie dieser id selbst weggeraeumt (keine Waise)
 //! * `bild_aufnehmen({gruppe?})` -> `{fund, methode}`; nur im aktiven Flug (`kein_flug`). Die Aufnahme laeuft in einem
-//!   eigenen Faden mit Zeitgrenze (5 s): antwortet der Simulator nicht, kommt `bild_io` und eine neue Aufnahme ist
+//!   eigenen Faden mit Zeitgrenze (8 s): antwortet der Simulator nicht, kommt `bild_io` und eine neue Aufnahme ist
 //!   sofort wieder moeglich; der haengende Faden bleibt liegen (hoechstens einer, solange er haengt kommt `bild_io`
 //!   "haengt noch"), ein zu spaetes Ergebnis wird verworfen
 //! * `bild_ordner_zeigen({gruppe, id})`: markiert das JPEG im Dateimanager (Finder, Explorer); nur ein vorhandenes
@@ -113,6 +113,17 @@
 //! Ereignisse (nur Wecksignale): `bild_quelle_neu` (der Eingangseintrag), `bild_aufgenommen`
 //! (`{ok, aufnahme}` oder `{ok:false, code, meldung}`, `code` z. B. `kein_flug`, `verdeckt`).
 //!
+//! Fensteraufnahme (Windows): zuerst Windows.Graphics.Capture (`aufnahme.methode: "wgc"`). Das nimmt das
+//! Simulatorfenster selbst auf, auch im Vollbild und wenn AeroACARS im Hintergrund liegt, und kopiert nichts
+//! von anderen Fenstern; das Bildmass kommt aus dem Rahmen. Nur wenn WGC nicht verfuegbar ist, scheitert oder
+//! ganz schwarz liefert, folgt der Rueckfall `printwindow`, dann `bitblt`. Der Code `verdeckt` gilt allein fuer
+//! diese Bildschirmkopie (liegt ein fremdes Fenster darueber), nie fuer `wgc`. Die Aufnahme bekommt hoechstens 8 s.
+//! Der Windows-Teil ist unter macOS nur uebersetzt (`cargo check --target x86_64-pc-windows-msvc`), nicht ausgefuehrt.
+//!
+//! Ton: Jede Aufnahme (Tastenkuerzel, Yoke-Knopf, `bild_aufnehmen`) meldet sich hoerbar, auch wenn AeroACARS
+//! im Hintergrund liegt: kurzes doppeltes Klicken bei Erfolg, tiefer Ton bei Fehlschlag (auch `kein_flug`). Die
+//! Nutzlast des Ereignisses bleibt unveraendert; ein Fehlschlag steht zusaetzlich als Warnung im Protokoll.
+//!
 //! Fehlercodes des Kerns: `bild_name`, `bild_pfad`, `bild_nicht_gefunden`, `bild_format`, `bild_unfertig`,
 //! `bild_quelle`, `bild_verboten`, `bild_zu_gross`, `bild_eingabe`, `bild_nicht_verfuegbar`, `bild_io`,
 //! `bild_veraltet` (nur `bild_uebernehmen` eines Funds `datei`: Groesse oder SHA-256 der Datei passen nicht mehr zum
@@ -125,8 +136,12 @@
 //! Stufen (befehle.json): lesen `bilder_liste`, `bild_lesen`, `bild_quellen_finden`, `bild_status`,
 //! `bild_kontext`; fachlich `bild_uebernehmen`, `bild_schreiben`, `bild_aufnehmen`, `bild_ordner_zeigen`,
 //! `bild_taste_lernen`;
-//! system `bild_senden`, `bild_hinzufuegen`, `bild_loeschen`, `bild_quellen_setzen`, `bild_export`.
-//! Die LAN-Bruecke reicht keinen davon durch.
+//! system `bild_senden` (aus dem Hauptfenster ohne Huelle-Fenster: der Senden-Dialog ist die Bestaetigung,
+//! Thomas 07.11.), `bild_hinzufuegen`, `bild_loeschen`, `bild_quellen_setzen`, `bild_export`.
+//! LAN-Bruecke (Thomas 07.11.): `bilder_liste`, `bild_status`, `bild_kontext`, `bild_aufnehmen` und `bild_schreiben`
+//! (dort nur der Sidecar) haben Arme, `bild_lesen` die Route `POST /api/bild` (Token-Kopf, Antwort rohe Bytes),
+//! `bild_senden` laeuft ueber `shell_request` ohne Huelle-Fenster, die anderen Systembefehle mit. Den Eingang arbeitet
+//! nur der Sim-PC ab; Quellen, Tasten, Hinzufuegen, Export und Dateimanager gibt es am Tablet nicht.
 //!
 //! Auslegung: Weil es genau fuenfzehn Befehle sind, tragen zwei Antworten mehr als der Name sagt:
 //! `bilder_liste` liefert auch Funde, Quellen mit Beobachtungszustand, den Altbestand (auf Wunsch) und das
@@ -308,8 +323,32 @@ pub(crate) fn bilder_liste(app: AppHandle, mit_altbestand: Option<bool>) -> Resu
 /// relative Pfad aus `bilder_liste`. Pfad-Ausbruch ist ausgeschlossen.
 #[tauri::command(async)]
 pub(crate) fn bild_lesen(app: AppHandle, pfad: String) -> Result<tauri::ipc::Response, UiError> {
-    let bytes = speicher::lesen(&wurzel(&app)?, &pfad).map_err(fehler)?;
-    Ok(tauri::ipc::Response::new(bytes))
+    Ok(tauri::ipc::Response::new(bild_bytes(&app, &pfad)?))
+}
+
+/// Fertige Bilder und Vorschauen; die Eingangskopien bleiben am Sim-PC.
+pub(crate) fn fuers_tablet(pfad: &str) -> bool {
+    pfad.ends_with(".jpg") && !pfad.ends_with(".quelle.jpg")
+}
+
+/// Der Hash haengt am Bild und an der Duplikatpruefung: Er bleibt, was immer das Tablet schickt.
+fn sha_behalten(neu: &mut Value, alt: Option<&Value>) {
+    if let Some(o) = neu.as_object_mut() {
+        match alt.and_then(|a| a.get("sha256")) {
+            Some(sha) => o.insert("sha256".into(), sha.clone()),
+            None => o.remove("sha256"),
+        };
+    }
+}
+
+pub(crate) fn sidecar_vom_tablet(app: AppHandle, gruppe: String, id: String, mut sidecar: Value) -> Result<speicher::Eintrag, UiError> {
+    let alt = speicher::eintrag(&wurzel(&app)?, &gruppe, &id).map_err(fehler)?;
+    sha_behalten(&mut sidecar, alt.sidecar.as_ref());
+    bild_schreiben(app, gruppe, id, None, None, Some(sidecar), None, None)
+}
+
+pub(crate) fn bild_bytes(app: &AppHandle, pfad: &str) -> Result<Vec<u8>, UiError> {
+    speicher::lesen(&wurzel(app)?, pfad).map_err(fehler)
 }
 
 /// Windows: Game Bar, Bilder-Ordner (mit OneDrive), Steam, NVIDIA. X-Plane:
@@ -516,6 +555,7 @@ fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
     }
     let r = (|| -> Result<Value, Fehler> {
         let a = plattform::fenster_aufnehmen()?;
+        tracing::info!(methode = a.methode, rueckfall = ?a.rueckfall_grund, "Bildaufnahme");
         let png = bilder_kern::png::aus_bgra(a.breite, a.hoehe, &a.bgra)?;
         let id = uuid::Uuid::new_v4().to_string();
         let w = wurzel(app).map_err(|u| Fehler::Io(u.message))?;
@@ -540,9 +580,20 @@ fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
 #[tauri::command]
 pub(crate) async fn bild_aufnehmen(app: AppHandle, gruppe: Option<String>) -> Result<Value, UiError> {
     let gruppe = gruppe.unwrap_or_else(|| EINGANG.to_string());
-    tauri::async_runtime::spawn_blocking(move || aufnehmen_intern(&app, &gruppe))
+    let r = tauri::async_runtime::spawn_blocking(move || aufnehmen_intern(&app, &gruppe))
         .await
-        .map_err(|e| UiError::new("bild_io", e.to_string()))?
+        .map_err(|e| UiError::new("bild_io", e.to_string()))?;
+    rueckmeldung(&r);
+    r
+}
+
+/// Hoerbare Rueckmeldung zu einer Aufnahme (Klicken bei Erfolg, tiefer Ton sonst, auch
+/// `kein_flug`); bei Fehlschlag zusaetzlich ins Protokoll, bisher blieb er still.
+fn rueckmeldung(r: &Result<Value, UiError>) {
+    if let Err(e) = r {
+        tracing::warn!(code = %e.code, meldung = %e.message, "Bilder: Aufnahme fehlgeschlagen");
+    }
+    plattform::ton_abspielen(r.is_ok());
 }
 
 /// Nutzlast des Ereignisses `bild_aufgenommen`. Ohne aktiven Flug wird die
@@ -556,6 +607,36 @@ fn aufgenommen_nutzlast(flug_aktiv: bool, aufnehmen: impl FnOnce() -> Result<Val
     }
 }
 
+/// Wie [`rueckmeldung`], aber nach der Nutzlast des Ereignisses `bild_aufgenommen`
+/// (die dabei unveraendert bleibt): `ok` entscheidet ueber den Ton, `code` und
+/// `meldung` gehen bei Fehlschlag ins Protokoll.
+fn nutzlast_rueckmeldung(nutzlast: &Value) {
+    let ok = nutzlast["ok"].as_bool().unwrap_or(false);
+    if !ok {
+        tracing::warn!(
+            code = nutzlast["code"].as_str().unwrap_or(""),
+            meldung = nutzlast["meldung"].as_str().unwrap_or(""),
+            "Bilder: Aufnahme per Taste fehlgeschlagen"
+        );
+    }
+    plattform::ton_abspielen(ok);
+}
+
+/// Werte von `bild_senden`, wenn der Befehl ueber `shell_request` kommt (ohne zweite Rueckfrage).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendenWerte {
+    sendung_id: String,
+    text: Option<String>,
+    geo_stufe: Option<String>,
+    bilder: Vec<BildKennungEin>,
+}
+
+pub(crate) async fn bild_senden_aus_werten(app: AppHandle, werte: Value) -> Result<Value, UiError> {
+    let w: SendenWerte = serde_json::from_value(werte).map_err(|e| UiError::new("bild_eingabe", e.to_string()))?;
+    bild_senden(app, w.sendung_id, w.text, w.geo_stufe, w.bilder).await
+}
+
 /// Ein Bild der Sendung als Kennung: der Kern liest `<gruppe>/<bild_id>.jpg`
 /// selbst und entfernt EXIF/XMP; es gehen keine Bytes durch die Oberflaeche.
 #[derive(Debug, Deserialize)]
@@ -565,9 +646,9 @@ pub(crate) struct BildKennungEin {
     meta: Value,
 }
 
-/// Sendet Bilder an `POST /api/bilder` (P-7.25). Stufe **system**: ein
-/// gesendetes Bild laesst sich nicht zurueckholen, darum bestaetigt die Huelle
-/// (nur mit der Zahl der Bilder). Der Kern liest die verwalteten JPEG-Dateien,
+/// Sendet Bilder an `POST /api/bilder` (P-7.25). Stufe **system**, aber ohne
+/// Huelle-Fenster (Thomas 07.11.): Bestaetigung ist der Senden-Dialog, am Sim-PC
+/// wie am Tablet; `shell_request` und die Bruecke machen die Ausnahme nur hierfuer. Der Kern liest die verwalteten JPEG-Dateien,
 /// entfernt alle APP1-Segmente (gleiche Datei = gleiche Upload-Bytes, kein
 /// `konflikt` bei Wiederholung) und haengt das Pilot-Token an; es erreicht die
 /// Oberflaeche nie. Die Antwort des Servers geht unveraendert zurueck.
@@ -870,6 +951,7 @@ fn quellen_setzen_intern(
 /// Ordnerdialog des Systems; `None`, wenn der Pilot abbricht.
 async fn ordner_dialog(app: &AppHandle) -> Result<Option<PathBuf>, UiError> {
     use tauri_plugin_dialog::DialogExt;
+    let _verborgen = crate::huelle::fuer_systemdialog(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().pick_folder(move |p| {
         let _ = tx.send(p);
@@ -915,6 +997,7 @@ fn hinzufuegen_ergebnis(wurzel: &std::path::Path, pfade: &[String], gruppe: &str
 /// Dateiauswahl des Systems (JPG, PNG); `None`, wenn der Pilot abbricht.
 async fn dateien_dialog(app: &AppHandle) -> Result<Option<Vec<String>>, UiError> {
     use tauri_plugin_dialog::DialogExt;
+    let _verborgen = crate::huelle::fuer_systemdialog(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().add_filter("JPG, PNG", &["jpg", "jpeg", "png"]).pick_files(move |p| {
         let _ = tx.send(p);
@@ -936,6 +1019,7 @@ pub(crate) async fn bild_export(app: AppHandle, zip_base64: String, dateiname: S
     let bytes = b64(&zip_base64, "zip_base64")?;
     let vorschlag: String = dateiname.chars().filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ' ')).collect();
     let vorschlag = if vorschlag.trim().is_empty() { "AeroACARS-Bilder.zip".to_string() } else { vorschlag };
+    let _verborgen = crate::huelle::fuer_systemdialog(&app);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().file().add_filter("ZIP", &["zip"]).set_file_name(vorschlag).save_file(move |p| {
         let _ = tx.send(p);
@@ -1033,12 +1117,20 @@ pub(crate) fn starten(app: &AppHandle) {
             entsperren(anzeige()).status = status;
             // Zuerst dauerhaft im Eingang; das Ereignis ist nur ein Wecksignal.
             funde_abarbeiten(&slots, funde, jetzt, |f| fund_in_eingang(&app, f), |e| {
+                ans_tablet(&app, EREIGNIS_QUELLE_NEU, e);
                 if let Err(err) = app.emit(EREIGNIS_QUELLE_NEU, e) {
                     tracing::warn!(fehler = %err, "bild_quelle_neu nicht gesendet");
                 }
             });
         }
     });
+}
+
+/// Dieselben Wecksignale fuer offene Tablets.
+fn ans_tablet(app: &AppHandle, ereignis: &str, nutzlast: &impl serde::Serialize) {
+    if let Ok(wert) = serde_json::to_value(nutzlast) {
+        app.state::<crate::AppState>().remote_events.send(crate::remote::RemoteEvent::new(ereignis, wert));
+    }
 }
 
 /// Tastenkuerzel oder Yoke-Knopf gedrueckt: ohne aktiven Flug nichts aufnehmen (Ereignis mit
@@ -1048,6 +1140,8 @@ fn taste_gedrueckt(app: &AppHandle) {
     let app = app.clone();
     let _ = std::thread::Builder::new().name("bild-aufnahme".into()).spawn(move || {
         let nutzlast = aufgenommen_nutzlast(flug_aktiv(&app), || aufnehmen_intern(&app, EINGANG));
+        nutzlast_rueckmeldung(&nutzlast);
+        ans_tablet(&app, EREIGNIS_AUFGENOMMEN, &nutzlast);
         let _ = app.emit(EREIGNIS_AUFGENOMMEN, nutzlast);
     });
 }
@@ -1055,6 +1149,32 @@ fn taste_gedrueckt(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn das_tablet_liest_nur_fertige_bilder() {
+        assert!(fuers_tablet("P1/b1.jpg"));
+        assert!(fuers_tablet("P1/b1.vorschau.jpg"));
+        assert!(!fuers_tablet("eingang/b1.quelle.jpg"));
+        assert!(!fuers_tablet("eingang/b1.quelle.png"));
+        assert!(!fuers_tablet("P1/b1.json"));
+    }
+
+    #[test]
+    fn das_tablet_aendert_den_hash_nicht() {
+        let mut neu = json!({"text": "x", "sha256": "fremd"});
+        sha_behalten(&mut neu, Some(&json!({"sha256": "echt"})));
+        assert_eq!(neu, json!({"text": "x", "sha256": "echt"}));
+        let mut ohne = json!({"sha256": "fremd"});
+        sha_behalten(&mut ohne, Some(&json!({})));
+        assert_eq!(ohne, json!({}));
+    }
+
+    #[test]
+    fn senden_werte_aus_der_oberflaeche() {
+        let w: SendenWerte = serde_json::from_value(json!({"sendungId": S, "text": "Hallo", "geoStufe": "verdeckt", "bilder": [{"gruppe": "P1", "bild_id": B1, "meta": {"fassung": 1}}]})).unwrap();
+        assert_eq!((w.sendung_id.as_str(), w.text.as_deref(), w.geo_stufe.as_deref(), w.bilder.len()), (S, Some("Hallo"), Some("verdeckt"), 1));
+        assert!(serde_json::from_value::<SendenWerte>(json!({"text": "ohne Kennung"})).is_err());
+    }
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const S: &str = "11111111-2222-4333-8444-555555555555";

@@ -8,15 +8,16 @@
  ],
  "grenzen": {
   "max_je_sendung": 5,
-  "max_kante_px": 1600,
+  "max_kante_px": 2560,
   "vorschau_kante_px": 320,
   "vorschau_qualitaet": 0.7,
   "jpeg_qualitaeten": [
-   0.86,
-   0.78,
-   0.68,
-   0.55,
-   0.42
+    0.95,
+    0.92,
+    0.88,
+    0.82,
+    0.7,
+    0.55
   ],
   "max_bytes": 4000000,
   "text_max_zeichen": 500,

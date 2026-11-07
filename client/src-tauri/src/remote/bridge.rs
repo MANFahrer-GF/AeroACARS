@@ -82,6 +82,15 @@ struct VmSitzung {
     teil: Option<String>,
 }
 
+/// `bild_schreiben` vom Tablet: alles ausser dem Sidecar wird abgelehnt, nicht ignoriert.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BildSidecar {
+    gruppe: String,
+    id: String,
+    sidecar: Value,
+}
+
 /// Ohne Argumente (null) = ohne Kennung; falsche Argumente sind ein Fehler
 /// (ein `"sitzung":"7"` darf nicht still zu „alle" werden).
 fn vm_args(body: &Value) -> Result<VmSitzung, UiError> {
@@ -277,6 +286,74 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
         // Dazu die Paket-Uebersicht und „Auf neues Paket pruefen“ (holt nur
         // von live, aktiv erst beim naechsten Start).
         "paket_info" => ok_json(crate::laufzeit_paket::paket_info().await),
+        // Bilder-Tab am Tablet (Thomas 07.11.2026). Die Bytes laufen ueber `/api/bild`,
+        // den Eingang arbeitet nur der Sim-PC ab, Dateiaufgaben bleiben dort.
+        "bilder_liste" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                #[serde(default)]
+                mit_altbestand: Option<bool>,
+            }
+            match parse_args::<A>(body) {
+                // Das Tablet fragt im Takt, der Ordner wird dabei durchsucht.
+                Ok(a) => {
+                    let app = app.clone();
+                    match tokio::task::spawn_blocking(move || crate::bilder::bilder_liste(app, a.mit_altbestand)).await {
+                        Ok(r) => from_uierr(r),
+                        Err(e) => Err(UiError::new("bild_io", e.to_string())),
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        }
+        // Nur der Sidecar (Text, Favorit, Flug, Sendevermerk): Bilddaten schreibt
+        // allein der Sim-PC, das Tablet legt keine Bytes in den Ordner.
+        "bild_schreiben" => {
+            match parse_args::<BildSidecar>(body) {
+                Ok(a) => from_uierr(crate::bilder::sidecar_vom_tablet(app.clone(), a.gruppe, a.id, a.sidecar)),
+                Err(e) => Err(e),
+            }
+        }
+        "bild_aufnehmen" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(default)]
+                gruppe: Option<String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::bilder::bild_aufnehmen(app.clone(), a.gruppe).await),
+                Err(e) => Err(e),
+            }
+        }
+        "bild_status" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                #[serde(default)]
+                sendung_id: Option<String>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::bilder::bild_status(a.sendung_id).await),
+                Err(e) => Err(e),
+            }
+        }
+        "bild_kontext" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                #[serde(default)]
+                zeiten: Option<Vec<String>>,
+                #[serde(default)]
+                pirep_id: Option<String>,
+                #[serde(default)]
+                mit_spur: Option<bool>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::bilder::bild_kontext(app.clone(), st!(), a.zeiten, a.pirep_id, a.mit_spur).await),
+                Err(e) => Err(e),
+            }
+        }
         "paket_jetzt_pruefen" => ok_json(crate::laufzeit_paket::paket_jetzt_pruefen().await),
         "paket_datei" => {
             #[derive(Deserialize)]
@@ -1090,7 +1167,16 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 werte: Option<Value>,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::huelle::bestaetigen_lassen(app.clone(), a.befehl, a.werte).await),
+                // Bilder (Thomas 07.11.2026): Der Senden-Dialog auf dem Tablet ist die
+                // Bestaetigung, eine zweite am Sim-PC waere mitten im Flug ein fremdes
+                // Fenster. Alles andere bleibt bei der Huelle, auch das Update.
+                Ok(a) => {
+                    if a.befehl == "bild_senden" {
+                        from_uierr(crate::bilder::bild_senden_aus_werten(app.clone(), a.werte.unwrap_or_default()).await)
+                    } else {
+                        from_uierr(crate::huelle::bestaetigen_lassen(app.clone(), a.befehl, a.werte).await)
+                    }
+                }
                 Err(e) => Err(e),
             }
         }
@@ -1399,6 +1485,28 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
 }
 
 #[cfg(test)]
+mod bild_tests {
+    #[test]
+    fn nur_bild_senden_laeuft_vom_tablet_ohne_huelle() {
+        let quelle = include_str!("bridge.rs");
+        let arm = &quelle[quelle.find("\"shell_request\" =>").unwrap()..quelle.find("\"huelle_einstellungen\" =>").unwrap()];
+        assert_eq!(arm.matches("a.befehl ==").count(), 1);
+        assert!(arm.contains("a.befehl == \"bild_senden\""));
+    }
+
+    #[test]
+    fn bild_schreiben_vom_tablet_nimmt_keine_bilddaten_an() {
+        let nur_sidecar = serde_json::json!({"gruppe": "g", "id": "i", "sidecar": {}});
+        assert!(super::parse_args::<super::BildSidecar>(&nur_sidecar).is_ok());
+        for feld in ["jpegBase64", "vorschauBase64", "quelleEntfernen", "sha256"] {
+            let mut b = nur_sidecar.clone();
+            b[feld] = serde_json::json!("x");
+            assert!(super::parse_args::<super::BildSidecar>(&b).is_err(), "{feld}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     //! Dispatch-shape tests. We cannot run a full command here (they need
     //! a live `AppState` + Tauri runtime), so these cover the two pure
@@ -1667,21 +1775,15 @@ mod tests {
             // Sim-PC selbst — sonst laege er bei jedem gekoppelten Geraet.
             "hoppie_get_logon_code",
 
-            // 07.11.2026 (Bilder-Tab, bilder-1): Die Bilder liegen auf dem
-            // Sim-PC, die Befehle lesen und loeschen dort Dateien, nehmen sein
-            // Fenster auf, beobachten seine Ordner und senden mit dem
-            // Pilot-Token (das nie ein anderes Geraet erreicht). Nichts davon
-            // gehoert ins LAN; die Brueckenarme fehlen mit Absicht.
-            "bilder_liste",
+            // 07.11.2026 (Bilder-Tab, bilder-1): `bild_lesen` hat die Route
+            // `/api/bild` (rohe Bytes statt JSON). Der Rest ist Arbeit am Sim-PC:
+            // Eingang uebernehmen, seine Ordner und Tasten, sein Dateimanager.
+            // Systembefehle laufen ueber `shell_request`.
             "bild_lesen",
             "bild_quellen_finden",
             "bild_uebernehmen",
-            "bild_schreiben",
-            "bild_aufnehmen",
-            "bild_status",
             "bild_senden",
             "bild_hinzufuegen",
-            "bild_kontext",
             "bild_ordner_zeigen",
             "bild_taste_lernen",
             "bild_loeschen",

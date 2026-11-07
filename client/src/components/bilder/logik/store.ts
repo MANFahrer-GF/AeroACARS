@@ -6,6 +6,7 @@ import { alsBase64 } from "./bildverarbeitung";
 import { GRENZEN, TABELLE } from "./grenzen";
 import { zipBauen } from "./zip";
 import { fehlerCode, fehlerText } from "./normalisieren";
+import { sendeMeta } from "./nachrichtVorschau";
 import {
   antwortEinarbeiten, aufrufFehler, auswahlNachSenden, offeneIds, sendeStart, sendungIdWaehlen, standNachLaden, type Sendestand,
 } from "./sendezustand";
@@ -47,6 +48,8 @@ export interface StoreAbhaengig {
   neueId: () => string;
   warten: (ms: number) => Promise<void>;
   jetzt: () => number;
+  /** Am Tablet nur neu laden: Den Eingang arbeitet der Sim-PC ab. */
+  ohneEingang?: boolean;
 }
 
 const ANFANG: BilderZustand = {
@@ -112,6 +115,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
 
   let eingangLaeufe = 0;
   async function eingang(): Promise<void> {
+    if (dep.ohneEingang) return laden();
     eingangLaeufe++;
     setzen({ arbeitet: true });
     try {
@@ -134,7 +138,9 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   /** Sidecar eines Bildes aendern (voller Stand, `bild_schreiben` ersetzt das Dokument). */
   function sidecarAendern(e: Eintrag, f: (s: Sidecar) => Sidecar): Promise<void> {
     return reihe(async () => {
-      const alt = e.sidecar as Sidecar;
+      // Tablet und Sim-PC schreiben dasselbe Dokument: vom frischen Stand ausgehen, nicht vom Stand der Anzeige.
+      await laden();
+      const alt = (z.liste?.eintraege.find((x) => x.id === e.id)?.sidecar ?? e.sidecar) as Sidecar;
       await api.schreiben({ gruppe: e.gruppe, id: e.id, sidecar: f(alt) });
       await laden();
     });
@@ -156,9 +162,8 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     }
   }
 
-  function vermerk(e: Eintrag, v: SendeVermerk): Sidecar["sendungen"] {
-    const alt = (e.sidecar?.sendungen ?? []).filter((x) => x.sendung_id !== v.sendung_id);
-    return [...alt, v];
+  function vermerk(sc: Sidecar, v: SendeVermerk): Sidecar["sendungen"] {
+    return [...sc.sendungen.filter((x) => x.sendung_id !== v.sendung_id), v];
   }
 
   /** `stufe` nur beim Senden selbst; Nachfragen und Fortsetzen behalten die Stufe des vorhandenen Vermerks. */
@@ -173,12 +178,12 @@ export function erzeugeStore(dep: StoreAbhaengig) {
       const vorAufruf = s.phase === "sendet";
       const status: SendeVermerk["status"] = s.phase === "gesendet" ? "gesendet" : s.phase === "fehlgeschlagen" || vorAufruf ? "abgelehnt" : "angenommen";
       const code = vorAufruf ? "discord_unklar" : s.code;
-      await sidecarAendern(e, (sc) => ({ ...sc, sendungen: vermerk(e, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe ?? sc.sendungen.find((x) => x.sendung_id === sendungId)?.geo_stufe ?? z.geoStufe, status, code }) }));
+      await sidecarAendern(e, (sc) => ({ ...sc, sendungen: vermerk(sc, { sendung_id: sendungId, zeit_ms: dep.jetzt(), geo_stufe: stufe ?? sc.sendungen.find((x) => x.sendung_id === sendungId)?.geo_stufe ?? z.geoStufe, status, code }) }));
     }
   }
 
   /** Senden (hoechstens `max_je_sendung`). Rueckgabe: neue Auswahl (Fehlgeschlagene bleiben). */
-  async function senden(ids: string[], text: string, stufe: GeoStufe): Promise<Set<string>> {
+  async function senden(ids: string[], text: string, stufe: GeoStufe, phaseText: (e: Eintrag) => string): Promise<Set<string>> {
     const liste = z.liste?.eintraege ?? [];
     const gewaehlt = ids.map((id) => liste.find((e) => e.id === id)).filter((e): e is Eintrag => !!e && !!e.sidecar?.meta);
     if (gewaehlt.length === 0 || gewaehlt.length > GRENZEN.max_je_sendung) return new Set(ids);
@@ -188,7 +193,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     // Sendung zuerst festhalten, damit ein Neustart mitten im Aufruf fortsetzen kann
     await vermerkeSchreiben(idListe, sendungId, stufe, z.sendestand);
     let stand = z.sendestand;
-    const anfrage = { sendungId, text, geoStufe: stufe, bilder: gewaehlt.map((e) => ({ gruppe: e.gruppe, bild_id: e.id, meta: e.sidecar!.meta! })) };
+    const anfrage = { sendungId, text, geoStufe: stufe, bilder: gewaehlt.map((e) => ({ gruppe: e.gruppe, bild_id: e.id, meta: sendeMeta(e.sidecar!.meta!, stufe, phaseText(e)) })) };
     try {
       const a = await api.senden(anfrage);
       stand = antwortEinarbeiten(stand, idListe, sendungId, a);
@@ -274,7 +279,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     quellenSetzen(aktuelleQuellen().map((q) => (q.pfad === pfad ? { ...q, ...aendern } : q)));
   const quelleEntfernen = (pfad: string) => quellenSetzen(aktuelleQuellen().filter((q) => q.pfad !== pfad));
   const quelleVorschlagen = (f: Fundort) =>
-    quellenSetzen([...aktuelleQuellen().filter((q) => q.pfad !== f.pfad), { pfad: f.pfad, aktiv: true, original_entfernen: false, art: "aufgespuert" }]);
+    quellenSetzen([...aktuelleQuellen().filter((q) => q.pfad !== f.pfad), { pfad: f.pfad, aktiv: true, original_entfernen: false, art: f.art }]);
   async function ordnerWaehlen(): Promise<void> {
     try {
       const r = await api.quellenSetzen({ ordnerWaehlen: true });
@@ -285,16 +290,19 @@ export function erzeugeStore(dep: StoreAbhaengig) {
   }
   async function yokeFestlegen(): Promise<void> {
     if (z.yokeLernt) return;
-    setzen({ yokeLernt: true });
+    setzen({ yokeLernt: true, meldung: null }); // eine alte Meldung gilt fuer den neuen Versuch nicht mehr
     try {
-      const t = await api.tasteLernen();
+      let t: Awaited<ReturnType<typeof api.tasteLernen>>;
+      try {
+        t = await api.tasteLernen();
+      } finally {
+        setzen({ yokeLernt: false }); // Das Lernen endet hier, nicht erst mit der Bestaetigung
+      }
       if (t === null) { meldung("fehler", "bilder.meldung.yoke_abgelaufen"); return; }
       await api.quellenSetzen({ yokeTaste: t });
       await laden();
     } catch (e) {
       if (fehlerCode(e) !== "huelle_abgelehnt") meldung("fehler", "bilder.meldung.yoke_fehler", { fehler: fehlerText(e) });
-    } finally {
-      setzen({ yokeLernt: false });
     }
   }
   async function yokeEntfernen(): Promise<void> {
@@ -336,14 +344,19 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     await laden(false);
   }
 
+  /** `bild_io`: Der Simulator hat nicht innerhalb der Zeitgrenze (8 s) geantwortet oder die vorige Aufnahme haengt noch. */
+  function aufnahmeGescheitert(code: string, text: string): void {
+    const art = code === "kein_flug" ? "kein_flug" : code === "bild_io" ? "aufnahme_zeit" : "aufnahme_fehler";
+    meldung("fehler", `bilder.meldung.${art}`, { fehler: text });
+  }
+
   async function aufnehmen(): Promise<void> {
+    setzen({ meldung: null });
     try {
       await api.aufnehmen();
       await eingang();
     } catch (e) {
-      // `bild_io`: Der Simulator hat nicht innerhalb der Zeitgrenze (5 s) geantwortet oder die vorige Aufnahme haengt noch.
-      const art = fehlerCode(e) === "kein_flug" ? "kein_flug" : fehlerCode(e) === "bild_io" ? "aufnahme_zeit" : "aufnahme_fehler";
-      meldung("fehler", `bilder.meldung.${art}`, { fehler: fehlerText(e) });
+      aufnahmeGescheitert(fehlerCode(e), fehlerText(e));
     }
   }
 
@@ -378,7 +391,7 @@ export function erzeugeStore(dep: StoreAbhaengig) {
     abonnieren: (h: () => void) => { hoerer.add(h); return () => { hoerer.delete(h); }; },
     laden, pilotSetzen, einschalten, geoStufeSetzen, eingang, textSetzen, favoritSetzen, flugSetzen, loeschen, senden, fortsetzen, kontingentHolen,
     yokeFestlegen, yokeEntfernen, quellenFinden, quelleUmschalten, quelleEntfernen, quelleVorschlagen, ordnerWaehlen, tastenkuerzelSetzen, hinzufuegen,
-    altbestandAnzeigen, altbestandUebernehmen, aufnehmen, ordnerZeigen, exportieren,
+    altbestandAnzeigen, altbestandUebernehmen, aufnehmen, aufnahmeGescheitert, ordnerZeigen, exportieren,
     meldungLoeschen: () => setzen({ meldung: null }),
   };
 }

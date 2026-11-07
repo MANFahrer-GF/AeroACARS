@@ -4,9 +4,10 @@ import { bildMetaBauen, datenStufe } from "./meta";
 import { entscheide, gruppeFuer, massePassen } from "./uebernahmeRegel";
 import { serienBilden } from "./serien";
 import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppieren, platzJeFlug, seitenweise } from "./gruppen";
-import { bereinigen, umschalten } from "./auswahl";
+import { bereinigen, offenNachHaken, umschalten } from "./auswahl";
 import { kontingentAnzeige, reichtKontingent, retrySekunden } from "./kontingent";
-import { vorschauBauen } from "./nachrichtVorschau";
+import { infoZeile, sendeMeta, vorschauBauen } from "./nachrichtVorschau";
+import { schonAufDiscord } from "./sendezustand";
 import { eintrag, fund, meta } from "./testhilfen";
 import { fundLesen, kontextLesen, listeLesen } from "./normalisieren";
 import tabelle from "../../../../../bundle/tabellen/bilder.json";
@@ -14,7 +15,7 @@ import tabelle from "../../../../../bundle/tabellen/bilder.json";
 describe("Tabelle aus dem Paket", () => {
   it("liest Grenzen und Metadatenliste", () => {
     expect(GRENZEN.max_je_sendung).toBe(5);
-    expect(GRENZEN.max_kante_px).toBe(1600);
+    expect(GRENZEN.max_kante_px).toBe(2560);
     expect(TABELLE.metadaten.map((m) => m.feld)).toContain("naechster_flugplatz");
     expect(TABELLE.geoVorgabe).toBe("verdeckt");
   });
@@ -61,10 +62,10 @@ describe("Uebernahmeregel", () => {
     expect(entscheide(fund({ art: "standard", sim_vordergrund: null }), [])).toEqual({ tat: "uebernehmen", modus: "verschieben" });
     expect(entscheide(fund({ art: "standard", sim_vordergrund: false }), [])).toEqual({ tat: "uebernehmen", modus: "verschieben" });
   });
-  it("aufgespuert: nur mit Simulator im Vordergrund, nur kopiert", () => {
+  it("aufgespuert: verworfen nur, wenn der Simulator belegt nicht vorn war (am Mac unbekannt), nur kopiert", () => {
     expect(entscheide(fund({ art: "aufgespuert", sim_vordergrund: true }), [])).toEqual({ tat: "uebernehmen", modus: "kopieren" });
     expect(entscheide(fund({ art: "aufgespuert", sim_vordergrund: false }), [])).toEqual({ tat: "verwerfen", grund: "vordergrund" });
-    expect(entscheide(fund({ art: "aufgespuert", sim_vordergrund: null }), [])).toEqual({ tat: "verwerfen", grund: "vordergrund" });
+    expect(entscheide(fund({ art: "aufgespuert", sim_vordergrund: null }), [])).toEqual({ tat: "uebernehmen", modus: "kopieren" });
   });
   it("aufgespuert: Pixelmasse muessen zum Simulatorfenster passen, fehlt das Fenster, wird nicht abgelehnt", () => {
     const f = fund({ art: "aufgespuert", sim_vordergrund: true, sim_fenster: { breite: 2560, hoehe: 1440 } });
@@ -158,6 +159,16 @@ describe("Aufraeumen", () => {
 });
 
 describe("Auswahl und Kontingent", () => {
+  it("rechts steht das zuletzt gewaehlte Bild, am Blatt oeffnet ein Haken nichts", () => {
+    expect(offenNachHaken("a", "b", new Set(["b"]), true)).toBe("b");
+    expect(offenNachHaken(null, "b", new Set(["b"]), true)).toBe("b");
+    expect(offenNachHaken(null, "b", new Set(["b"]), false)).toBe(null);
+    expect(offenNachHaken("a", "b", new Set(["b"]), false)).toBe("b");
+    expect(offenNachHaken("b", "b", new Set(["a", "c"]), true)).toBe("c");
+    expect(offenNachHaken("b", "b", new Set(), true)).toBe("b");
+    expect(offenNachHaken("a", "b", new Set(["c"]), true)).toBe("a");
+  });
+
   it("umschalten und bereinigen", () => {
     let a = umschalten(new Set(), "x");
     a = umschalten(a, "y");
@@ -182,22 +193,39 @@ describe("Auswahl und Kontingent", () => {
   });
 });
 
+describe("Schon auf Discord", () => {
+  const v = (status: "angenommen" | "gesendet" | "abgelehnt") => ({ sendung_id: "s", zeit_ms: 1, geo_stufe: "aus" as const, status });
+  it("zaehlt nur bestaetigte Zustellungen, auch aeltere", () => {
+    expect(schonAufDiscord(undefined)).toBe(false);
+    expect(schonAufDiscord([v("abgelehnt"), v("angenommen")])).toBe(false);
+    expect(schonAufDiscord([v("gesendet"), v("abgelehnt")])).toBe(true);
+  });
+});
+
 describe("Vorschau der Nachricht (Spiegel des Servers)", () => {
   const m = meta({ rufzeichen: "GSG101", abflug: "EDDF", ziel: "LEPA" });
-  it("Kopf, Ortszeile je Stufe, Text zuletzt", () => {
-    const v = vorschauBauen("Thomas K", [m], "verdeckt", "Schoen!", 2000);
-    expect(v.kopf).toBe("Thomas K · GSG101 · EDDF\u2013LEPA · Airbus A320 (A320)");
-    expect(v.geo).toEqual([{ text: "10:00 UTC · 50.030° N 8.570° E · 12000 ft · 270° · EDDF", verdeckt: true, nummer: null }]);
-    expect(vorschauBauen("T", [m], "sichtbar", "", 2000).geo[0].verdeckt).toBe(false);
-    expect(vorschauBauen("T", [m], "aus", "", 2000).geo).toEqual([]);
+  it("Kopf, eine Zeile je Bild, Text zuletzt; Zeit, Hoehe und Phase bleiben sichtbar", () => {
+    const voll = sendeMeta(m, "verdeckt", "Boarding");
+    const v = vorschauBauen("Thomas K", [voll], "verdeckt", "Schoen!", 2000);
+    expect(v.kopf).toBe("📷 **Thomas K** · GSG101 · EDDF\u2013LEPA · Airbus A320 (A320)");
+    expect(v.zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: "EDDF · 270° · Google Maps · VATSIM Radar", ortRoh: "EDDF · 270° · [Google Maps](<https://www.google.com/maps?q=50.0300,8.5700>) · [VATSIM Radar](<https://vatsim-radar.com/?center=8.5700,50.0300&zoom=15>)", verdeckt: true }]);
+    expect(vorschauBauen("T", [voll], "sichtbar", "", 2000).zeilen[0].verdeckt).toBe(false);
   });
-  it("ohne Position keine Ortszeile; mehrere Bilder werden nummeriert", () => {
-    expect(vorschauBauen("T", [meta({ breite: null, laenge: null })], "sichtbar", "", 2000).geo).toEqual([]);
-    const v = vorschauBauen("T", [m, m], "sichtbar", "", 2000);
-    expect(v.geo.map((g) => g.nummer)).toEqual([1, 2]);
+  it("bei „aus“ verlaesst keine Position das Programm, Zeit, Hoehe und Phase bleiben", () => {
+    const aus = sendeMeta(m, "aus", "Boarding");
+    expect([aus.breite, aus.laenge, aus.kurs, aus.naechster_flugplatz]).toEqual([null, null, null, null]);
+    expect(vorschauBauen("T", [aus], "aus", "", 2000).zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: null, ortRoh: null, verdeckt: false }]);
+  });
+  it("ohne Position bleibt die Info; mehrere Bilder werden nummeriert; ohne alles keine Zeile", () => {
+    expect(vorschauBauen("T", [meta({ breite: null, laenge: null })], "sichtbar", "", 2000).zeilen[0].ort).toBeNull();
+    expect(vorschauBauen("T", [m, m], "sichtbar", "", 2000).zeilen.map((g) => g.nummer)).toEqual([1, 2]);
+    expect(vorschauBauen("T", [meta({ breite: null, laenge: null, zeit_utc: null, hoehe_ft: null })], "sichtbar", "", 2000).zeilen).toEqual([]);
+  });
+  it("die Phase traegt keine Discord-Formatierung", () => {
+    expect(infoZeile({ ...m, phase_text: "||Reise**flug" })).toBe("10:00Z · 12000 ft · Reise flug");
   });
   it("Formatierung in festen Feldern wird entfernt", () => {
-    expect(vorschauBauen("a||b**", [meta({ rufzeichen: "X||Y" })], "aus", "", 2000).kopf).not.toMatch(/[|*]/);
+    expect(vorschauBauen("a||b**", [meta({ rufzeichen: "X||Y" })], "aus", "", 2000).kopf).toBe("📷 **a b** · X Y · EDDF\u2013LEPA · Airbus A320 (A320)");
   });
   it("Kuerzung wird gemeldet", () => {
     expect(vorschauBauen("T", [m], "aus", "x".repeat(2100), 2000).gekuerzt).toBe(true);

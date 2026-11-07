@@ -1,7 +1,7 @@
 // Attrappe der IPC-Schicht fuer die Vorschau des Bilder-Tabs (nur vite.bilder.config.mjs).
 // `?fall=` normal (Entwurf: vier Gruppen), fehler, leer (erster Start, ungesendet), leerein,
 // ohneflug, kontingent0, unklar, offline, viele (60 Bilder), fund (neuer Fund im Eingang).
-export const isTauri = true;
+export const isTauri = !window.location.search.includes("tablet=1");
 export const formatIpcError = (e: unknown) => String(e);
 export async function openExternal(url: string) { window.open(url, "_blank"); }
 
@@ -168,3 +168,4 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
     default: return undefined as T;
   }
 }
+export const bildBytesHolen = async (pfad: string): Promise<Uint8Array> => new Uint8Array(await invoke<ArrayBuffer>("bild_lesen", { pfad }));

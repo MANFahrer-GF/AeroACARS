@@ -5178,8 +5178,12 @@
       "aufnahme_xplane_kurz": "{{taste}} in X-Plane",
       "aufnahme_aus": "Aufnahme per Tastenkürzel ist auf diesem System nicht möglich. Nutze die Bildquellen.",
       "nur_im_flug": "Aufnahme und Übernahme laufen nur in einem AeroACARS-Flug.",
-      "zusammenfassung": "{{bilder}} Bilder · {{fluege}} Flüge · {{platz}} auf diesem Rechner",
-      "zusammenfassung_kurz": "{{bilder}} Bilder · {{fluege}} Flüge · {{platz}}",
+      "zusammenfassung": "{{bilder}} · {{fluege}} · {{platz}} auf diesem Rechner",
+      "zusammenfassung_kurz": "{{bilder}} · {{fluege}} · {{platz}}",
+      "anzahl_bilder": "{{n}} Bilder",
+      "anzahl_bild_eins": "1 Bild",
+      "anzahl_fluege": "{{n}} Flüge",
+      "anzahl_flug_eins": "1 Flug",
       "keine": "Noch keine Bilder auf diesem Rechner",
       "ordner_zeigen": "Bilder-Ordner im Dateimanager zeigen",
       "quellen": "Bildquellen",
@@ -5220,7 +5224,7 @@
       "schon": "schon eingerichtet",
       "fehlt": "Ordner nicht vorhanden",
       "kuerzel": "Tastenkürzel für die Aufnahme",
-      "kuerzel_setzen": "Speichern",
+      "kuerzel_setzen": "Tastenkürzel festlegen",
       "kuerzel_fehler": "Kürzel nicht angemeldet: {{fehler}}",
       "bestaetigung": "Jede Änderung der Quellen bestätigst du in einem Fenster des Programms.",
       "eigene_werkzeuge": "Eigene Werkzeuge funktionieren mit jeder Taste, sobald ihr Ordner hier als Bildquelle eingetragen ist.",
@@ -5230,6 +5234,9 @@
         "unbelegt": "kein Knopf belegt",
         "festlegen": "Yoke-Taste festlegen",
         "lernt": "Jetzt den Knopf drücken …",
+        "kuerzel_lernt": "Jetzt die Tasten drücken …",
+        "kuerzel_hinweis": "Tasten zusammen drücken, mit Strg, Alt oder Shift. Esc bricht ab.",
+        "kuerzel_nur_taste": "Bitte zusammen mit Strg, Alt oder Shift drücken.",
         "hinweis_lernen": "Jetzt den Knopf drücken, du hast 10 Sekunden.",
         "entfernen": "Entfernen",
         "xplane_hinweis": "In X-Plane belegst du den Knopf in den Joystick-Einstellungen des Simulators mit sim/operation/screenshot."
@@ -5401,7 +5408,6 @@
       "titel": "Bilder senden",
       "zu": "Schließen",
       "anzahl": "{{count}} Bilder an den Discord-Kanal der GSG",
-      "max": "Höchstens {{max}} Bilder je Sendung",
       "zu_viele": "Wähle höchstens {{max}} Bilder.",
       "text": {
         "label": "Dein Text (optional)",
@@ -5416,9 +5422,8 @@
         "verdeckt": "Verdeckt, zum Aufklappen",
         "verdeckt_text": "Dieselben Angaben stehen unter einem grauen Balken und erscheinen erst beim Klick.",
         "aus": "Nicht mitsenden",
-        "aus_text": "Die Position verlässt dein Programm nicht. Die Nachricht nennt nur dich, den Flug und deinen Text.",
-        "ohne_position": "Zu diesen Bildern gibt es keine Position, die Auswahl bleibt ohne Wirkung.",
-        "hinweis": "Gilt für alle Sendungen, bis du es hier änderst. Die Bilddatei geht ohne Metadaten nach Discord; was du hier wählst, steht im Text."
+        "aus_text": "Die Position verlässt dein Programm nicht. Die Nachricht nennt dich, den Flug, Zeit, Höhe, Phase und deinen Text.",
+        "ohne_position": "Zu diesen Bildern gibt es keine Position, die Auswahl bleibt ohne Wirkung."
       },
       "vorschau": {
         "titel": "So erscheint die Nachricht",
@@ -5426,11 +5431,10 @@
         "gekuerzt": "Discord kürzt diese Nachricht.",
         "bild": "Bild {{n}}",
         "bilder_hinweis": "Die Bilder hängen als Dateien an der Nachricht.",
-        "verdeckt": "Geo-Daten verdeckt · zum Anzeigen klicken",
-        "verdeckt_hinweis": "Dahinter steht je Bild: Zeit, Position, Höhe, Kurs, nächster Flugplatz. Erwähnungen im Text werden nicht ausgelöst.",
-        "sichtbar_hinweis": "Je Bild steht eine Zeile mit Zeit, Position, Höhe, Kurs und nächstem Flugplatz im Text. Erwähnungen im Text werden nicht ausgelöst.",
-        "aus_hinweis": "Es gehen keine Positionsdaten mit. Erwähnungen im Text werden nicht ausgelöst."
+        "verdeckt": "Geo-Daten verdeckt · zum Anzeigen klicken"
       },
+      "schon_gesendet_eins": "Dieses Bild ist schon auf Discord. Senden schickt es als neue Nachricht noch einmal.",
+      "schon_gesendet_n": "Schon auf Discord: {{count}} von {{gesamt}} Bildern. Senden schickt sie als neue Nachricht noch einmal.",
       "server_offline": "Server nicht erreichbar. Senden wartet, nichts geht verloren.",
       "senden": "Senden ({{count}})",
       "abbrechen": "Abbrechen",
@@ -5441,16 +5445,7 @@
       "kanal": "Kanal „Bilder“ der German Sky Group",
       "text_label_n": "Text für alle {{count}} Bilder",
       "text_label_eins": "Text für das Bild",
-      "jetzt": "Jetzt senden",
-      "zeilen": {
-        "groesse": "Größe",
-        "groesse_text_eins": "1 Bild, {{groesse}} nach Verkleinerung auf {{px}} px",
-        "groesse_text": "{{count}} Bilder, {{groesse}} nach Verkleinerung auf {{px}} px",
-        "weg": "Weg",
-        "weg_text": "Dieser Rechner, GSG-Server (live), Discord. Der Zugang zu Discord liegt nur auf dem Server.",
-        "fehlschlag": "Falls etwas fehlschlägt",
-        "fehlschlag_text": "Jedes Bild bekommt sein eigenes Ergebnis. Was nicht ankam, bleibt ausgewählt und zeigt den Grund an der Kachel; „Erneut versuchen“ schickt nur das Fehlende, nichts kommt doppelt an."
-      }
+      "jetzt": "Jetzt senden"
     },
     "kontingent": {
       "rest": "Diese Stunde noch {{rest}} von {{grenze}}",
@@ -5508,7 +5503,7 @@
       "hinzufuegen_fehler": "Hinzufügen nicht möglich: {{fehler}}",
       "kein_flug": "Ohne AeroACARS-Flug wird nichts aufgenommen.",
       "aufnahme_fehler": "Aufnahme nicht möglich: {{fehler}}",
-      "aufnahme_zeit": "Aufnahme nicht fertig geworden: Der Simulator hat nicht innerhalb von 5 s geantwortet (oder die vorige Aufnahme hängt noch). Bitte gleich noch einmal versuchen. Technisch: {{fehler}}",
+      "aufnahme_zeit": "Aufnahme nicht fertig geworden: Der Simulator hat nicht innerhalb von 8 s geantwortet (oder die vorige Aufnahme hängt noch). Bitte gleich noch einmal versuchen. Technisch: {{fehler}}",
       "ordner_fehler": "Ordner nicht zu öffnen: {{fehler}}",
       "geladen_fehler": "Bilder nicht ladbar: {{fehler}}",
       "schliessen": "Meldung schließen",
@@ -5526,6 +5521,7 @@
       "taste_xplane_bekannt": "{{taste}} im Simulator legt das Bild hier ab",
       "taste_msfs": "{{kuerzel}} nimmt das Simulator-Fenster auf",
       "neue": "{{count}} neue Bilder in diesem Flug",
+      "neue_eins": "1 neues Bild in diesem Flug",
       "taste_msfs_neutral": "Die AeroACARS-Aufnahmetaste nimmt das Simulator-Fenster auf"
     },
     "gruppe": {

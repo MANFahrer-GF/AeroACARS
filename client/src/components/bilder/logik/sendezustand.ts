@@ -120,6 +120,11 @@ export function zusammenfassung(stand: Sendestand, ids: Iterable<string>) {
   return { sendet, fehlgeschlagen, gesendet, unklar, nichtErreichbar };
 }
 
+/** Hat Discord dieses Bild schon einmal bekommen? Ein spaeterer Fehlschlag aendert daran nichts. */
+export function schonAufDiscord(vermerke: ReadonlyArray<{ status: "angenommen" | "gesendet" | "abgelehnt" }> | undefined): boolean {
+  return (vermerke ?? []).some((v) => v.status === "gesendet");
+}
+
 /** Stand einer Kachel, wenn es in dieser Sitzung keinen gibt: aus dem letzten Vermerk im Sidecar. */
 export function standAusVermerk(v: { sendung_id: string; status: "angenommen" | "gesendet" | "abgelehnt"; code?: string } | undefined): KachelStand | undefined {
   if (!v) return undefined;

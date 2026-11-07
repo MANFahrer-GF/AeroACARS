@@ -66,6 +66,17 @@ pub fn knopf_gedrueckt(maske: u32, knopf: u8) -> bool {
     (1..=MAX_KNOEPFE).contains(&knopf) && maske & (1u32 << (knopf - 1)) != 0
 }
 
+/// Registry-Schluessel (HKCU) mit dem wirklichen Geraetenamen; `winmm` nennt nur den Treiber.
+pub fn oem_schluessel(hersteller_id: u16, produkt_id: u16) -> String {
+    format!(r"System\CurrentControlSet\Control\MediaProperties\PrivateProperties\Joystick\OEM\VID_{hersteller_id:04X}&PID_{produkt_id:04X}")
+}
+
+/// Anzeigename: der Registry-Name, sonst der von `winmm`; passend zur Grenze aus [`YokeTaste::pruefen`].
+pub fn name_waehlen(oem: Option<&str>, winmm: &str) -> String {
+    let n = oem.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(winmm).trim();
+    n.chars().take(64).collect()
+}
+
 /// Der niedrigste Knopf, der jetzt gedrueckt ist und vorher nicht (1-basiert).
 pub fn neuer_knopf(vorher: u32, jetzt: u32) -> Option<u8> {
     let neu = jetzt & !vorher;
@@ -177,6 +188,15 @@ mod tests {
         assert_eq!(geraet_finden(&[g(0, &t.geraet_name, 0x1, t.produkt_id)], &t), None, "anderer Hersteller");
         assert_eq!(geraet_finden(&[g(0, "Honeycomb Bravo", t.hersteller_id, t.produkt_id)], &t), None, "anderer Name");
         assert_eq!(geraet_finden(&[], &t), None);
+    }
+
+    #[test]
+    fn geraetename_aus_der_registry_sonst_winmm() {
+        assert!(oem_schluessel(0x294B, 0x1900).ends_with(r"Joystick\OEM\VID_294B&PID_1900"));
+        assert_eq!(name_waehlen(Some(" Honeycomb Alpha "), "Treiber"), "Honeycomb Alpha");
+        assert_eq!(name_waehlen(Some(" "), "Treiber"), "Treiber");
+        assert_eq!(name_waehlen(None, "Treiber"), "Treiber");
+        assert_eq!(name_waehlen(Some(&"x".repeat(80)), "T").chars().count(), 64, "pruefen darf nicht scheitern");
     }
 
     #[test]

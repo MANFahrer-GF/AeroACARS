@@ -4,13 +4,13 @@ import { erzeugeStore } from "./store";
 import { eintrag } from "./testhilfen";
 import type { BilderListe, SendeAntwort } from "./typen";
 
-function aufbau(o: { aufnehmen?: BildAktionen["aufnehmen"]; senden?: BildAktionen["senden"]; status?: BildAktionen["status"]; eintraege?: ReturnType<typeof eintrag>[]; gespeichert?: Record<string, string> } = {}) {
+function aufbau(o: { aufnehmen?: BildAktionen["aufnehmen"]; senden?: BildAktionen["senden"]; status?: BildAktionen["status"]; eintraege?: ReturnType<typeof eintrag>[]; gespeichert?: Record<string, string>; funde?: BilderListe["funde"]; ohneEingang?: boolean } = {}) {
   const eintraege = o.eintraege ?? [eintrag({ id: "a" }), eintrag({ id: "b" }), eintrag({ id: "c" })];
   const geschrieben: Array<{ id: string; sidecar: { sendungen?: Array<{ status: string; code?: string; sendung_id: string }> } }> = [];
   const gespeichert: Record<string, string> = { ...(o.gespeichert ?? {}) };
   const aufrufe: unknown[] = [];
   const api = {
-    liste: async (): Promise<BilderListe> => ({ eintraege, belegt_bytes: 0, quellen: [], tastenkuerzel: null, aufnahme_verfuegbar: false, simulator_taste: null, funde: [], altbestand: [] }),
+    liste: async (): Promise<BilderListe> => ({ eintraege, belegt_bytes: 0, quellen: [], tastenkuerzel: null, aufnahme_verfuegbar: false, simulator_taste: null, funde: o.funde ?? [], altbestand: [] }),
     schreiben: async (a: { id: string; sidecar: never }) => {
       geschrieben.push(a as never);
       const e = eintraege.find((x) => x.id === a.id)!;
@@ -26,16 +26,27 @@ function aufbau(o: { aufnehmen?: BildAktionen["aufnehmen"]; senden?: BildAktione
     api, kodieren: async () => { throw new Error("nicht gebraucht"); },
     zustandLesen: async () => gespeichert,
     zustandSchreiben: async (k, v) => { if (v === null) delete gespeichert[k]; else gespeichert[k] = v; },
-    neueId: () => `S${++n}`, warten: async () => undefined, jetzt: () => 1000,
+    neueId: () => `S${++n}`, warten: async () => undefined, jetzt: () => 1000, ohneEingang: o.ohneEingang,
   });
   return { store, geschrieben, gespeichert, aufrufe, api };
 }
+
+const keinePhase = () => "";
+
+describe("Store: Tablet", () => {
+  it("laedt nur neu und laesst den Eingang dem Sim-PC", async () => {
+    const t = aufbau({ ohneEingang: true, funde: [{ fund_id: "f1" }] as never });
+    await t.store.eingang();
+    expect(t.store.lesen().geladen).toBe(true);
+    expect(t.store.lesen().uebernahme.fehler).toBe(0);
+  });
+});
 
 describe("Store: Senden", () => {
   it("Erfolg: gesendet, Auswahl leer, Kontingent aus der Antwort, Vermerk im Sidecar", async () => {
     const t = aufbau();
     await t.store.laden();
-    const rest = await t.store.senden(["a", "b"], "Hallo", "verdeckt");
+    const rest = await t.store.senden(["a", "b"], "Hallo", "verdeckt", keinePhase);
     expect([...rest]).toEqual([]);
     const z = t.store.lesen();
     expect(z.sendestand.a.phase).toBe("gesendet");
@@ -48,20 +59,20 @@ describe("Store: Senden", () => {
     const t = aufbau({ eintraege: Array.from({ length: 6 }, (_, i) => eintrag({ id: `x${i}` })) });
     await t.store.laden();
     const ids = Array.from({ length: 6 }, (_, i) => `x${i}`);
-    expect([...(await t.store.senden(ids, "", "aus"))]).toEqual(ids);
+    expect([...(await t.store.senden(ids, "", "aus", keinePhase))]).toEqual(ids);
     expect(t.aufrufe).toEqual([]);
   });
   it("Server nicht erreichbar: Bilder bleiben ausgewaehlt, nichts geht verloren", async () => {
     const t = aufbau({ senden: async () => { throw { code: "live_nicht_erreichbar", message: "x" }; } });
     await t.store.laden();
-    const rest = await t.store.senden(["a"], "", "verdeckt");
+    const rest = await t.store.senden(["a"], "", "verdeckt", keinePhase);
     expect([...rest]).toEqual(["a"]);
     expect(t.store.lesen().sendestand.a).toMatchObject({ phase: "fehlgeschlagen", code: "server_nicht_erreichbar" });
   });
   it("Antwort bleibt aus: erst bild_status fragen; bleibt es leer, gilt Zustellung unklar und das Bild bleibt ausgewaehlt", async () => {
     const t = aufbau({ senden: async () => { throw { code: "live_antwort_fehlt", message: "x" }; } });
     await t.store.laden();
-    const rest = await t.store.senden(["a"], "", "verdeckt");
+    const rest = await t.store.senden(["a"], "", "verdeckt", keinePhase);
     expect([...rest]).toEqual(["a"]);
     expect(t.store.lesen().sendestand.a.code).toBe("discord_unklar");
   });
@@ -71,14 +82,14 @@ describe("Store: Senden", () => {
       status: async () => ({ bilder: [{ bild_id: "a", status: "gesendet" }], kontingent: null }),
     });
     await t.store.laden();
-    expect([...(await t.store.senden(["a"], "", "verdeckt"))]).toEqual([]);
+    expect([...(await t.store.senden(["a"], "", "verdeckt", keinePhase))]).toEqual([]);
     expect(t.store.lesen().sendestand.a.phase).toBe("gesendet");
   });
   it("Kontingent ausgeschoepft: Code und retry_after je Bild", async () => {
     const antwort: SendeAntwort = { bilder: [{ bild_id: "a", status: "abgelehnt", code: "kontingent", retry_after: 420 }], kontingent: { rest: 0, grenze: 12, retry_after: 420 } };
     const t = aufbau({ senden: async () => antwort });
     await t.store.laden();
-    await t.store.senden(["a"], "", "verdeckt");
+    await t.store.senden(["a"], "", "verdeckt", keinePhase);
     expect(t.store.lesen().sendestand.a).toMatchObject({ code: "kontingent", retryAfter: 420 });
     expect(t.store.lesen().kontingent?.rest).toBe(0);
   });
@@ -86,8 +97,8 @@ describe("Store: Senden", () => {
     let n = 0;
     const t = aufbau({ senden: async (a) => { if (++n === 1) throw { code: "live_nicht_erreichbar", message: "x" }; return { bilder: a.bilder.map((b) => ({ bild_id: b.bild_id, status: "gesendet" as const })), kontingent: null }; } });
     await t.store.laden();
-    await t.store.senden(["a"], "", "verdeckt");
-    await t.store.senden(["a"], "", "verdeckt");
+    await t.store.senden(["a"], "", "verdeckt", keinePhase);
+    await t.store.senden(["a"], "", "verdeckt", keinePhase);
     expect(t.store.lesen().sendestand.a).toMatchObject({ phase: "gesendet", sendungId: "S1" });
   });
   it("angenommen: wird nachgefragt, bis es gesendet ist", async () => {
@@ -97,7 +108,7 @@ describe("Store: Senden", () => {
       status: async () => ({ bilder: [{ bild_id: "a", status: ++n < 2 ? "angenommen" : "gesendet" }], kontingent: null }),
     });
     await t.store.laden();
-    await t.store.senden(["a"], "", "verdeckt");
+    await t.store.senden(["a"], "", "verdeckt", keinePhase);
     await new Promise((r) => setTimeout(r, 20));
     expect(t.store.lesen().sendestand.a.phase).toBe("gesendet");
   });
@@ -111,13 +122,29 @@ describe("Store: Stufe im Vermerk und Yoke-Taste", () => {
       status: async () => ({ bilder: [{ bild_id: "a", status: ++n < 1 ? "angenommen" : "gesendet" }], kontingent: null }),
     });
     await t.store.laden();
-    await t.store.senden(["a"], "", "sichtbar");
+    await t.store.senden(["a"], "", "sichtbar", keinePhase);
     await new Promise((r) => setTimeout(r, 20));
     await t.store.geoStufeSetzen("aus");
     const v = t.store.lesen().liste!.eintraege.find((e) => e.id === "a")!.sidecar!.sendungen!;
     expect(v).toHaveLength(1);
     expect(v[0]).toMatchObject({ status: "gesendet", geo_stufe: "sichtbar" });
   });
+  it("Yoke-Taste: das Lernen endet vor der Bestaetigung, eine alte Meldung verschwindet beim neuen Versuch", async () => {
+    const t = aufbau();
+    let waehrendBestaetigung: boolean | null = null;
+    let meldungDabei: unknown = "offen";
+    let gelernt: unknown = null;
+    t.api.tasteLernen = async () => gelernt as never;
+    t.api.quellenSetzen = async () => { waehrendBestaetigung = t.store.lesen().yokeLernt; meldungDabei = t.store.lesen().meldung; return { quellen: [], abgebrochen: false }; };
+    await t.store.laden();
+    await t.store.yokeFestlegen();
+    expect(t.store.lesen().meldung?.schluessel).toBe("bilder.meldung.yoke_abgelaufen");
+    gelernt = { geraet_name: "Yoke", hersteller_id: 1, produkt_id: 2, knopf: 7 };
+    await t.store.yokeFestlegen();
+    expect(waehrendBestaetigung).toBe(false);
+    expect(meldungDabei).toBeNull();
+  });
+
   it("Yoke-Taste: lernen, speichern mit yokeTaste, Zeit abgelaufen meldet, entfernen mit null", async () => {
     const t = aufbau();
     const gesetzt: unknown[] = [];
@@ -165,7 +192,7 @@ describe("Store: Einwilligung, Fortsetzen, Sidecar", () => {
     const eintraege = [eintrag({ id: "a" })];
     const haengt = aufbau({ eintraege, senden: () => new Promise(() => undefined) });
     await haengt.store.laden();
-    void haengt.store.senden(["a"], "Hallo", "verdeckt");
+    void haengt.store.senden(["a"], "Hallo", "verdeckt", keinePhase);
     await new Promise((r) => setTimeout(r, 0));
     expect(eintraege[0].sidecar!.sendungen).toEqual([expect.objectContaining({ sendung_id: "S1", status: "abgelehnt", code: "discord_unklar" })]);
     // Neustart: neuer Store auf demselben Sidecar
@@ -175,7 +202,7 @@ describe("Store: Einwilligung, Fortsetzen, Sidecar", () => {
     await neu.store.fortsetzen();
     expect(statusAufrufe).toBe(0);
     expect(neu.store.lesen().sendestand.a).toMatchObject({ phase: "fehlgeschlagen", sendungId: "S1", code: "discord_unklar" });
-    await neu.store.senden(["a"], "Hallo", "verdeckt");
+    await neu.store.senden(["a"], "Hallo", "verdeckt", keinePhase);
     expect(neu.aufrufe[0]).toMatchObject({ sendungId: "S1" });
   });
   it("Aufnahme: bild_io (Simulator antwortet nicht innerhalb von 5 s) hat einen eigenen Text, kein_flug und Sonstiges behalten ihren", async () => {
