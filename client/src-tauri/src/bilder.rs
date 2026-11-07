@@ -70,7 +70,10 @@
 //!   `sha256` (kanonischer Hash der EXIF-freien Bytes, 64 Hex) wird im Sidecar als `sha256` festgehalten; ein im
 //!   Bilderordner schon vorhandener Hash einer anderen Bild-id wird atomar mit Code `duplikat` abgelehnt (Meldung
 //!   `gruppe/id` des vorhandenen Bildes) und die Eingangskopie dieser id selbst weggeraeumt (keine Waise)
-//! * `bild_aufnehmen({gruppe?})` -> `{fund, methode}`; nur im aktiven Flug (`kein_flug`)
+//! * `bild_aufnehmen({gruppe?})` -> `{fund, methode}`; nur im aktiven Flug (`kein_flug`). Die Aufnahme laeuft in einem
+//!   eigenen Faden mit Zeitgrenze (5 s): antwortet der Simulator nicht, kommt `bild_io` und eine neue Aufnahme ist
+//!   sofort wieder moeglich; der haengende Faden bleibt liegen (hoechstens einer, solange er haengt kommt `bild_io`
+//!   "haengt noch"), ein zu spaetes Ergebnis wird verworfen
 //! * `bild_ordner_zeigen({gruppe, id})`: markiert das JPEG im Dateimanager (Finder, Explorer); nur ein vorhandenes
 //!   JPEG im verwalteten Ordner, kein Pfad-Ausbruch
 //!

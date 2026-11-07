@@ -4,6 +4,7 @@
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -361,6 +362,11 @@ impl Drop for Gdi {
 /// dessen Rechteck schneidet** (Fehler `verdeckt`), denn die Kopie nimmt alles
 /// mit, was dort auf dem Bildschirm liegt.
 pub fn fenster_aufnehmen() -> Result<Aufnahme, Fehler> {
+    static FADEN: AtomicBool = AtomicBool::new(false);
+    super::mit_frist(super::AUFNAHME_FRIST, &FADEN, fenster_aufnehmen_roh)
+}
+
+fn fenster_aufnehmen_roh() -> Result<Aufnahme, Fehler> {
     let (hwnd, r) = sim_fenster().ok_or_else(|| Fehler::NichtGefunden("Kein Simulatorfenster gefunden (FlightSimulator, X-Plane)".into()))?;
     let (b, h) = (r.right - r.left, r.bottom - r.top);
     let mut gdi = Gdi::neu(b, h)?;
