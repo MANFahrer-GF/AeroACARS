@@ -382,7 +382,7 @@ async fn flight_end_manual(
                 );
             }
             clear_persisted_flight(&app, Some(&flight.pirep_id));
-            bilder::nachlauf_beginnen(&app, &flight);
+            bilder::nachlauf_beginnen(&app, &flight, divert_to.as_deref().unwrap_or(&flight.arr_airport));
             log_activity(
                 &state,
                 ActivityLevel::Warn,

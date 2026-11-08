@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::kontext::Stand;
 use crate::sicher;
 use crate::Fehler;
 
@@ -27,6 +28,9 @@ use crate::Fehler;
 pub const VORGABE_MIN: u32 = 30;
 /// Hoechstwert, auch fuer eine beschaedigte Tabelle oder Datei.
 pub const MAX_MIN: u32 = 240;
+/// So lange nach der angezeigten Endzeit wird noch abgelegt: Eine Datei gilt erst nach
+/// der Stabilitaetspause als fertig, ein kurz vor Ablauf entstandenes Bild darf nicht verloren gehen.
+pub const NACHFRIST_MS: i64 = 15_000;
 /// Ab dieser Entfernung vom Abstellplatz ist der Nachlauf vorbei.
 pub const MAX_WEG_M: f64 = 500.0;
 /// Steht das Flugzeug bei der Abgabe weiter vom Aufsetzpunkt weg, hat der Pilot
@@ -48,6 +52,7 @@ pub struct Nachlauf {
     /// Die Phase bei der Abgabe, wie sie ein Bild im Flug getragen haette.
     #[serde(default)]
     pub phase: Value,
+    pub beginn_ms: i64,
     pub bis_ms: i64,
     pub breite: f64,
     pub laenge: f64,
@@ -85,10 +90,29 @@ impl Nachlauf {
     /// entscheidet die Zeit: Eine fehlende Position beweist keinen Ortswechsel.
     pub fn gilt(&self, jetzt_ms: i64, position: Option<(f64, f64)>) -> bool {
         // Mehr Restzeit als der Hoechstwert: Uhr verstellt oder Datei beschaedigt.
-        if jetzt_ms >= self.bis_ms || self.bis_ms - jetzt_ms > i64::from(MAX_MIN) * 60_000 {
+        if jetzt_ms >= self.bis_ms + NACHFRIST_MS || self.bis_ms - jetzt_ms > i64::from(MAX_MIN) * 60_000 {
             return false;
         }
         position.filter(|p| brauchbar(*p)).is_none_or(|p| abstand_m(p, (self.breite, self.laenge)) <= MAX_WEG_M)
+    }
+
+    /// Der Stand fuer ein Bild dieser Zeit (von Hand hinzugefuegt, Absturzrest): der abgegebene
+    /// Flug am Abstellplatz. `None`, wenn die Zeit nicht in diesen Nachlauf faellt.
+    pub fn stand_zu(&self, zeit_ms: i64) -> Option<Stand> {
+        if zeit_ms < self.beginn_ms || zeit_ms >= self.bis_ms + NACHFRIST_MS {
+            return None;
+        }
+        let text = |s: &Option<String>| s.clone().map_or(Value::Null, Value::String);
+        let mut m = Stand::new();
+        m.insert("breite".into(), self.breite.into());
+        m.insert("laenge".into(), self.laenge.into());
+        m.insert("flugzeug_icao".into(), text(&self.flugzeug_icao));
+        m.insert("phase".into(), self.phase.clone());
+        m.insert("pirep_id".into(), self.pirep_id.clone().into());
+        m.insert("rufzeichen".into(), text(&self.rufzeichen));
+        m.insert("abflug".into(), self.abflug.clone().into());
+        m.insert("ziel".into(), self.ziel.clone().into());
+        Some(m)
     }
 }
 
@@ -147,6 +171,7 @@ mod tests {
             ziel: "EDDF".into(),
             flugzeug_icao: Some("A320".into()),
             phase: Value::String("Arrived".into()),
+            beginn_ms: JETZT,
             bis_ms: JETZT + 30 * 60_000,
             breite: STAND.0,
             laenge: STAND.1,
@@ -154,11 +179,22 @@ mod tests {
     }
 
     #[test]
-    fn gilt_bis_zum_ablauf_und_keine_millisekunde_laenger() {
+    fn gilt_bis_zum_ablauf_samt_nachfrist_und_keine_millisekunde_laenger() {
         let n = nachlauf();
         assert!(n.gilt(JETZT, Some(STAND)));
-        assert!(n.gilt(n.bis_ms - 1, Some(STAND)));
-        assert!(!n.gilt(n.bis_ms, Some(STAND)));
+        assert!(n.gilt(n.bis_ms, Some(STAND)), "ein Bild von kurz vor Ablauf wird noch fertig");
+        assert!(n.gilt(n.bis_ms + NACHFRIST_MS - 1, Some(STAND)));
+        assert!(!n.gilt(n.bis_ms + NACHFRIST_MS, Some(STAND)));
+    }
+
+    #[test]
+    fn stand_nur_innerhalb_dieses_nachlaufs_mit_flug_und_abstellplatz() {
+        let n = nachlauf();
+        let s = n.stand_zu(JETZT + 60_000).unwrap();
+        assert_eq!((s["pirep_id"].as_str(), s["ziel"].as_str(), s["breite"].as_f64()), (Some("P1"), Some("EDDF"), Some(STAND.0)));
+        assert_eq!(s["phase"], "Arrived");
+        assert!(n.stand_zu(JETZT - 1).is_none(), "vor der Abgabe gilt die Flugaufzeichnung");
+        assert!(n.stand_zu(n.bis_ms + NACHFRIST_MS).is_none());
     }
 
     #[test]
@@ -175,7 +211,7 @@ mod tests {
         assert!(n.gilt(JETZT, None), "Simulator weg");
         assert!(n.gilt(JETZT, Some((0.0, 0.0))), "Menue meldet 0/0");
         assert!(n.gilt(JETZT, Some((f64::NAN, 8.0))));
-        assert!(!n.gilt(n.bis_ms, None));
+        assert!(!n.gilt(n.bis_ms + NACHFRIST_MS, None));
     }
 
     #[test]

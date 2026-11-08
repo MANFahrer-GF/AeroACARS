@@ -192,9 +192,8 @@ fn protokolle(dir: &Path) -> Vec<(String, PathBuf, i64, i64)> {
 }
 
 /// Je Zeit der naechste Protokollstand (aus allen in Frage kommenden Flugprotokollen,
-/// oder nur aus dem von `pirep_id`). Liegt eine Zeit bis `nachlauf_ms` hinter dem Ende eines
-/// Protokolls und kein Flug deckt sie ab, gilt dessen letzter Stand (das Bild entstand am Abstellplatz).
-pub fn protokoll_staende(dir: &Path, pirep_id: Option<&str>, zeiten: &[i64], nachlauf_ms: i64) -> Result<Vec<Option<Treffer>>, Fehler> {
+/// oder nur aus dem von `pirep_id`).
+pub fn protokoll_staende(dir: &Path, pirep_id: Option<&str>, zeiten: &[i64]) -> Result<Vec<Option<Treffer>>, Fehler> {
     let dateien = match pirep_id {
         Some(id) => vec![(id.to_string(), protokoll_datei(dir, id)?)],
         None => kandidaten(dir, zeiten),
@@ -211,28 +210,7 @@ pub fn protokoll_staende(dir: &Path, pirep_id: Option<&str>, zeiten: &[i64], nac
             }
         }
     }
-    if nachlauf_ms > 0 && best.iter().any(Option::is_none) {
-        let alle = protokolle(dir);
-        for (i, z) in zeiten.iter().enumerate() {
-            if best[i].is_none() {
-                best[i] = nachlauf_treffer(&alle, pirep_id, *z, nachlauf_ms);
-            }
-        }
-    }
     Ok(best)
-}
-
-/// Der letzte Stand des zuletzt beendeten Protokolls, in dessen Nachlauf `zeit` liegt.
-fn nachlauf_treffer(alle: &[(String, PathBuf, i64, i64)], pirep_id: Option<&str>, zeit: i64, nachlauf_ms: i64) -> Option<Treffer> {
-    let (id, p, _, ende) = alle
-        .iter()
-        .filter(|(id, _, _, ende)| pirep_id.is_none_or(|x| x == id) && *ende < zeit && zeit <= ende + nachlauf_ms)
-        .max_by_key(|(_, _, _, ende)| *ende)?;
-    // Die letzte Position kann lange vor dem Dateiende liegen (Flug nach dem Parken eingefroren).
-    let letzte = oeffnen(p)?.lines().map_while(Result::ok).filter(|z| z.starts_with(r#"{"type":"position""#)).filter_map(|z| zeile_zeit(&z)).last()?;
-    let mut t = protokoll_auswerten(oeffnen(p)?, id, &[letzte], false).treffer.pop().flatten()?;
-    t.abstand_ms = zeit - ende;
-    Some(t)
 }
 
 /// Ausgeduennte Spur eines Flugs aus seinem Protokoll (`[[breite, laenge], ...]`).
@@ -255,14 +233,9 @@ pub struct PirepKurz {
     pub flugzeug_icao: Option<String>,
 }
 
-/// Der PIREP, dessen Block-Zeiten `zeit` einschliessen, sonst der zuletzt geparkte, in dessen
-/// Nachlauf (`nachlauf_ms` ab Block-on) sie liegt. Fehlt eine der beiden Zeiten, passt er nicht.
-pub fn logbuch_stand(pireps: &[PirepKurz], zeit: i64, nachlauf_ms: i64) -> Option<Stand> {
-    let bloecke = || pireps.iter().filter_map(|p| Some((p, p.block_off_ms?, p.block_on_ms?)));
-    let p = bloecke()
-        .find(|(_, a, b)| *a <= zeit && zeit <= *b)
-        .or_else(|| bloecke().filter(|(_, _, b)| *b < zeit && zeit <= b + nachlauf_ms).max_by_key(|(_, _, b)| *b))
-        .map(|(p, _, _)| p)?;
+/// Der PIREP, dessen Block-Zeiten `zeit` einschliessen. Fehlt eine der beiden Zeiten, passt er nicht.
+pub fn logbuch_stand(pireps: &[PirepKurz], zeit: i64) -> Option<Stand> {
+    let p = pireps.iter().find(|p| matches!((p.block_off_ms, p.block_on_ms), (Some(a), Some(b)) if a <= zeit && zeit <= b))?;
     let opt = |s: &Option<String>| s.clone().filter(|x| !x.is_empty()).map_or(Value::Null, Value::String);
     let mut m = Stand::new();
     m.insert("pirep_id".into(), json!(p.pirep_id));
@@ -476,11 +449,11 @@ mod tests {
         fs::write(t.path().join("notiz.txt"), "x").unwrap();
         let z = zeit_ms("2026-11-07T10:02:05Z").unwrap();
         // Aenderungszeit der Dateien ist „jetzt“ (2026-11-07 oder spaeter): beide Zeitraeume werden geprueft
-        let r = protokoll_staende(t.path(), None, &[z], 0).unwrap();
+        let r = protokoll_staende(t.path(), None, &[z]).unwrap();
         assert_eq!(r[0].as_ref().unwrap().stand["pirep_id"], "P1");
-        let nur = protokoll_staende(t.path(), Some("P2"), &[z], 0).unwrap();
+        let nur = protokoll_staende(t.path(), Some("P2"), &[z]).unwrap();
         assert!(nur[0].is_none(), "P2 liegt einen Tag davor");
-        assert!(protokoll_staende(t.path(), Some("../x"), &[z], 0).is_err());
+        assert!(protokoll_staende(t.path(), Some("../x"), &[z]).is_err());
         assert_eq!(protokoll_spur(t.path(), "P1").unwrap().len(), 3);
         assert!(matches!(protokoll_spur(t.path(), "P9"), Err(Fehler::NichtGefunden(_))));
     }
@@ -498,90 +471,11 @@ mod tests {
             flugzeug_icao: Some("A20N".into()),
         };
         let z = ms("2026-11-07T11:00:00Z").unwrap();
-        let s = logbuch_stand(std::slice::from_ref(&p), z, 0).unwrap();
+        let s = logbuch_stand(std::slice::from_ref(&p), z).unwrap();
         assert_eq!((s["pirep_id"].as_str(), s["abflug"].as_str(), s["ziel"].is_null()), (Some("L1"), Some("EDDF"), true));
         assert!(!s.contains_key("breite"), "keine Position geraten");
-        assert!(logbuch_stand(std::slice::from_ref(&p), ms("2026-11-07T12:00:01Z").unwrap(), 0).is_none());
+        assert!(logbuch_stand(std::slice::from_ref(&p), ms("2026-11-07T12:00:01Z").unwrap()).is_none());
         let ohne_ende = PirepKurz { block_on_ms: None, ..p.clone() };
-        assert!(logbuch_stand(&[ohne_ende], z, 0).is_none(), "ohne Block-on passt nichts");
-    }
-
-    fn protokoll_mit_ende(dir: &Path, name: &str, inhalt: String, ende_ms: i64) {
-        let p = dir.join(name);
-        fs::write(&p, inhalt).unwrap();
-        let zeit = SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(ende_ms as u64);
-        fs::File::options().write(true).open(&p).unwrap().set_modified(zeit).unwrap();
-    }
-
-    #[test]
-    fn nachlauf_nimmt_den_letzten_stand_bis_zur_grenze_und_nicht_darueber() {
-        let t = tempfile::tempdir().unwrap();
-        let ende = zeit_ms("2026-11-07T10:03:05Z").unwrap();
-        protokoll_mit_ende(t.path(), "P1.jsonl", protokoll(), ende);
-        const FENSTER: i64 = 30 * 60_000;
-        let z = ende + 20 * 60_000;
-        let r = protokoll_staende(t.path(), None, &[z, ende + FENSTER, ende + FENSTER + 1], FENSTER).unwrap();
-        let treffer = r[0].as_ref().unwrap();
-        assert_eq!((treffer.stand["pirep_id"].as_str(), treffer.stand["breite"].as_f64()), (Some("P1"), Some(50.2)), "der letzte Stand");
-        assert_eq!(treffer.abstand_ms, 20 * 60_000, "der wahre Abstand");
-        assert!(r[1].is_some(), "die Grenze gehoert dazu");
-        assert!(r[2].is_none(), "danach nichts mehr");
-        assert!(protokoll_staende(t.path(), None, &[z], 0).unwrap()[0].is_none(), "Gegenprobe: ohne Nachlauf nichts");
-    }
-
-    #[test]
-    fn nachlauf_findet_die_letzte_position_auch_lange_vor_dem_dateiende() {
-        let t = tempfile::tempdir().unwrap();
-        // Flug nach dem Parken eingefroren: Ereignisse laufen noch, Positionen nicht mehr.
-        let ende = zeit_ms("2026-11-07T10:08:00Z").unwrap();
-        protokoll_mit_ende(t.path(), "P1.jsonl", protokoll(), ende);
-        let r = protokoll_staende(t.path(), None, &[ende + 60_000], 30 * 60_000).unwrap();
-        let treffer = r[0].as_ref().unwrap();
-        assert_eq!((treffer.stand["pirep_id"].as_str(), treffer.stand["breite"].as_f64()), (Some("P1"), Some(50.2)));
-    }
-
-    #[test]
-    fn nachlauf_gilt_nicht_vor_dem_ende_und_fragt_nur_den_gewuenschten_flug() {
-        let t = tempfile::tempdir().unwrap();
-        let ende = zeit_ms("2026-11-07T10:03:05Z").unwrap();
-        protokoll_mit_ende(t.path(), "P1.jsonl", protokoll(), ende);
-        const FENSTER: i64 = 30 * 60_000;
-        let z = ende + 60 * 60_000;
-        let vorher = zeit_ms("2026-11-07T09:50:00Z").unwrap();
-        assert!(protokoll_staende(t.path(), None, &[vorher], FENSTER).unwrap()[0].is_none(), "nur die Endseite wird verlaengert");
-        assert!(protokoll_staende(t.path(), None, &[z], FENSTER).unwrap()[0].is_none());
-        protokoll_mit_ende(t.path(), "P9.jsonl", protokoll().replace("P1", "P9"), ende);
-        let nur = protokoll_staende(t.path(), Some("P9"), &[ende + 60_000], FENSTER).unwrap();
-        assert_eq!(nur[0].as_ref().unwrap().stand["pirep_id"], "P9");
-    }
-
-    #[test]
-    fn ein_laufender_zweiter_flug_geht_dem_nachlauf_des_ersten_vor() {
-        let t = tempfile::tempdir().unwrap();
-        let ende1 = zeit_ms("2026-11-07T10:03:05Z").unwrap();
-        protokoll_mit_ende(t.path(), "P1.jsonl", protokoll(), ende1);
-        let zweiter = protokoll().replace("T10:0", "T10:1").replace("P1", "P2");
-        let ende2 = zeit_ms("2026-11-07T10:13:05Z").unwrap();
-        protokoll_mit_ende(t.path(), "P2.jsonl", zweiter, ende2);
-        let r = protokoll_staende(t.path(), None, &[zeit_ms("2026-11-07T10:12:05Z").unwrap()], 30 * 60_000).unwrap();
-        assert_eq!(r[0].as_ref().unwrap().stand["pirep_id"], "P2");
-    }
-
-    #[test]
-    fn logbuch_nachlauf_nach_block_on_der_zuletzt_geparkte_und_der_flug_selbst_geht_vor() {
-        fn ms(s: &str) -> Option<i64> {
-            zeit_ms(s)
-        }
-        let flug = |id: &str, ab: &str, an: &str| PirepKurz { pirep_id: id.into(), block_off_ms: ms(ab), block_on_ms: ms(an), ..Default::default() };
-        let erster = flug("L1", "2026-11-07T10:00:00Z", "2026-11-07T11:00:00Z");
-        let zweiter = flug("L2", "2026-11-07T11:10:00Z", "2026-11-07T12:00:00Z");
-        const FENSTER: i64 = 30 * 60_000;
-        let id = |z: &str, l: &[PirepKurz]| logbuch_stand(l, ms(z).unwrap(), FENSTER).map(|s| s["pirep_id"].as_str().unwrap().to_string());
-        let beide = [erster.clone(), zweiter];
-        assert_eq!(id("2026-11-07T11:05:00Z", &beide).as_deref(), Some("L1"), "im Nachlauf");
-        assert_eq!(id("2026-11-07T11:20:00Z", &beide).as_deref(), Some("L2"), "der laufende Flug geht vor");
-        assert_eq!(id("2026-11-07T12:20:00Z", &beide).as_deref(), Some("L2"), "der zuletzt geparkte");
-        assert_eq!(id("2026-11-07T11:30:00Z", &[erster.clone()]).as_deref(), Some("L1"), "die Grenze gehoert dazu");
-        assert_eq!(id("2026-11-07T11:30:01Z", &[erster]), None, "danach nichts mehr");
+        assert!(logbuch_stand(&[ohne_ende], z).is_none(), "ohne Block-on passt nichts");
     }
 }

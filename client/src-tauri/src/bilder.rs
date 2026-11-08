@@ -145,7 +145,7 @@
 //!
 //! Auslegung: Weil es genau fuenfzehn Befehle sind, tragen zwei Antworten mehr als der Name sagt:
 //! Nachlauf (`bilder_kern::nachlauf`): Nach einer erfolgreichen Abgabe zaehlen Taste und Ordnerbeobachtung noch zum
-//! abgegebenen Flug; `bilder_liste.nachlauf` nennt ihn (`{pirep_id, rufzeichen, abflug, ziel, bis_ms}`, sonst `null`).
+//! abgegebenen Flug, auch die Zuordnung per `bild_kontext` (nur in diesem Nachlauf); `bilder_liste.nachlauf` nennt ihn (`{pirep_id, rufzeichen, abflug, ziel, bis_ms}`, sonst `null`).
 //! `bilder_liste` liefert auch Funde, Quellen mit Beobachtungszustand, den Altbestand (auf Wunsch) und das
 //! Tastenkuerzel; `bild_quellen_setzen` setzt neben den Ordnern auch das Tastenkuerzel.
 //!
@@ -266,12 +266,19 @@ fn nachlauf_stand() -> &'static Mutex<Option<Nachlauf>> {
 
 /// Beendet genau den geprueften Nachlauf: Hat eine Abgabe inzwischen einen neuen gesetzt, bleibt der stehen.
 fn nachlauf_beenden(app: &AppHandle, geprueft: &Nachlauf) {
-    let mut g = entsperren(nachlauf_stand());
-    if nur_wenn_gleich(&mut g, geprueft) {
+    let beendet = nur_wenn_gleich(&mut entsperren(nachlauf_stand()), geprueft);
+    if beendet {
         if let Ok(w) = wurzel(app) {
             nachlauf::entfernen(&w);
         }
+        nachlauf_wecken(app);
     }
+}
+
+/// Der Tab soll den Wechsel sofort sehen, nicht erst im naechsten Takt.
+fn nachlauf_wecken(app: &AppHandle) {
+    ans_tablet(app, EREIGNIS_QUELLE_NEU, &Value::Null);
+    let _ = app.emit(EREIGNIS_QUELLE_NEU, Value::Null);
 }
 
 fn nur_wenn_gleich(stand: &mut Option<Nachlauf>, geprueft: &Nachlauf) -> bool {
@@ -295,7 +302,7 @@ fn nachlauf_gueltig(app: &AppHandle) -> Option<Nachlauf> {
 }
 
 /// Nach einer erfolgreichen Abgabe (auch in die Warteschlange): Bilder zaehlen noch zu diesem Flug.
-pub(crate) fn nachlauf_beginnen(app: &AppHandle, flug: &crate::ActiveFlight) {
+pub(crate) fn nachlauf_beginnen(app: &AppHandle, flug: &crate::ActiveFlight, ziel: &str) {
     let (position, aufsetzpunkt, phase) = {
         let s = flug.stats.lock().unwrap_or_else(|e| e.into_inner());
         (crate::aircraft_position_for_gates(&s), s.landing_lat.zip(s.landing_lon), serde_json::to_value(s.phase).unwrap_or(Value::Null))
@@ -308,18 +315,22 @@ pub(crate) fn nachlauf_beginnen(app: &AppHandle, flug: &crate::ActiveFlight) {
         pirep_id: flug.pirep_id.clone(),
         rufzeichen: rufzeichen(flug),
         abflug: flug.dpt_airport.clone(),
-        ziel: flug.arr_airport.clone(),
+        ziel: ziel.to_string(),
         flugzeug_icao: Some(flug.aircraft_icao.clone()).filter(|x| !x.trim().is_empty()),
         phase,
+        beginn_ms: jetzt_ms(),
         bis_ms: jetzt_ms() + nachlauf_minuten_ms(),
         breite,
         laenge,
     };
-    let mut g = entsperren(nachlauf_stand());
-    if let Err(e) = wurzel(app).map_err(|u| Fehler::Io(u.message)).and_then(|w| nachlauf::speichern(&w, &n)) {
-        tracing::warn!(fehler = %e, "Bilder: Nachlauf nicht gespeichert, er gilt bis zum naechsten Programmstart");
+    {
+        let mut g = entsperren(nachlauf_stand());
+        if let Err(e) = wurzel(app).map_err(|u| Fehler::Io(u.message)).and_then(|w| nachlauf::speichern(&w, &n)) {
+            tracing::warn!(fehler = %e, "Bilder: Nachlauf nicht gespeichert, er gilt bis zum naechsten Programmstart");
+        }
+        *g = Some(n);
     }
-    *g = Some(n);
+    nachlauf_wecken(app);
 }
 
 /// Der Stand fuer `bilder_liste`; im aktiven Flug keiner.
@@ -688,9 +699,10 @@ static AUFNAHME_LAEUFT: AtomicBool = AtomicBool::new(false);
 /// (PNG) in `gruppe` ab. Auf anderen Systemen: Fehler `bild_nicht_verfuegbar`.
 /// Ohne aktiven Flug: `kein_flug`, auch vom Knopf.
 fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
-    if !aufnahme_moeglich(app) {
+    // Der Stand im Moment der Ausloesung; endet der Flug waehrend der Aufnahme, zaehlt das Bild noch zu ihm.
+    let Some(meta) = meta_basis_jetzt(app) else {
         return Err(kein_flug());
-    }
+    };
     if AUFNAHME_LAEUFT.swap(true, Ordering::SeqCst) {
         return Err(UiError::new("bild_beschaeftigt", "Eine Aufnahme laeuft schon"));
     }
@@ -701,11 +713,7 @@ fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
         let id = uuid::Uuid::new_v4().to_string();
         let w = wurzel(app).map_err(|u| Fehler::Io(u.message))?;
         let e = speicher::quelle_schreiben(&w, gruppe, &id, QuellFormat::Png, &png)?;
-        // Dauerhaft im Eingang ablegen (mit dem Stand zur Aufnahme), erst dann melden.
-        let Some(meta) = meta_basis_jetzt(app) else {
-            let _ = std::fs::remove_file(w.join(e.quelle_pfad.clone().unwrap_or_default()));
-            return Err(Fehler::KeinFlug("Der Flug ist inzwischen beendet".into()));
-        };
+        // Dauerhaft im Eingang ablegen (mit dem Stand zur Ausloesung), erst dann melden.
         let quelle_pfad = e.quelle_pfad.clone().unwrap_or_default();
         let fund = EingangsFund::aufnahme(id, jetzt_ms(), quelle_pfad, e.quelle_groesse, a.breite, a.hoehe, Some(SimFenster { breite: a.breite, hoehe: a.hoehe }), meta);
         if let Err(f) = eingang::ablegen(&w, &fund) {
@@ -875,10 +883,10 @@ pub(crate) async fn bild_kontext(
     let dir = app.path().app_data_dir().map(|d| d.join("flight_logs")).map_err(|e| UiError::new("bild_io", e.to_string()))?;
     let (ms2, pirep2) = (ms.clone(), pirep_id.clone());
     let hat_aktive_spur = aktiv_spur.is_some();
-    let nachlauf_ms = nachlauf_minuten_ms();
+    let nachlauf_jetzt = if aktiv_pirep.is_none() { nachlauf_gueltig(&app).filter(|n| pirep_id.as_deref().is_none_or(|p| p == n.pirep_id)) } else { None };
     let (treffer, spur_datei, protokoll_fluege) = tauri::async_runtime::spawn_blocking(move || {
         crate::flugprotokoll_abwarten(); // alles Bisherige steht in der Datei
-        let t = kontext::protokoll_staende(&dir, pirep2.as_deref(), &ms2, nachlauf_ms).map_err(fehler)?;
+        let t = kontext::protokoll_staende(&dir, pirep2.as_deref(), &ms2).map_err(fehler)?;
         let spur = if mit_spur == Some(true) && !hat_aktive_spur {
             let id = pirep2.or_else(|| t.iter().flatten().find_map(|x| x.stand.get("pirep_id").and_then(Value::as_str).map(str::to_string)));
             id.and_then(|i| kontext::protokoll_spur(&dir, &i).ok())
@@ -908,9 +916,12 @@ pub(crate) async fn bild_kontext(
         .map(|((iso, z), t)| {
             let (quelle, mut stand, abstand) = match t {
                 Some(t) => ("protokoll", t.stand, Some(t.abstand_ms)),
-                None => match kontext::logbuch_stand(&pireps, *z, nachlauf_ms) {
-                    Some(s) => ("logbuch", s, None),
-                    None => ("keine", kontext::Stand::new(), None),
+                None => match nachlauf_jetzt.as_ref().and_then(|n| n.stand_zu(*z)) {
+                    Some(s) => ("protokoll", s, None),
+                    None => match kontext::logbuch_stand(&pireps, *z) {
+                        Some(s) => ("logbuch", s, None),
+                        None => ("keine", kontext::Stand::new(), None),
+                    },
                 },
             };
             stand.insert("zeit".into(), json!(iso));
@@ -1677,8 +1688,17 @@ mod tests {
     }
 
     #[test]
+    fn beginn_und_ende_des_nachlaufs_wecken_den_tab() {
+        let q = include_str!("bilder.rs");
+        for f in ["pub(crate) fn nachlauf_beginnen", "fn nachlauf_beenden(app"] {
+            let rumpf = q.split(f).nth(1).unwrap().split("\n}\n").next().unwrap();
+            assert!(rumpf.contains("nachlauf_wecken(app);"), "{f}");
+        }
+    }
+
+    #[test]
     fn eine_inzwischen_neue_abgabe_wird_nicht_vom_alten_ende_geloescht() {
-        let alt = Nachlauf { pirep_id: "A".into(), rufzeichen: None, abflug: "EDDF".into(), ziel: "EDDM".into(), flugzeug_icao: None, phase: Value::Null, bis_ms: 1, breite: 50.0, laenge: 8.0 };
+        let alt = Nachlauf { pirep_id: "A".into(), rufzeichen: None, abflug: "EDDF".into(), ziel: "EDDM".into(), flugzeug_icao: None, phase: Value::Null, beginn_ms: 0, bis_ms: 1, breite: 50.0, laenge: 8.0 };
         let neu = Nachlauf { pirep_id: "B".into(), ..alt.clone() };
         let mut stand = Some(neu.clone());
         assert!(!nur_wenn_gleich(&mut stand, &alt));
@@ -1690,10 +1710,11 @@ mod tests {
     #[test]
     fn nachlauf_beginnt_an_allen_abgaben_und_nie_beim_abbrechen() {
         let quelle = crate::quelle_gesamt::PRODUKTION;
-        assert_eq!(quelle.matches("bilder::nachlauf_beginnen(&app, &flight);").count(), 3, "gefiled, Warteschlange, von Hand");
+        assert_eq!(quelle.matches("bilder::nachlauf_beginnen(&app, &flight, &effective_arr_icao);").count(), 2, "gefiled, Warteschlange: das tatsaechliche Ziel");
+        assert_eq!(quelle.matches("bilder::nachlauf_beginnen(&app, &flight, divert_to.as_deref().unwrap_or(&flight.arr_airport));").count(), 1, "von Hand");
         for marke in ["\"PIREP filed: {} {} – {}{}\"", "\"PIREP queued: {} {} – {}\""] {
             let davor = &quelle[..quelle.find(marke).unwrap()];
-            assert!(davor[davor.len().saturating_sub(400)..].contains("bilder::nachlauf_beginnen(&app, &flight);"), "{marke}");
+            assert!(davor[davor.len().saturating_sub(400)..].contains("bilder::nachlauf_beginnen("), "{marke}");
         }
         let abbruch = quelle.split("async fn flight_cancel(").nth(1).unwrap().split("async fn ").next().unwrap();
         assert!(!abbruch.contains("nachlauf_beginnen"), "ein abgebrochener Flug hat keinen Nachlauf");
