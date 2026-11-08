@@ -479,6 +479,9 @@ fn init_tracing() {
         pid = std::process::id(),
         log_dir = ?log_dir(),
         rechner = %rechner_beschreibung(),
+        // Die Auswertung der Diagnose-Logs (recorder/clientTechnik.ts) laesst
+        // Testlaeufe aus: lokale Debug-Builds teilen die Kennung der Beta.
+        testlauf = cfg!(debug_assertions),
         "AeroACARS starting"
     );
 
