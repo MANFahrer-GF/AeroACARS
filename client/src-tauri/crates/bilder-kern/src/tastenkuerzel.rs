@@ -72,36 +72,76 @@ pub fn lesen(roh: &str) -> Result<Taste, Fehler> {
 /// freien angemeldet, solange die alte noch gilt.
 pub const HOTKEY_IDS: [i32; 2] = [0x4141, 0x4142];
 
+/// Auftrag an den Hotkey-Faden; Tasten als `(mods, vk)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Befehl {
+    /// Sofort umstellen (`None` = freigeben).
+    Setzen(Option<(u32, u32)>),
+    /// Neue Kombi zusaetzlich anmelden, die alte bleibt.
+    Vorbereiten((u32, u32)),
+    /// Die vorbereitete Kombi gilt, die alte wird abgemeldet.
+    Bestaetigen,
+    /// Die vorbereitete Kombi wird abgemeldet, die alte gilt weiter.
+    Verwerfen,
+}
+
 /// Was der Hotkey-Faden gerade bei Windows angemeldet hat.
 #[derive(Debug, Default)]
 pub struct Belegung {
     gehalten: Option<(i32, u32, u32)>,
+    vorbereitet: Option<(i32, u32, u32)>,
 }
 
 impl Belegung {
-    /// Stellt auf `neu` (`(mods, vk)`, `None` = freigeben) um. Die alte Kombi wird erst
-    /// abgemeldet, wenn die neue steht; scheitert die neue, gilt die alte weiter. Die
-    /// schon gehaltene Kombi gilt als Erfolg: nochmal anmelden scheiterte an uns selbst.
-    pub fn umstellen<E>(
+    /// Fuehrt einen Auftrag aus. Die alte Kombi geht erst, wenn die neue steht; die schon
+    /// gehaltene gilt als Erfolg (nochmal anmelden scheiterte an uns selbst).
+    pub fn ausfuehren<E>(
         &mut self,
-        neu: Option<(u32, u32)>,
+        befehl: Befehl,
         mut anmelden: impl FnMut(i32, u32, u32) -> Result<(), E>,
         mut abmelden: impl FnMut(i32),
     ) -> Result<(), E> {
-        if neu == self.gehalten.map(|(_, m, v)| (m, v)) {
+        match befehl {
+            Befehl::Setzen(None) => {
+                self.verwerfen(&mut abmelden);
+                if let Some((id, _, _)) = self.gehalten.take() {
+                    abmelden(id);
+                }
+            }
+            Befehl::Setzen(Some(neu)) => {
+                self.vorbereiten(neu, &mut anmelden, &mut abmelden)?;
+                self.bestaetigen(&mut abmelden);
+            }
+            Befehl::Vorbereiten(neu) => self.vorbereiten(neu, &mut anmelden, &mut abmelden)?,
+            Befehl::Bestaetigen => self.bestaetigen(&mut abmelden),
+            Befehl::Verwerfen => self.verwerfen(&mut abmelden),
+        }
+        Ok(())
+    }
+
+    fn vorbereiten<E>(&mut self, neu: (u32, u32), anmelden: &mut impl FnMut(i32, u32, u32) -> Result<(), E>, abmelden: &mut impl FnMut(i32)) -> Result<(), E> {
+        self.verwerfen(abmelden); // ein liegengebliebener Versuch darf nicht weiter gelten
+        if self.gehalten.map(|(_, m, v)| (m, v)) == Some(neu) {
             return Ok(());
         }
-        let bisher = self.gehalten.map(|(id, _, _)| id);
-        let Some((mods, vk)) = neu else {
-            bisher.into_iter().for_each(&mut abmelden);
-            self.gehalten = None;
-            return Ok(());
-        };
-        let id = if bisher == Some(HOTKEY_IDS[0]) { HOTKEY_IDS[1] } else { HOTKEY_IDS[0] };
-        anmelden(id, mods, vk)?;
-        bisher.into_iter().for_each(&mut abmelden);
-        self.gehalten = Some((id, mods, vk));
+        let id = if self.gehalten.map(|(id, _, _)| id) == Some(HOTKEY_IDS[0]) { HOTKEY_IDS[1] } else { HOTKEY_IDS[0] };
+        anmelden(id, neu.0, neu.1)?;
+        self.vorbereitet = Some((id, neu.0, neu.1));
         Ok(())
+    }
+
+    fn bestaetigen(&mut self, abmelden: &mut impl FnMut(i32)) {
+        if let Some(neu) = self.vorbereitet.take() {
+            if let Some((id, _, _)) = self.gehalten.replace(neu) {
+                abmelden(id);
+            }
+        }
+    }
+
+    fn verwerfen(&mut self, abmelden: &mut impl FnMut(i32)) {
+        if let Some((id, _, _)) = self.vorbereitet.take() {
+            abmelden(id);
+        }
     }
 }
 
@@ -179,32 +219,30 @@ impl Anmeldung {
         }
     }
 
-    /// Wechselt auf die Kombi `neu`: erst anmelden, dann mit `speichern` festhalten.
-    /// Ist `neu` vergeben, bleibt alles wie es war, gespeichert wird nichts. Scheitert
-    /// das Speichern, gilt wieder die alte Kombi, denn die steht weiter in der Datei.
+    /// Wechselt auf die Kombi `neu`: `vorbereiten` meldet sie zusaetzlich an, dann
+    /// `speichern`, dann `abschliessen(gespeichert)` (die alte aufgeben oder die neue
+    /// zuruecknehmen). Ist `neu` vergeben, wird nichts gespeichert und die alte bleibt.
     pub fn aendern(
         &mut self,
         neu: &str,
-        mut setzen: impl FnMut(&Taste) -> Result<(), Fehler>,
+        vorbereiten: impl FnOnce(&Taste) -> Result<(), Fehler>,
         speichern: impl FnOnce() -> Result<(), Fehler>,
+        abschliessen: impl FnOnce(bool),
     ) -> Result<(), Fehler> {
         let taste = lesen(neu)?;
-        setzen(&taste).map_err(|e| {
+        vorbereiten(&taste).map_err(|e| {
             let bleibt = self.soll.as_ref().filter(|_| self.angemeldet).map(|a| format!("; {} bleibt aktiv", a.text)).unwrap_or_default();
             Fehler::Eingabe(format!("{} nicht uebernommen: {}{bleibt}", taste.text, e.meldung()))
         })?;
-        let alt = self.soll.replace(taste);
+        if let Err(e) = speichern() {
+            abschliessen(false);
+            return Err(e);
+        }
+        abschliessen(true);
+        self.soll = Some(taste);
         self.angemeldet = true;
         self.fehler = None;
         self.versuche = 0;
-        if let Err(e) = speichern() {
-            if alt.is_some() {
-                self.soll = alt;
-                self.angemeldet = false;
-                self.nachholen(setzen);
-            }
-            return Err(e);
-        }
         Ok(())
     }
 }
@@ -239,9 +277,9 @@ mod tests {
         ablauf: Vec<String>,
     }
 
-    fn umstellen(b: &mut Belegung, s: &std::cell::RefCell<System>, neu: Option<(u32, u32)>) -> Result<(), u32> {
-        b.umstellen(
-            neu,
+    fn befehl(b: &mut Belegung, s: &std::cell::RefCell<System>, was: Befehl) -> Result<(), u32> {
+        b.ausfuehren(
+            was,
             |id, m, v| {
                 let mut s = s.borrow_mut();
                 if s.fremd.contains(&(m, v)) || s.eigen.iter().any(|e| (e.1, e.2) == (m, v)) {
@@ -258,6 +296,10 @@ mod tests {
                 s.ablauf.push(format!("ab {v}"));
             },
         )
+    }
+
+    fn umstellen(b: &mut Belegung, s: &std::cell::RefCell<System>, neu: Option<(u32, u32)>) -> Result<(), u32> {
+        befehl(b, s, Befehl::Setzen(neu))
     }
 
     #[test]
@@ -334,78 +376,146 @@ mod tests {
         assert!(!ohne_dienst.aktiv() && ohne_dienst.fehler().is_some());
     }
 
+    /// Anmeldung und Belegung zusammen, wie im Programm.
+    struct Aufbau {
+        a: Anmeldung,
+        b: std::cell::RefCell<Belegung>,
+        s: std::cell::RefCell<System>,
+    }
+
+    impl Aufbau {
+        fn neu(fremd: Vec<(u32, u32)>) -> Self {
+            Aufbau { a: Anmeldung::default(), b: Default::default(), s: std::cell::RefCell::new(System { fremd, ..Default::default() }) }
+        }
+
+        fn start(&mut self, text: &str) -> Meldung {
+            let (b, s) = (&self.b, &self.s);
+            self.a.starten(text, |t| Self::auftrag(b, s, Befehl::Setzen(Some((t.mods, t.vk)))))
+        }
+
+        fn auftrag(b: &std::cell::RefCell<Belegung>, s: &std::cell::RefCell<System>, was: Befehl) -> Result<(), Fehler> {
+            befehl(&mut b.borrow_mut(), s, was).map_err(|c| Fehler::Eingabe(format!("schon belegt (Windows-Fehler {c})")))
+        }
+
+        fn nachholen(&mut self) -> Meldung {
+            let (b, s) = (&self.b, &self.s);
+            self.a.nachholen(|t| Self::auftrag(b, s, Befehl::Setzen(Some((t.mods, t.vk)))))
+        }
+
+        fn aendern(&mut self, neu: &str, speichern: Result<(), Fehler>) -> Result<(), Fehler> {
+            let (b, s) = (&self.b, &self.s);
+            self.a.aendern(
+                neu,
+                |t| Self::auftrag(b, s, Befehl::Vorbereiten((t.mods, t.vk))),
+                || {
+                    s.borrow_mut().ablauf.push("speichern".into());
+                    speichern
+                },
+                |ok| Self::auftrag(b, s, if ok { Befehl::Bestaetigen } else { Befehl::Verwerfen }).unwrap(),
+            )
+        }
+
+        fn ablauf(&self) -> Vec<String> {
+            self.s.borrow().ablauf.clone()
+        }
+
+        fn angemeldet(&self) -> Vec<u32> {
+            self.s.borrow().eigen.iter().map(|e| e.2).collect()
+        }
+    }
+
+    const ALT_F9: (u32, u32) = (MOD_ALT, 0x78);
+
+    #[test]
+    fn wechsel_laeuft_anmelden_speichern_alte_abmelden() {
+        let mut x = Aufbau::neu(vec![]);
+        x.start("Ctrl+Shift+S");
+        x.aendern("Alt+F9", Ok(())).unwrap();
+        assert_eq!(x.ablauf(), ["an 83", "an 120", "speichern", "ab 83"]);
+        assert_eq!(x.angemeldet(), [120]);
+        assert!(x.a.aktiv());
+    }
+
     #[test]
     fn vergebene_neue_kombi_wird_nicht_gespeichert_und_die_alte_bleibt_aktiv() {
-        let mut a = Anmeldung::default();
-        a.starten("Ctrl+Shift+S", |_| Ok(()));
-        let e = a.aendern("Alt+F9", belegt, || panic!("Vergebenes wird nie gespeichert")).unwrap_err();
+        let mut x = Aufbau::neu(vec![ALT_F9]);
+        x.start("Ctrl+Shift+S");
+        let e = x.aendern("Alt+F9", Ok(())).unwrap_err();
         assert!(e.meldung().contains("Alt+F9") && e.meldung().contains("Ctrl+Shift+S bleibt aktiv"), "{}", e.meldung());
-        assert!(a.aktiv());
-        assert_eq!(a.fehler(), None, "die alte Kombi laeuft, der Fehler gehoert zur Antwort");
-        assert_eq!(a.nachholen(|_| panic!("die alte ist angemeldet")), Meldung::Nichts);
+        assert_eq!(x.ablauf(), ["an 83"], "nichts gespeichert, nichts abgemeldet");
+        assert_eq!(x.angemeldet(), [83]);
+        assert!(x.a.aktiv());
+        assert_eq!(x.a.fehler(), None, "die alte Kombi laeuft, der Fehler gehoert zur Antwort");
+        assert_eq!(x.nachholen(), Meldung::Nichts);
     }
 
     #[test]
-    fn neue_kombi_wird_erst_angemeldet_dann_gespeichert() {
-        let ablauf = std::cell::RefCell::new(Vec::new());
-        let mut a = Anmeldung::default();
-        a.starten("Ctrl+Shift+S", |_| Ok(()));
-        a.aendern(
-            "Alt+F9",
-            |t| {
-                ablauf.borrow_mut().push(format!("anmelden {}", t.text));
-                Ok(())
-            },
-            || {
-                ablauf.borrow_mut().push("speichern".to_string());
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(*ablauf.borrow(), ["anmelden Alt+F9", "speichern"]);
-        assert!(a.aktiv());
+    fn scheitert_das_speichern_geht_nur_die_neue_wieder_weg() {
+        let mut x = Aufbau::neu(vec![]);
+        x.start("Ctrl+Shift+S");
+        assert!(x.aendern("Alt+F9", Err(Fehler::Io("Platte voll".into()))).is_err());
+        assert_eq!(x.ablauf(), ["an 83", "an 120", "speichern", "ab 120"], "die alte wurde nie abgemeldet");
+        assert_eq!(x.angemeldet(), [83]);
+        assert!(x.a.aktiv());
+        x.aendern("Alt+F9", Ok(())).expect("ein spaeterer Wechsel geht");
+        assert_eq!(x.angemeldet(), [120]);
     }
 
     #[test]
-    fn scheitert_das_speichern_gilt_wieder_die_alte_kombi() {
-        let gesetzt = std::cell::RefCell::new(Vec::new());
-        let mut a = Anmeldung::default();
-        a.starten("Ctrl+Shift+S", |_| Ok(()));
-        let e = a.aendern(
-            "Alt+F9",
-            |t| {
-                gesetzt.borrow_mut().push(t.text.clone());
-                Ok(())
-            },
-            || Err(Fehler::Io("Platte voll".into())),
-        );
-        assert!(e.is_err());
-        assert_eq!(*gesetzt.borrow(), ["Alt+F9", "Ctrl+Shift+S"], "zurueck auf die Kombi aus der Datei");
-        assert!(a.aktiv());
+    fn scheitert_das_speichern_ohne_alte_kombi_bleibt_nichts_stehen() {
+        let mut x = Aufbau::neu(vec![]);
+        assert!(matches!(x.start("S"), Meldung::Fehlschlag(_)));
+        assert!(x.aendern("Alt+F9", Err(Fehler::Io("Platte voll".into()))).is_err());
+        assert!(x.angemeldet().is_empty());
+        assert!(!x.a.aktiv());
+        assert_eq!(x.nachholen(), Meldung::Nichts, "nichts Gueltiges zu wiederholen");
+    }
+
+    #[test]
+    fn liegengebliebener_versuch_wird_beim_naechsten_auftrag_abgemeldet() {
+        let s = std::cell::RefCell::new(System::default());
+        let mut b = Belegung::default();
+        umstellen(&mut b, &s, Some((2, 83))).unwrap();
+        befehl(&mut b, &s, Befehl::Vorbereiten((1, 120))).unwrap(); // Zeitueberschreitung, keiner bestaetigt
+        umstellen(&mut b, &s, Some((2, 84))).unwrap();
+        assert_eq!(s.borrow().eigen.iter().map(|e| e.2).collect::<Vec<_>>(), [84]);
+        befehl(&mut b, &s, Befehl::Vorbereiten((1, 120))).unwrap();
+        befehl(&mut b, &s, Befehl::Verwerfen).unwrap();
+        befehl(&mut b, &s, Befehl::Bestaetigen).unwrap();
+        assert_eq!(s.borrow().eigen.iter().map(|e| e.2).collect::<Vec<_>>(), [84], "verworfen heisst verworfen");
+    }
+
+    #[test]
+    fn vorbereiten_der_gehaltenen_kombi_ist_kein_fehler() {
+        let s = std::cell::RefCell::new(System::default());
+        let mut b = Belegung::default();
+        umstellen(&mut b, &s, Some((2, 83))).unwrap();
+        befehl(&mut b, &s, Befehl::Vorbereiten((2, 83))).unwrap();
+        befehl(&mut b, &s, Befehl::Bestaetigen).unwrap();
+        assert_eq!(s.borrow().ablauf, ["an 83"]);
     }
 
     #[test]
     fn wechsel_beendet_eine_laufende_wiederholung() {
-        let mut a = Anmeldung::default();
-        a.starten("Ctrl+Shift+S", belegt);
-        a.aendern("Alt+F9", |_| Ok(()), || Ok(())).unwrap();
-        assert!(a.aktiv());
-        assert_eq!(a.fehler(), None);
-        assert_eq!(a.nachholen(|_| panic!("nichts mehr offen")), Meldung::Nichts);
+        let mut x = Aufbau::neu(vec![(MOD_CONTROL | MOD_SHIFT, 0x53)]);
+        assert!(matches!(x.start("Ctrl+Shift+S"), Meldung::Fehlschlag(_)));
+        x.aendern("Alt+F9", Ok(())).unwrap();
+        assert!(x.a.aktiv());
+        assert_eq!(x.a.fehler(), None);
+        assert_eq!(x.nachholen(), Meldung::Nichts);
+        assert_eq!(x.angemeldet(), [120]);
     }
 
     #[test]
     fn vergebene_kombi_waehrend_der_wiederholung_laesst_die_gespeicherte_weiterlaufen() {
-        let mut a = Anmeldung::default();
-        a.starten("Ctrl+Shift+S", belegt);
-        let e = a.aendern("Alt+F9", belegt, || panic!("nicht speichern")).unwrap_err();
+        let alt = (MOD_CONTROL | MOD_SHIFT, 0x53);
+        let mut x = Aufbau::neu(vec![alt, ALT_F9]);
+        x.start("Ctrl+Shift+S");
+        let e = x.aendern("Alt+F9", Ok(())).unwrap_err();
         assert!(!e.meldung().contains("bleibt aktiv"), "es ist ja keine aktiv: {}", e.meldung());
-        let mut gesehen = String::new();
-        a.nachholen(|t| {
-            gesehen = t.text.clone();
-            Ok(())
-        });
-        assert_eq!(gesehen, "Ctrl+Shift+S", "wiederholt wird die Kombi aus der Datei");
-        assert!(a.aktiv());
+        x.s.borrow_mut().fremd.clear(); // das alte Programm ist weg
+        assert!(matches!(x.nachholen(), Meldung::Nachgeholt(_)));
+        assert_eq!(x.angemeldet(), [83], "wiederholt wird die Kombi aus der Datei");
+        assert!(x.a.aktiv());
     }
 }

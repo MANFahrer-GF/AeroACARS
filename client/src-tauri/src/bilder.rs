@@ -1237,7 +1237,12 @@ fn quellen_setzen_intern(
     let schreiben = || quellen::einstellungen_schreiben(&datei, &neu);
     if plattform::AUFNAHME_VERFUEGBAR && neu.tastenkuerzel != bisher.tastenkuerzel {
         // Erst anmelden: ist die neue Kombi vergeben, bleibt die alte aktiv und gespeichert.
-        entsperren(hotkey_stand()).aendern(&neu.tastenkuerzel, hotkey_setzen, schreiben).map_err(fehler)?;
+        let abschliessen = |gespeichert: bool| {
+            if let Err(e) = hotkey_mit(|h| if gespeichert { h.bestaetigen() } else { h.verwerfen() }) {
+                tracing::warn!(fehler = %e, gespeichert, "Tastenkuerzel-Wechsel nicht abgeschlossen");
+            }
+        };
+        entsperren(hotkey_stand()).aendern(&neu.tastenkuerzel, |t| hotkey_mit(|h| h.vorbereiten(t)), schreiben, abschliessen).map_err(fehler)?;
     } else {
         schreiben().map_err(fehler)?;
     }
@@ -1333,11 +1338,15 @@ pub(crate) async fn bild_export(app: AppHandle, zip_base64: String, dateiname: S
 
 // ------------------------------------------------- Beobachtung, Hotkey
 
-fn hotkey_setzen(t: &tastenkuerzel::Taste) -> Result<(), Fehler> {
+fn hotkey_mit(auftrag: impl FnOnce(&plattform::Hotkey) -> Result<(), Fehler>) -> Result<(), Fehler> {
     match entsperren(hotkey()).as_ref() {
-        Some(h) => h.setzen(Some(t)),
+        Some(h) => auftrag(h),
         None => Err(Fehler::Io("Tastenkuerzel-Dienst laeuft nicht".into())),
     }
+}
+
+fn hotkey_setzen(t: &tastenkuerzel::Taste) -> Result<(), Fehler> {
+    hotkey_mit(|h| h.setzen(Some(t)))
 }
 
 fn hotkey_protokollieren(m: tastenkuerzel::Meldung) {
@@ -1383,8 +1392,11 @@ pub(crate) fn starten(app: &AppHandle) {
             let app_taste = app.clone();
             match plattform::hotkey_starten(move || taste_gedrueckt(&app_taste)) {
                 Ok(h) => {
+                    // Unter der Sperre: ein Wechsel aus der Oberflaeche kann nicht dazwischenkommen.
+                    let mut stand = entsperren(hotkey_stand());
                     *entsperren(hotkey()) = Some(h);
-                    let meldung = entsperren(hotkey_stand()).starten(&einst.tastenkuerzel, hotkey_setzen);
+                    let meldung = stand.starten(&einst.tastenkuerzel, hotkey_setzen);
+                    drop(stand);
                     hotkey_protokollieren(meldung);
                 }
                 Err(e) => entsperren(hotkey_stand()).dienst_fehlt(&e),

@@ -33,7 +33,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use super::Aufnahme;
 use crate::suche::{self, Fundort};
-use crate::tastenkuerzel::{Belegung, Taste};
+use crate::tastenkuerzel::{Befehl, Belegung, Taste};
 use crate::verdeckung::{verdeckt, Rechteck};
 use crate::yoke::{self, Flanke, Geraet, SuchStand, YokeTaste};
 use crate::Fehler;
@@ -433,8 +433,8 @@ pub fn ton_abspielen(ok: bool) {
     unsafe { PlaySoundW(wav.as_ptr() as *const u16, null_mut(), SND_MEMORY | SND_ASYNC | SND_NODEFAULT) };
 }
 
-/// Offener Auftrag an den Hotkey-Faden: neue Taste (oder `None` = freigeben) und Antwortkanal.
-type Auftrag = Mutex<Option<(Option<(u32, u32)>, mpsc::Sender<Result<(), String>>)>>;
+/// Offener Auftrag an den Hotkey-Faden samt Antwortkanal.
+type Auftrag = Mutex<Option<(Befehl, mpsc::Sender<Result<(), String>>)>>;
 
 /// Eigener Faden mit Nachrichtenschleife fuer `RegisterHotKey`.
 pub struct Hotkey {
@@ -465,10 +465,10 @@ pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, F
                     if msg.message == WM_HOTKEY {
                         bei_taste();
                     } else if msg.message == WM_APP {
-                        let Some((neu, antwort)) = a2.lock().ok().and_then(|mut g| g.take()) else { continue };
+                        let Some((befehl, antwort)) = a2.lock().ok().and_then(|mut g| g.take()) else { continue };
                         let erg = belegung
-                            .umstellen(
-                                neu,
+                            .ausfuehren(
+                                befehl,
                                 |id, mods, vk| if RegisterHotKey(null_mut(), id, mods | MOD_NOREPEAT, vk) != 0 { Ok(()) } else { Err(GetLastError()) },
                                 |id| {
                                     UnregisterHotKey(null_mut(), id);
@@ -488,15 +488,42 @@ pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, F
 impl Hotkey {
     /// Meldet das Tastenkuerzel an (ersetzt das bisherige); `None` gibt es frei.
     pub fn setzen(&self, taste: Option<&Taste>) -> Result<(), Fehler> {
+        self.auftragen(Befehl::Setzen(taste.map(|t| (t.mods, t.vk))))
+    }
+
+    /// Meldet die neue Kombi zusaetzlich an; die alte gilt bis [`Hotkey::bestaetigen`].
+    pub fn vorbereiten(&self, taste: &Taste) -> Result<(), Fehler> {
+        let erg = self.auftragen(Befehl::Vorbereiten((taste.mods, taste.vk)));
+        if matches!(erg, Err(Fehler::Io(_))) {
+            // Keine Antwort: der Versuch darf nicht spaeter unbemerkt wirksam werden.
+            let _ = self.absenden(Befehl::Verwerfen);
+        }
+        erg
+    }
+
+    pub fn bestaetigen(&self) -> Result<(), Fehler> {
+        self.auftragen(Befehl::Bestaetigen)
+    }
+
+    pub fn verwerfen(&self) -> Result<(), Fehler> {
+        self.auftragen(Befehl::Verwerfen)
+    }
+
+    fn auftragen(&self, befehl: Befehl) -> Result<(), Fehler> {
+        self.absenden(befehl)?
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .map_err(|_| Fehler::Io("Hotkey-Faden antwortet nicht".into()))?
+            .map_err(Fehler::Eingabe)
+    }
+
+    fn absenden(&self, befehl: Befehl) -> Result<mpsc::Receiver<Result<(), String>>, Fehler> {
         let (tx, rx) = mpsc::channel();
-        *self.auftrag.lock().map_err(|_| Fehler::Io("Hotkey gesperrt".into()))? = Some((taste.map(|t| (t.mods, t.vk)), tx));
+        *self.auftrag.lock().map_err(|_| Fehler::Io("Hotkey gesperrt".into()))? = Some((befehl, tx));
         // SAFETY: Faden-ID stammt aus dem Hotkey-Faden.
         if unsafe { PostThreadMessageW(self.faden, WM_APP, 0, 0) } == 0 {
             return Err(Fehler::Io("Hotkey-Faden nicht erreichbar".into()));
         }
-        rx.recv_timeout(std::time::Duration::from_secs(3))
-            .map_err(|_| Fehler::Io("Hotkey-Faden antwortet nicht".into()))?
-            .map_err(Fehler::Eingabe)
+        Ok(rx)
     }
 }
 
