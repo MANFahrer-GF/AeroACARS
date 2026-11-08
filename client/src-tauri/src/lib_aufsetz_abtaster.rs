@@ -58,9 +58,18 @@ fn landung_episode_zuruecksetzen(stats: &mut FlightStats) {
 /// das: der Dump gilt sofort als abgeschlossen, der Reset-Block re-armt den
 /// Sampler auf demselben Tick, und der zweite Aufsetzer bekommt seinen
 /// eigenen Dump + seine eigene `apply_accident_heuristic`-Auswertung.
-fn touchdown_dump_faellig(elapsed_seit_touchdown_ms: i64, agl_jetzt_ft: f32) -> bool {
+fn touchdown_dump_faellig(elapsed_seit_touchdown_ms: i64, agl_jetzt_ft: f32, am_boden: bool) -> bool {
     elapsed_seit_touchdown_ms >= crate::grenzwerte::grenzwerte().landung.touchdown_post_window_ms.wert
-        || agl_jetzt_ft > crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_agl_threshold_ft.wert
+        || wieder_weggestiegen(agl_jetzt_ft, am_boden)
+}
+
+/// Ueber der T&G-Schwelle UND nicht am Boden. Meldet der Simulator Bodenkontakt,
+/// ist ein hoher AGL-Wert ein Messfehler: DrmAg9Ve55BeQaV1 (07.11.2026, X-Plane)
+/// rollte mit 0,7 ft aus, ein einzelner Wert von 715 ft bei `on_ground=true`
+/// schloss das Fenster nach 3,7 s als „Hopser", und die Landung galt mangels
+/// Bereitschaftssignal als nicht messbar (G-Wert verloren).
+fn wieder_weggestiegen(agl_jetzt_ft: f32, am_boden: bool) -> bool {
+    !am_boden && agl_jetzt_ft > crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_agl_threshold_ft.wert
 }
 
 fn open_touchdown_capture_window(stats: &mut FlightStats, now: DateTime<Utc>) {
@@ -1471,8 +1480,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                     // Frueh-Dump bei Bounce-in-Aufprall — siehe Doc-Kommentar
                     // an `touchdown_dump_faellig`.
                     let agl_jetzt_ft = snap.altitude_agl_ft as f32;
-                    let climbed_out_early = agl_jetzt_ft > crate::grenzwerte::grenzwerte().phasen_kern.touch_and_go_agl_threshold_ft.wert;
-                    if touchdown_dump_faellig(elapsed_ms, agl_jetzt_ft) {
+                    let climbed_out_early = wieder_weggestiegen(agl_jetzt_ft, snap.on_ground);
+                    if touchdown_dump_faellig(elapsed_ms, agl_jetzt_ft, snap.on_ground) {
                         if climbed_out_early && elapsed_ms < crate::grenzwerte::grenzwerte().landung.touchdown_post_window_ms.wert {
                             tracing::info!(
                                 pirep_id = %flight.pirep_id,

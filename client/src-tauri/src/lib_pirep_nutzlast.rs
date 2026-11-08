@@ -1015,10 +1015,7 @@ fn effective_touchdown_events(stats: &FlightStats) -> std::borrow::Cow<'_, [Touc
     // statt der echten Touchdown-Zeit bekommen — sichtbar wuerde das nur
     // im seltenen Fall T&G+gerastete Sampler-Landung, aber ehrlicher ist's
     // so oder so.
-    let timestamp = stats
-        .landing_at
-        .or(stats.sampler_touchdown_at)
-        .unwrap_or_else(Utc::now);
+    let timestamp = bestaetigter_aufsetzer(stats).unwrap_or_else(Utc::now);
     let mut events = stats.touchdown_events.clone();
     events.push(TouchdownEvent {
         timestamp,
@@ -1065,6 +1062,15 @@ fn aufsetzer_fuer_pirep(
     (eintraege, haertester)
 }
 
+/// Zeitpunkt der Landung fuer PIREP und Abgleich: zuerst der vom Abtaster
+/// bestaetigte Aufsetzer, denn den meldet auch live. Die Phasenlogik setzt
+/// `landing_at` schon beim ersten Bodenkontakt-Kandidaten. 6vMvrbQArNgR8M14
+/// (07.11.2026): Diesen verwarf der Abtaster als FALSE_EDGE, bestaetigt wurde
+/// der Aufsetzer 5,4 s spaeter, und der PIREP trug die verworfene Zeit.
+fn bestaetigter_aufsetzer(stats: &FlightStats) -> Option<DateTime<Utc>> {
+    stats.sampler_touchdown_at.or(stats.landing_at)
+}
+
 /// Weicht der PIREP von dem ab, was als Landung an live ging (20.10.2026,
 /// Stück 3)? Verglichen werden Aufsetz-Zeitpunkt (±2 s, wie der Recorder
 /// zuordnet) und Sinkrate (ganze fpm, wie `landing_vs_fpm`). `None`, wenn
@@ -1076,7 +1082,7 @@ fn aufsetzer_fuer_pirep(
 /// Hier: laut ins Protokoll.
 fn landung_widerspricht_meldung(stats: &FlightStats) -> Option<String> {
     let (gemeldet_ts, gemeldet_vs) = stats.gemeldete_landung?;
-    let aufsetzen = stats.landing_at.or(stats.sampler_touchdown_at);
+    let aufsetzen = bestaetigter_aufsetzer(stats);
     let vs = stats.canonical_landing_rate_fpm().map(|v| v.round() as i32);
     match (aufsetzen, vs) {
         (Some(ts), _) if (ts.timestamp_millis() - gemeldet_ts).abs() > 2_000 => Some(format!(
