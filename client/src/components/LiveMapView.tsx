@@ -2800,17 +2800,19 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   <Sym pfad={PFAD.taxi} />
                   {showTaxi && <span className="aa-livemap-toggle__wort">{t("livemap.layer_taxi")}</span>}
                 </button>
-                <button
-                  type="button"
-                  className={`aa-livemap-toggle ${bildKarte.bilderAn ? "aa-livemap-toggle--active" : ""}`}
-                  aria-pressed={bildKarte.bilderAn}
-                  aria-label={t("livemap.layer_bilder")}
-                  title={t("livemap.layer_bilder")}
-                  onClick={() => bildKarte.setBilderAn((v) => !v)}
-                >
-                  <Sym pfad={PFAD.bilder} />
-                  {bildKarte.bilderAn && <span className="aa-livemap-toggle__wort">{t("livemap.layer_bilder")}</span>}
-                </button>
+                {bildKarte.marken > 0 && (
+                  <button
+                    type="button"
+                    className={`aa-livemap-toggle ${bildKarte.bilderAn ? "aa-livemap-toggle--active" : ""}`}
+                    aria-pressed={bildKarte.bilderAn}
+                    aria-label={t("livemap.layer_bilder")}
+                    title={t("livemap.layer_bilder")}
+                    onClick={() => bildKarte.setBilderAn((v) => !v)}
+                  >
+                    <Sym pfad={PFAD.bilder} />
+                    {bildKarte.bilderAn && <span className="aa-livemap-toggle__wort">{t("livemap.layer_bilder")}</span>}
+                  </button>
+                )}
                 <button
                   type="button"
                   className={`aa-livemap-toggle ${showVa ? "aa-livemap-toggle--active" : ""}`}
