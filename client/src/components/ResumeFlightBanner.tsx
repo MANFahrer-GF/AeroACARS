@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
-import type { ActiveFlightInfo, ResumableFlight, SimStatus } from "../types";
+import type { ActiveFlightInfo, FlightEndOutcome, ResumableFlight, SimStatus } from "../types";
 import { useConfirm } from "./ConfirmDialog";
 import { resolveFlightIdent } from "../lib/callsign";
 import { Notice } from "./ui";
@@ -21,6 +21,11 @@ interface Props {
   onAdopted: (info: ActiveFlightInfo) => void;
   /** Notify the dashboard when the flight was cancelled. */
   onCancelled: () => void;
+  /** Der gelandete Flug wurde aus dem Banner abgegeben (DAL667). */
+  onFiledSuccess?: (outcome: FlightEndOutcome) => void;
+  /** Das Programm meldet `abgabe-ankunft-1`. Ein aelteres gaebe mit den
+   *  Live-Werten des Simulators ab (DAL667) — dann kein Knopf. */
+  abgabeMoeglich?: boolean;
 }
 
 type Mode =
@@ -42,6 +47,8 @@ export function ResumeFlightBanner({
   activeFlight,
   onAdopted,
   onCancelled,
+  onFiledSuccess,
+  abgabeMoeglich,
 }: Props) {
   const { t } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
@@ -350,6 +357,76 @@ export function ResumeFlightBanner({
     }
   }
 
+  /** Gelandet, geparkt, nichts sperrt: Dann ist der Flug fertig, egal was
+   *  der Simulator gerade zeigt. DAL667 (07.11.2026): Nach dem Parken in
+   *  KSFO lud der Pilot eine 777 in Rio, und das Banner bot nur „Flug
+   *  abbrechen" — der fertige Flug wurde storniert. Ein Divert wird im
+   *  Divert-Banner beantwortet, eine Sperre im Sprung-Banner. */
+  const abgebbar =
+    abgabeMoeglich === true &&
+    mode.kind === "auto_resumed" &&
+    activeFlight?.phase === "arrived" &&
+    !activeFlight.abgabe_sperre &&
+    !activeFlight.divert_hint;
+
+  async function doFile() {
+    if (mode.kind !== "auto_resumed" || !activeFlight) return;
+    const info = activeFlight;
+    setMode((prev) => (prev.kind === "auto_resumed" ? { ...prev, busy: true } : prev));
+    try {
+      await invoke("flight_end");
+      onFiledSuccess?.({
+        kind: "filed",
+        callsign: info.airline_icao
+          ? `${info.airline_icao} ${resolveFlightIdent(info.flight_number, info.callsign)}`
+          : resolveFlightIdent(info.flight_number, info.callsign),
+        dpt: info.dpt_airport,
+        arr: info.arr_airport,
+      });
+      if (!onFiledSuccess) onCancelled();
+      setMode({ kind: "idle" });
+    } catch (err) {
+      const e = err as { code?: string; details?: { missing?: string[] } };
+      // Gibt die App den Flug gerade selbst ab (Auto-File im Takt), verliert
+      // dieser Klick das Rennen — das ist kein Fehler. Die laufende Abgabe
+      // meldet sich ueber `pirep_auto_filed`; ist der Flug schon weg, ist er
+      // abgegeben (Codex-Pruefung DAL667).
+      if (e?.code === "flight_setup_in_progress") {
+        setMode((prev) => (prev.kind === "auto_resumed" ? { ...prev, busy: false } : prev));
+        return;
+      }
+      if (e?.code === "no_active_flight") {
+        onCancelled();
+        setMode({ kind: "idle" });
+        return;
+      }
+      const msg =
+        e?.code === "flight_validation_failed"
+          ? (e.details?.missing ?? [])
+              .map((k) => t(`active_flight.validation.fields.${k}`, { defaultValue: k }))
+              .join("\n")
+          : errMsg(err);
+      alert(`${t("resume.abgeben_fehler")}\n\n${msg}`);
+      setMode((prev) => (prev.kind === "auto_resumed" ? { ...prev, busy: false } : prev));
+    }
+  }
+
+  // Hinweis ueber, Knopf IN der jeweiligen Aktionszeile — nicht als eigene
+  // Zeile (Sichtpruefung 08.11.: zwei Knopfzeilen uebereinander).
+  const abgebenHinweis = abgebbar ? (
+    <p className="active-flight__paused-instructions">{t("resume.abgeben_hinweis")}</p>
+  ) : null;
+  const abgebenKnopf = abgebbar ? (
+    <button
+      type="button"
+      className="button button--primary"
+      onClick={() => void doFile()}
+      disabled={mode.kind === "auto_resumed" && mode.busy}
+    >
+      {t("resume.abgeben")}
+    </button>
+  ) : null;
+
   if (mode.kind === "idle") return null;
 
   // v0.13.12: lokale JSX-Variable umbenannt — `positionSuspect` ist jetzt
@@ -407,7 +484,9 @@ export function ResumeFlightBanner({
         </p>
         <LetzterPunkt flight={activeFlight} />
         <ComparisonGrid activeFlight={activeFlight} />
+        {abgebenHinweis}
         <RecheckActions
+          vorne={abgebenKnopf}
           busy={mode.busy}
           vomBoden={activeFlight?.resume_vom_boden_moeglich === true}
           onConfirm={() => {
@@ -446,7 +525,9 @@ export function ResumeFlightBanner({
         </div>
         <p className="active-flight__paused-instructions">{t("resume.warte_text")}</p>
         <LetzterPunkt flight={mode.flight} />
+        {abgebenHinweis}
         <div className="active-flight__paused-actions">
+          {abgebenKnopf}
           <button
             type="button"
             className="resume-modal__danger"
@@ -507,7 +588,10 @@ export function ResumeFlightBanner({
         )
       )}
 
+      {abgebenHinweis}
+
       <div className="resume-modal__actions">
+        {abgebenKnopf}
         <button
           type="button"
           className="button button--primary resume-modal__primary"
@@ -911,12 +995,15 @@ function haversineNm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 // ─── RecheckActions (im Pause-Banner-Action-Look) ────────────────────
 
 function RecheckActions({
+  vorne,
   busy,
   vomBoden,
   onConfirm,
   onVomBoden,
   onCancel,
 }: {
+  /** Zusaetzlicher Knopf vorn in der Zeile („Flug abgeben", DAL667). */
+  vorne?: ReactNode;
   busy: boolean;
   /** Auf einem anderen Platz am Boden neu geladen (GAF 278): MSFS kann viele
    *  Flüge nicht in der Luft laden — dann von dort weiterfliegen. */
@@ -960,6 +1047,7 @@ function RecheckActions({
         <p className="active-flight__paused-instructions">{t("resume.vom_boden_hinweis")}</p>
       )}
       <div className="active-flight__paused-actions">
+        {vorne}
         {vomBoden ? (
           <button
             type="button"

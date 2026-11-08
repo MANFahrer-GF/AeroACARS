@@ -119,8 +119,7 @@ fn apply_pause_resume(
         // `try_resume_flight` (Phase 3) — geteilte Logik, nicht dupliziert.
         if let Some(d) = discontinuity {
             if is_impossible_discontinuity(&d) {
-                stats.resume_discontinuity = Some(d);
-                stats.resume_spruenge.push(d);
+                sprung_vermerken(&mut stats, d, now);
             }
         }
     }

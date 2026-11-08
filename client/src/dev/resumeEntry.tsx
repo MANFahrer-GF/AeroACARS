@@ -2,6 +2,8 @@
 // 27.09.2026). `?sim=1` = Simulator verbunden, `&weg=1` = Position passt nicht.
 // `?gefunden=1` = nur auf dem Server gefunden, `&woanders=1` = meldet gerade
 // von einem anderen Gerät (24.10.2026).
+// `&arrived=1` = gelandet und geparkt, nichts sperrt: Knopf „Flug abgeben"
+// (DAL667, 07.11.2026).
 import "./resumeGefunden";
 import { createRoot } from "react-dom/client";
 import i18n from "i18next";
@@ -22,6 +24,7 @@ const flug = {
   pirep_id: "p", airline_icao: "SIA", flight_number: "375", callsign: "",
   dpt_airport: "WSSS", arr_airport: "EDDM", was_just_resumed: true,
   resume_position_suspect: q.has("weg"),
+  phase: q.has("arrived") ? "arrived" : "cruise", abgabe_sperre: null, divert_hint: null,
   last_known_lat: 21.2929, last_known_lon: 86.2577, last_known_alt_ft: 36012,
   last_known_heading_deg: 302, last_known_gs_kt: 488,
   last_known_at: new Date(Date.now() - 4 * 60_000).toISOString(),
@@ -31,6 +34,6 @@ const flug = {
 const gefunden = q.has("gefunden");
 createRoot(document.getElementById("root")!).render(
   <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-    <ResumeFlightBanner activeFlight={gefunden ? null : flug} onAdopted={() => {}} onCancelled={() => {}} />
+    <ResumeFlightBanner activeFlight={gefunden ? null : flug} onAdopted={() => {}} onCancelled={() => {}} abgabeMoeglich />
   </div>,
 );

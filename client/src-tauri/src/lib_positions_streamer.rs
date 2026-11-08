@@ -219,6 +219,20 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 break;
             }
 
+            // Abgabe eines gelandeten Flugs VOR allen Toren dieser Schleife:
+            // Pause, `was_just_resumed`, Sim getrennt, kein Snapshot — jedes
+            // davon endet unten mit `continue`. Bis 3.0.0-beta.2.4 stand der
+            // Versuch nur am Ende des Takts; DAL667 (07.11.2026) landete in
+            // KSFO, der Pilot ging ins MSFS-Menue und lud eine 777 in Rio, und
+            // der Flug wurde nie abgegeben. Was der Simulator nach der Ankunft
+            // tut, aendert an einem fertigen Flug nichts — die Abgabe liest
+            // nur die Flugdaten (Tor: `abgabe_tor_position`, Datensatz:
+            // `live_snapshot_gehoert_zum_flug`). Der Merker
+            // `auto_file_gestartet` haelt es bei EINEM Versuch.
+            if flight.stats.lock().expect("flight stats").phase == FlightPhase::Arrived {
+                auto_file_versuchen(&app, &flight, false);
+            }
+
             // v0.13.9 Stream F (Mid-Session Sim-Crash-Recovery — LE27):
             // Wenn was_just_resumed=true gesetzt ist, pausiert der Streamer
             // den Position-Push (kein FSM-Step, kein Outbox-Push, kein
@@ -233,19 +247,31 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // (Telefon, Pinkelpause, Pause im Sim). Heartbeat-Body baut sich
             // aus dem letzten guten Pre-Recovery-Snapshot (last_good_snap
             // VOR diesem Tick, identisch zum SimPause/SimDisconnect-Pfad).
-            if flight.was_just_resumed.load(Ordering::Relaxed) {
+            //
+            // Ebenso nach einem Simulatorwechsel nach dem Parken (DAL667):
+            // Der Flug ist fertig, das neu geladene Flugzeug gehoert nicht
+            // in seine Spur — siehe `flug_nach_ankunft_eingefroren`.
+            if flight.was_just_resumed.load(Ordering::Relaxed)
+                || flug_nach_ankunft_eingefroren(&flight.stats.lock().expect("flight stats"))
+            {
                 if last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL {
-                    if let Some(hb) = last_good_snap.as_ref() {
-                        let (phase, body) = {
-                            let stats = flight.stats.lock().expect("flight stats");
-                            let p = stats.phase;
-                            (p, build_heartbeat_body(hb, &stats, p))
-                        };
-                        // Über den Arbeiter — der Streamer wartet nicht
-                        // auf phpVMS (siehe `spawn_phpvms_meldungen`).
-                        last_heartbeat = std::time::Instant::now();
-                        phpvms_meldungen.lebenszeichen(body, phase, false);
-                    }
+                    // Auch ohne guten Snapshot: Frisch nach einem App-Neustart
+                    // hat dieser Streamer noch keinen, und bliebe der Flug hier
+                    // stehen, raeumte phpVMS den PIREP nach `acars.live_time`
+                    // ab (Codex-Pruefung DAL667). Der Body liest aus dem
+                    // Snapshot nur die Hoehe als Rueckfall, wenn keine
+                    // Spitzenhoehe bekannt ist — Flugzeit, Sprit und Strecke
+                    // kommen aus den Flugdaten.
+                    let hb = last_good_snap.clone().unwrap_or_default();
+                    let (phase, body) = {
+                        let stats = flight.stats.lock().expect("flight stats");
+                        let p = stats.phase;
+                        (p, build_heartbeat_body(&hb, &stats, p))
+                    };
+                    // Über den Arbeiter — der Streamer wartet nicht
+                    // auf phpVMS (siehe `spawn_phpvms_meldungen`).
+                    last_heartbeat = std::time::Instant::now();
+                    phpvms_meldungen.lebenszeichen(body, phase, false);
                 }
                 continue;
             }
@@ -331,8 +357,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         if is_impossible_discontinuity(&discontinuity) {
                             {
                                 let mut stats = flight.stats.lock().expect("flight stats");
-                                stats.resume_discontinuity = Some(discontinuity);
-                                stats.resume_spruenge.push(discontinuity);
+                                sprung_vermerken(&mut stats, discontinuity, Utc::now());
                             }
                             log_activity_and_record(
                                 &app,
@@ -2745,15 +2770,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 }
             }
 
-            // Auch OHNE Phasenwechsel: Die Landebewertung wird erst ein paar
-            // Sekunden nach dem Aufsetzen fertig. Wer nur den Uebergang nach
-            // `Arrived` prueft, kann das Fenster treffen, in dem die Sperre
-            // noch steht — und danach kommt kein zweiter Uebergang mehr
-            // (Cloud-QS 23.09.2026). Der Merker in `auto_file_versuchen`
-            // sorgt dafuer, dass trotzdem nur EIN Versuch laeuft.
-            if phase_change.is_none() && current_phase == FlightPhase::Arrived {
-                auto_file_versuchen(&app, &flight, false);
-            }
+            // Auch OHNE Phasenwechsel versucht der Takt die Abgabe — jetzt
+            // ganz oben in der Schleife, vor Pause und Co. (DAL667). Die
+            // Landebewertung wird erst Sekunden nach dem Aufsetzen fertig
+            // (Cloud-QS 23.09.2026); der Versuch dort faengt das auf.
 
             // Unified heartbeat-and-phase-update: POST `/pireps/{id}/update`
             // either when the phase just changed (so the live map sees the

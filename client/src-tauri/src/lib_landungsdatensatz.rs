@@ -1370,6 +1370,20 @@ fn eingabe_teile(
     teile
 }
 
+/// Gehoert der Live-Snapshot des Simulators noch zu diesem Flug? Nicht,
+/// solange der Simulator pausiert ist oder nach einem Neustart/einer Pause
+/// noch nicht zum Flug passt (`was_just_resumed`), und nicht nach einem
+/// Simulatorwechsel nach dem Parken. Sonst stuende im Landungsdatensatz das
+/// Flugzeug, das der Pilot danach geladen hat (DAL667, 07.11.2026: B752
+/// gelandet, danach eine PMDG 777-300ER in Rio).
+fn live_snapshot_gehoert_zum_flug(stats: &FlightStats, was_just_resumed: bool) -> bool {
+    !was_just_resumed
+        && stats.paused_since.is_none()
+        && !alle_spruenge(stats)
+            .iter()
+            .any(|d| sprung_nach_der_landung(d, stats))
+}
+
 fn record_landing_for_filed_flight(
     app: &AppHandle,
     flight: &ActiveFlight,
@@ -1378,7 +1392,13 @@ fn record_landing_for_filed_flight(
     effective_arr_icao: &str,
 ) {
     // ── Vor der Sperre: alles, was nicht aus den Flugdaten kommt ─────────
-    let snapshot = current_snapshot(app);
+    let snapshot = current_snapshot(app).filter(|_| {
+        let stats = flight.stats.lock().expect("flight stats");
+        live_snapshot_gehoert_zum_flug(
+            &stats,
+            flight.was_just_resumed.load(std::sync::atomic::Ordering::SeqCst),
+        )
+    });
     let sim_kind_label = read_sim_config(app).kind;
     let sim_label = match sim_kind_label {
         SimKind::Off => None,

@@ -54,6 +54,8 @@ async fn flight_end_manual(
             .take()
             .ok_or_else(|| UiError::new("no_active_flight", "no flight is active"))?
     };
+    // Wechsel nach dem Parken fuer die Notiz — siehe `flight_end` (DAL667).
+    wechsel_vor_der_abgabe_vermerken(&app, &flight, current_snapshot(&app).as_ref());
     // Offene Positionen nachsenden — siehe `flight_end`.
     flight.positionen_nachsenden.store(true, Ordering::SeqCst);
     flight.stop.store(true, Ordering::SeqCst);
@@ -247,6 +249,7 @@ async fn flight_end_manual(
         } else if abgabe_sperre(&stats) == Some(AbgabeSperre::LandungFehlt) {
             notes = landung_fehlt_notiz(None, &notes);
         }
+        notes = nach_ankunft_notiz(&stats, &notes);
         if let Some(divert) = divert_to
             .as_ref()
             .map(|s| s.trim().to_uppercase())

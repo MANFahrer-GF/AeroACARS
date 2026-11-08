@@ -369,7 +369,10 @@ fn flight_info(
         paused_last_known: stats.paused_last_known.clone(),
         divert_hint: stats.divert_hint.clone(),
         umleitung_ziel: stats.umleitung_ziel.clone(),
-        unmoeglicher_sprung: stats.resume_discontinuity.is_some(),
+        // Nur ein Sprung, der die Abgabe sperrt — das Sprung-Banner faellt
+        // auf dieses Feld zurueck, ein Wechsel nach dem Parken (DAL667)
+        // darf dort keine Frage ausloesen.
+        unmoeglicher_sprung: sperrender_sprung(&stats),
         abgabe_sperre: abgabe_sperre(&stats).map(|g| g.code().to_string()),
         resume_wartet_grund: stats.resume_wartet.as_ref().map(|(g, _)| g.clone()),
         resume_wartet_s: stats.resume_wartet.as_ref().map(|(_, s)| *s),

@@ -599,6 +599,8 @@
             danach_am_boden: false,
             luecke_secs: st.resume_luecke_secs,
             nur_bestaetigt: false,
+            am: None,
+            nach_ankunft: false,
         };
         assert!(
             ist_sprung_ans_ziel(&d),
@@ -958,6 +960,8 @@
             danach_am_boden: false,
             luecke_secs: None,
             nur_bestaetigt: false,
+            am: None,
+            nach_ankunft: false,
         };
         assert_eq!(
             sprung_grund(&alt),
