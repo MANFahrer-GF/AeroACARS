@@ -247,6 +247,8 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const einschaltenKarte = z.eingeschaltet === false && !spaeter;
   const beobachtete = (liste?.quellen ?? []).filter((q) => q.aktiv && q.beobachtet);
   const meldung = z.meldung;
+  // Aeltere Programme melden keinen Nachlauf; das Feld fehlt dann.
+  const nachlauf = !aktiverFlug && liste?.nachlauf && liste.nachlauf.bis_ms > Date.now() ? liste.nachlauf : null;
   const neueImFlug = aktiverFlug ? alle.filter((e) => flugSchluessel(e) === aktiverFlug.pirep_id).length : 0;
 
   return (
@@ -310,6 +312,14 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             {simulator === "msfs" ? (kuerzelText ? t("bilder.band.taste_msfs", { kuerzel: kuerzelText }) : t("bilder.band.taste_msfs_neutral")) : xplaneTaste ? t("bilder.band.taste_xplane_bekannt", { taste: xplaneTaste }) : t("bilder.band.taste_xplane")}
           </span>
           <span className="bt-band__rechts">{neueImFlug === 1 ? t("bilder.band.neue_eins") : t("bilder.band.neue", { count: neueImFlug })}</span>
+        </div>
+      ) : nachlauf ? (
+        <div className="bt-band bt-band--aktiv">
+          <span className="bt-band__punkt" aria-hidden="true" />
+          <span className="bt-band__fett">{t("bilder.band.nachlauf")}</span>
+          {nachlauf.rufzeichen && <span className="bt-acars">{nachlauf.rufzeichen}</span>}
+          <span>{nachlauf.abflug}{"–"}{nachlauf.ziel}</span>
+          <span className="bt-band__dim">{t("bilder.band.nachlauf_text", { zeit: kurzZeit(new Date(nachlauf.bis_ms).toISOString()) })}</span>
         </div>
       ) : (
         <div className="bt-band bt-band--ruhe">

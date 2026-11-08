@@ -943,6 +943,7 @@ async fn flight_end(
                 record_landing_for_filed_flight(&app, &flight, &effective_arr_icao);
             }
             clear_persisted_flight(&app, Some(&flight.pirep_id));
+            bilder::nachlauf_beginnen(&app, &flight);
             log_activity(
                 &state,
                 ActivityLevel::Info,
@@ -1194,6 +1195,7 @@ async fn flight_end(
                 // Warteschlangen-Zweig den Forensik-Nachtrag vor `FlightEnded`.
                 anflug_forensik_nachtrag_schreiben(&app, &flight);
                 clear_persisted_flight(&app, Some(&flight.pirep_id));
+                bilder::nachlauf_beginnen(&app, &flight);
                 log_activity(
                     &state,
                     ActivityLevel::Warn,

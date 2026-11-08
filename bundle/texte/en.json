@@ -5529,6 +5529,8 @@
       "aktiv": "Flight active",
       "kein_flug": "No flight active",
       "kein_flug_text": "Pictures are only imported during an AeroACARS flight.",
+      "nachlauf": "After the flight",
+      "nachlauf_text": "Pictures still belong to this flight until {{zeit}}.",
       "beobachtet": "{{sim}} · folder {{pfad}} is being watched",
       "keine_quelle": "No picture source being watched",
       "taste_xplane": "The simulator’s own key puts the picture here",

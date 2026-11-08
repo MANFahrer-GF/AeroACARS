@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   lerne: null as unknown,
   senden: null as null | ((a: Record<string, unknown>) => unknown),
   status: null as null | (() => unknown),
+  nachlauf: undefined as unknown,
   fluege: [] as unknown[],
   gekuerzt: false,
   unvollstaendig: true,
@@ -29,7 +30,7 @@ vi.mock("../../lib/ipc", () => ({
     h.aufrufe.push({ cmd, args });
     switch (cmd) {
       case "bilder_liste":
-        return { eintraege: h.zeilen, belegt_bytes: 5_000_000, quellen: [], tastenkuerzel: h.kuerzel, aufnahme_verfuegbar: false, simulator_taste: h.taste, funde: [], altbestand: [] };
+        return { nachlauf: h.nachlauf, eintraege: h.zeilen, belegt_bytes: 5_000_000, quellen: [], tastenkuerzel: h.kuerzel, aufnahme_verfuegbar: false, simulator_taste: h.taste, funde: [], altbestand: [] };
       case "ui_state_get_all": return h.einwilligung ? { "aeroacars.bilder.einwilligung.17": "1" } : {};
       case "bild_lesen": return new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0, 2, 0xff, 0xd9]);
       case "bild_senden": return h.senden ? h.senden(args!) : { bilder: [], kontingent: { rest: 9, grenze: 12, retry_after: 0 } };
@@ -51,7 +52,7 @@ import { eintrag } from "./logik/testhilfen";
 
 beforeEach(() => {
   h.tablet = false;
-  h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null; h.status = null; h.fluege = []; h.gekuerzt = false; h.unvollstaendig = true; h.taste = null; h.kuerzel = null; h.lerne = null;
+  h.aufrufe = []; h.zeilen = []; h.einwilligung = true; h.senden = null; h.status = null; h.fluege = []; h.gekuerzt = false; h.unvollstaendig = true; h.taste = null; h.kuerzel = null; h.lerne = null; h.nachlauf = undefined;
   URL.createObjectURL = vi.fn(() => "blob:x");
   URL.revokeObjectURL = vi.fn();
   void bilderStore.pilotSetzen(null);
@@ -188,6 +189,37 @@ describe("Bilder-Tab", () => {
     expect(d.getByText(/Deine Auswahl bleibt/)).toBeInTheDocument();
     expect(d.getByRole("button", { name: "Jetzt senden" })).toBeDisabled();
     expect(h.aufrufe.some((a) => a.cmd === "bild_senden")).toBe(false);
+  });
+
+  it("Nachlauf: nach der Abgabe zeigt das Band den abgegebenen Flug und die Endzeit", async () => {
+    vorbereiten();
+    const bis = Date.UTC(2099, 0, 1, 15, 42);
+    h.nachlauf = { pirep_id: "P1", rufzeichen: "GSG412", abflug: "EDDF", ziel: "LSZH", bis_ms: bis };
+    zeigen(false);
+    expect(await screen.findByText("Nachlauf")).toBeInTheDocument();
+    expect(screen.getByText("GSG412")).toBeInTheDocument();
+    expect(screen.getByText("Bilder gehören bis 15:42Z noch zu diesem Flug.")).toBeInTheDocument();
+    expect(screen.queryByText("Kein Flug aktiv")).toBeNull();
+  });
+
+  it("Nachlauf: abgelaufen oder bei aelterem Programm bleibt es bei „Kein Flug aktiv“", async () => {
+    vorbereiten();
+    h.nachlauf = { pirep_id: "P1", rufzeichen: "GSG412", abflug: "EDDF", ziel: "LSZH", bis_ms: Date.now() - 1 };
+    const { unmount } = zeigen(false);
+    expect(await screen.findByText("Kein Flug aktiv")).toBeInTheDocument();
+    expect(screen.queryByText("Nachlauf")).toBeNull();
+    unmount();
+    h.nachlauf = undefined;
+    zeigen(false);
+    expect(await screen.findByText("Kein Flug aktiv")).toBeInTheDocument();
+  });
+
+  it("Nachlauf: im aktiven Flug zaehlt allein der Flug", async () => {
+    vorbereiten();
+    h.nachlauf = { pirep_id: "P0", rufzeichen: "GSG1", abflug: "EDDM", ziel: "EDDL", bis_ms: Date.UTC(2099, 0, 1) };
+    zeigen(true);
+    expect(await screen.findByText("Flug aktiv")).toBeInTheDocument();
+    expect(screen.queryByText("Nachlauf")).toBeNull();
   });
 
   it("Flug aendern bietet einen frueheren Flug ohne Galeriebild an und schreibt seine Daten", async () => {

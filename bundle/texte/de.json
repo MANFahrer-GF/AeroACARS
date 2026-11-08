@@ -5529,6 +5529,8 @@
       "aktiv": "Flug aktiv",
       "kein_flug": "Kein Flug aktiv",
       "kein_flug_text": "Bilder werden nur in einem AeroACARS-Flug übernommen.",
+      "nachlauf": "Nachlauf",
+      "nachlauf_text": "Bilder gehören bis {{zeit}} noch zu diesem Flug.",
       "beobachtet": "{{sim}} · Ordner {{pfad}} wird beobachtet",
       "keine_quelle": "Keine Bildquelle beobachtet",
       "taste_xplane": "Die Taste des Simulators legt das Bild hier ab",

@@ -27,6 +27,7 @@
   "seite": 24,
   "aufraeumen_tage": 30,
   "zuordnung_toleranz_s": 120,
+  "nachlauf_min": 30,
   "sende_abfrage_s": 4,
   "sende_abfrage_max": 8,
   "tile_breite_px": 196

@@ -150,6 +150,8 @@ export interface BilderListe {
   aufnahme_verfuegbar: boolean;
   /** Screenshot-Taste des Simulators je Pilot (aus dessen Einstellungen); null = unbekannt. */
   simulator_taste: { simulator: string; text: string } | null;
+  /** Abgegebener Flug, dem Bilder noch zaehlen; fehlt bei aelteren Programmen. */
+  nachlauf?: { pirep_id: string; rufzeichen: string | null; abflug: string; ziel: string; bis_ms: number } | null;
   funde: Fund[];
   altbestand: AltEintrag[];
 }

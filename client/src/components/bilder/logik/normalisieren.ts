@@ -120,6 +120,13 @@ export function yokeLesen(roh: unknown): import("./typen").YokeTaste | null {
   return knopf !== null && hersteller !== null && produkt !== null ? { geraet_name: text(y.geraet_name) ?? "", hersteller_id: hersteller, produkt_id: produkt, knopf } : null;
 }
 
+function nachlaufLesen(roh: unknown): BilderListe["nachlauf"] {
+  const r = obj(roh);
+  const [pirep, bis] = [text(r.pirep_id), zahl(r.bis_ms)];
+  if (!pirep || bis === null) return null;
+  return { pirep_id: pirep, rufzeichen: text(r.rufzeichen), abflug: text(r.abflug) ?? "", ziel: text(r.ziel) ?? "", bis_ms: bis };
+}
+
 export function listeLesen(roh: unknown): BilderListe {
   const r = obj(roh);
   const k = obj(r.tastenkuerzel);
@@ -134,6 +141,7 @@ export function listeLesen(roh: unknown): BilderListe {
     simulator_taste: text(obj(r.simulator_taste).text) ? { simulator: text(obj(r.simulator_taste).simulator) ?? "", text: String(obj(r.simulator_taste).text) } : null,
     funde: liste(r.funde, fundLesen),
     altbestand: liste(r.altbestand, altLesen),
+    nachlauf: nachlaufLesen(r.nachlauf),
   };
 }
 

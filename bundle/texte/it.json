@@ -5529,6 +5529,8 @@
       "aktiv": "Volo attivo",
       "kein_flug": "Nessun volo attivo",
       "kein_flug_text": "Le immagini vengono importate solo durante un volo AeroACARS.",
+      "nachlauf": "Dopo il volo",
+      "nachlauf_text": "Le immagini appartengono ancora a questo volo fino alle {{zeit}}.",
       "beobachtet": "{{sim}} · la cartella {{pfad}} è osservata",
       "keine_quelle": "Nessuna fonte di immagini osservata",
       "taste_xplane": "Il tasto del simulatore mette qui l’immagine",

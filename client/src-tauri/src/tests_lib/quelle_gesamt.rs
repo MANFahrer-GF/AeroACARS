@@ -322,6 +322,9 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `abweichung_als_sprung` + `wechsel_vor_der_abgabe_vermerken` in beiden
 /// Abgabewegen. Tests `nach_dem_parken_*`, `abweichung_als_sprung_*`,
 /// `beide_abgabewege_*`, `lebenszeichen_ohne_guten_snapshot`.
+/// — plus Bilder-Nachlauf 08.11. (P-11.30): `bilder::nachlauf_beginnen` an den drei
+/// Abgabestellen (`flight_end` gefiled und Warteschlange, `flight_end_manual`). Tests
+/// `bilder::tests::nachlauf_beginnt_an_allen_abgaben_und_nie_beim_abbrechen`, `bilder-kern` (`nachlauf::tests::*`).
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -332,4 +335,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "4bc07ef6d3a901b2704dcf75e8b422869ae39764deef14188fdb42cc26de5fdc";
+const HASH_VOR_DER_ZERLEGUNG: &str = "c9e592ff3ce79a21e245f0cc98a61f199aabc2d64f20928c6f18c820d1fcc77b";
