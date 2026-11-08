@@ -387,6 +387,27 @@
         assert!(landung_widerspricht_meldung(&st).is_some(), "anderer Aufsetzer");
     }
 
+    /// 6vMvrbQArNgR8M14: Die Phasenlogik merkt sich den ersten Kandidaten, der
+    /// Abtaster verwirft ihn und bestaetigt 5,4 s spaeter den echten Aufsetzer.
+    #[test]
+    fn bestaetigter_aufsetzer_geht_vor_verworfenem_kandidaten() {
+        let flight = fixture();
+        let td = t0();
+        gerade_aufgesetzt(&flight, td);
+        let mut st = flight.stats.lock().unwrap();
+        let bestaetigt = td + chrono::Duration::milliseconds(5_437);
+        st.landing_at = Some(td);
+        st.sampler_touchdown_at = Some(bestaetigt);
+        st.gemeldete_landung = Some((bestaetigt.timestamp_millis(), -667));
+        assert_eq!(landung_widerspricht_meldung(&st), None, "gleicher Aufsetzer wie live");
+        assert_eq!(bestaetigter_aufsetzer(&st), Some(bestaetigt));
+        // Gegenprobe: ohne Abtaster bleibt die Zeit der Phasenlogik, und der
+        // Abstand ist ein Widerspruch.
+        st.sampler_touchdown_at = None;
+        assert_eq!(bestaetigter_aufsetzer(&st), Some(td));
+        assert!(landung_widerspricht_meldung(&st).is_some());
+    }
+
     /// Die Live-Meldung eines abgebrochenen Aufsetzers ist nicht die
     /// Landung: nicht nachschicken, nicht vergleichen.
     #[test]
