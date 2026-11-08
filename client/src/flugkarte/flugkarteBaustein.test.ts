@@ -10,6 +10,8 @@
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+const vorschau = vi.hoisted(() => ({ marke: vi.fn((..._a: unknown[]) => vi.fn()) }));
+vi.mock("./markenVorschau", () => ({ markeMitVorschau: vorschau.marke }));
 const leer = (): unknown => new Proxy(function () {}, { get: (_z, k) => (k === "then" ? undefined : leer()), apply: () => leer() });
 vi.mock("maplibre-gl", () => {
   class Karte {
@@ -315,6 +317,63 @@ describe("Bildpunkte", () => {
     expect(beiBild).toHaveBeenCalledWith("a");
     weg();
     expect(marken()[0].entfernt).toBe(true);
+  });
+  it("Vorschau: nur mit bildVorschau, liefert das Bild der Marke, Schliessen raeumt sie weg", async () => {
+    const d = document.createElement("div");
+    vorschau.marke.mockClear();
+    const bilder = () => Promise.resolve([{ id: "a", lat: 50, lon: 8, name: "Bild 11:00Z" }]);
+    flugkarteAnzeigen(d, akte(), { ...OPT, bilder: bilder() });
+    await vi.waitFor(() => expect(marken()).toHaveLength(1));
+    expect(vorschau.marke).not.toHaveBeenCalled();
+    const bildVorschau = vi.fn(() => ({ url: Promise.resolve("blob:v"), zeilen: [] }));
+    const weg = flugkarteAnzeigen(d, akte(), { ...OPT, bilder: bilder(), bildVorschau });
+    await vi.waitFor(() => expect(vorschau.marke).toHaveBeenCalledTimes(1));
+    const a = vorschau.marke.mock.calls[0];
+    expect(a[0]).toBe(marken().at(-1)!.o.element);
+    expect(a[2]).toBe("Bild 11:00Z");
+    (a[3] as () => unknown)();
+    expect(bildVorschau).toHaveBeenCalledWith("a");
+    weg();
+    expect(vorschau.marke.mock.results[0].value).toHaveBeenCalled();
+  });
+  describe("Chip Bilder", () => {
+    const zwei = () => Promise.resolve([{ id: "a", lat: 50, lon: 8, name: "n" }, { id: "b", lat: 51, lon: 8, name: "m" }]);
+    const chip = (d: HTMLElement) => d.querySelector<HTMLButtonElement>("[data-bilder]");
+    const anzeigen = () => marken().map((m) => m.o.element.style.display);
+    it("ohne Bilder und bei leerer Liste gibt es ihn nicht (Admin-Webapp)", async () => {
+      const d = document.createElement("div");
+      flugkarteAnzeigen(d, akte(), OPT);
+      expect(chip(d)).toBeNull();
+      flugkarteAnzeigen(d, akte(), { ...OPT, bilder: Promise.resolve([]) });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(chip(d)).toBeNull();
+    });
+    it("nennt die Anzahl, steht anfangs an, blendet aus und ein und schliesst dabei die Vorschau", async () => {
+      const d = document.createElement("div");
+      vorschau.marke.mockClear();
+      flugkarteAnzeigen(d, akte(), { ...OPT, bilder: zwei(), bildVorschau: () => null });
+      await vi.waitFor(() => expect(chip(d)).not.toBeNull());
+      expect(chip(d)!.textContent).toBe("Bilder 2");
+      expect(chip(d)!.getAttribute("aria-pressed")).toBe("true");
+      expect(anzeigen()).toEqual(["", ""]);
+      expect(vorschau.marke.mock.results[0].value).not.toHaveBeenCalled();
+      chip(d)!.click();
+      expect(chip(d)!.getAttribute("aria-pressed")).toBe("false");
+      expect(anzeigen()).toEqual(["none", "none"]);
+      expect(vorschau.marke.mock.results[0].value).toHaveBeenCalled();
+      chip(d)!.click();
+      expect(chip(d)!.getAttribute("aria-pressed")).toBe("true");
+      expect(anzeigen()).toEqual(["", ""]);
+    });
+    it.each(["alle", "wichtig"])("Knopf %s holt ausgeblendete Bilder zurueck", async (knopf) => {
+      const d = document.createElement("div");
+      flugkarteAnzeigen(d, akte(), { ...OPT, bilder: zwei() });
+      await vi.waitFor(() => expect(chip(d)).not.toBeNull());
+      chip(d)!.click();
+      (d.querySelector(`[data-fk="${knopf}"]`) as HTMLButtonElement).click();
+      expect(chip(d)!.getAttribute("aria-pressed")).toBe("true");
+      expect(anzeigen()).toEqual(["", ""]);
+    });
   });
   it("kommt die Liste erst nach dem Schliessen, setzt der Baustein nichts mehr", async () => {
     const d = document.createElement("div");

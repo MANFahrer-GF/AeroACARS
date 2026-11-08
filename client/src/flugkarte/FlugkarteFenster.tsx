@@ -13,6 +13,7 @@ import { BildGross } from "../components/bilder/BildGross";
 import { bilderStore } from "../components/bilder/bilderStore";
 import { bildZeitIso } from "../components/bilder/Kacheln";
 import { anzeigbar, flugSchluessel } from "../components/bilder/logik/gruppen";
+import { useMarkenVorschau } from "../components/bilder/useMarkenVorschau";
 import type { Eintrag } from "../components/bilder/logik/typen";
 import { flugkarteAnzeigen } from "./flugkarte";
 import type { Flugakte } from "./flugakteTypen";
@@ -28,6 +29,7 @@ export default function FlugkarteFenster({ pirepId, onClose }: { pirepId: string
   const [gross, setGross] = useState<{ id: string; bilder: Eintrag[] } | null>(null);
   const { t, i18n } = useTranslation();
   const sprache = i18n.resolvedLanguage ?? i18n.language ?? "en";
+  const vorschauVon = useMarkenVorschau();
 
   useEffect(() => {
     let weg: (() => void) | null = null, abgebrochen = false;
@@ -59,6 +61,7 @@ export default function FlugkarteFenster({ pirepId, onClose }: { pirepId: string
               });
           }),
           beiBild: (id) => setGross({ id, bilder: flugBilder }),
+          bildVorschau: (id) => vorschauVon(flugBilder.find((e) => e.id === id)),
           // nur im Entwicklungsmodus: Karte fuer Browser-Tests greifbar (wie in der Webapp)
           beiKarte: import.meta.env.DEV ? (karte) => { (window as unknown as { __flugkarte: unknown }).__flugkarte = karte; } : undefined,
         });

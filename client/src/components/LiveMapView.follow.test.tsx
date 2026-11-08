@@ -188,6 +188,21 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
+describe("LiveMapView Schalter Bilder", () => {
+  it("steht anfangs an, zeigt dann das Wort und schaltet aus und wieder ein", () => {
+    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
+    fireLoad();
+    const knopf = screen.getByRole("button", { name: "Bilder" });
+    expect(knopf.getAttribute("aria-pressed")).toBe("true");
+    expect(knopf.textContent?.trim()).toBe("Bilder");
+    fireEvent.click(knopf);
+    expect(knopf.getAttribute("aria-pressed")).toBe("false");
+    expect(knopf.textContent?.trim()).toBe("");
+    fireEvent.click(knopf);
+    expect(knopf.getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
 describe("LiveMapView Follow-Kamera", () => {
   it("zentriert bei Follow=an auf das Flugzeug und folgt Positions-Updates", () => {
     const { rerender } = render(

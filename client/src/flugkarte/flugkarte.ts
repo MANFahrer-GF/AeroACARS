@@ -15,6 +15,7 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck.gl/layers";
 import { WebMercatorViewport } from "@deck.gl/core";
 import "./flugkarte.css";
+import { markeMitVorschau, type VorschauVon } from "./markenVorschau";
 import { FARBEN_DUNKEL, KATEGORIEN, type Flugakte, type Kategorie } from "./flugakteTypen";
 
 /** Werte fuer einen Text; Zahlen formatiert der Baustein in der Sprache, bevor sie ankommen */
@@ -39,6 +40,8 @@ export interface FlugkarteOptionen {
   bilder?: Promise<Array<{ id: string; lat: number; lon: number; name: string; hoeheFt?: number | null }>>;
   /** Klick auf einen Bildpunkt */
   beiBild?: (id: string) => void;
+  /** Kleines Bild beim Ueberfahren eines Bildpunkts */
+  bildVorschau?: VorschauVon;
 }
 
 const BILD_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
@@ -274,7 +277,15 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   opt.beiKarte?.(map);
 
   // Bildpunkte: eigene Marker, unabhaengig von Ereignis-Haufen, Popup und Wiedergabe
-  let bildMarker: Array<{ b: { lon: number; lat: number; hoeheFt?: number | null }; m: maplibregl.Marker }> = [];
+  let bildMarker: Array<{ b: { lon: number; lat: number; hoeheFt?: number | null }; m: maplibregl.Marker; el: HTMLElement; vorschauZu?: () => void }> = [];
+  let bilderAn = true;
+  function bilderSchalten(an: boolean) {
+    bilderAn = an;
+    for (const { el, vorschauZu } of bildMarker) {
+      el.style.display = an ? "" : "none";
+      if (!an) vorschauZu?.(); // ein verschwundener Punkt meldet kein Verlassen mehr
+    }
+  }
   void opt.bilder?.then((liste) => {
     if (beendet) return;
     bildMarker = liste.map((b) => {
@@ -285,9 +296,12 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
       el.setAttribute("aria-label", b.name);
       el.innerHTML = BILD_SVG;
       el.addEventListener("click", (ev) => { ev.stopPropagation(); opt.beiBild?.(b.id); });
-      return { b, m: new maplibregl.Marker({ element: el }).setLngLat([b.lon, b.lat]).addTo(map) };
+      const vorschauZu = opt.bildVorschau ? markeMitVorschau(el, map, b.name, () => opt.bildVorschau!(b.id)) : undefined;
+      if (vorschauZu) aufraeumen.push(vorschauZu);
+      return { b, m: new maplibregl.Marker({ element: el }).setLngLat([b.lon, b.lat]).addTo(map), el, vorschauZu };
     });
     bildpunkteHeben();
+    renderChips();
   });
   aufraeumen.push(() => bildMarker.forEach(({ m }) => m.remove()));
 
@@ -771,16 +785,17 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
       if (MESSBAR[k] === false) return `<span class="fk-chip fk-nm" title="${esc(U("nicht_messbar_flugzeug"))}"><i>${esc(c.c)}</i>${esc(c.n)} <em>–</em></span>`;
       if (!n) return "";
       return `<button class="fk-chip" data-k="${k}" aria-pressed="${c.on}" title="${esc(c.how)}"><i style="background:${c.col};${k === "warn" ? "color:#fff" : ""}">${esc(c.c)}</i>${esc(c.n)} <em>${n}</em></button>`;
-    }).join("");
+    }).join("") + (bildMarker.length === 0 ? "" : `<button class="fk-chip" data-bilder aria-pressed="${bilderAn}"><i style="background:#2563eb;color:#fff">${BILD_SVG}</i>${esc(opt.t("livemap.layer_bilder") ?? "")} <em>${bildMarker.length}</em></button>`);
   }
   chipsEl.addEventListener("click", (ev) => {
     const b = (ev.target as HTMLElement).closest<HTMLElement>("button.fk-chip"); if (!b) return;
+    if (b.hasAttribute("data-bilder")) { bilderSchalten(!bilderAn); renderChips(); return; } // Bilder sind keine Ereignisse
     haufenZu(); const c = CATS[b.dataset.k!]; c.on = !c.on;
     if (sel != null && E[sel].k === b.dataset.k && !c.on) select(null);
     renderChips(); renderList(); refresh();
   });
-  $("alle").onclick = () => { haufenZu(); Object.values(CATS).forEach((c) => (c.on = true)); renderChips(); renderList(); refresh(); };
-  $("wichtig").onclick = () => { haufenZu(); Object.entries(CATS).forEach(([k, c]) => (c.on = DEF[k])); renderChips(); renderList(); refresh(); };
+  $("alle").onclick = () => { haufenZu(); Object.values(CATS).forEach((c) => (c.on = true)); bilderSchalten(true); renderChips(); renderList(); refresh(); };
+  $("wichtig").onclick = () => { haufenZu(); Object.entries(CATS).forEach(([k, c]) => (c.on = DEF[k])); bilderSchalten(true); renderChips(); renderList(); refresh(); };
 
   // ---------- Datenstreifen ----------
   const cv = $<HTMLCanvasElement>("diagramm"), cx = cv.getContext("2d")!;

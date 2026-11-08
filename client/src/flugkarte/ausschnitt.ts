@@ -5,6 +5,7 @@
 import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { FARBEN_DUNKEL } from "./flugakteTypen";
+import { markeMitVorschau, type VorschauVon } from "./markenVorschau";
 
 export interface BildMarke {
   id: string;
@@ -27,6 +28,8 @@ export interface AusschnittOptionen {
   stilUrl: string;
   /** Klick auf eine Bildmarke. */
   beiMarke?: (id: string) => void;
+  /** Kleines Bild beim Ueberfahren einer Bildmarke. */
+  bildVorschau?: VorschauVon;
   /** Klick auf die Karte (Detailspalte: Karte-Tab oeffnen). */
   beiKlick?: () => void;
   /** Zoom des Fokus; Vorgabe 8. */
@@ -87,8 +90,11 @@ function karteSteuern(map: maplibregl.Map, opt: AusschnittOptionen): Ausschnitt 
   let bereit = false;
   let letzte: AusschnittEingabe | null = null;
   let marker: maplibregl.Marker[] = [];
+  let vorschauen: Array<() => void> = [];
 
   function markenZeichnen(e: AusschnittEingabe) {
+    vorschauen.forEach((zu) => zu());
+    vorschauen = [];
     marker.forEach((m) => m.remove());
     marker = e.marken.map((m) => {
       const el = document.createElement("button");
@@ -100,6 +106,7 @@ function karteSteuern(map: maplibregl.Map, opt: AusschnittOptionen): Ausschnitt 
         ev.stopPropagation();
         opt.beiMarke?.(m.id);
       });
+      if (opt.bildVorschau) vorschauen.push(markeMitVorschau(el, map, m.name, () => opt.bildVorschau!(m.id)));
       return new maplibregl.Marker({ element: el }).setLngLat([m.lon, m.lat]).addTo(map);
     });
   }
@@ -156,6 +163,7 @@ function karteSteuern(map: maplibregl.Map, opt: AusschnittOptionen): Ausschnitt 
     },
     aufraeumen() {
       beendet = true;
+      vorschauen.forEach((zu) => zu());
       marker.forEach((m) => m.remove());
       map.remove();
     },

@@ -1,6 +1,7 @@
 // Bilder und Vorschauen aus dem verwalteten Ordner als Blob-Adresse (nur lokal, kein Host).
 import { useEffect, useState } from "react";
 import { bildAktionen } from "./logik/api";
+import type { Eintrag } from "./logik/typen";
 
 const MAX = 300;
 /** Vollbilder aus der Grossansicht sind gross: am Tablet zaehlt der Speicher, nicht die Anzahl. */
@@ -51,6 +52,11 @@ export function useBildUrl(pfad: string | null): string | null {
   // Nie die Adresse des vorigen Pfads zeigen: beim Blaettern stuende sonst kurz das alte Bild unter dem neuen Kopf.
   if (!pfad) return null;
   return stand.pfad === pfad ? stand.url : adressen.get(pfad)?.url ?? null;
+}
+
+/** Kleines Bild fuer die Kartenpunkte; null, wenn es keins gibt. Nie das Vollbild: Ueberfahren vieler Punkte verdraengte sonst alles andere aus dem Zwischenspeicher. */
+export function vorschauAdresse(e: Eintrag | undefined): Promise<string | null> {
+  return e?.vorschau_pfad ? holen(e.vorschau_pfad).catch(() => null) : Promise.resolve(null);
 }
 
 /** Geloeschte Bilder aus dem Zwischenspeicher nehmen. */

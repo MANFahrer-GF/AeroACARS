@@ -19,6 +19,8 @@ vi.mock("maplibre-gl", () => ({
   },
 }));
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
+const vorschau = vi.hoisted(() => ({ marke: vi.fn((..._a: unknown[]) => vi.fn()) }));
+vi.mock("./markenVorschau", () => ({ markeMitVorschau: vorschau.marke }));
 import { bildKarteAnzeigen, spurGeoJson } from "./ausschnitt";
 
 describe("Kartenausschnitt", () => {
@@ -45,6 +47,26 @@ describe("Kartenausschnitt", () => {
     expect([h.marken, h.spruenge]).toEqual([1, 1]);
     k.aktualisieren({ ...eingabe(), kugel: true });
     expect([h.marken, h.spruenge]).toEqual([2, 2]);
+    h.webgl = false;
+    vi.unstubAllGlobals();
+  });
+  it("Vorschau: je Marke das eigene Bild; neu gezeichnete Marken und das Aufraeumen schliessen die alte", async () => {
+    h.webgl = true;
+    vi.stubGlobal("fetch", async () => { throw new Error("offline"); });
+    vorschau.marke.mockClear();
+    const bildVorschau = vi.fn(() => ({ url: Promise.resolve("blob:v"), zeilen: [] }));
+    const k = bildKarteAnzeigen(document.createElement("div"), { stilUrl: "x", bildVorschau });
+    await h.laden!();
+    const eingabe = { spur: null, marken: [{ id: "a", name: "A", lat: 50, lon: 8, aktiv: true }], fokus: { lat: 50, lon: 8 }, kugel: false };
+    k.aktualisieren(eingabe);
+    const [, , name, adresse] = vorschau.marke.mock.calls[0];
+    expect(name).toBe("A");
+    (adresse as () => unknown)();
+    expect(bildVorschau).toHaveBeenCalledWith("a");
+    k.aktualisieren({ ...eingabe, kugel: true });
+    expect(vorschau.marke.mock.results[0].value).toHaveBeenCalledTimes(1);
+    k.aufraeumen();
+    expect(vorschau.marke.mock.results[1].value).toHaveBeenCalledTimes(1);
     h.webgl = false;
     vi.unstubAllGlobals();
   });

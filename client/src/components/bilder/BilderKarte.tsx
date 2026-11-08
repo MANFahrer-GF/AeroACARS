@@ -8,6 +8,7 @@ import { bildKarteAnzeigen, type Ausschnitt, type BildMarke } from "../../flugka
 import stilUrl from "../../flugkarte/stil-dunkel.json?url";
 import { bildAktionen } from "./logik/api";
 import { spurAusTrack } from "./logik/datum";
+import { useMarkenVorschau } from "./useMarkenVorschau";
 import type { Eintrag } from "./logik/typen";
 
 const spurCache = new Map<string, Array<[number, number]> | null>();
@@ -65,6 +66,9 @@ export function BilderKarte({
   const beiMarke = useRef(onMarke);
   const beiKlick = useRef<() => void>(() => undefined);
   beiMarke.current = onMarke;
+  const vorschauVon = useMarkenVorschau();
+  const vorschau = useRef({ bilder: flugBilder, von: vorschauVon });
+  vorschau.current = { bilder: flugBilder, von: vorschauVon };
   beiKlick.current = () => {
     if (hatOrt) onOeffnen({ lat: meta!.breite!, lon: meta!.laenge!, id: eintrag.id, pirep: meta?.pirep_id ?? null });
   };
@@ -74,6 +78,7 @@ export function BilderKarte({
     const k = bildKarteAnzeigen(feld.current, {
       stilUrl,
       beiMarke: (id) => beiMarke.current(id),
+      bildVorschau: (id) => vorschau.current.von(vorschau.current.bilder.find((e) => e.id === id)),
       beiKlick: () => beiKlick.current(),
       zoom: 8,
       beiFehler: () => setKartenFehler(true),

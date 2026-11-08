@@ -18,14 +18,15 @@ vi.mock("./bilderStore", () => ({
   useBilder: () => ({ liste: h.ohneListe ? null : { eintraege: h.eintraege } }),
   bilderStore: { laden: h.laden },
 }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: h.t }) }));
-const h = vi.hoisted(() => ({ eintraege: [] as unknown[], ohneListe: false, laden: vi.fn(async () => undefined), t: (k: string) => k }));
+vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: h.t, i18n: { language: "de" } }) }));
+vi.mock("./useBildUrl", () => ({ vorschauAdresse: h.vorschau }));
+const h = vi.hoisted(() => ({ vorschau: vi.fn(async (_e: unknown) => "blob:v" as string | null), eintraege: [] as unknown[], ohneListe: false, laden: vi.fn(async () => undefined), t: (k: string) => k }));
 import { eintrag } from "./logik/testhilfen";
 import { useBildKarte } from "./useBildKarte";
 
 function karte() {
   const aufrufe: unknown[] = [];
-  return { aufrufe, m: { setProjection: (p: unknown) => aufrufe.push(["projektion", p]), flyTo: (o: unknown) => aufrufe.push(["fly", o]), getZoom: () => 4, isStyleLoaded: () => true, once: vi.fn() } };
+  return { aufrufe, m: { setProjection: (p: unknown) => aufrufe.push(["projektion", p]), flyTo: (o: unknown) => aufrufe.push(["fly", o]), getZoom: () => 4, isStyleLoaded: () => true, once: vi.fn(), on: vi.fn(), off: vi.fn(), getContainer: () => document.body } };
 }
 
 describe("useBildKarte", () => {
@@ -87,6 +88,57 @@ describe("useBildKarte", () => {
     h.eintraege = [zeile(), eintrag({ id: "b", meta: { pirep_id: "P1", breite: 11, laenge: 21 } })];
     rerender();
     expect(marker).toHaveLength(3);
+  });
+  it("Ueberfahren einer Marke zeigt die Vorschau dieses Bildes; beim Abbau verschwindet sie", async () => {
+    h.eintraege = [
+      eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } }),
+      eintrag({ id: "b", meta: { pirep_id: "P1", breite: 11, laenge: 21, rufzeichen: "GSG412", abflug: "EDDF", ziel: "LSZH", zeit_utc: "2026-11-08T14:21:00Z", hoehe_ft: 11200, phase: "descent", flugzeug_titel: "A320-251N" } }),
+    ];
+    marker.length = 0;
+    h.vorschau.mockClear();
+    const k = karte();
+    const { unmount } = renderHook(() => useBildKarte({ current: k.m as never }, null, "P1"));
+    const ev = new MouseEvent("pointerenter");
+    Object.defineProperty(ev, "pointerType", { value: "mouse" });
+    marker[1].el!.dispatchEvent(ev);
+    await vi.waitFor(() => expect(h.vorschau).toHaveBeenCalledTimes(1));
+    expect((h.vorschau.mock.calls[0][0] as { id: string }).id).toBe("b");
+    expect([...document.querySelectorAll(".marken-vorschau__zeile")].map((z) => z.textContent)).toEqual([
+      "GSG412 · EDDF–LSZH", `14:21Z · ${(11200).toLocaleString("de")} ft · ${h.t("bilder.detail.phase.descent")}`, "A320-251N",
+    ]);
+    unmount();
+    expect(document.querySelector(".marken-vorschau")).toBeNull();
+  });
+  it("Schalter Bilder: steht anfangs an, aus nimmt Marken und offene Vorschau weg, an setzt sie wieder", async () => {
+    h.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } })];
+    marker.length = 0;
+    const ref = { current: karte().m as never };
+    const { result } = renderHook(() => useBildKarte(ref, null, "P1"));
+    expect(result.current.bilderAn).toBe(true);
+    expect(marker).toHaveLength(1);
+    const ev = new MouseEvent("pointerenter");
+    Object.defineProperty(ev, "pointerType", { value: "mouse" });
+    marker[0].el!.dispatchEvent(ev);
+    await vi.waitFor(() => expect(document.querySelector(".marken-vorschau")).not.toBeNull());
+    act(() => result.current.setBilderAn(false));
+    expect(marker[0].entfernt).toBe(true);
+    expect(document.querySelector(".marken-vorschau")).toBeNull();
+    expect(marker).toHaveLength(1);
+    act(() => result.current.setBilderAn(true));
+    expect(marker).toHaveLength(2);
+    expect(marker[1].entfernt).toBe(false);
+  });
+  it("ein neuer Fokus aus dem Bilder-Tab schaltet die Bilder wieder ein, derselbe nicht", () => {
+    h.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } })];
+    const ref = { current: karte().m as never };
+    let fokus = { lat: 10, lon: 20, id: "a", pirep: "P1", n: 1 };
+    const { result, rerender } = renderHook(() => useBildKarte(ref, fokus, null));
+    act(() => result.current.setBilderAn(false));
+    rerender();
+    expect(result.current.bilderAn).toBe(false);
+    fokus = { ...fokus, n: 2 };
+    rerender();
+    expect(result.current.bilderAn).toBe(true);
   });
   it("laedt die Liste einmal, wenn ein Flug laeuft und noch keine da ist; ohne Flug nicht", () => {
     h.ohneListe = true;

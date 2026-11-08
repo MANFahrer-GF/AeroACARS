@@ -183,6 +183,7 @@ const PFAD: Record<string, string> = {
   // Track-Symbol daneben. Der Hut meint den Bodenbereich, nicht den Weg —
   // vier Striche, die auch klein noch eine Silhouette haben.
   taxi: "<path d=\"M4 20l16 0\" /> <path d=\"M9.4 10l5.2 0\" /> <path d=\"M7.8 15l8.4 0\" /> <path d=\"M6 20l5 -15h2l5 15\" />",
+  bilder: "<path d=\"M4 8h3l2-3h6l2 3h3v11H4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3.5\" />",
   va: "<path d=\"M16 10h4a2 2 0 0 1 0 4h-4l-4 7h-3l2 -7h-4l-2 2h-3l2 -4l-2 -4h3l2 2h4l-2 -7h3l4 7\" />",
 };
 
@@ -2764,7 +2765,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
             <div className="aa-livemap-controls__group">
               <div className="aa-livemap-controls__row">
                 {/* Variante B: Symbol immer, Text nur wenn AN.
-                    Diese drei sind unabhaengige Ein/Aus-Schalter, anders
+                    Diese vier sind unabhaengige Ein/Aus-Schalter, anders
                     als die Paare darueber — bei reinen Symbolen haenge der
                     Zustand allein an der Faerbung. Der Preis ist, dass die
                     Leiste beim Umschalten um die Wortbreite zuckt; das ist
@@ -2798,6 +2799,17 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                 >
                   <Sym pfad={PFAD.taxi} />
                   {showTaxi && <span className="aa-livemap-toggle__wort">{t("livemap.layer_taxi")}</span>}
+                </button>
+                <button
+                  type="button"
+                  className={`aa-livemap-toggle ${bildKarte.bilderAn ? "aa-livemap-toggle--active" : ""}`}
+                  aria-pressed={bildKarte.bilderAn}
+                  aria-label={t("livemap.layer_bilder")}
+                  title={t("livemap.layer_bilder")}
+                  onClick={() => bildKarte.setBilderAn((v) => !v)}
+                >
+                  <Sym pfad={PFAD.bilder} />
+                  {bildKarte.bilderAn && <span className="aa-livemap-toggle__wort">{t("livemap.layer_bilder")}</span>}
                 </button>
                 <button
                   type="button"
