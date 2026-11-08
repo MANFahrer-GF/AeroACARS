@@ -228,7 +228,9 @@ fn nachlauf_treffer(alle: &[(String, PathBuf, i64, i64)], pirep_id: Option<&str>
         .iter()
         .filter(|(id, _, _, ende)| pirep_id.is_none_or(|x| x == id) && *ende < zeit && zeit <= ende + nachlauf_ms)
         .max_by_key(|(_, _, _, ende)| *ende)?;
-    let mut t = protokoll_auswerten(oeffnen(p)?, id, &[*ende], false).treffer.pop().flatten()?;
+    // Die letzte Position kann lange vor dem Dateiende liegen (Flug nach dem Parken eingefroren).
+    let letzte = oeffnen(p)?.lines().map_while(Result::ok).filter(|z| z.starts_with(r#"{"type":"position""#)).filter_map(|z| zeile_zeit(&z)).last()?;
+    let mut t = protokoll_auswerten(oeffnen(p)?, id, &[letzte], false).treffer.pop().flatten()?;
     t.abstand_ms = zeit - ende;
     Some(t)
 }
@@ -525,6 +527,17 @@ mod tests {
         assert!(r[1].is_some(), "die Grenze gehoert dazu");
         assert!(r[2].is_none(), "danach nichts mehr");
         assert!(protokoll_staende(t.path(), None, &[z], 0).unwrap()[0].is_none(), "Gegenprobe: ohne Nachlauf nichts");
+    }
+
+    #[test]
+    fn nachlauf_findet_die_letzte_position_auch_lange_vor_dem_dateiende() {
+        let t = tempfile::tempdir().unwrap();
+        // Flug nach dem Parken eingefroren: Ereignisse laufen noch, Positionen nicht mehr.
+        let ende = zeit_ms("2026-11-07T10:08:00Z").unwrap();
+        protokoll_mit_ende(t.path(), "P1.jsonl", protokoll(), ende);
+        let r = protokoll_staende(t.path(), None, &[ende + 60_000], 30 * 60_000).unwrap();
+        let treffer = r[0].as_ref().unwrap();
+        assert_eq!((treffer.stand["pirep_id"].as_str(), treffer.stand["breite"].as_f64()), (Some("P1"), Some(50.2)));
     }
 
     #[test]

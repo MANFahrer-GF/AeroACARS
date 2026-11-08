@@ -1859,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Con la nuova versione di AeroACARS: la scheda “Immagini” raccoglie gli screenshot dei tuoi voli per volo, con posizione e dati di volo; le immagini scelte si possono inviare con un testo e, se vuoi, con la posizione nascosta al canale Discord del GSG. Attivi l’invio una volta tu stesso; nulla parte in automatico. La finestra di ripresa offre inoltre “Invia volo” per un volo atterrato. Per tutti: la mappa può ora mostrare un globo."
+    "neu_text": "Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

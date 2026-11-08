@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "With the new AeroACARS version: the “Pictures” tab collects screenshots from your flights by flight, with position and flight data; selected pictures can be sent with a text and optionally a hidden position to the GSG Discord channel. You turn sending on yourself once; nothing goes out automatically. The resume window also offers “File flight” for a landed flight. For everyone: the map can now show a globe."
+    "neu_text": "With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

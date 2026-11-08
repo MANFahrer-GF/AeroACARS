@@ -264,12 +264,22 @@ fn nachlauf_stand() -> &'static Mutex<Option<Nachlauf>> {
     N.get_or_init(|| Mutex::new(None))
 }
 
-fn nachlauf_beenden(app: &AppHandle) {
-    if entsperren(nachlauf_stand()).take().is_some() {
+/// Beendet genau den geprueften Nachlauf: Hat eine Abgabe inzwischen einen neuen gesetzt, bleibt der stehen.
+fn nachlauf_beenden(app: &AppHandle, geprueft: &Nachlauf) {
+    let mut g = entsperren(nachlauf_stand());
+    if nur_wenn_gleich(&mut g, geprueft) {
         if let Ok(w) = wurzel(app) {
             nachlauf::entfernen(&w);
         }
     }
+}
+
+fn nur_wenn_gleich(stand: &mut Option<Nachlauf>, geprueft: &Nachlauf) -> bool {
+    if stand.as_ref() == Some(geprueft) {
+        *stand = None;
+        return true;
+    }
+    false
 }
 
 /// Der abgegebene Flug, dem Bilder noch zaehlen. Was nicht mehr gilt, endet hier endgueltig:
@@ -280,7 +290,7 @@ fn nachlauf_gueltig(app: &AppHandle) -> Option<Nachlauf> {
     if n.gilt(jetzt_ms(), position) {
         return Some(n);
     }
-    nachlauf_beenden(app);
+    nachlauf_beenden(app, &n);
     None
 }
 
@@ -292,7 +302,6 @@ pub(crate) fn nachlauf_beginnen(app: &AppHandle, flug: &crate::ActiveFlight) {
     };
     let Some((breite, laenge)) = position.filter(|p| nachlauf::darf_beginnen(*p, aufsetzpunkt)) else {
         tracing::info!(pirep_id = %flug.pirep_id, "Bilder: kein Nachlauf, das Flugzeug steht nicht am Landeplatz");
-        nachlauf_beenden(app);
         return;
     };
     let n = Nachlauf {
@@ -306,10 +315,11 @@ pub(crate) fn nachlauf_beginnen(app: &AppHandle, flug: &crate::ActiveFlight) {
         breite,
         laenge,
     };
+    let mut g = entsperren(nachlauf_stand());
     if let Err(e) = wurzel(app).map_err(|u| Fehler::Io(u.message)).and_then(|w| nachlauf::speichern(&w, &n)) {
         tracing::warn!(fehler = %e, "Bilder: Nachlauf nicht gespeichert, er gilt bis zum naechsten Programmstart");
     }
-    *entsperren(nachlauf_stand()) = Some(n);
+    *g = Some(n);
 }
 
 /// Der Stand fuer `bilder_liste`; im aktiven Flug keiner.
@@ -322,8 +332,11 @@ fn nachlauf_anzeige(app: &AppHandle) -> Value {
 
 /// Im Beobachtertakt: Ein neuer Flug beendet den Nachlauf, auch wenn er wieder abgebrochen wird.
 fn nachlauf_takt(app: &AppHandle) {
+    let bisher = entsperren(nachlauf_stand()).clone();
     if flug_aktiv(app) {
-        nachlauf_beenden(app);
+        if let Some(n) = bisher {
+            nachlauf_beenden(app, &n);
+        }
     } else {
         let _ = nachlauf_gueltig(app);
     }
@@ -1661,6 +1674,17 @@ mod tests {
         zeit += 20_000;
         assert!(takt(&mut zeit).is_empty());
         assert_eq!(gemeldet, 1);
+    }
+
+    #[test]
+    fn eine_inzwischen_neue_abgabe_wird_nicht_vom_alten_ende_geloescht() {
+        let alt = Nachlauf { pirep_id: "A".into(), rufzeichen: None, abflug: "EDDF".into(), ziel: "EDDM".into(), flugzeug_icao: None, phase: Value::Null, bis_ms: 1, breite: 50.0, laenge: 8.0 };
+        let neu = Nachlauf { pirep_id: "B".into(), ..alt.clone() };
+        let mut stand = Some(neu.clone());
+        assert!(!nur_wenn_gleich(&mut stand, &alt));
+        assert_eq!(stand, Some(neu.clone()), "der neue bleibt");
+        assert!(nur_wenn_gleich(&mut stand, &neu));
+        assert_eq!(stand, None);
     }
 
     #[test]
