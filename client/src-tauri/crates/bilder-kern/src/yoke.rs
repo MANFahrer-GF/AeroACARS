@@ -61,6 +61,32 @@ pub fn geraet_finden(geraete: &[Geraet], taste: &YokeTaste) -> Option<u32> {
         .map(|g| g.nummer)
 }
 
+/// Merkt das letzte Suchergebnis: der Sekundentakt schreibt nur Wechsel ins Protokoll.
+#[derive(Debug, Default)]
+pub struct SuchStand {
+    letztes: Option<Option<u32>>,
+}
+
+impl SuchStand {
+    pub fn geaendert(&mut self, treffer: Option<u32>) -> bool {
+        let neu = self.letztes != Some(treffer);
+        self.letztes = Some(treffer);
+        neu
+    }
+}
+
+/// Protokollzeile zur Suche; beim Nichtfund mit allen Geraeten, die Windows gerade meldet.
+pub fn suchbericht(taste: &YokeTaste, treffer: Option<u32>, geraete: &[Geraet]) -> String {
+    let gemerkt = format!("{:?} ({:04X}:{:04X}) Knopf {}", taste.geraet_name, taste.hersteller_id, taste.produkt_id, taste.knopf);
+    match treffer {
+        Some(n) => format!("Yoke-Knopf: Geraet gefunden unter Nummer {n}: {gemerkt}"),
+        None => {
+            let da: Vec<String> = geraete.iter().map(|g| format!("{}: {:?} ({:04X}:{:04X})", g.nummer, g.name, g.hersteller_id, g.produkt_id)).collect();
+            format!("Yoke-Knopf: Geraet nicht gefunden: {gemerkt}; angeschlossen: [{}]", da.join(", "))
+        }
+    }
+}
+
 /// Ist der Knopf (1-basiert) in der Maske gedrueckt?
 pub fn knopf_gedrueckt(maske: u32, knopf: u8) -> bool {
     (1..=MAX_KNOEPFE).contains(&knopf) && maske & (1u32 << (knopf - 1)) != 0
@@ -188,6 +214,29 @@ mod tests {
         assert_eq!(geraet_finden(&[g(0, &t.geraet_name, 0x1, t.produkt_id)], &t), None, "anderer Hersteller");
         assert_eq!(geraet_finden(&[g(0, "Honeycomb Bravo", t.hersteller_id, t.produkt_id)], &t), None, "anderer Name");
         assert_eq!(geraet_finden(&[], &t), None);
+    }
+
+    #[test]
+    fn suche_meldet_nur_wechsel() {
+        let mut s = SuchStand::default();
+        assert!(s.geaendert(None), "der erste Nichtfund kommt ins Protokoll");
+        assert!(!s.geaendert(None), "der Sekundentakt flutet es nicht");
+        assert!(s.geaendert(Some(2)));
+        assert!(!s.geaendert(Some(2)));
+        assert!(s.geaendert(Some(3)), "neue Nummer");
+        assert!(s.geaendert(None), "abgesteckt");
+    }
+
+    #[test]
+    fn suchbericht_nennt_das_gemerkte_und_beim_nichtfund_die_angeschlossenen() {
+        let t = taste();
+        let gefunden = suchbericht(&t, Some(1), &[]);
+        assert!(gefunden.contains("gefunden unter Nummer 1") && gefunden.contains("294B:1900") && gefunden.contains("Knopf 5"), "{gefunden}");
+        let liste = [g(0, "Microsoft PC-Joystick-Treiber", 0x294B, 0x1900), g(4, "Pedale", 0x10, 0x20)];
+        let fehlt = suchbericht(&t, None, &liste);
+        assert!(fehlt.contains("nicht gefunden") && fehlt.contains("Honeycomb Alpha Flight Controls"), "{fehlt}");
+        assert!(fehlt.contains(r#"0: "Microsoft PC-Joystick-Treiber" (294B:1900)"#) && fehlt.contains(r#"4: "Pedale" (0010:0020)"#), "{fehlt}");
+        assert!(suchbericht(&t, None, &[]).ends_with("angeschlossen: []"));
     }
 
     #[test]

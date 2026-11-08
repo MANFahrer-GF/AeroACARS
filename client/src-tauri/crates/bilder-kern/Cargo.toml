@@ -9,6 +9,7 @@ description = "Bilder-Tab (N-13, Faehigkeit bilder-1): verwalteter Ordner, Quell
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 sha2 = "0.10"
 chrono.workspace = true
 uuid = { version = "1", features = ["v4"] }

@@ -68,6 +68,147 @@ pub fn lesen(roh: &str) -> Result<Taste, Fehler> {
     Ok(Taste { mods, vk, text })
 }
 
+/// Die beiden Kennungen fuer `RegisterHotKey`: die neue Kombi wird unter der
+/// freien angemeldet, solange die alte noch gilt.
+pub const HOTKEY_IDS: [i32; 2] = [0x4141, 0x4142];
+
+/// Was der Hotkey-Faden gerade bei Windows angemeldet hat.
+#[derive(Debug, Default)]
+pub struct Belegung {
+    gehalten: Option<(i32, u32, u32)>,
+}
+
+impl Belegung {
+    /// Stellt auf `neu` (`(mods, vk)`, `None` = freigeben) um. Die alte Kombi wird erst
+    /// abgemeldet, wenn die neue steht; scheitert die neue, gilt die alte weiter. Die
+    /// schon gehaltene Kombi gilt als Erfolg: nochmal anmelden scheiterte an uns selbst.
+    pub fn umstellen<E>(
+        &mut self,
+        neu: Option<(u32, u32)>,
+        mut anmelden: impl FnMut(i32, u32, u32) -> Result<(), E>,
+        mut abmelden: impl FnMut(i32),
+    ) -> Result<(), E> {
+        if neu == self.gehalten.map(|(_, m, v)| (m, v)) {
+            return Ok(());
+        }
+        let bisher = self.gehalten.map(|(id, _, _)| id);
+        let Some((mods, vk)) = neu else {
+            bisher.into_iter().for_each(&mut abmelden);
+            self.gehalten = None;
+            return Ok(());
+        };
+        let id = if bisher == Some(HOTKEY_IDS[0]) { HOTKEY_IDS[1] } else { HOTKEY_IDS[0] };
+        anmelden(id, mods, vk)?;
+        bisher.into_iter().for_each(&mut abmelden);
+        self.gehalten = Some((id, mods, vk));
+        Ok(())
+    }
+}
+
+/// Was das Protokoll ueber einen Anmeldeversuch wissen muss (nur Zustandswechsel).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Meldung {
+    Nichts,
+    Fehlschlag(String),
+    /// Nach so vielen Wiederholungen doch noch angemeldet.
+    Nachgeholt(u32),
+}
+
+/// Stand des Tastenkuerzels: welche Kombi gelten soll, ob sie angemeldet ist und
+/// was zuletzt schiefging. `setzen` ist die Anmeldung beim Hotkey-Faden.
+#[derive(Debug, Default)]
+pub struct Anmeldung {
+    soll: Option<Taste>,
+    angemeldet: bool,
+    fehler: Option<String>,
+    versuche: u32,
+}
+
+impl Anmeldung {
+    pub fn aktiv(&self) -> bool {
+        self.angemeldet
+    }
+
+    pub fn fehler(&self) -> Option<&str> {
+        self.fehler.as_deref()
+    }
+
+    /// Der Hotkey-Faden laeuft nicht: nichts zu wiederholen.
+    pub fn dienst_fehlt(&mut self, fehler: &Fehler) {
+        self.fehler = Some(fehler.meldung().to_string());
+    }
+
+    /// Anmelden beim Programmstart. Eine unlesbare Kombi wird nie wiederholt.
+    pub fn starten(&mut self, text: &str, setzen: impl FnMut(&Taste) -> Result<(), Fehler>) -> Meldung {
+        match lesen(text) {
+            Ok(t) => {
+                self.soll = Some(t);
+                self.nachholen(setzen)
+            }
+            Err(e) => {
+                self.fehler = Some(e.meldung().to_string());
+                Meldung::Fehlschlag(e.meldung().to_string())
+            }
+        }
+    }
+
+    /// Versucht die gueltige Kombi anzumelden, solange sie noch nicht angemeldet ist
+    /// (das alte Programm haelt sie nach einem Update noch einen Moment fest).
+    pub fn nachholen(&mut self, mut setzen: impl FnMut(&Taste) -> Result<(), Fehler>) -> Meldung {
+        let Some(t) = self.soll.clone().filter(|_| !self.angemeldet) else { return Meldung::Nichts };
+        match setzen(&t) {
+            Ok(()) => {
+                self.angemeldet = true;
+                self.fehler = None;
+                if self.versuche == 0 {
+                    Meldung::Nichts
+                } else {
+                    Meldung::Nachgeholt(std::mem::take(&mut self.versuche))
+                }
+            }
+            Err(e) => {
+                self.versuche = self.versuche.saturating_add(1);
+                let neu = self.fehler.as_deref() != Some(e.meldung());
+                self.fehler = Some(e.meldung().to_string());
+                if neu {
+                    Meldung::Fehlschlag(e.meldung().to_string())
+                } else {
+                    Meldung::Nichts
+                }
+            }
+        }
+    }
+
+    /// Wechselt auf die Kombi `neu`: erst anmelden, dann mit `speichern` festhalten.
+    /// Ist `neu` vergeben, bleibt alles wie es war, gespeichert wird nichts. Scheitert
+    /// das Speichern, gilt wieder die alte Kombi, denn die steht weiter in der Datei.
+    pub fn aendern(
+        &mut self,
+        neu: &str,
+        mut setzen: impl FnMut(&Taste) -> Result<(), Fehler>,
+        speichern: impl FnOnce() -> Result<(), Fehler>,
+    ) -> Result<(), Fehler> {
+        let taste = lesen(neu)?;
+        setzen(&taste).map_err(|e| {
+            let bleibt = self.soll.as_ref().filter(|_| self.angemeldet).map(|a| format!("; {} bleibt aktiv", a.text)).unwrap_or_default();
+            Fehler::Eingabe(format!("{} nicht uebernommen: {}{bleibt}", taste.text, e.meldung()))
+        })?;
+        let alt = self.soll.replace(taste);
+        self.angemeldet = true;
+        self.fehler = None;
+        self.versuche = 0;
+        if let Err(e) = speichern() {
+            if alt.is_some() {
+                self.soll = alt;
+                self.angemeldet = false;
+                self.nachholen(setzen);
+            }
+            return Err(e);
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,5 +229,183 @@ mod tests {
         for schlecht in ["S", "F9", "", "Ctrl", "Ctrl+", "Ctrl+Shift", "Ctrl+S+D", "Ctrl+Ä", "Ctrl+F25", "Ctrl+F0", "Ctrl++S", "Ctrl+Space"] {
             assert!(lesen(schlecht).is_err(), "{schlecht:?}");
         }
+    }
+
+    /// Windows im Kleinen: eine Kombi hat genau einen Halter.
+    #[derive(Default)]
+    struct System {
+        fremd: Vec<(u32, u32)>,
+        eigen: Vec<(i32, u32, u32)>,
+        ablauf: Vec<String>,
+    }
+
+    fn umstellen(b: &mut Belegung, s: &std::cell::RefCell<System>, neu: Option<(u32, u32)>) -> Result<(), u32> {
+        b.umstellen(
+            neu,
+            |id, m, v| {
+                let mut s = s.borrow_mut();
+                if s.fremd.contains(&(m, v)) || s.eigen.iter().any(|e| (e.1, e.2) == (m, v)) {
+                    return Err(1409);
+                }
+                s.eigen.push((id, m, v));
+                s.ablauf.push(format!("an {v}"));
+                Ok(())
+            },
+            |id| {
+                let mut s = s.borrow_mut();
+                let v = s.eigen.iter().find(|e| e.0 == id).map(|e| e.2).unwrap();
+                s.eigen.retain(|e| e.0 != id);
+                s.ablauf.push(format!("ab {v}"));
+            },
+        )
+    }
+
+    #[test]
+    fn neue_kombi_steht_bevor_die_alte_geht() {
+        let s = std::cell::RefCell::new(System::default());
+        let mut b = Belegung::default();
+        umstellen(&mut b, &s, Some((2, 83))).unwrap();
+        umstellen(&mut b, &s, Some((1, 120))).unwrap();
+        assert_eq!(s.borrow().ablauf, ["an 83", "an 120", "ab 83"]);
+        assert_eq!(s.borrow().eigen.len(), 1);
+    }
+
+    #[test]
+    fn vergebene_kombi_laesst_die_alte_stehen_und_folgewechsel_gehen() {
+        let s = std::cell::RefCell::new(System { fremd: vec![(1, 120)], ..Default::default() });
+        let mut b = Belegung::default();
+        umstellen(&mut b, &s, Some((2, 83))).unwrap();
+        assert_eq!(umstellen(&mut b, &s, Some((1, 120))), Err(1409));
+        assert_eq!(s.borrow().eigen.iter().map(|e| e.2).collect::<Vec<_>>(), [83], "die alte gilt weiter");
+        umstellen(&mut b, &s, Some((2, 84))).unwrap();
+        assert_eq!(s.borrow().eigen.iter().map(|e| e.2).collect::<Vec<_>>(), [84]);
+    }
+
+    #[test]
+    fn gehaltene_kombi_ist_erfolg_ohne_aufruf_und_none_gibt_frei() {
+        let s = std::cell::RefCell::new(System::default());
+        let mut b = Belegung::default();
+        umstellen(&mut b, &s, Some((2, 83))).unwrap();
+        umstellen(&mut b, &s, Some((2, 83))).expect("nochmal dieselbe scheitert nicht an uns selbst");
+        assert_eq!(s.borrow().ablauf, ["an 83"]);
+        umstellen(&mut b, &s, None).unwrap();
+        assert!(s.borrow().eigen.is_empty());
+        umstellen(&mut b, &s, None).unwrap();
+        assert_eq!(s.borrow().ablauf.len(), 2, "nichts gehalten, nichts abzumelden");
+    }
+
+    fn belegt(_: &Taste) -> Result<(), Fehler> {
+        Err(Fehler::Eingabe("Tastenkuerzel ist schon belegt (Windows-Fehler 1409)".into()))
+    }
+
+    #[test]
+    fn nach_update_wird_wiederholt_bis_das_alte_programm_weg_ist() {
+        let mut a = Anmeldung::default();
+        assert!(matches!(a.starten("Ctrl+Shift+S", belegt), Meldung::Fehlschlag(_)));
+        assert!(!a.aktiv());
+        assert!(a.fehler().unwrap().contains("1409"));
+        assert_eq!(a.nachholen(belegt), Meldung::Nichts, "dieselbe Meldung nur einmal im Protokoll");
+        assert_eq!(a.nachholen(|_| Ok(())), Meldung::Nachgeholt(2));
+        assert!(a.aktiv());
+        assert_eq!(a.fehler(), None);
+        let mut gerufen = false;
+        assert_eq!(
+            a.nachholen(|_| {
+                gerufen = true;
+                Ok(())
+            }),
+            Meldung::Nichts
+        );
+        assert!(!gerufen, "angemeldet: nichts mehr zu tun");
+    }
+
+    #[test]
+    fn beim_ersten_versuch_erfolgreich_und_ohne_gueltige_kombi_keine_wiederholung() {
+        let mut a = Anmeldung::default();
+        assert_eq!(a.starten("Alt+F9", |_| Ok(())), Meldung::Nichts);
+        assert!(a.aktiv());
+        let mut kaputt = Anmeldung::default();
+        assert!(matches!(kaputt.starten("S", |_| panic!("unlesbar wird nie angemeldet")), Meldung::Fehlschlag(_)));
+        assert_eq!(kaputt.nachholen(|_| panic!("unlesbar wird nie wiederholt")), Meldung::Nichts);
+        assert!(!kaputt.aktiv() && kaputt.fehler().is_some());
+        let mut ohne_dienst = Anmeldung::default();
+        ohne_dienst.dienst_fehlt(&Fehler::Io("Hotkey-Faden startet nicht".into()));
+        assert_eq!(ohne_dienst.nachholen(|_| panic!("ohne Dienst keine Wiederholung")), Meldung::Nichts);
+        assert!(!ohne_dienst.aktiv() && ohne_dienst.fehler().is_some());
+    }
+
+    #[test]
+    fn vergebene_neue_kombi_wird_nicht_gespeichert_und_die_alte_bleibt_aktiv() {
+        let mut a = Anmeldung::default();
+        a.starten("Ctrl+Shift+S", |_| Ok(()));
+        let e = a.aendern("Alt+F9", belegt, || panic!("Vergebenes wird nie gespeichert")).unwrap_err();
+        assert!(e.meldung().contains("Alt+F9") && e.meldung().contains("Ctrl+Shift+S bleibt aktiv"), "{}", e.meldung());
+        assert!(a.aktiv());
+        assert_eq!(a.fehler(), None, "die alte Kombi laeuft, der Fehler gehoert zur Antwort");
+        assert_eq!(a.nachholen(|_| panic!("die alte ist angemeldet")), Meldung::Nichts);
+    }
+
+    #[test]
+    fn neue_kombi_wird_erst_angemeldet_dann_gespeichert() {
+        let ablauf = std::cell::RefCell::new(Vec::new());
+        let mut a = Anmeldung::default();
+        a.starten("Ctrl+Shift+S", |_| Ok(()));
+        a.aendern(
+            "Alt+F9",
+            |t| {
+                ablauf.borrow_mut().push(format!("anmelden {}", t.text));
+                Ok(())
+            },
+            || {
+                ablauf.borrow_mut().push("speichern".to_string());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(*ablauf.borrow(), ["anmelden Alt+F9", "speichern"]);
+        assert!(a.aktiv());
+    }
+
+    #[test]
+    fn scheitert_das_speichern_gilt_wieder_die_alte_kombi() {
+        let gesetzt = std::cell::RefCell::new(Vec::new());
+        let mut a = Anmeldung::default();
+        a.starten("Ctrl+Shift+S", |_| Ok(()));
+        let e = a.aendern(
+            "Alt+F9",
+            |t| {
+                gesetzt.borrow_mut().push(t.text.clone());
+                Ok(())
+            },
+            || Err(Fehler::Io("Platte voll".into())),
+        );
+        assert!(e.is_err());
+        assert_eq!(*gesetzt.borrow(), ["Alt+F9", "Ctrl+Shift+S"], "zurueck auf die Kombi aus der Datei");
+        assert!(a.aktiv());
+    }
+
+    #[test]
+    fn wechsel_beendet_eine_laufende_wiederholung() {
+        let mut a = Anmeldung::default();
+        a.starten("Ctrl+Shift+S", belegt);
+        a.aendern("Alt+F9", |_| Ok(()), || Ok(())).unwrap();
+        assert!(a.aktiv());
+        assert_eq!(a.fehler(), None);
+        assert_eq!(a.nachholen(|_| panic!("nichts mehr offen")), Meldung::Nichts);
+    }
+
+    #[test]
+    fn vergebene_kombi_waehrend_der_wiederholung_laesst_die_gespeicherte_weiterlaufen() {
+        let mut a = Anmeldung::default();
+        a.starten("Ctrl+Shift+S", belegt);
+        let e = a.aendern("Alt+F9", belegt, || panic!("nicht speichern")).unwrap_err();
+        assert!(!e.meldung().contains("bleibt aktiv"), "es ist ja keine aktiv: {}", e.meldung());
+        let mut gesehen = String::new();
+        a.nachholen(|t| {
+            gesehen = t.text.clone();
+            Ok(())
+        });
+        assert_eq!(gesehen, "Ctrl+Shift+S", "wiederholt wird die Kombi aus der Datei");
+        assert!(a.aktiv());
     }
 }

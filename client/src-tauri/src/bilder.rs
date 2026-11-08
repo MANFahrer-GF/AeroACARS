@@ -391,10 +391,10 @@ fn yoke() -> &'static Mutex<Option<plattform::Yoke>> {
     Y.get_or_init(|| Mutex::new(None))
 }
 
-/// Letzter Fehler beim Anmelden des Tastenkuerzels (z. B. „schon belegt“).
-fn hotkey_fehler() -> &'static Mutex<Option<String>> {
-    static F: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-    F.get_or_init(|| Mutex::new(None))
+/// Stand des Tastenkuerzels. Die Sperre haelt Aendern und Wiederholen auseinander.
+fn hotkey_stand() -> &'static Mutex<tastenkuerzel::Anmeldung> {
+    static S: OnceLock<Mutex<tastenkuerzel::Anmeldung>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(tastenkuerzel::Anmeldung::default()))
 }
 
 fn b64(s: &str, was: &str) -> Result<Vec<u8>, UiError> {
@@ -410,11 +410,12 @@ fn jetzt_ms() -> i64 {
 // ---------------------------------------------------------------- lesen
 
 fn tastenkuerzel_stand(e: &Einstellungen) -> Value {
+    let stand = entsperren(hotkey_stand());
     json!({
         "text": e.tastenkuerzel,
         "verfuegbar": plattform::AUFNAHME_VERFUEGBAR,
-        "aktiv": entsperren(hotkey()).is_some() && entsperren(hotkey_fehler()).is_none(),
-        "fehler": entsperren(hotkey_fehler()).clone(),
+        "aktiv": stand.aktiv(),
+        "fehler": stand.fehler(),
         "yoke": e.yoke,
         "yoke_verfuegbar": plattform::YOKE_VERFUEGBAR,
     })
@@ -557,6 +558,7 @@ pub(crate) async fn bild_taste_lernen() -> Result<Value, UiError> {
     let ergebnis = tauri::async_runtime::spawn_blocking(|| plattform::yoke_lernen(Duration::from_secs(10))).await;
     YOKE_LERNT.store(false, Ordering::SeqCst);
     let t = ergebnis.map_err(|e| UiError::new("bild_io", e.to_string()))?.map_err(fehler)?;
+    tracing::info!(taste = ?t, "Yoke-Knopf gelernt");
     Ok(json!(t))
 }
 
@@ -1232,9 +1234,14 @@ fn quellen_setzen_intern(
     let bisher = quellen::einstellungen_lesen(&datei);
     let neu = quellen::einstellungen_neu(&bisher, quellen, tastenkuerzel.as_deref(), yoke_taste, ordner.as_deref(), &wurzel(app)?, app.path().home_dir().ok().as_deref())
         .map_err(fehler)?;
-    quellen::einstellungen_schreiben(&datei, &neu).map_err(fehler)?;
+    let schreiben = || quellen::einstellungen_schreiben(&datei, &neu);
+    if plattform::AUFNAHME_VERFUEGBAR && neu.tastenkuerzel != bisher.tastenkuerzel {
+        // Erst anmelden: ist die neue Kombi vergeben, bleibt die alte aktiv und gespeichert.
+        entsperren(hotkey_stand()).aendern(&neu.tastenkuerzel, hotkey_setzen, schreiben).map_err(fehler)?;
+    } else {
+        schreiben().map_err(fehler)?;
+    }
     beobachtung_aufsetzen(&neu.quellen);
-    hotkey_anwenden(&neu.tastenkuerzel);
     yoke_anwenden(neu.yoke.as_ref());
     Ok(json!({"quellen": entsperren(anzeige()).status, "tastenkuerzel": tastenkuerzel_stand(&neu)}))
 }
@@ -1326,19 +1333,19 @@ pub(crate) async fn bild_export(app: AppHandle, zip_base64: String, dateiname: S
 
 // ------------------------------------------------- Beobachtung, Hotkey
 
-fn hotkey_anwenden(text: &str) {
-    if !plattform::AUFNAHME_VERFUEGBAR {
-        return;
+fn hotkey_setzen(t: &tastenkuerzel::Taste) -> Result<(), Fehler> {
+    match entsperren(hotkey()).as_ref() {
+        Some(h) => h.setzen(Some(t)),
+        None => Err(Fehler::Io("Tastenkuerzel-Dienst laeuft nicht".into())),
     }
-    let ergebnis = match (tastenkuerzel::lesen(text), entsperren(hotkey()).as_ref()) {
-        (Ok(t), Some(h)) => h.setzen(Some(&t)),
-        (Err(e), _) => Err(e),
-        (_, None) => Err(Fehler::Io("Tastenkuerzel-Dienst laeuft nicht".into())),
-    };
-    *entsperren(hotkey_fehler()) = ergebnis.err().map(|e| {
-        tracing::warn!(fehler = %e, "Tastenkuerzel der Bildaufnahme nicht angemeldet");
-        e.meldung().to_string()
-    });
+}
+
+fn hotkey_protokollieren(m: tastenkuerzel::Meldung) {
+    match m {
+        tastenkuerzel::Meldung::Nichts => {}
+        tastenkuerzel::Meldung::Fehlschlag(fehler) => tracing::warn!(fehler = %fehler, "Tastenkuerzel der Bildaufnahme nicht angemeldet"),
+        tastenkuerzel::Meldung::Nachgeholt(versuche) => tracing::info!(versuche, "Tastenkuerzel der Bildaufnahme nach Wiederholung angemeldet"),
+    }
 }
 
 fn yoke_anwenden(taste: Option<&bilder_kern::yoke::YokeTaste>) {
@@ -1377,9 +1384,10 @@ pub(crate) fn starten(app: &AppHandle) {
             match plattform::hotkey_starten(move || taste_gedrueckt(&app_taste)) {
                 Ok(h) => {
                     *entsperren(hotkey()) = Some(h);
-                    hotkey_anwenden(&einst.tastenkuerzel);
+                    let meldung = entsperren(hotkey_stand()).starten(&einst.tastenkuerzel, hotkey_setzen);
+                    hotkey_protokollieren(meldung);
                 }
-                Err(e) => *entsperren(hotkey_fehler()) = Some(e.meldung().to_string()),
+                Err(e) => entsperren(hotkey_stand()).dienst_fehlt(&e),
             }
         }
         if plattform::YOKE_VERFUEGBAR {
@@ -1387,12 +1395,14 @@ pub(crate) fn starten(app: &AppHandle) {
             // Beim Lernen ist ein Druck die Antwort, keine Aufnahme (auch beim schon belegten Knopf).
             let bei_knopf = move || {
                 if !YOKE_LERNT.load(Ordering::SeqCst) {
+                    tracing::info!("Yoke-Knopf ausgeloest");
                     taste_gedrueckt(&app_yoke);
                 }
             };
             match plattform::yoke_starten(bei_knopf) {
                 Ok(y) => {
                     *entsperren(yoke()) = Some(y);
+                    tracing::info!(taste = ?einst.yoke, "Yoke-Knopf aus den Einstellungen");
                     yoke_anwenden(einst.yoke.as_ref());
                 }
                 Err(e) => tracing::warn!(fehler = %e, "Yoke-Knopf der Bildaufnahme nicht gestartet"),
@@ -1401,6 +1411,8 @@ pub(crate) fn starten(app: &AppHandle) {
         let start = std::time::Instant::now();
         loop {
             std::thread::sleep(TAKT);
+            let meldung = entsperren(hotkey_stand()).nachholen(hotkey_setzen);
+            hotkey_protokollieren(meldung);
             nachlauf_takt(&app);
             let vordergrund = plattform::sim_vordergrund();
             // Sperre nur zum Holen der Quellen: die Ordnerabfragen laufen ohne sie,

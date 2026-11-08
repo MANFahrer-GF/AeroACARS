@@ -33,9 +33,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use super::Aufnahme;
 use crate::suche::{self, Fundort};
-use crate::tastenkuerzel::Taste;
+use crate::tastenkuerzel::{Belegung, Taste};
 use crate::verdeckung::{verdeckt, Rechteck};
-use crate::yoke::{self, Flanke, Geraet, YokeTaste};
+use crate::yoke::{self, Flanke, Geraet, SuchStand, YokeTaste};
 use crate::Fehler;
 
 pub const AUFNAHME_VERFUEGBAR: bool = true;
@@ -442,7 +442,6 @@ pub struct Hotkey {
     auftrag: Arc<Auftrag>,
 }
 
-const HOTKEY_ID: i32 = 0x4141;
 const MOD_NOREPEAT: u32 = 0x4000;
 
 pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, Fehler> {
@@ -457,7 +456,7 @@ pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, F
                 let mut msg: MSG = std::mem::zeroed();
                 PeekMessageW(&mut msg, null_mut(), WM_APP, WM_APP, PM_NOREMOVE); // Nachrichtenwarteschlange anlegen
                 let _ = bereit_tx.send(GetCurrentThreadId());
-                let mut belegt = false;
+                let mut belegung = Belegung::default();
                 loop {
                     let r = GetMessageW(&mut msg, null_mut(), 0, 0);
                     if r <= 0 {
@@ -467,21 +466,15 @@ pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, F
                         bei_taste();
                     } else if msg.message == WM_APP {
                         let Some((neu, antwort)) = a2.lock().ok().and_then(|mut g| g.take()) else { continue };
-                        if belegt {
-                            UnregisterHotKey(null_mut(), HOTKEY_ID);
-                            belegt = false;
-                        }
-                        let erg = match neu {
-                            None => Ok(()),
-                            Some((mods, vk)) => {
-                                if RegisterHotKey(null_mut(), HOTKEY_ID, mods | MOD_NOREPEAT, vk) != 0 {
-                                    belegt = true;
-                                    Ok(())
-                                } else {
-                                    Err(format!("Tastenkuerzel ist schon belegt (Windows-Fehler {})", GetLastError()))
-                                }
-                            }
-                        };
+                        let erg = belegung
+                            .umstellen(
+                                neu,
+                                |id, mods, vk| if RegisterHotKey(null_mut(), id, mods | MOD_NOREPEAT, vk) != 0 { Ok(()) } else { Err(GetLastError()) },
+                                |id| {
+                                    UnregisterHotKey(null_mut(), id);
+                                },
+                            )
+                            .map_err(|code| format!("Tastenkuerzel ist schon belegt (Windows-Fehler {code})"));
                         let _ = antwort.send(erg);
                     }
                 }
@@ -592,6 +585,7 @@ pub fn yoke_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Yoke, Fehle
             let mut flanke = Flanke::default();
             let mut nummer: Option<u32> = None;
             let mut zuletzt_gesucht: Option<u64> = None;
+            let mut suche = SuchStand::default();
             loop {
                 let taste = {
                     let (m, cv) = &*z;
@@ -608,13 +602,18 @@ pub fn yoke_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Yoke, Fehle
                     flanke = Flanke::default();
                     nummer = None;
                     zuletzt_gesucht = None;
+                    suche = SuchStand::default();
                 }
                 // Fehlt das Geraet, einmal je Sekunde ueber Hersteller, Produkt und Name
                 // suchen (auch unter neuer Nummer); `winmm` fragt dabei alle Nummern ab, also
                 // nicht, solange das Geraet lesbar ist.
                 if nummer.is_none() && zuletzt_gesucht.is_none_or(|t| jetzt.saturating_sub(t) >= 1000) {
                     zuletzt_gesucht = Some(jetzt);
-                    nummer = yoke::geraet_finden(&joy_geraete(), &taste);
+                    let geraete = joy_geraete();
+                    nummer = yoke::geraet_finden(&geraete, &taste);
+                    if suche.geaendert(nummer) {
+                        tracing::info!("{}", yoke::suchbericht(&taste, nummer, &geraete));
+                    }
                 }
                 let gedrueckt = match nummer {
                     Some(n) => match joy_lesen(n) {
