@@ -2,12 +2,12 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-const marker: Array<{ lngLat?: number[]; entfernt: boolean }> = [];
+const marker: Array<{ lngLat?: number[]; entfernt: boolean; el?: HTMLElement }> = [];
 vi.mock("maplibre-gl", () => ({
   default: {
     Marker: class {
-      d: { lngLat?: number[]; entfernt: boolean } = { entfernt: false };
-      constructor() { marker.push(this.d); }
+      d: { lngLat?: number[]; entfernt: boolean; el?: HTMLElement } = { entfernt: false };
+      constructor(o: { element?: HTMLElement }) { this.d.el = o.element; marker.push(this.d); }
       setLngLat(l: number[]) { this.d.lngLat = l; return this; }
       addTo() { return this; }
       remove() { this.d.entfernt = true; }
@@ -15,9 +15,11 @@ vi.mock("maplibre-gl", () => ({
   },
 }));
 vi.mock("./bilderStore", () => ({
-  useBilder: () => ({ liste: { eintraege: h.eintraege } }),
+  useBilder: () => ({ liste: h.ohneListe ? null : { eintraege: h.eintraege } }),
+  bilderStore: { laden: h.laden },
 }));
-const h = vi.hoisted(() => ({ eintraege: [] as unknown[] }));
+vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: h.t }) }));
+const h = vi.hoisted(() => ({ eintraege: [] as unknown[], ohneListe: false, laden: vi.fn(async () => undefined), t: (k: string) => k }));
 import { eintrag } from "./logik/testhilfen";
 import { useBildKarte } from "./useBildKarte";
 
@@ -48,5 +50,53 @@ describe("useBildKarte", () => {
     expect(result.current.marken).toBe(1);
     expect(marker.map((x) => x.lngLat)).toEqual([[20, 10]]);
     expect(k.aufrufe.some((a) => (a as unknown[])[0] === "fly")).toBe(true);
+  });
+  it("Klick auf eine Marke liefert das Bild und alle Bilder des Flugs in Zeitfolge, ohne die Karte zu erreichen", () => {
+    h.eintraege = [
+      eintrag({ id: "spaet", meta: { pirep_id: "P1", zeit_utc: "2026-11-07T12:00:00Z", breite: 10, laenge: 20 } }),
+      eintrag({ id: "frueh", meta: { pirep_id: "P1", zeit_utc: "2026-11-07T10:00:00Z", breite: null, laenge: null } }),
+    ];
+    marker.length = 0;
+    const k = karte();
+    const { result } = renderHook(() => useBildKarte({ current: k.m as never }, null, "P1"));
+    expect(result.current.gross).toBeNull();
+    const el = marker[0].el!;
+    expect(el.tagName).toBe("BUTTON");
+    const beiKarte = vi.fn();
+    const huelle = document.createElement("div");
+    huelle.addEventListener("click", beiKarte);
+    huelle.appendChild(el);
+    act(() => el.click());
+    expect(beiKarte).not.toHaveBeenCalled();
+    expect(result.current.gross?.id).toBe("spaet");
+    expect(result.current.gross?.bilder.map((b) => b.id)).toEqual(["frueh", "spaet"]);
+    act(() => result.current.grossZu());
+    expect(result.current.gross).toBeNull();
+  });
+  it("eine neue Liste mit denselben Marken baut sie nicht neu (Tablet-Takt), eine geaenderte schon", () => {
+    const zeile = () => eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } });
+    h.eintraege = [zeile()];
+    marker.length = 0;
+    const k = karte();
+    const ref = { current: k.m as never };
+    const { rerender } = renderHook(() => useBildKarte(ref, null, "P1"));
+    expect(marker).toHaveLength(1);
+    h.eintraege = [zeile()];
+    rerender();
+    expect(marker).toHaveLength(1);
+    h.eintraege = [zeile(), eintrag({ id: "b", meta: { pirep_id: "P1", breite: 11, laenge: 21 } })];
+    rerender();
+    expect(marker).toHaveLength(3);
+  });
+  it("laedt die Liste einmal, wenn ein Flug laeuft und noch keine da ist; ohne Flug nicht", () => {
+    h.ohneListe = true;
+    h.laden.mockClear();
+    const k = karte();
+    renderHook(() => useBildKarte({ current: k.m as never }, null, null));
+    expect(h.laden).not.toHaveBeenCalled();
+    const { rerender } = renderHook(() => useBildKarte({ current: k.m as never }, null, "P1"));
+    rerender();
+    expect(h.laden).toHaveBeenCalledTimes(1);
+    h.ohneListe = false;
   });
 });

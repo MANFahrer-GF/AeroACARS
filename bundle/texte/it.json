@@ -1859,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Ora le immagini si possono inviare anche dal tablet tramite il bridge LAN. Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato."
+    "neu_text": "Ora le immagini si possono vedere ingrandite: con la lente sulla miniatura, con un clic sull'immagine a destra e con i punti sulle mappe. La mappa del volo mostra ora le immagini del volo come punti. Ora le immagini si possono inviare anche dal tablet tramite il bridge LAN. Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -5297,7 +5297,8 @@
       "oeffnen_mit": "Dettagli: {{zeit}} {{phase}}, {{hoehe}}",
       "auswaehlen_mit": "Seleziona: {{zeit}} {{phase}}",
       "ohne_flug": "Senza volo",
-      "serie_auswaehlen": "Seleziona serie di {{n}} immagini"
+      "serie_auswaehlen": "Seleziona serie di {{n}} immagini",
+      "gross": "Mostra ingrandita l'immagine {{zeit}}"
     },
     "status": {
       "sendet": "Invio in corso …",
@@ -5395,7 +5396,8 @@
         "msl": "MSL",
         "ueber_grund": "al suolo"
       },
-      "leer_hinweis": "Scegli un’immagine per vedere i dettagli."
+      "leer_hinweis": "Scegli un’immagine per vedere i dettagli.",
+      "gross": "Mostra immagine ingrandita"
     },
     "karte": {
       "titel": "Mappa",
@@ -5583,6 +5585,15 @@
       "titel": "{{n}} immagini inviate hanno più di {{tage}} giorni",
       "text": "Occupano {{platz}}. Selezionale e spostale nel cestino se ti serve spazio.",
       "auswaehlen": "Seleziona per pulizia"
+    },
+    "gross": {
+      "titel": "Immagine ingrandita",
+      "zu": "Chiudi vista ingrandita",
+      "vor": "Immagine successiva",
+      "zurueck": "Immagine precedente",
+      "zaehler": "{{n}} di {{m}}",
+      "volle_groesse": "Dimensione piena",
+      "einpassen": "Adatta alla finestra"
     }
   }
 }

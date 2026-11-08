@@ -186,3 +186,8 @@
 .fk-streifen { position: relative; }
 .fk-bandtipp { position: absolute; z-index: 4; pointer-events: none; white-space: nowrap; background: #142131; border: 1px solid #2e4156; border-radius: 6px; padding: 3px 8px; font-family: var(--fk-f-data); font-size: .74rem; color: var(--fk-hi); }
 .fk-bandtipp[hidden] { display: none; }
+
+/* Bildpunkte (nur im AeroACARS-Fenster): Kamera statt Ring, damit sie nicht wie ein Ereignis aussehen */
+.fk .fk-bildmarke { width: 26px; height: 26px; padding: 0; border: 2px solid #fff; border-radius: 50%; display: grid; place-items: center; background: #2563eb; color: #fff; box-shadow: 0 0 0 1px #0b121b; }
+.fk .fk-bildmarke:hover:not(:disabled) { background: #1d4ed8; }
+.fk .fk-bildmarke::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; }

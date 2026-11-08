@@ -19,11 +19,18 @@ vi.mock("maplibre-gl", () => {
     getBearing() { return 0; }
     getCanvas() { return { clientWidth: 1200, clientHeight: 800, getBoundingClientRect: () => ({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 }) }; }
     getCenter() { return { lng: 0, lat: 0 }; }
-    on() { return this; }
+    on(art: string, f: (e: unknown) => void) { if (art === "move") (globalThis as any).__beiMove.push(f); return this; }
     once() { return this; }
     remove = vi.fn();
   }
-  return { default: { Map: Karte, NavigationControl: class {}, AttributionControl: class {} } };
+  class Marke {
+    constructor(public o: { element: HTMLElement }) { (globalThis as any).__marken.push(this); }
+    setLngLat(l: number[]) { (this as any).lngLat = l; return this; }
+    setOffset(o: number[]) { (this as any).offset = o; return this; }
+    addTo() { return this; }
+    remove() { (this as any).entfernt = true; }
+  }
+  return { default: { Map: Karte, NavigationControl: class {}, AttributionControl: class {}, Marker: Marke } };
 });
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
 vi.mock("@deck.gl/mapbox", () => ({ MapboxOverlay: class { setProps() {} } }));
@@ -61,7 +68,9 @@ beforeAll(() => {
   (window as any).matchMedia ??= () => ({ matches: false });
   Element.prototype.scrollIntoView ??= () => {};
 });
-afterEach(() => { document.body.innerHTML = ""; vi.restoreAllMocks(); });
+afterEach(() => { document.body.innerHTML = ""; vi.restoreAllMocks(); (globalThis as any).__marken = []; (globalThis as any).__beiMove = []; });
+(globalThis as any).__marken = [];
+(globalThis as any).__beiMove = [];
 
 const zeile = (t: string, lat: number, alt: number) => [lat, 8.5, alt, alt - 300, 250, 240, 0, 90, 2, 0, 5000, t, 0, 1, 1, 0, 1, 1, 1];
 function akte(mehr: Partial<Flugakte> = {}): Flugakte {
@@ -284,4 +293,42 @@ describe("Flugkarte in drei Sprachen", () => {
       expect(sichtbar).toContain(FK[sprache]["regel.antiice_tw"] + (sprache === "en" ? " switches repeatedly" : " commuta ripetutamente"));
     });
   }
+});
+
+describe("Bildpunkte", () => {
+  const marken = () => (globalThis as any).__marken as Array<{ o: { element: HTMLButtonElement }; lngLat: number[]; entfernt?: boolean }>;
+  it("ohne Bilder setzt der Baustein keine einzige Marke (Admin-Webapp und Flugakte bleiben unveraendert)", () => {
+    const d = document.createElement("div");
+    flugkarteAnzeigen(d, akte(), OPT);
+    expect(marken()).toEqual([]);
+  });
+  it("mit Bildern: Knopf je Bild mit Namen, Klick meldet die Kennung, Aufraeumen entfernt die Marken", () => {
+    const d = document.createElement("div");
+    const beiBild = vi.fn();
+    const weg = flugkarteAnzeigen(d, akte(), { ...OPT, bilder: [{ id: "a", lat: 50, lon: 8, name: "Bild 11:00Z" }], beiBild });
+    expect(marken()).toHaveLength(1);
+    const el = marken()[0].o.element;
+    expect(marken()[0].lngLat).toEqual([8, 50]);
+    expect(el.tagName).toBe("BUTTON");
+    expect(el.getAttribute("aria-label")).toBe("Bild 11:00Z");
+    el.click();
+    expect(beiBild).toHaveBeenCalledWith("a");
+    weg();
+    expect(marken()[0].entfernt).toBe(true);
+  });
+  it("in 3D steht der Punkt in der Hoehe der Spur, in 2D am Boden, ein Bild ohne Hoehe bleibt am Boden", () => {
+    const d = document.createElement("div");
+    flugkarteAnzeigen(d, akte(), { ...OPT, bilder: [{ id: "hoch", lat: 50, lon: 8, name: "h", hoeheFt: 36000 }, { id: "ohne", lat: 50, lon: 8, name: "o", hoeheFt: null }] });
+    const offset = (i: number) => (marken()[i] as unknown as { offset: number[] }).offset;
+    const bewegen = () => (globalThis as any).__beiMove.forEach((f: (e: unknown) => void) => f({}));
+    bewegen();
+    expect(offset(0)).toEqual([0, 0]);
+    (d.querySelector('[data-fk="v3d"]') as HTMLButtonElement).click();
+    bewegen();
+    expect(Math.hypot(offset(0)[0], offset(0)[1])).toBeGreaterThan(1);
+    expect(offset(1)).toEqual([0, 0]);
+    (d.querySelector('[data-fk="v2d"]') as HTMLButtonElement).click();
+    bewegen();
+    expect(offset(0)).toEqual([0, 0]);
+  });
 });

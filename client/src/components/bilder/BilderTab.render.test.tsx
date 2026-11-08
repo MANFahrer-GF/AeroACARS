@@ -1,7 +1,7 @@
 // Rendertests des Bilder-Tabs: echte Komponenten, gestellte `invoke`-Antworten.
 import fs from "node:fs";
 import path from "node:path";
-import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
+import { act, render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   gekuerzt: false,
   unvollstaendig: true,
   hoerer: new Map<string, Array<(e: { payload: unknown }) => void>>(),
+  beiMarke: null as null | ((id: string) => void),
 }));
 
 vi.mock("../../lib/ipc", () => ({
@@ -44,7 +45,7 @@ vi.mock("../../lib/ipc", () => ({
     }
   },
 }));
-vi.mock("../../flugkarte/ausschnitt", () => ({ bildKarteAnzeigen: (_r: unknown, o: { beiFehler?: (e: unknown) => void }) => { o.beiFehler?.(new Error("kein WebGL")); return { aktualisieren: () => undefined, aufraeumen: () => undefined }; } }));
+vi.mock("../../flugkarte/ausschnitt", () => ({ bildKarteAnzeigen: (_r: unknown, o: { beiFehler?: (e: unknown) => void; beiMarke?: (id: string) => void }) => { h.beiMarke = o.beiMarke ?? null; o.beiFehler?.(new Error("kein WebGL")); return { aktualisieren: () => undefined, aufraeumen: () => undefined }; } }));
 
 import { BilderTab } from "./BilderTab";
 import { bilderStore } from "./bilderStore";
@@ -471,8 +472,102 @@ describe("Bilder-Tab", () => {
   });
 });
 
+// Gemessen im Browser: je nach Ladereihenfolge gewann `.maplibregl-map { position: relative }`, die kleine Karte hatte Hoehe 0.
+it("die kleine Karte fuellt ihr Feld unabhaengig von der Ladereihenfolge der Stile", () => {
+  const css = fs.readFileSync(path.join(__dirname, "bilder.css"), "utf-8");
+  expect(css).toMatch(/\.bt-karte__feld \.bt-karte__map \{ position: absolute; inset: 0; \}/);
+});
+
 // jsdom rechnet kein CSS: die Regel selbst ist hier der Beleg, gemessen im Browser (Kachel wurde beim Ueberfahren deckend).
 it("Ueberfahren einer Kachel deckt das Bild nicht ab", () => {
   const css = fs.readFileSync(path.join(__dirname, "bilder.css"), "utf-8");
   expect(css).toMatch(/\.bt-kachel__oeffnen:hover:not\(:disabled\) \{ background: rgba\(255, 255, 255, 0\.06\); \}/);
+});
+
+describe("Grossansicht", () => {
+  const dialog = () => screen.getByRole("dialog", { name: "Bild in Großansicht", hidden: true });
+  const zu = () => screen.queryByRole("dialog", { name: "Bild in Großansicht", hidden: true });
+  const zahl = () => document.querySelector(".bt-gross__zahl")?.textContent;
+  // Der Store lebt ueber die Tests hinweg: erst weiterklicken, wenn die Liste dieses Tests steht.
+  const lupen = () => waitFor(() => { const l = screen.getAllByRole("button", { name: /^Bild .+ groß anzeigen$/ }); expect(l).toHaveLength(3); return l; });
+
+  it("Lupe oeffnet das Grossbild; Blaettern mit Knopf und Pfeiltaste laeuft im Kreis", async () => {
+    vorbereiten();
+    zeigen();
+    await userEvent.click((await lupen())[0]);
+    expect(dialog()).toBeInTheDocument();
+    const zeiten = new Set<string>();
+    const merken = () => zeiten.add(document.querySelector(".bt-gross__zeit")!.textContent!);
+    expect(zahl()).toBe("1 von 3");
+    merken();
+    await userEvent.click(screen.getByRole("button", { name: "Nächstes Bild", hidden: true }));
+    expect(zahl()).toBe("2 von 3");
+    merken();
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(zahl()).toBe("3 von 3");
+    merken();
+    expect(zeiten).toEqual(new Set(["10:00:00Z", "10:01:00Z", "10:02:00Z"]));
+  });
+
+  it("Esc schliesst, der Fokus geht zur Lupe zurueck; die Kachel selbst oeffnet weiter nur die Detailspalte", async () => {
+    vorbereiten();
+    zeigen();
+    const lupe = (await lupen())[1];
+    await userEvent.click(lupe);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Großansicht schließen", hidden: true }));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(zu()).toBeNull();
+    expect(document.activeElement).toBe(lupe);
+    await userEvent.click(document.querySelector(".bt-kachel__oeffnen")!);
+    expect(zu()).toBeNull();
+  });
+
+  it("Tab bleibt im Grossbild", async () => {
+    vorbereiten();
+    zeigen();
+    await userEvent.click((await lupen())[0]);
+    const knoepfe = Array.from(dialog().querySelectorAll("button"));
+    expect(knoepfe.length).toBe(4);
+    for (let i = 0; i < knoepfe.length + 1; i++) {
+      fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+      expect(dialog().contains(document.activeElement)).toBe(true);
+    }
+  });
+
+  it("Klick auf das Bild schaltet volle Groesse, Blaettern passt wieder ein, Klick daneben schliesst", async () => {
+    vorbereiten();
+    zeigen();
+    await userEvent.click((await lupen())[0]);
+    const buehne = document.querySelector(".bt-gross__buehne")!;
+    const bild = await waitFor(() => { const b = buehne.querySelector("img"); expect(b).toBeTruthy(); return b!; });
+    fireEvent.click(bild);
+    expect(buehne.getAttribute("data-voll")).toBe("an");
+    expect(zu()).not.toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Nächstes Bild", hidden: true }));
+    expect(buehne.getAttribute("data-voll")).toBeNull();
+    fireEvent.click(buehne);
+    expect(zu()).toBeNull();
+  });
+
+  it("Bild in der Detailspalte oeffnet das Grossbild, der Stern tut das nicht", async () => {
+    vorbereiten();
+    zeigen();
+    const knopf = await screen.findByRole("button", { name: "Bild groß anzeigen" });
+    await userEvent.click(document.querySelector(".bt-detail__stern")!);
+    expect(zu()).toBeNull();
+    await userEvent.click(knopf);
+    expect(dialog()).toBeInTheDocument();
+  });
+
+  it("Punkt auf der kleinen Karte zeigt das Bild und blaettert nur im selben Flug", async () => {
+    vorbereiten();
+    zeigen();
+    await lupen();
+    await waitFor(() => expect(h.beiMarke).not.toBeNull());
+    act(() => h.beiMarke!("r0"));
+    expect(dialog()).toBeInTheDocument();
+    expect(zahl()).toBe("1 von 2");
+    await waitFor(() => expect(document.querySelector(".bt-detail__zeit")?.textContent).toBe("10:00:00Z"));
+  });
 });

@@ -35,7 +35,7 @@ export function useKachelTexte() {
 }
 
 export function Kachel({
-  e, stand, gewaehlt, offen, onWahl, onOeffnen, onErneut,
+  e, stand, gewaehlt, offen, onWahl, onOeffnen, onGross, onErneut,
 }: {
   e: Eintrag;
   stand: KachelStand | undefined;
@@ -43,6 +43,7 @@ export function Kachel({
   offen: boolean;
   onWahl: () => void;
   onOeffnen: () => void;
+  onGross: () => void;
   onErneut: () => void;
 }) {
   const { t, phase, hoehe, grund } = useKachelTexte();
@@ -66,6 +67,7 @@ export function Kachel({
         >
           {zeit}
         </button>
+        <button type="button" className="bt-kachel__gross" aria-label={t("bilder.kachel.gross", { zeit })} title={t("bilder.kachel.gross", { zeit })} onClick={onGross}>{Symbol.lupe}</button>
         <span className="bt-kachel__leiste">
           <span className="bt-kachel__zeit">{zeit}</span>
           <span className="bt-kachel__hoehe">{hoeheText}</span>

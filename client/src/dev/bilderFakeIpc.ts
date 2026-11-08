@@ -122,13 +122,23 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
         aufnahme_verfuegbar: q.get("sim") === "msfs", simulator_taste: q.get("taste") === "keine" ? null : { simulator: "xplane", text: "Shift+Leertaste" }, funde: eingangFund(),
         altbestand: a.mitAltbestand ? Array.from({ length: fall === "leer" ? 142 : 0 }, (_, i) => ({ pfad: `/x/${i}.png`, dateizeit_ms: Date.now() - i * 1000, groesse: 1, format: "png", quelle: "/x" })) : [],
       } as T;
+    case "flugakte_laden": {
+      // ?flugkarte=1: kleine Akte EDDF-LSZH, damit die Bildpunkte eine Spur unter sich haben
+      const z = (t: string, la: number, lo: number, h: number) => [la, lo, h, h - 300, 250, 240, 0, 170, 2, 0, 5000, t, 0, 1, 1, 0, 1, 1, 1];
+      return JSON.stringify({
+        version: 1, kopf: { start: "2026-11-08T13:00:00Z", dpt_airport: "EDDF", arr_airport: "LSZH" }, flugzeug: "A320",
+        dep_gate: null, arr_gate: null, route: null, klappenArt: "hebel", messbar: {}, abdeckung: {}, land: null, filed: null,
+        track: [z("13:04:00", 50.04, 8.56, 400), z("13:11:00", 50.2, 8.9, 1850), z("13:38:00", 49.1, 8.7, 36000), z("14:21:00", 47.9, 8.4, 11200), z("14:32:00", 47.4581, 8.549, 2410), z("14:35:00", 47.46, 8.55, 1416)],
+        events: [{ t: "2026-11-08T13:38:00Z", i: 2, k: "ap", txt: "Autopilot" }],
+      }) as T;
+    }
     case "bild_lesen": {
       const pfad = String(a.pfad);
       if (pfad.includes(".quelle.")) return await szeneAlsBytes(2, 2560, 1440, "image/png") as T;
       const id = pfad.split("/").pop()!.split(".")[0];
       const z = zeilen.find((r) => r.id === id);
       const klein = pfad.includes("vorschau");
-      return await szeneAlsBytes(z?.szene ?? 0, klein ? 320 : 640, klein ? 200 : 400, "image/jpeg") as T;
+      return await szeneAlsBytes(z?.szene ?? 0, klein ? 320 : 1920, klein ? 200 : 1200, "image/jpeg") as T;
     }
     case "bild_uebernehmen":
       if (a.modus === "verwerfen") { w.__fundErledigt = true; return null as T; }

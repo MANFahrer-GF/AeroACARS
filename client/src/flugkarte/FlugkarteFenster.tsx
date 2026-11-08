@@ -9,6 +9,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "../lib/ipc";
+import { BildGross } from "../components/bilder/BildGross";
+import { bilderStore } from "../components/bilder/bilderStore";
+import { bildZeitIso } from "../components/bilder/Kacheln";
+import { anzeigbar, flugSchluessel } from "../components/bilder/logik/gruppen";
+import type { Eintrag } from "../components/bilder/logik/typen";
 import { flugkarteAnzeigen } from "./flugkarte";
 import type { Flugakte } from "./flugakteTypen";
 import stilUrl from "./stil-dunkel.json?url";
@@ -20,24 +25,36 @@ export default function FlugkarteFenster({ pirepId, onClose }: { pirepId: string
   const zuKnopf = useRef<HTMLButtonElement>(null);
   const [fehler, setFehler] = useState<string | null>(null);
   const [laedt, setLaedt] = useState(true);
+  const [gross, setGross] = useState<{ id: string; bilder: Eintrag[] } | null>(null);
   const { t, i18n } = useTranslation();
   const sprache = i18n.resolvedLanguage ?? i18n.language ?? "en";
 
   useEffect(() => {
     let weg: (() => void) | null = null, abgebrochen = false;
     setFehler(null); setLaedt(true);
-    invoke<string | null>("flugakte_laden", { pirepId })
-      .then((text) => {
+    // laden() faengt Fehler selbst: ohne Bilderliste kommt die Karte eben ohne Bildpunkte
+    Promise.all([invoke<string | null>("flugakte_laden", { pirepId }), bilderStore.laden()])
+      .then(([text]) => {
         if (abgebrochen || !feld.current) return;
         if (text == null) { setFehler(t("flugkarte.fenster.kein_protokoll")); return; }
         const akte = JSON.parse(text) as Flugakte;
         const start = akte.kopf?.start ? new Date(akte.kopf.start) : null;
+        const flugBilder = (bilderStore.lesen().liste?.eintraege ?? [])
+          .filter((e) => anzeigbar(e) && flugSchluessel(e) === pirepId)
+          .sort((a, b) => (bildZeitIso(a) ?? "").localeCompare(bildZeitIso(b) ?? ""));
         weg = flugkarteAnzeigen(feld.current, akte, {
           stilUrl,
           // Texte aus common.json (flugkarte.*), dieselben wie in der Webapp; fehlt einer, bleibt der deutsche aus der Akte
           t: (k, w) => (i18n.exists(k) ? i18n.t(k, w) : null),
           sprache,
           datum: start ? start.toLocaleDateString(sprache, { timeZone: "UTC" }) : undefined,
+          bilder: flugBilder
+            .filter((e) => typeof e.sidecar?.meta?.breite === "number" && typeof e.sidecar?.meta?.laenge === "number")
+            .map((e) => {
+              const zeit = e.sidecar!.meta!.zeit_utc?.slice(11, 16);
+              return { id: e.id, lat: e.sidecar!.meta!.breite!, lon: e.sidecar!.meta!.laenge!, hoeheFt: e.sidecar!.meta!.hoehe_ft, name: t("bilder.karte.bild_marke", { name: zeit ? `${zeit}Z` : e.id }) };
+            }),
+          beiBild: (id) => setGross({ id, bilder: flugBilder }),
           // nur im Entwicklungsmodus: Karte fuer Browser-Tests greifbar (wie in der Webapp)
           beiKarte: import.meta.env.DEV ? (karte) => { (window as unknown as { __flugkarte: unknown }).__flugkarte = karte; } : undefined,
         });
@@ -81,6 +98,7 @@ export default function FlugkarteFenster({ pirepId, onClose }: { pirepId: string
       {laedt && <div className="flugkarte-hinweis">{t("flugkarte.fenster.laedt")}</div>}
       {fehler && <div className="flugkarte-hinweis">{fehler}</div>}
       <div className="flugkarte-inhalt" ref={feld} />
+      {gross && <BildGross bilder={gross.bilder} startId={gross.id} onZu={() => setGross(null)} ziel={fenster.current} />}
     </div>
   );
 }

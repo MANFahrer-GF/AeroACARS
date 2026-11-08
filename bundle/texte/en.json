@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Pictures can now also be sent from a tablet over the LAN bridge. With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked."
+    "neu_text": "Pictures can now be viewed large: with the magnifier on the tile, a click on the picture on the right, and the points on the maps. The flight map now shows the pictures of the flight as points. Pictures can now also be sent from a tablet over the LAN bridge. With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -5297,7 +5297,8 @@
       "oeffnen_mit": "Details: {{zeit}} {{phase}}, {{hoehe}}",
       "auswaehlen_mit": "Select: {{zeit}} {{phase}}",
       "ohne_flug": "No flight",
-      "serie_auswaehlen": "Select series of {{n}} pictures"
+      "serie_auswaehlen": "Select series of {{n}} pictures",
+      "gross": "Show picture {{zeit}} large"
     },
     "status": {
       "sendet": "Sending …",
@@ -5395,7 +5396,8 @@
         "msl": "MSL",
         "ueber_grund": "ground speed"
       },
-      "leer_hinweis": "Choose a picture to see its details."
+      "leer_hinweis": "Choose a picture to see its details.",
+      "gross": "Show picture large"
     },
     "karte": {
       "titel": "Map",
@@ -5583,6 +5585,15 @@
       "titel": "{{n}} sent pictures are older than {{tage}} days",
       "text": "They use {{platz}}. Select them and move them to the trash if you need the space.",
       "auswaehlen": "Select for clean-up"
+    },
+    "gross": {
+      "titel": "Picture in large view",
+      "zu": "Close large view",
+      "vor": "Next picture",
+      "zurueck": "Previous picture",
+      "zaehler": "{{n}} of {{m}}",
+      "volle_groesse": "Full size",
+      "einpassen": "Fit to window"
     }
   }
 }

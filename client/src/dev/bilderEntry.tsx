@@ -11,6 +11,7 @@ import "../App.css";
 import { Sidebar } from "../components/Sidebar";
 import { BilderTab } from "../components/bilder/BilderTab";
 import { BilderHintergrund } from "../components/bilder/BilderHintergrund";
+import FlugkarteFenster from "../flugkarte/FlugkarteFenster";
 
 const q = new URLSearchParams(window.location.search);
 const sprache = q.get("sprache") ?? "de";
@@ -44,6 +45,7 @@ createRoot(document.getElementById("root")!).render(
           onKarteOeffnen={(f) => { (window as unknown as { __karteGeoeffnet: unknown }).__karteGeoeffnet = f; }}
         />
       </main>
+      {q.get("flugkarte") === "1" && <FlugkarteFenster pirepId="P412" onClose={() => undefined} />}
     </div>
   </StrictMode>,
 );
