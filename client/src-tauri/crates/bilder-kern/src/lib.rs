@@ -28,6 +28,7 @@
 pub mod beobachter;
 pub mod eingang;
 pub mod fehler;
+pub mod fensterschnitt;
 pub mod jpeg;
 pub mod kontext;
 pub mod live;

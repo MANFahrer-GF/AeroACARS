@@ -118,6 +118,8 @@
 //! von anderen Fenstern; das Bildmass kommt aus dem Rahmen. Nur wenn WGC nicht verfuegbar ist, scheitert oder
 //! ganz schwarz liefert, folgt der Rueckfall `printwindow`, dann `bitblt`. Der Code `verdeckt` gilt allein fuer
 //! diese Bildschirmkopie (liegt ein fremdes Fenster darueber), nie fuer `wgc`. Die Aufnahme bekommt hoechstens 8 s.
+//! Die Aufnahme zeigt nur den Innenbereich des Fensters (ohne Titelleiste und Rand); im Vollbild und bei randlosen
+//! Fenstern faellt kein Pixel weg, ein unplausibler Schnitt laesst das Bild ungeschnitten (Protokoll: `schnitt`, `vorher`, `nachher`).
 //! Der Windows-Teil ist unter macOS nur uebersetzt (`cargo check --target x86_64-pc-windows-msvc`), nicht ausgefuehrt.
 //!
 //! Ton: Jede Aufnahme (Tastenkuerzel, Yoke-Knopf, `bild_aufnehmen`) meldet sich hoerbar, auch wenn AeroACARS
@@ -722,7 +724,14 @@ fn aufnehmen_intern(app: &AppHandle, gruppe: &str) -> Result<Value, UiError> {
     }
     let r = (|| -> Result<Value, Fehler> {
         let a = plattform::fenster_aufnehmen()?;
-        tracing::info!(methode = a.methode, rueckfall = ?a.rueckfall_grund, "Bildaufnahme");
+        tracing::info!(
+            methode = a.methode,
+            rueckfall = ?a.rueckfall_grund,
+            schnitt = %a.schnitt,
+            vorher = %format!("{}x{}", a.vorher.0, a.vorher.1),
+            nachher = %format!("{}x{}", a.breite, a.hoehe),
+            "Bildaufnahme"
+        );
         let png = bilder_kern::png::aus_bgra(a.breite, a.hoehe, &a.bgra)?;
         let id = uuid::Uuid::new_v4().to_string();
         let w = wurzel(app).map_err(|u| Fehler::Io(u.message))?;

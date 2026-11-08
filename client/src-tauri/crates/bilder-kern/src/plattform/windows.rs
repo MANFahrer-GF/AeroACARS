@@ -9,13 +9,13 @@ use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use windows_sys::core::GUID;
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HWND, LPARAM, RECT};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::DwmGetWindowAttribute;
 use windows_sys::Win32::Media::Multimedia::{
     joyGetDevCapsW, joyGetNumDevs, joyGetPosEx, JOYCAPSW, JOYERR_NOERROR, JOYINFOEX, JOY_RETURNBUTTONS,
 };
 use windows_sys::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO,
+    BitBlt, ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, SRCCOPY,
 };
 use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
@@ -26,12 +26,13 @@ use windows_sys::Win32::System::Threading::{GetCurrentThreadId, OpenProcess, Que
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::Shell::{FOLDERID_Pictures, SHGetKnownFolderPath};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetForegroundWindow, GetLayeredWindowAttributes, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
+    EnumWindows, GetClientRect, GetForegroundWindow, GetLayeredWindowAttributes, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
     GetWindowThreadProcessId, IsIconic, IsWindowVisible, PeekMessageW, PostThreadMessageW, GWL_EXSTYLE, GW_HWNDPREV, GW_OWNER, LWA_ALPHA,
     MSG, PM_NOREMOVE, WM_APP, WM_HOTKEY, WS_EX_LAYERED,
 };
 
 use super::Aufnahme;
+use crate::fensterschnitt::{gdi_quelle, innenbereich, lage_passt, masse_nach_schnitt, zuschneiden, Schnitt};
 use crate::suche::{self, Fundort};
 use crate::tastenkuerzel::{Befehl, Belegung, Taste};
 use crate::verdeckung::{verdeckt, Rechteck};
@@ -46,6 +47,12 @@ const SIM_PROZESSE: [&str; 3] = ["flightsimulator.exe", "flightsimulator2024.exe
 
 /// `PW_RENDERFULLCONTENT` aus winuser.h (windows-sys kennt die Konstante nicht).
 const PW_RENDERFULLCONTENT: u32 = 0x2;
+
+/// `PW_CLIENTONLY` aus winuser.h: `PrintWindow` zeichnet nur den Innenbereich (windows-sys kennt die Konstante nicht).
+const PW_CLIENTONLY: u32 = 0x1;
+
+/// `DWMWA_EXTENDED_FRAME_BOUNDS`: sichtbarer Fensterrahmen ohne den unsichtbaren Rand (Schatten, Groessenrand).
+const DWMWA_EXTENDED_FRAME_BOUNDS: u32 = 9;
 
 /// `FOLDERID_Captures`: Ablage der Game Bar (`Videos\Captures`), laut Messung am
 /// 07.11.2026 per API zu erfragen, weil der Registrywert leer ist.
@@ -202,10 +209,41 @@ fn sim_fenster() -> Option<(HWND, RECT)> {
     liste.into_iter().max_by_key(|(_, r)| i64::from(r.right - r.left) * i64::from(r.bottom - r.top))
 }
 
-/// Breite und Hoehe (Pixel) des Simulatorfensters, falls eines offen ist.
+/// Das Fensterrechteck (`GetWindowRect`) in Bildschirmkoordinaten.
+fn fenster_rechteck(hwnd: HWND) -> Option<Rechteck> {
+    let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    // SAFETY: Ausgabestruktur ist lokal; bei ungueltigem Handle schlaegt die Abfrage fehl.
+    (unsafe { GetWindowRect(hwnd, &mut r) } != 0).then(|| Rechteck::neu(r.left, r.top, r.right, r.bottom))
+}
+
+/// Der Innenbereich (Client-Bereich) des Fensters in Bildschirmkoordinaten.
+fn innen_rechteck(hwnd: HWND) -> Option<Rechteck> {
+    let mut c = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut p = POINT { x: 0, y: 0 };
+    // SAFETY: Abfragen auf das Fenster des Simulators; bei ungueltigem Handle schlagen sie fehl.
+    let ok = unsafe { GetClientRect(hwnd, &mut c) != 0 && ClientToScreen(hwnd, &mut p) != 0 };
+    ok.then(|| Rechteck::neu(p.x, p.y, p.x + (c.right - c.left), p.y + (c.bottom - c.top)))
+}
+
+/// Der sichtbare Fensterrahmen (ohne unsichtbaren Rand), falls DWM ihn nennt.
+fn sichtbarer_rahmen(hwnd: HWND) -> Option<Rechteck> {
+    let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    // SAFETY: Ausgabestruktur ist lokal und genau so gross, wie angegeben.
+    let hr = unsafe { DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut r as *mut RECT as *mut c_void, std::mem::size_of::<RECT>() as u32) };
+    (hr == 0).then(|| Rechteck::neu(r.left, r.top, r.right, r.bottom))
+}
+
+/// Breite und Hoehe (Pixel) des Simulatorfensters ohne Titelleiste und Rand
+/// (Innenbereich, wie ihn die Aufnahme liefert), falls eines offen ist.
+/// Ist der Schnitt nicht plausibel, gilt das ganze Fensterrechteck.
 pub fn sim_fenstermasse() -> Option<(u32, u32)> {
-    let (_, r) = sim_fenster()?;
-    Some(((r.right - r.left).max(0) as u32, (r.bottom - r.top).max(0) as u32))
+    let (hwnd, r) = sim_fenster()?;
+    let voll = ((r.right - r.left).max(0) as u32, (r.bottom - r.top).max(0) as u32);
+    let schnitt = innen_rechteck(hwnd).map(|i| innenbereich(voll, &[Rechteck::neu(r.left, r.top, r.right, r.bottom)], &i));
+    Some(match schnitt {
+        Some(s @ Schnitt::Innen(_)) => masse_nach_schnitt(voll, &s),
+        _ => voll,
+    })
 }
 
 pub(super) fn ganz_schwarz(bgra: &[u8]) -> bool {
@@ -372,13 +410,13 @@ pub fn fenster_aufnehmen() -> Result<Aufnahme, Fehler> {
 }
 
 fn fenster_aufnehmen_roh() -> Result<Aufnahme, Fehler> {
-    let (hwnd, r) = sim_fenster().ok_or_else(|| Fehler::NichtGefunden("Kein Simulatorfenster gefunden (FlightSimulator, X-Plane)".into()))?;
+    let (hwnd, _) = sim_fenster().ok_or_else(|| Fehler::NichtGefunden("Kein Simulatorfenster gefunden (FlightSimulator, X-Plane)".into()))?;
     let wgc_grund = match super::wgc::aufnehmen(hwnd) {
-        Ok(a) => return Ok(a),
+        Ok(a) => return Ok(auf_innenbereich(hwnd, a)),
         Err(grund) => grund,
     };
     // Rueckfall; scheitert auch er mit einem E/A-Fehler, steht der WGC-Grund dabei.
-    match fenster_aufnehmen_gdi(hwnd, r) {
+    match fenster_aufnehmen_gdi(hwnd) {
         Ok(a) => Ok(Aufnahme { rueckfall_grund: Some(wgc_grund), ..a }),
         Err(Fehler::Io(m)) => Err(Fehler::Io(format!("{m} (Windows.Graphics.Capture: {wgc_grund})"))),
         Err(Fehler::Verdeckt(m)) => Err(Fehler::Verdeckt(format!("{m} (Windows.Graphics.Capture: {wgc_grund})"))),
@@ -386,26 +424,59 @@ fn fenster_aufnehmen_roh() -> Result<Aufnahme, Fehler> {
     }
 }
 
-/// Rueckfall: `PrintWindow`, dann `BitBlt` (siehe `fenster_aufnehmen`).
-fn fenster_aufnehmen_gdi(hwnd: HWND, r: RECT) -> Result<Aufnahme, Fehler> {
-    let (b, h) = (r.right - r.left, r.bottom - r.top);
+/// Schneidet eine WGC-Aufnahme auf den Innenbereich. WGC liefert den sichtbaren
+/// Rahmen (`DWMWA_EXTENDED_FRAME_BOUNDS`); passt das Bildmass dazu nicht, gilt
+/// das Fensterrechteck, und passt auch das nicht, bleibt das Bild ungeschnitten.
+fn auf_innenbereich(hwnd: HWND, a: Aufnahme) -> Aufnahme {
+    let mut kandidaten: Vec<Rechteck> = sichtbarer_rahmen(hwnd).into_iter().collect();
+    let mut fr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    // SAFETY: Ausgabestruktur ist lokal.
+    if unsafe { GetWindowRect(hwnd, &mut fr) } != 0 {
+        kandidaten.push(Rechteck::neu(fr.left, fr.top, fr.right, fr.bottom));
+    }
+    let vorher = (a.breite, a.hoehe);
+    let schnitt = match innen_rechteck(hwnd) {
+        Some(i) => innenbereich(vorher, &kandidaten, &i),
+        None => Schnitt::Unplausibel("Innenbereich nicht lesbar".into()),
+    };
+    let (bgra, (breite, hoehe)) = zuschneiden(a.bgra, vorher, &schnitt);
+    Aufnahme { breite, hoehe, bgra, schnitt, vorher, ..a }
+}
+
+/// Rueckfall: `PrintWindow`, dann `BitBlt` (siehe `fenster_aufnehmen`). Bei
+/// plausiblem Innenbereich wird nur dieser aufgenommen (`PW_CLIENTONLY`,
+/// `BitBlt` ab dem Innenbereich), sonst das ganze Fensterrechteck. Die Masse werden
+/// hier frisch gelesen: der WGC-Versuch davor kann Sekunden gedauert haben.
+fn fenster_aufnehmen_gdi(hwnd: HWND) -> Result<Aufnahme, Fehler> {
+    let lage = || (fenster_rechteck(hwnd), innen_rechteck(hwnd));
+    let lage_davor = lage();
+    let r = lage_davor.0.ok_or_else(|| Fehler::NichtGefunden("Das Simulatorfenster ist nicht mehr da".into()))?;
+    let voll = ((r.rechts - r.links).max(0) as u32, (r.unten - r.oben).max(0) as u32);
+    let schnitt = match &lage_davor.1 {
+        Some(i) => innenbereich(voll, &[r], i),
+        None => Schnitt::Unplausibel("Innenbereich nicht lesbar".into()),
+    };
+    let quelle = gdi_quelle(&r, voll, &schnitt);
+    let (b, h) = (quelle.breite as i32, quelle.hoehe as i32);
+    let (quelle_links, quelle_oben) = (quelle.links, quelle.oben);
+    let druck_flags = if quelle.nur_innen { PW_RENDERFULLCONTENT | PW_CLIENTONLY } else { PW_RENDERFULLCONTENT };
     let mut gdi = Gdi::neu(b, h)?;
     let mut bgra = vec![0u8; (b as usize) * (h as usize) * 4];
     let mut methode = "printwindow";
     gdi.waehlen();
     // SAFETY: gueltiges Fenster- und DC-Handle; das Bitmap ist gewaehlt.
-    let gezeichnet = unsafe { PrintWindow(hwnd, gdi.mem, PW_RENDERFULLCONTENT) } != 0;
+    let gezeichnet = unsafe { PrintWindow(hwnd, gdi.mem, druck_flags) } != 0;
     // GetDIBits verlangt ein Bitmap, das in keinem DC gewaehlt ist: `auslesen` loest es zuerst.
     let mut ok = gezeichnet && gdi.auslesen(b, h, &mut bgra) && !ganz_schwarz(&bgra);
     if !ok {
-        let sim = Rechteck::neu(r.left, r.top, r.right, r.bottom);
+        let sim = Rechteck::neu(quelle_links, quelle_oben, quelle_links + b, quelle_oben + h);
         if verdeckt(&sim, &fenster_darueber(hwnd)) {
             return Err(Fehler::Verdeckt("Der Simulator liefert nur Schwarz und ein anderes Fenster liegt darueber; bitte den Simulator nach vorn holen".into()));
         }
         methode = "bitblt";
         gdi.waehlen();
         // SAFETY: Quell-DC ist der Bildschirm, Ziel der Speicher-DC mit gewaehltem Bitmap.
-        let kopiert = unsafe { BitBlt(gdi.mem, 0, 0, b, h, gdi.schirm, r.left, r.top, SRCCOPY | CAPTUREBLT) } != 0;
+        let kopiert = unsafe { BitBlt(gdi.mem, 0, 0, b, h, gdi.schirm, quelle_links, quelle_oben, SRCCOPY | CAPTUREBLT) } != 0;
         let fehler_nr = if kopiert { 0 } else { unsafe { GetLastError() } };
         ok = kopiert && gdi.auslesen(b, h, &mut bgra);
         if !ok {
@@ -418,7 +489,10 @@ fn fenster_aufnehmen_gdi(hwnd: HWND, r: RECT) -> Result<Aufnahme, Fehler> {
     if ganz_schwarz(&bgra) {
         return Err(Fehler::Io("Die Aufnahme ist schwarz (Vollbild-Ausgabe des Simulators nicht abgreifbar)".into()));
     }
-    Ok(Aufnahme { breite: b as u32, hoehe: h as u32, bgra, methode, rueckfall_grund: None })
+    if !lage_passt(&lage_davor, &lage(), methode == "bitblt") {
+        return Err(Fehler::Io("Das Simulatorfenster wurde waehrend der Aufnahme veraendert; bitte noch einmal aufnehmen".into()));
+    }
+    Ok(Aufnahme { breite: b as u32, hoehe: h as u32, bgra, methode, rueckfall_grund: None, schnitt, vorher: voll })
 }
 
 /// Rueckmeldeton der Aufnahme: kurzes Klicken bei Erfolg, tiefer Ton bei Fehlschlag.
