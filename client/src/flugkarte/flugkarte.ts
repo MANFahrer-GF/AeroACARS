@@ -15,6 +15,7 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck.gl/layers";
 import { WebMercatorViewport } from "@deck.gl/core";
 import "./flugkarte.css";
+import { markeMitVorschau, type VorschauVon } from "./markenVorschau";
 import { FARBEN_DUNKEL, KATEGORIEN, type Flugakte, type Kategorie } from "./flugakteTypen";
 
 /** Werte fuer einen Text; Zahlen formatiert der Baustein in der Sprache, bevor sie ankommen */
@@ -39,6 +40,8 @@ export interface FlugkarteOptionen {
   bilder?: Promise<Array<{ id: string; lat: number; lon: number; name: string; hoeheFt?: number | null }>>;
   /** Klick auf einen Bildpunkt */
   beiBild?: (id: string) => void;
+  /** Kleines Bild beim Ueberfahren eines Bildpunkts */
+  bildVorschau?: VorschauVon;
 }
 
 const BILD_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
@@ -285,6 +288,7 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
       el.setAttribute("aria-label", b.name);
       el.innerHTML = BILD_SVG;
       el.addEventListener("click", (ev) => { ev.stopPropagation(); opt.beiBild?.(b.id); });
+      if (opt.bildVorschau) aufraeumen.push(markeMitVorschau(el, map, b.name, () => opt.bildVorschau!(b.id)));
       return { b, m: new maplibregl.Marker({ element: el }).setLngLat([b.lon, b.lat]).addTo(map) };
     });
     bildpunkteHeben();

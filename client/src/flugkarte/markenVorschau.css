@@ -1,0 +1,8 @@
+/* Feste Farben: die Vorschau liegt am <body>, ausserhalb von .bt und .fk. z-index ueber .flugkarte-fenster (2000). */
+.marken-vorschau { position: fixed; top: 0; left: 0; z-index: 2050; width: 220px; box-sizing: border-box; padding: 4px; background: #0b121b; border: 1px solid #2e4156; border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55); pointer-events: none; }
+.marken-vorschau[hidden] { display: none; }
+.marken-vorschau__bild { height: 118px; border-radius: 5px; overflow: hidden; background: #142131; }
+.marken-vorschau__bild img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.marken-vorschau__zeile { padding: 0 4px; font-size: 11.5px; line-height: 1.4; color: #a9b8c7; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.marken-vorschau__bild + .marken-vorschau__zeile { margin-top: 4px; font-weight: 700; color: #e9eff5; }
+.marken-vorschau__zeile:first-child { font-weight: 700; color: #e9eff5; }

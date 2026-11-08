@@ -9,6 +9,8 @@ import maplibregl from "maplibre-gl";
 import { bilderStore, useBilder } from "./bilderStore";
 import { bildZeitIso } from "./Kacheln";
 import { anzeigbar, flugSchluessel } from "./logik/gruppen";
+import { markeMitVorschau } from "../../flugkarte/markenVorschau";
+import { useMarkenVorschau } from "./useMarkenVorschau";
 import type { Eintrag } from "./logik/typen";
 import "./bilder.css";
 
@@ -47,8 +49,9 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
 
   // Am Tablet kommt die Liste alle paar Sekunden neu: unveraenderte Marken nicht neu bauen, sonst geht ein Tippen verloren.
   const markenSchluessel = JSON.stringify(marken);
-  const aktuell = useRef({ marken, flugBilder });
-  aktuell.current = { marken, flugBilder };
+  const vorschauVon = useMarkenVorschau();
+  const aktuell = useRef({ marken, flugBilder, vorschauVon });
+  aktuell.current = { marken, flugBilder, vorschauVon };
   useEffect(() => {
     const map = mapRef.current;
     const { marken } = aktuell.current;
@@ -64,9 +67,10 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
         ev.stopPropagation();
         setGross({ id: m.id, bilder: aktuell.current.flugBilder });
       });
-      return new maplibregl.Marker({ element: el }).setLngLat([m.lon, m.lat]).addTo(map);
+      const vorschauZu = markeMitVorschau(el, map, name, () => aktuell.current.vorschauVon(aktuell.current.flugBilder.find((e) => e.id === m.id)));
+      return { marke: new maplibregl.Marker({ element: el }).setLngLat([m.lon, m.lat]).addTo(map), vorschauZu };
     });
-    return () => gesetzt.forEach((m) => m.remove());
+    return () => gesetzt.forEach((m) => { m.vorschauZu(); m.marke.remove(); });
   }, [mapRef, markenSchluessel, fokus?.id, t]);
 
   useEffect(() => {
