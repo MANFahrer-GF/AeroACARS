@@ -19,7 +19,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "aeroacars-app"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "aeroacars-mqtt",
  "anyhow",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "aeroacars-mqtt"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -184,7 +184,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api-client"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "chrono",
  "paket-endpunkte",
@@ -527,7 +527,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bewertung-host"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "chrono",
  "landing-scoring",
@@ -539,14 +539,14 @@ dependencies = [
 
 [[package]]
 name = "bewertung-wasm"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "landing-scoring",
 ]
 
 [[package]]
 name = "bilder-kern"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "chrono",
  "libc",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "cabin-announcements"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "discord-presence"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1893,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "geo"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -2197,7 +2197,7 @@ dependencies = [
 
 [[package]]
 name = "hoppie-protocol"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -2737,7 +2737,7 @@ dependencies = [
 
 [[package]]
 name = "kabine-wasm"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "bewertung-host",
  "cabin-announcements",
@@ -2759,7 +2759,7 @@ dependencies = [
 
 [[package]]
 name = "landing-scoring"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -2971,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "metar"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "chrono",
  "paket-endpunkte",
@@ -3549,7 +3549,7 @@ dependencies = [
 
 [[package]]
 name = "paket-endpunkte"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -4098,7 +4098,7 @@ dependencies = [
 
 [[package]]
 name = "recorder"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "chrono",
  "geo",
@@ -4353,7 +4353,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-bundle"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "chrono",
  "minisign",
@@ -4639,7 +4639,7 @@ dependencies = [
 
 [[package]]
 name = "secrets"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -5024,7 +5024,7 @@ dependencies = [
 
 [[package]]
 name = "sim-core"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "chrono",
  "serde",
@@ -5036,7 +5036,7 @@ dependencies = [
 
 [[package]]
 name = "sim-msfs"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "bindgen",
  "chrono",
@@ -5051,7 +5051,7 @@ dependencies = [
 
 [[package]]
 name = "sim-xplane"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -5181,7 +5181,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "storage"
-version = "3.0.0-beta.2.6"
+version = "3.0.0-beta.2.7"
 dependencies = [
  "chrono",
  "landing-scoring",
