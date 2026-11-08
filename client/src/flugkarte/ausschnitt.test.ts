@@ -1,6 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
+const h = vi.hoisted(() => ({ webgl: false, laden: null as null | (() => Promise<void>), marken: 0, spruenge: 0 }));
 vi.mock("maplibre-gl", () => ({
-  default: { Map: class { constructor() { throw new Error("kein WebGL"); } }, AttributionControl: class {}, Marker: class {}, LngLatBounds: class {} },
+  default: {
+    Map: class {
+      constructor() {
+        if (!h.webgl) throw new Error("kein WebGL");
+        return new Proxy(this, { get: (_z, k) => {
+          if (k === "on") return (art: string, f: () => Promise<void>) => { if (art === "load") h.laden = f; };
+          if (k === "jumpTo") return () => { h.spruenge++; };
+          if (k === "getSource") return () => undefined;
+          return () => undefined;
+        } });
+      }
+    },
+    AttributionControl: class {},
+    Marker: class { constructor() { h.marken++; } setLngLat() { return this; } addTo() { return this; } remove() {} },
+    LngLatBounds: class {},
+  },
 }));
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
 import { bildKarteAnzeigen, spurGeoJson } from "./ausschnitt";
@@ -16,5 +32,20 @@ describe("Kartenausschnitt", () => {
     const k = bildKarteAnzeigen(document.createElement("div"), { stilUrl: "x", beiFehler: fehler });
     expect(fehler).toHaveBeenCalledTimes(1);
     expect(() => { k.aktualisieren({ spur: null, marken: [], fokus: null, kugel: true }); k.aufraeumen(); }).not.toThrow();
+  });
+  it("dieselbe Eingabe aus dem Tablet-Takt baut nichts neu und springt nicht zurueck; eine geaenderte schon", async () => {
+    h.webgl = true;
+    vi.stubGlobal("fetch", async () => { throw new Error("offline"); });
+    const k = bildKarteAnzeigen(document.createElement("div"), { stilUrl: "x" });
+    await h.laden!();
+    const eingabe = () => ({ spur: null, marken: [{ id: "a", name: "A", lat: 50, lon: 8, aktiv: true }], fokus: { lat: 50, lon: 8 }, kugel: false });
+    k.aktualisieren(eingabe());
+    expect([h.marken, h.spruenge]).toEqual([1, 1]);
+    k.aktualisieren(eingabe());
+    expect([h.marken, h.spruenge]).toEqual([1, 1]);
+    k.aktualisieren({ ...eingabe(), kugel: true });
+    expect([h.marken, h.spruenge]).toEqual([2, 2]);
+    h.webgl = false;
+    vi.unstubAllGlobals();
   });
 });

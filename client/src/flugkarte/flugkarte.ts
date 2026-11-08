@@ -35,8 +35,13 @@ export interface FlugkarteOptionen {
   datum?: string;
   /** Nur fuer Tests: Zugriff auf die MapLibre-Karte */
   beiKarte?: (karte: maplibregl.Map) => void;
+  /** Nur im AeroACARS-Fenster: Bilder des Flugs als Punkte; kommen sie spaeter, wartet die Karte nicht auf sie. Die Webapp gibt keine mit */
+  bilder?: Promise<Array<{ id: string; lat: number; lon: number; name: string; hoeheFt?: number | null }>>;
+  /** Klick auf einen Bildpunkt */
+  beiBild?: (id: string) => void;
 }
 
+const BILD_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
 const FT = 0.3048;
 const SAT_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 const DEM_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
@@ -268,6 +273,24 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
   opt.beiKarte?.(map);
 
+  // Bildpunkte: eigene Marker, unabhaengig von Ereignis-Haufen, Popup und Wiedergabe
+  let bildMarker: Array<{ b: { lon: number; lat: number; hoeheFt?: number | null }; m: maplibregl.Marker }> = [];
+  void opt.bilder?.then((liste) => {
+    if (beendet) return;
+    bildMarker = liste.map((b) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "fk-bildmarke";
+      el.title = b.name;
+      el.setAttribute("aria-label", b.name);
+      el.innerHTML = BILD_SVG;
+      el.addEventListener("click", (ev) => { ev.stopPropagation(); opt.beiBild?.(b.id); });
+      return { b, m: new maplibregl.Marker({ element: el }).setLngLat([b.lon, b.lat]).addTo(map) };
+    });
+    bildpunkteHeben();
+  });
+  aufraeumen.push(() => bildMarker.forEach(({ m }) => m.remove()));
+
   let overlay: MapboxOverlay | null = null;
   const VEC: Array<[string, string]> = [];
   map.on("error", (e: any) => console.warn("Flugkarte:", e?.error?.message ?? e));
@@ -336,7 +359,7 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   map.on("zoom", () => refresh());
   map.on("pitch", () => refresh());
   map.on("zoomstart", () => haufenZu());
-  map.on("move", () => { if (is3d || map.getPitch() > 1 || welt() !== weltGezeichnet) refresh(); placePop(); placePlane(); });
+  map.on("move", () => { if (is3d || map.getPitch() > 1 || welt() !== weltGezeichnet) refresh(); placePop(); placePlane(); bildpunkteHeben(); });
 
   // ---------- deck.gl-Ebenen ----------
   const SEG: number[] = []; for (let i = 1; i < T.length; i++) SEG.push(i);
@@ -474,6 +497,15 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   // Nicht die Bewegungsrichtung: beim Pushback rollt das Flugzeug rueckwaerts (Thomas 28.10.).
   // Nur ohne gemessenen Kurs ersatzweise die Bewegungsrichtung.
   const planeEl = $("flugzeug");
+  /** In 3D liegt die Spur in echter Hoehe, Marker haengen am Boden: um den Unterschied am Bildschirm verschieben. */
+  function bildpunkteHeben() {
+    if (bildMarker.length === 0) return;
+    const vp = viewport();
+    for (const { b, m } of bildMarker) {
+      const unten = vp.project([b.lon, b.lat, 0]), oben = vp.project([b.lon, b.lat, Z((b.hoeheFt ?? 0) * FT)]);
+      m.setOffset([oben[0] - unten[0], oben[1] - unten[1]]);
+    }
+  }
   function placePlane() {
     const vp = viewport(), a = stateAt(scrubS);
     const p0 = vp.project([a.lon, a.lat, Z(a.h * FT)]);

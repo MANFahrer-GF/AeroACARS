@@ -13,7 +13,7 @@ import { Kachel, SerienKachel } from "./Kacheln";
 import type { Kachel as KachelDaten } from "./logik/serien";
 
 export function GruppenAnsicht({
-  gruppen, sendestand, auswahl, offenId, aktivePirep, jetzt, onWahl, onSerieWahl, onOeffnen, onErneut, onZuordnen, herkunft,
+  gruppen, sendestand, auswahl, offenId, aktivePirep, jetzt, onWahl, onSerieWahl, onOeffnen, onGross, onErneut, onZuordnen, herkunft,
 }: {
   gruppen: Gruppe[];
   sendestand: Sendestand;
@@ -24,6 +24,7 @@ export function GruppenAnsicht({
   onWahl: (id: string) => void;
   onSerieWahl: (ids: string[]) => void;
   onOeffnen: (e: Eintrag) => void;
+  onGross: (e: Eintrag) => void;
   onErneut: (id: string) => void;
   onZuordnen: (g: Gruppe) => void;
   herkunft: (g: Gruppe) => string | null;
@@ -48,6 +49,7 @@ export function GruppenAnsicht({
       offen={offenId === e.id}
       onWahl={() => onWahl(e.id)}
       onOeffnen={() => onOeffnen(e)}
+      onGross={() => onGross(e)}
       onErneut={() => onErneut(e.id)}
     />
   );

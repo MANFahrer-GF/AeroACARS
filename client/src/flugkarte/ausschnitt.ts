@@ -149,6 +149,8 @@ function karteSteuern(map: maplibregl.Map, opt: AusschnittOptionen): Ausschnitt 
 
   return {
     aktualisieren(e) {
+      // Am Tablet kommt die Liste alle paar Sekunden neu: unveraendert nichts neu bauen, sonst geht ein Tippen verloren und die Karte springt zurueck.
+      if (letzte && JSON.stringify(letzte) === JSON.stringify(e)) return;
       letzte = e;
       anwenden();
     },

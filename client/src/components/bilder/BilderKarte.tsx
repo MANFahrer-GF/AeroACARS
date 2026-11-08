@@ -87,7 +87,7 @@ export function BilderKarte({
     if (!hatOrt || !karte.current) return;
     karte.current.aktualisieren({
       spur,
-      marken: markenFuerFlug(flugBilder, eintrag.id, (e) => t("bilder.karte.bild_marke", { name: e.sidecar?.meta?.zeit_utc?.slice(11, 16) ?? e.id })),
+      marken: markenFuerFlug(flugBilder, eintrag.id, (e) => { const zeit = e.sidecar?.meta?.zeit_utc?.slice(11, 16); return t("bilder.karte.bild_marke", { name: zeit ? `${zeit}Z` : e.id }); }),
       fokus: { lat: meta!.breite!, lon: meta!.laenge! },
       kugel,
     });

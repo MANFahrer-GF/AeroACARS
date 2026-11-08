@@ -11,6 +11,7 @@
 // dem App-Theme (data-theme) umschaltet; Overlay-Farben aus CSS-Vars.
 // Rein Anzeige — keine Wertung.
 
+import { BildGross } from "./bilder/BildGross";
 import { useBildKarte, type BildFokus } from "./bilder/useBildKarte";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -3081,6 +3082,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           </div>
         </div>
       </div>
+      {bildKarte.gross && <BildGross bilder={bildKarte.gross.bilder} startId={bildKarte.gross.id} onZu={bildKarte.grossZu} />}
     </section>
   );
 }

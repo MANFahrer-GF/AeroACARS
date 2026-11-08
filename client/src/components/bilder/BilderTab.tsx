@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isTauri, listen } from "../../lib/ipc";
 import { Button, Modal, Notice } from "../ui";
+import { BildGross } from "./BildGross";
 import { DetailSpalte } from "./DetailSpalte";
 import { EinschaltenKarte, WegeKarte } from "./Erststart";
 import { GruppenAnsicht } from "./GruppenAnsicht";
@@ -18,7 +19,7 @@ import { KEIN_FILTER, anzeigbar, bytesText, filtern, flugOptionenBauen, flugSchl
 import { reichtKontingent } from "./logik/kontingent";
 import { kurzZeit, simulatorName } from "./logik/metaFormat";
 import type { FlugAuswahl } from "./logik/store";
-import type { FlugEintrag } from "./logik/typen";
+import type { Eintrag, FlugEintrag } from "./logik/typen";
 import { bildZeitIso, useKachelTexte } from "./Kacheln";
 import { wiederholText, zusammenfassung } from "./logik/sendezustand";
 import "./bilder.css";
@@ -54,6 +55,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const [seite, setSeite] = useState(0);
   const [auswahl, setAuswahl] = useState<ReadonlySet<string>>(new Set());
   const [offenId, setOffenId] = useState<string | null>(null);
+  const [gross, setGross] = useState<{ id: string; bilder: Eintrag[] } | null>(null);
   const [quellenOffen, setQuellenOffen] = useState(false);
   const [sendenOffen, setSendenOffen] = useState(false);
   const [einschaltenOffen, setEinschaltenOffen] = useState(false);
@@ -105,6 +107,8 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const offen = alle.find((e) => e.id === offenId) ?? null;
   useEffect(() => { if (offenId && !offen && liste) setOffenId(null); }, [offenId, offen, liste]);
   const flugBilder = useMemo(() => (offen ? alle.filter((e) => flugSchluessel(e) === flugSchluessel(offen) && flugSchluessel(e) !== "") : []), [alle, offen]);
+  // Geblaettert wird in der Reihenfolge der Liste ueber alle Seiten, Serien aufgeloest.
+  const listenBilder = useMemo(() => gruppen.flatMap((g) => g.kacheln.flatMap((k) => (k.art === "bild" ? [k.bild] : k.bilder))), [gruppen]);
 
   // Dateien per Ziehen (Tauri meldet Pfade, die Webview bekommt keine Dateien)
   useEffect(() => {
@@ -369,6 +373,7 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
               onWahl={toggle}
               onSerieWahl={serieWahl}
               onOeffnen={(e) => setOffenId((a) => (a === e.id ? null : e.id))}
+              onGross={(e) => setGross({ id: e.id, bilder: listenBilder })}
               onErneut={erneut}
               onZuordnen={(g: Gruppe) => zuordnenOeffnen(g.kacheln.flatMap((k) => (k.art === "bild" ? [k.bild.id] : k.bilder.map((b) => b.id))), "")}
               herkunft={(g) => {
@@ -398,7 +403,11 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
             onFavorit={(an) => offen && void bilderStore.favoritSetzen(offen, an)}
             onFlugAendern={() => { if (offen) zuordnenOeffnen([offen.id], flugSchluessel(offen)); }}
             onKarteOeffnen={onKarteOeffnen}
-            onMarke={(id) => setOffenId(id)}
+            onMarke={(id) => {
+              setOffenId(id);
+              setGross({ id, bilder: [...flugBilder].sort((a, b) => (bildZeitIso(a) ?? "").localeCompare(bildZeitIso(b) ?? "")) });
+            }}
+            onGross={() => { if (offen) setGross({ id: offen.id, bilder: listenBilder.some((e) => e.id === offen.id) ? listenBilder : [offen] }); }}
             onZu={() => setOffenId(null)}
           />
         </div>
@@ -428,6 +437,8 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
           </div>
         </footer>
       )}
+
+      {gross && <BildGross bilder={gross.bilder} startId={gross.id} onZu={() => setGross(null)} />}
 
       <SendenDialog
         offen={sendenOffen}

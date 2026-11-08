@@ -11,7 +11,7 @@ import { Symbol } from "./Symbole";
 import { useBildUrl } from "./useBildUrl";
 
 export function DetailSpalte({
-  e, gewaehlt, flugBilder, aktivePirep, einzelAktionen, mitOrdner, onSenden, onOrdner, onLoeschen, onText, onFavorit, onFlugAendern, onKarteOeffnen, onMarke, onZu,
+  e, gewaehlt, flugBilder, aktivePirep, einzelAktionen, mitOrdner, onSenden, onOrdner, onLoeschen, onText, onFavorit, onFlugAendern, onKarteOeffnen, onMarke, onGross, onZu,
 }: {
   e: Eintrag | null;
   gewaehlt: boolean;
@@ -29,6 +29,7 @@ export function DetailSpalte({
   onFlugAendern: () => void;
   onKarteOeffnen: (f: { lat: number; lon: number; id: string; pirep: string | null }) => void;
   onMarke: (id: string) => void;
+  onGross: () => void;
   onZu: () => void;
 }) {
   const { t, sprache, phase } = useKachelTexte();
@@ -47,6 +48,7 @@ export function DetailSpalte({
       <Button size="sm" variant="quiet" className="bt-detail__zu" onClick={onZu} aria-label={t("bilder.detail.schliessen")}>{Symbol.zu}</Button>
       <div className="bt-detail__bild">
         {url && <img src={url} alt="" />}
+        <button type="button" className="bt-detail__gross" aria-label={t("bilder.detail.gross")} title={t("bilder.detail.gross")} onClick={onGross}><span>{Symbol.lupe}</span></button>
         <button type="button" className="bt-detail__stern" data-an={favorit ? "an" : undefined} aria-pressed={favorit} aria-label={t("bilder.detail.favorit.an")} title={t(favorit ? "bilder.detail.favorit.an" : "bilder.detail.favorit.aus")} onClick={() => onFavorit(!favorit)}>{Symbol.stern}</button>
       </div>
       <div className="bt-detail__kopf">

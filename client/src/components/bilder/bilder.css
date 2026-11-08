@@ -144,6 +144,13 @@ button.bt-chip:hover { color: var(--text); }
 /* Die globale Regel `button:hover:not(:disabled)` deckt sonst das Bild ab */
 .bt-kachel__oeffnen:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
 .bt-kachel__oeffnen:focus-visible { outline: 2px solid var(--acc); outline-offset: -3px; }
+/* Lupe: oben links, also weit weg von der Auswahl oben rechts; steht dort eine Sendemarke, daneben */
+.bt-kachel__gross { position: absolute; top: 6px; left: 6px; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 13, 16, 0.72); color: #e9eff5; cursor: zoom-in; }
+.bt-kachel__gross::after { content: ""; position: absolute; inset: -4px; }
+.bt-kachel__gross svg { width: 18px; height: 18px; }
+.bt-kachel__gross:hover:not(:disabled) { background: rgba(10, 13, 16, 0.9); }
+.bt-kachel__gross:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; }
+.bt-kachel:has(.bt-marke) .bt-kachel__gross { left: 40px; }
 .bt-kachel__leiste {
   position: absolute; left: 0; right: 0; bottom: 0;
   display: flex; align-items: center; gap: 6px;
@@ -210,6 +217,11 @@ button.bt-chip:hover { color: var(--text); }
 .bt-detail__zu { display: none; align-self: flex-end; }
 .bt-detail__bild { position: relative; border-radius: var(--r-lg); overflow: hidden; border: 1px solid var(--line); aspect-ratio: 16 / 10; background: var(--surface-3); flex: none; }
 .bt-detail__bild img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.bt-detail__gross { position: absolute; inset: 0; padding: 8px; border: 0; background: none; color: #e9eff5; cursor: zoom-in; display: flex; align-items: flex-end; justify-content: flex-end; }
+.bt-detail__gross:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
+.bt-detail__gross:focus-visible { outline: 2px solid var(--acc); outline-offset: -3px; }
+.bt-detail__gross span { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 13, 16, 0.72); }
+.bt-detail__gross svg { width: 18px; height: 18px; }
 .bt-detail__stern { position: absolute; top: 8px; right: 8px; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 13, 16, 0.72); color: #e9eff5; cursor: pointer; }
 .bt-detail__stern svg { width: 18px; height: 18px; }
 .bt-detail__stern[data-an="an"] { color: var(--sem-warn); }
@@ -246,7 +258,8 @@ button.bt-chip:hover { color: var(--text); }
 .bt-zaehler { align-self: flex-end; font-size: var(--fs-200); color: var(--text-dim); }
 .bt-karte { display: flex; flex-direction: column; gap: 6px; }
 .bt-karte__feld { position: relative; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; background: #0b121b; aspect-ratio: 288 / 150; cursor: pointer; }
-.bt-karte__map { position: absolute; inset: 0; }
+/* Doppelte Klasse: je nach Ladereihenfolge gewinnt sonst `.maplibregl-map { position: relative }`, die Karte haette Hoehe 0 */
+.bt-karte__feld .bt-karte__map { position: absolute; inset: 0; }
 .bt-karte__feld .maplibregl-canvas { cursor: pointer; }
 .bt-karte__hinweis { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: var(--sp-3); color: #9aabbd; font-size: var(--fs-300); pointer-events: none; }
 .bt-karte__umschalter { position: absolute; top: 6px; left: 6px; z-index: 2; display: inline-flex; border-radius: var(--r-md); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.25); }
@@ -254,6 +267,36 @@ button.bt-chip:hover { color: var(--text); }
 .bt-karte__umschalter button[aria-pressed="true"] { background: #e9eff5; color: #0b121b; font-weight: 700; }
 .bt-karte__marke { width: 14px; height: 14px; padding: 0; border-radius: 50%; background: #fff; border: 3px solid #5fb0ff; box-shadow: 0 0 0 1px #0b121b; cursor: pointer; }
 .bt-karte__marke--aktiv { background: #facc15; border-color: #f97316; width: 18px; height: 18px; }
+.bt-karte__marke::after { content: ""; position: absolute; inset: -10px; border-radius: 50%; }
+.bt-karte__marke:hover:not(:disabled) { background: #fff; }
+.bt-karte__marke--aktiv:hover:not(:disabled) { background: #facc15; }
+
+/* ---------- Grossansicht ----------
+   Feste Farben: sie liegt auch ueber der Flugkarte und der Live-Karte, ausserhalb von .bt.
+   z-index ueber .flugkarte-fenster (2000). */
+.bt-gross { position: fixed; inset: 0; z-index: 2100; display: flex; flex-direction: column; background: #05080c; color: #e9eff5; font-size: 14px; }
+.bt-gross, .bt-gross * { box-sizing: border-box; }
+.bt-gross__kopf { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 8px 12px 8px 16px; background: #0b121b; border-bottom: 1px solid #22303f; }
+.bt-gross__zahl { font-weight: 700; }
+.bt-gross__zeit { font-family: var(--font-acars, monospace); }
+.bt-gross__phase { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: rgba(233, 239, 245, 0.14); }
+.bt-gross__hoehe { color: #9fb0c2; }
+.bt-gross__umschalten { margin-left: auto; min-height: 36px; padding: 0 12px; border: 1px solid #2e4156; border-radius: 8px; background: #142131; color: #e9eff5; font: inherit; font-weight: 600; cursor: pointer; }
+.bt-gross__umschalten:hover:not(:disabled) { background: #1d2c3d; }
+.bt-gross__knopf { width: 44px; height: 44px; padding: 0; border: 1px solid #2e4156; border-radius: 8px; display: grid; place-items: center; background: #142131; color: #e9eff5; cursor: pointer; }
+.bt-gross__knopf:hover:not(:disabled) { background: #1d2c3d; }
+.bt-gross__knopf svg { width: 22px; height: 22px; }
+.bt-gross button:focus-visible { outline: 2px solid #5fb0ff; outline-offset: 2px; }
+.bt-gross__buehne { position: relative; flex: 1 1 0; min-height: 0; overflow: auto; display: flex; padding: 12px; }
+/* margin: auto statt Zentrieren per Flex: sonst waeren die oberen und linken Teile eines grossen Bildes nicht erreichbar */
+.bt-gross__buehne img { margin: auto; display: block; max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
+.bt-gross__buehne img[data-vorschau="an"] { width: 100%; height: 100%; }
+.bt-gross__buehne[data-voll="an"] img { max-width: none; max-height: none; cursor: zoom-out; }
+.bt-gross__buehne[data-voll="an"] img[data-vorschau="an"] { width: auto; height: auto; }
+.bt-gross__laedt { margin: auto; color: #9fb0c2; }
+.bt-gross__blatt { position: absolute; top: calc(50% + 24px); transform: translateY(-50%); width: 48px; height: 72px; background: rgba(10, 13, 16, 0.72); }
+.bt-gross__blatt--zurueck { left: 12px; }
+.bt-gross__blatt--vor { right: 12px; }
 
 /* ---------- Auswahlleiste ---------- */
 .bt-leiste {

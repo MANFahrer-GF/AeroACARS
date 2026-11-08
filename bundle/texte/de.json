@@ -1859,7 +1859,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Mit der neuen AeroACARS-Version: Fotos beim Aussteigen gehören noch zum Flug. Bis 30 Minuten nach der Abgabe landen Bilder automatisch beim abgegebenen Flug, solange das Flugzeug am Abstellplatz steht."
+    "neu_text": "Bilder lassen sich jetzt groß ansehen: über die Lupe auf der Kachel, einen Klick auf das Bild rechts und über die Punkte auf den Karten. In der Flugkarte stehen die Bilder des Flugs jetzt als Punkte. Bilder lassen sich jetzt auch vom Tablet über die LAN-Brücke senden. Mit der neuen AeroACARS-Version: Fotos beim Aussteigen gehören noch zum Flug. Bis 30 Minuten nach der Abgabe landen Bilder automatisch beim abgegebenen Flug, solange das Flugzeug am Abstellplatz steht."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
@@ -5297,7 +5297,8 @@
       "oeffnen_mit": "Details: {{zeit}} {{phase}}, {{hoehe}}",
       "auswaehlen_mit": "Auswählen: {{zeit}} {{phase}}",
       "ohne_flug": "Ohne Flug",
-      "serie_auswaehlen": "Serie mit {{n}} Bildern auswählen"
+      "serie_auswaehlen": "Serie mit {{n}} Bildern auswählen",
+      "gross": "Bild {{zeit}} groß anzeigen"
     },
     "status": {
       "sendet": "Wird gesendet …",
@@ -5395,7 +5396,8 @@
         "msl": "MSL",
         "ueber_grund": "über Grund"
       },
-      "leer_hinweis": "Wähle ein Bild, um Details zu sehen."
+      "leer_hinweis": "Wähle ein Bild, um Details zu sehen.",
+      "gross": "Bild groß anzeigen"
     },
     "karte": {
       "titel": "Karte",
@@ -5583,6 +5585,15 @@
       "titel": "{{n}} gesendete Bilder sind älter als {{tage}} Tage",
       "text": "Sie belegen {{platz}}. Wähle sie aus und lege sie in den Papierkorb, wenn du den Platz brauchst.",
       "auswaehlen": "Zum Aufräumen auswählen"
+    },
+    "gross": {
+      "titel": "Bild in Großansicht",
+      "zu": "Großansicht schließen",
+      "vor": "Nächstes Bild",
+      "zurueck": "Vorheriges Bild",
+      "zaehler": "{{n}} von {{m}}",
+      "volle_groesse": "Volle Größe",
+      "einpassen": "Einpassen"
     }
   }
 }
