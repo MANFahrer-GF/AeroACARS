@@ -24,6 +24,10 @@ pub struct Aufnahme {
     pub methode: &'static str,
     /// Warum nicht `wgc`, wenn der Rueckfall gegriffen hat (fuers Protokoll).
     pub rueckfall_grund: Option<String>,
+    /// Was mit dem Fensterrand geschah (Innenbereich geschnitten, kein Rand oder unplausibel ungeschnitten).
+    pub schnitt: crate::fensterschnitt::Schnitt,
+    /// Bildmass vor dem Schnitt (fuers Protokoll); ohne Schnitt gleich `breite`/`hoehe`.
+    pub vorher: (u32, u32),
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};

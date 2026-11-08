@@ -22,6 +22,7 @@ use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemIntero
 use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
 
 use super::Aufnahme;
+use crate::fensterschnitt::Schnitt;
 
 /// So lange wird auf den ersten Rahmen gewartet.
 const ERSTER_RAHMEN: Duration = Duration::from_secs(2);
@@ -182,5 +183,5 @@ pub fn aufnehmen(hwnd: *mut std::ffi::c_void) -> Result<Aufnahme, String> {
     if super::windows::ganz_schwarz(&bgra) {
         return Err("ganz_schwarz".into());
     }
-    Ok(Aufnahme { breite: b, hoehe: h, bgra, methode: "wgc", rueckfall_grund: None })
+    Ok(Aufnahme { breite: b, hoehe: h, bgra, methode: "wgc", rueckfall_grund: None, schnitt: Schnitt::Ohne, vorher: (b, h) })
 }
