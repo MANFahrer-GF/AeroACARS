@@ -1859,7 +1859,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Neuer Reiter „Bilder“: Screenshots aus deinen Flügen werden nach Flug geordnet gesammelt, tragen Position und Flugdaten und lassen sich ausgewählt, mit Text und auf Wunsch mit verdeckter Position, in den Discord-Kanal der GSG senden. Du schaltest das Senden einmal selbst ein; nichts geht automatisch. Außerdem zeigt die Karte jetzt auf Wunsch eine Weltkugel. Für einen gelandeten Flug bietet das Fenster zum Wiederaufnehmen jetzt „Flug abgeben“."
+    "neu_text": "Mit der neuen AeroACARS-Version: Der Reiter „Bilder“ sammelt Screenshots aus deinen Flügen nach Flug geordnet, mit Position und Flugdaten; ausgewählte Bilder lassen sich mit Text und auf Wunsch mit verdeckter Position in den Discord-Kanal der GSG senden. Du schaltest das Senden einmal selbst ein; nichts geht automatisch. Außerdem bietet das Fenster zum Wiederaufnehmen für einen gelandeten Flug jetzt „Flug abgeben“. Für alle: Die Karte zeigt jetzt auf Wunsch eine Weltkugel."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",

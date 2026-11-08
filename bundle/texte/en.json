@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "New “Pictures” tab: screenshots from your flights are collected by flight, carry position and flight data, and can be sent, selected one by one with a text and optionally a hidden position, to the GSG Discord channel. You turn sending on yourself once; nothing goes out automatically. The map can now also show a globe. For a landed flight, the resume window now offers “File flight”."
+    "neu_text": "With the new AeroACARS version: the “Pictures” tab collects screenshots from your flights by flight, with position and flight data; selected pictures can be sent with a text and optionally a hidden position to the GSG Discord channel. You turn sending on yourself once; nothing goes out automatically. The resume window also offers “File flight” for a landed flight. For everyone: the map can now show a globe."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

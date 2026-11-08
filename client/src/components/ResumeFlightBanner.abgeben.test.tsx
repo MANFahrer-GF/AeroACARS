@@ -162,7 +162,6 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
           activeFlight={DAL667}
           onAdopted={() => {}}
           abgabeMoeglich
-        abgabeMoeglich
           onCancelled={() => {}}
           onFiledSuccess={() => {}}
         />,
@@ -186,7 +185,6 @@ describe("Resume-Banner: gelandeten Flug abgeben (DAL667)", () => {
           activeFlight={DAL667}
           onAdopted={() => {}}
           abgabeMoeglich
-        abgabeMoeglich
           onCancelled={zu}
           onFiledSuccess={() => {}}
         />,
