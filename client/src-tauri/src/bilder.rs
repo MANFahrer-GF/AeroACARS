@@ -266,12 +266,24 @@ fn nachlauf_stand() -> &'static Mutex<Option<Nachlauf>> {
 
 /// Beendet genau den geprueften Nachlauf: Hat eine Abgabe inzwischen einen neuen gesetzt, bleibt der stehen.
 fn nachlauf_beenden(app: &AppHandle, geprueft: &Nachlauf) {
-    let beendet = nur_wenn_gleich(&mut entsperren(nachlauf_stand()), geprueft);
-    if beendet {
+    {
+        let mut g = entsperren(nachlauf_stand());
+        if !nur_wenn_gleich(&mut g, geprueft) {
+            return;
+        }
+        // Unter der Sperre: Sonst loeschte das die Datei eines inzwischen neuen Nachlaufs.
         if let Ok(w) = wurzel(app) {
             nachlauf::entfernen(&w);
         }
-        nachlauf_wecken(app);
+    }
+    nachlauf_wecken(app);
+}
+
+/// Ein Flug endet, auch abgebrochen: Der Nachlauf eines frueheren Flugs ist vorbei, auch wenn der Takt ihn nie sah.
+pub(crate) fn nachlauf_nach_flugende(app: &AppHandle, pirep_id: Option<&str>) {
+    let bisher = entsperren(nachlauf_stand()).clone();
+    if let Some(n) = bisher.filter(|n| pirep_id != Some(n.pirep_id.as_str())) {
+        nachlauf_beenden(app, &n);
     }
 }
 
@@ -1685,6 +1697,12 @@ mod tests {
         zeit += 20_000;
         assert!(takt(&mut zeit).is_empty());
         assert_eq!(gemeldet, 1);
+    }
+
+    #[test]
+    fn jedes_flugende_beendet_den_nachlauf_eines_frueheren_flugs() {
+        let q = crate::quelle_gesamt::PRODUKTION.split("fn clear_persisted_flight(").nth(1).unwrap();
+        assert!(q[..300].contains("bilder::nachlauf_nach_flugende(app, erwartete_pirep_id);"));
     }
 
     #[test]

@@ -407,6 +407,7 @@ fn sollte_persistierten_flug_loeschen(
 }
 
 fn clear_persisted_flight(app: &AppHandle, erwartete_pirep_id: Option<&str>) {
+    bilder::nachlauf_nach_flugende(app, erwartete_pirep_id);
     let Ok(path) = active_flight_path(app) else {
         return;
     };
