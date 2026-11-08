@@ -7926,7 +7926,6 @@ input:disabled {
      so it always starts below it instead of beside it — not dependent on
      window width. 96px clears the controls row's rubric + one button row
      + padding with room to spare. */
-  top: 96px;
   width: 296px;
   /* Field feedback (2026-08-03): the events log was crowding/overlapping
      the bottom-right zoom (+/-) and attribution controls. Root cause: this
@@ -7936,18 +7935,13 @@ input:disabled {
      ignored its own top offset entirely, so the panel could reach up to
      `top` pixels further down than intended — a pre-existing shortfall,
      not something this round introduced, just never corrected until now. */
-  max-height: calc(100% - 208px);
+  /* Die Leiste bricht je nach Kartenbreite, Sprache und aktiven Schaltern um:
+     LiveMapView misst ihre Unterkante und setzt daraus --aa-panel-oben. */
+  top: var(--aa-panel-oben, 96px);
+  max-height: calc(100% - var(--aa-panel-oben, 96px) - 112px);
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-/* Unter 1180 px bricht die Schalterleiste in eine zweite Zeile um. */
-@media (max-width: 1180px) {
-  .aa-livemap-panel {
-    top: 124px;
-    max-height: calc(100% - 236px);
-  }
 }
 
 /* §4.1 — Flugwerte card. */

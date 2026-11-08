@@ -203,6 +203,36 @@ describe("LiveMapView Schalter Bilder", () => {
   });
 });
 
+describe("LiveMapView Abstand Panel unter der Schalterleiste", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function messen(hoehe: number) {
+    let melden = () => {};
+    vi.stubGlobal("ResizeObserver", class { constructor(cb: () => void) { melden = cb; } observe() {} disconnect() {} });
+    const { container } = render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
+    fireLoad();
+    const leiste = container.querySelector<HTMLElement>(".aa-livemap-controls")!;
+    Object.defineProperty(leiste, "offsetTop", { configurable: true, value: 17 });
+    const setzeHoehe = (h: number) => Object.defineProperty(leiste, "offsetHeight", { configurable: true, value: h });
+    const oben = () => leiste.parentElement!.style.getPropertyValue("--aa-panel-oben");
+    setzeHoehe(hoehe);
+    melden();
+    return { oben, setzeHoehe, melden: () => melden() };
+  }
+
+  it("bleibt bei einer Zeile an der bisherigen Stelle", () => {
+    expect(messen(56).oben()).toBe("96px");
+  });
+
+  it("rueckt unter die umgebrochene Leiste und zieht bei Aenderung nach", () => {
+    const m = messen(132); // drei Zeilen: Unterkante 149
+    expect(m.oben()).toBe("161px");
+    m.setzeHoehe(95);
+    m.melden();
+    expect(m.oben()).toBe("124px");
+  });
+});
+
 describe("LiveMapView Follow-Kamera", () => {
   it("zentriert bei Follow=an auf das Flugzeug und folgt Positions-Updates", () => {
     const { rerender } = render(

@@ -13,7 +13,7 @@
 
 import { BildGross } from "./bilder/BildGross";
 import { useBildKarte, type BildFokus } from "./bilder/useBildKarte";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   buildPilotFeatures, emptyFC, fetchVatsimData, esc as vatsimEsc,
@@ -2621,6 +2621,19 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       : "ok";
 
   const bildKarte = useBildKarte(mapRef, bildFokus, activeFlight?.pirep_id ?? null);
+
+  // Das rechte Panel beginnt immer unter der Schalterleiste, auch wenn sie umbricht.
+  const schalterleisteRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const leiste = schalterleisteRef.current;
+    if (!leiste || typeof ResizeObserver === "undefined") return;
+    const setzen = () =>
+      leiste.parentElement?.style.setProperty("--aa-panel-oben", `${Math.max(96, leiste.offsetTop + leiste.offsetHeight + 12)}px`);
+    setzen();
+    const beobachter = new ResizeObserver(setzen);
+    beobachter.observe(leiste);
+    return () => beobachter.disconnect();
+  }, []);
   return (
     <section className="aa-livemap">
       {/* README §2 — no buttons here at all; every control lives in the
@@ -2706,7 +2719,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
               named groups. Every switch shows its own state (bold/accent =
               active) — the whole point is that today's unlabeled icon
               buttons didn't. */}
-          <div className="aa-livemap-controls aa-livemap-overlay">
+          <div ref={schalterleisteRef} className="aa-livemap-controls aa-livemap-overlay">
             {/* Symbole statt Woerter: eine Ja/Nein-Entscheidung kostete
                 hier zwei breite Wörter plus Überschrift. Vertretbar, weil
                 bei einem Zweier-Umschalter immer eine Hälfte hell ist —
