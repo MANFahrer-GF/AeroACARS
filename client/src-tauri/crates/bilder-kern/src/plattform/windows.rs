@@ -33,9 +33,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use super::Aufnahme;
 use crate::suche::{self, Fundort};
-use crate::tastenkuerzel::Taste;
+use crate::tastenkuerzel::{Befehl, Belegung, Taste};
 use crate::verdeckung::{verdeckt, Rechteck};
-use crate::yoke::{self, Flanke, Geraet, YokeTaste};
+use crate::yoke::{self, Flanke, Geraet, SuchStand, YokeTaste};
 use crate::Fehler;
 
 pub const AUFNAHME_VERFUEGBAR: bool = true;
@@ -433,8 +433,8 @@ pub fn ton_abspielen(ok: bool) {
     unsafe { PlaySoundW(wav.as_ptr() as *const u16, null_mut(), SND_MEMORY | SND_ASYNC | SND_NODEFAULT) };
 }
 
-/// Offener Auftrag an den Hotkey-Faden: neue Taste (oder `None` = freigeben) und Antwortkanal.
-type Auftrag = Mutex<Option<(Option<(u32, u32)>, mpsc::Sender<Result<(), String>>)>>;
+/// Offener Auftrag an den Hotkey-Faden samt Antwortkanal.
+type Auftrag = Mutex<Option<(Befehl, mpsc::Sender<Result<(), String>>)>>;
 
 /// Eigener Faden mit Nachrichtenschleife fuer `RegisterHotKey`.
 pub struct Hotkey {
@@ -442,7 +442,6 @@ pub struct Hotkey {
     auftrag: Arc<Auftrag>,
 }
 
-const HOTKEY_ID: i32 = 0x4141;
 const MOD_NOREPEAT: u32 = 0x4000;
 
 pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, Fehler> {
@@ -457,7 +456,7 @@ pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, F
                 let mut msg: MSG = std::mem::zeroed();
                 PeekMessageW(&mut msg, null_mut(), WM_APP, WM_APP, PM_NOREMOVE); // Nachrichtenwarteschlange anlegen
                 let _ = bereit_tx.send(GetCurrentThreadId());
-                let mut belegt = false;
+                let mut belegung = Belegung::default();
                 loop {
                     let r = GetMessageW(&mut msg, null_mut(), 0, 0);
                     if r <= 0 {
@@ -466,22 +465,16 @@ pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, F
                     if msg.message == WM_HOTKEY {
                         bei_taste();
                     } else if msg.message == WM_APP {
-                        let Some((neu, antwort)) = a2.lock().ok().and_then(|mut g| g.take()) else { continue };
-                        if belegt {
-                            UnregisterHotKey(null_mut(), HOTKEY_ID);
-                            belegt = false;
-                        }
-                        let erg = match neu {
-                            None => Ok(()),
-                            Some((mods, vk)) => {
-                                if RegisterHotKey(null_mut(), HOTKEY_ID, mods | MOD_NOREPEAT, vk) != 0 {
-                                    belegt = true;
-                                    Ok(())
-                                } else {
-                                    Err(format!("Tastenkuerzel ist schon belegt (Windows-Fehler {})", GetLastError()))
-                                }
-                            }
-                        };
+                        let Some((befehl, antwort)) = a2.lock().ok().and_then(|mut g| g.take()) else { continue };
+                        let erg = belegung
+                            .ausfuehren(
+                                befehl,
+                                |id, mods, vk| if RegisterHotKey(null_mut(), id, mods | MOD_NOREPEAT, vk) != 0 { Ok(()) } else { Err(GetLastError()) },
+                                |id| {
+                                    UnregisterHotKey(null_mut(), id);
+                                },
+                            )
+                            .map_err(|code| format!("Tastenkuerzel ist schon belegt (Windows-Fehler {code})"));
                         let _ = antwort.send(erg);
                     }
                 }
@@ -495,15 +488,42 @@ pub fn hotkey_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Hotkey, F
 impl Hotkey {
     /// Meldet das Tastenkuerzel an (ersetzt das bisherige); `None` gibt es frei.
     pub fn setzen(&self, taste: Option<&Taste>) -> Result<(), Fehler> {
+        self.auftragen(Befehl::Setzen(taste.map(|t| (t.mods, t.vk))))
+    }
+
+    /// Meldet die neue Kombi zusaetzlich an; die alte gilt bis [`Hotkey::bestaetigen`].
+    pub fn vorbereiten(&self, taste: &Taste) -> Result<(), Fehler> {
+        let erg = self.auftragen(Befehl::Vorbereiten((taste.mods, taste.vk)));
+        if matches!(erg, Err(Fehler::Io(_))) {
+            // Keine Antwort: der Versuch darf nicht spaeter unbemerkt wirksam werden.
+            let _ = self.absenden(Befehl::Verwerfen);
+        }
+        erg
+    }
+
+    pub fn bestaetigen(&self) -> Result<(), Fehler> {
+        self.auftragen(Befehl::Bestaetigen)
+    }
+
+    pub fn verwerfen(&self) -> Result<(), Fehler> {
+        self.auftragen(Befehl::Verwerfen)
+    }
+
+    fn auftragen(&self, befehl: Befehl) -> Result<(), Fehler> {
+        self.absenden(befehl)?
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .map_err(|_| Fehler::Io("Hotkey-Faden antwortet nicht".into()))?
+            .map_err(Fehler::Eingabe)
+    }
+
+    fn absenden(&self, befehl: Befehl) -> Result<mpsc::Receiver<Result<(), String>>, Fehler> {
         let (tx, rx) = mpsc::channel();
-        *self.auftrag.lock().map_err(|_| Fehler::Io("Hotkey gesperrt".into()))? = Some((taste.map(|t| (t.mods, t.vk)), tx));
+        *self.auftrag.lock().map_err(|_| Fehler::Io("Hotkey gesperrt".into()))? = Some((befehl, tx));
         // SAFETY: Faden-ID stammt aus dem Hotkey-Faden.
         if unsafe { PostThreadMessageW(self.faden, WM_APP, 0, 0) } == 0 {
             return Err(Fehler::Io("Hotkey-Faden nicht erreichbar".into()));
         }
-        rx.recv_timeout(std::time::Duration::from_secs(3))
-            .map_err(|_| Fehler::Io("Hotkey-Faden antwortet nicht".into()))?
-            .map_err(Fehler::Eingabe)
+        Ok(rx)
     }
 }
 
@@ -592,6 +612,7 @@ pub fn yoke_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Yoke, Fehle
             let mut flanke = Flanke::default();
             let mut nummer: Option<u32> = None;
             let mut zuletzt_gesucht: Option<u64> = None;
+            let mut suche = SuchStand::default();
             loop {
                 let taste = {
                     let (m, cv) = &*z;
@@ -608,13 +629,18 @@ pub fn yoke_starten(bei_taste: impl Fn() + Send + 'static) -> Result<Yoke, Fehle
                     flanke = Flanke::default();
                     nummer = None;
                     zuletzt_gesucht = None;
+                    suche = SuchStand::default();
                 }
                 // Fehlt das Geraet, einmal je Sekunde ueber Hersteller, Produkt und Name
                 // suchen (auch unter neuer Nummer); `winmm` fragt dabei alle Nummern ab, also
                 // nicht, solange das Geraet lesbar ist.
                 if nummer.is_none() && zuletzt_gesucht.is_none_or(|t| jetzt.saturating_sub(t) >= 1000) {
                     zuletzt_gesucht = Some(jetzt);
-                    nummer = yoke::geraet_finden(&joy_geraete(), &taste);
+                    let geraete = joy_geraete();
+                    nummer = yoke::geraet_finden(&geraete, &taste);
+                    if suche.geaendert(nummer) {
+                        tracing::info!("{}", yoke::suchbericht(&taste, nummer, &geraete));
+                    }
                 }
                 let gedrueckt = match nummer {
                     Some(n) => match joy_lesen(n) {

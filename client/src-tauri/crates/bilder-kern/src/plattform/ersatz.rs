@@ -39,6 +39,18 @@ impl Hotkey {
     pub fn setzen(&self, _taste: Option<&Taste>) -> Result<(), Fehler> {
         Err(Fehler::NichtVerfuegbar("Das Tastenkuerzel gibt es nur unter Windows".into()))
     }
+
+    pub fn vorbereiten(&self, taste: &Taste) -> Result<(), Fehler> {
+        self.setzen(Some(taste))
+    }
+
+    pub fn bestaetigen(&self) -> Result<(), Fehler> {
+        self.setzen(None)
+    }
+
+    pub fn verwerfen(&self) -> Result<(), Fehler> {
+        self.setzen(None)
+    }
 }
 
 pub const YOKE_VERFUEGBAR: bool = false;
