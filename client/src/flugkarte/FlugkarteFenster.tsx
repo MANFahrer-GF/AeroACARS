@@ -32,28 +32,32 @@ export default function FlugkarteFenster({ pirepId, onClose }: { pirepId: string
   useEffect(() => {
     let weg: (() => void) | null = null, abgebrochen = false;
     setFehler(null); setLaedt(true);
-    // laden() faengt Fehler selbst: ohne Bilderliste kommt die Karte eben ohne Bildpunkte
-    Promise.all([invoke<string | null>("flugakte_laden", { pirepId }), bilderStore.laden()])
-      .then(([text]) => {
+    // laden() faengt Fehler selbst; die Karte wartet nicht auf die Liste, die Punkte kommen nach
+    const listeDa = bilderStore.laden();
+    invoke<string | null>("flugakte_laden", { pirepId })
+      .then((text) => {
         if (abgebrochen || !feld.current) return;
         if (text == null) { setFehler(t("flugkarte.fenster.kein_protokoll")); return; }
         const akte = JSON.parse(text) as Flugakte;
         const start = akte.kopf?.start ? new Date(akte.kopf.start) : null;
-        const flugBilder = (bilderStore.lesen().liste?.eintraege ?? [])
-          .filter((e) => anzeigbar(e) && flugSchluessel(e) === pirepId)
-          .sort((a, b) => (bildZeitIso(a) ?? "").localeCompare(bildZeitIso(b) ?? ""));
+        let flugBilder: Eintrag[] = [];
         weg = flugkarteAnzeigen(feld.current, akte, {
           stilUrl,
           // Texte aus common.json (flugkarte.*), dieselben wie in der Webapp; fehlt einer, bleibt der deutsche aus der Akte
           t: (k, w) => (i18n.exists(k) ? i18n.t(k, w) : null),
           sprache,
           datum: start ? start.toLocaleDateString(sprache, { timeZone: "UTC" }) : undefined,
-          bilder: flugBilder
-            .filter((e) => typeof e.sidecar?.meta?.breite === "number" && typeof e.sidecar?.meta?.laenge === "number")
-            .map((e) => {
-              const zeit = e.sidecar!.meta!.zeit_utc?.slice(11, 16);
-              return { id: e.id, lat: e.sidecar!.meta!.breite!, lon: e.sidecar!.meta!.laenge!, hoeheFt: e.sidecar!.meta!.hoehe_ft, name: t("bilder.karte.bild_marke", { name: zeit ? `${zeit}Z` : e.id }) };
-            }),
+          bilder: listeDa.then(() => {
+            flugBilder = (bilderStore.lesen().liste?.eintraege ?? [])
+              .filter((e) => anzeigbar(e) && flugSchluessel(e) === pirepId)
+              .sort((a, b) => (bildZeitIso(a) ?? "").localeCompare(bildZeitIso(b) ?? ""));
+            return flugBilder
+              .filter((e) => typeof e.sidecar?.meta?.breite === "number" && typeof e.sidecar?.meta?.laenge === "number")
+              .map((e) => {
+                const zeit = e.sidecar!.meta!.zeit_utc?.slice(11, 16);
+                return { id: e.id, lat: e.sidecar!.meta!.breite!, lon: e.sidecar!.meta!.laenge!, hoeheFt: e.sidecar!.meta!.hoehe_ft, name: t("bilder.karte.bild_marke", { name: zeit ? `${zeit}Z` : e.id }) };
+              });
+          }),
           beiBild: (id) => setGross({ id, bilder: flugBilder }),
           // nur im Entwicklungsmodus: Karte fuer Browser-Tests greifbar (wie in der Webapp)
           beiKarte: import.meta.env.DEV ? (karte) => { (window as unknown as { __flugkarte: unknown }).__flugkarte = karte; } : undefined,

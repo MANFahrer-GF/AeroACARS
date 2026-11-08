@@ -72,7 +72,7 @@ describe("FlugkarteFenster (AeroACARS)", () => {
       if (cmd === "bild_lesen") return new Uint8Array([1, 2, 3]);
       return undefined;
     });
-    const optionen = () => anzeigen.mock.calls[0][2] as { bilder: Array<{ id: string; lat: number; lon: number; name: string; hoeheFt?: number | null }>; beiBild: (id: string) => void };
+    const optionen = () => anzeigen.mock.calls[0][2] as { bilder: Promise<Array<{ id: string; lat: number; lon: number; name: string; hoeheFt?: number | null }>>; beiBild: (id: string) => void };
 
     it("nur Bilder dieses Flugs mit Position werden Punkte; Esc schliesst erst das Grossbild, dann das Fenster", async () => {
       URL.createObjectURL = vi.fn(() => "blob:x");
@@ -84,7 +84,7 @@ describe("FlugkarteFenster (AeroACARS)", () => {
       const zu = vi.fn();
       render(<FlugkarteFenster pirepId="A" onClose={zu} />);
       await waitFor(() => expect(anzeigen).toHaveBeenCalledTimes(1));
-      expect(optionen().bilder).toEqual([{ id: "hier", lat: 50, lon: 8, hoeheFt: 12000, name: "Bild 18:30Z" }]);
+      expect(await optionen().bilder).toEqual([{ id: "hier", lat: 50, lon: 8, hoeheFt: 12000, name: "Bild 18:30Z" }]);
       act(() => optionen().beiBild("hier"));
       const gross = screen.getByRole("dialog", { name: "Bild in Großansicht" });
       expect(document.querySelector(".flugkarte-fenster")!.contains(gross)).toBe(true);
@@ -100,7 +100,16 @@ describe("FlugkarteFenster (AeroACARS)", () => {
       tauriInvoke.mockImplementation(async (cmd: string) => { if (cmd === "bilder_liste") throw new Error("kein bilder-1"); return akte; });
       render(<FlugkarteFenster pirepId="ZZ" onClose={() => {}} />);
       await waitFor(() => expect(anzeigen).toHaveBeenCalledTimes(1));
-      expect(optionen().bilder).toEqual([]);
+      expect(await optionen().bilder).toEqual([]);
+    });
+
+    it("die Karte wartet nicht auf eine langsame Bilderliste", async () => {
+      let liste: (v: unknown) => void = () => undefined;
+      tauriInvoke.mockImplementation((cmd: string) => (cmd === "bilder_liste" ? new Promise((ok) => { liste = ok; }) : Promise.resolve(akte)));
+      render(<FlugkarteFenster pirepId="YY" onClose={() => {}} />);
+      await waitFor(() => expect(anzeigen).toHaveBeenCalledTimes(1));
+      liste({ eintraege: [eintrag({ id: "spaet", meta: { pirep_id: "YY", breite: 50, laenge: 8 } })], belegt_bytes: 0, quellen: [], altbestand: [], funde: [] });
+      expect((await optionen().bilder).map((b) => b.id)).toEqual(["spaet"]);
     });
   });
 });

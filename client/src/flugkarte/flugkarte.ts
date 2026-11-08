@@ -35,8 +35,8 @@ export interface FlugkarteOptionen {
   datum?: string;
   /** Nur fuer Tests: Zugriff auf die MapLibre-Karte */
   beiKarte?: (karte: maplibregl.Map) => void;
-  /** Nur im AeroACARS-Fenster: Bilder des Flugs als Punkte auf der Karte; die Webapp gibt keine mit */
-  bilder?: Array<{ id: string; lat: number; lon: number; name: string; hoeheFt?: number | null }>;
+  /** Nur im AeroACARS-Fenster: Bilder des Flugs als Punkte; kommen sie spaeter, wartet die Karte nicht auf sie. Die Webapp gibt keine mit */
+  bilder?: Promise<Array<{ id: string; lat: number; lon: number; name: string; hoeheFt?: number | null }>>;
   /** Klick auf einen Bildpunkt */
   beiBild?: (id: string) => void;
 }
@@ -274,15 +274,20 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   opt.beiKarte?.(map);
 
   // Bildpunkte: eigene Marker, unabhaengig von Ereignis-Haufen, Popup und Wiedergabe
-  const bildMarker = (opt.bilder ?? []).map((b) => {
-    const el = document.createElement("button");
-    el.type = "button";
-    el.className = "fk-bildmarke";
-    el.title = b.name;
-    el.setAttribute("aria-label", b.name);
-    el.innerHTML = BILD_SVG;
-    el.addEventListener("click", (ev) => { ev.stopPropagation(); opt.beiBild?.(b.id); });
-    return { b, m: new maplibregl.Marker({ element: el }).setLngLat([b.lon, b.lat]).addTo(map) };
+  let bildMarker: Array<{ b: { lon: number; lat: number; hoeheFt?: number | null }; m: maplibregl.Marker }> = [];
+  void opt.bilder?.then((liste) => {
+    if (beendet) return;
+    bildMarker = liste.map((b) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "fk-bildmarke";
+      el.title = b.name;
+      el.setAttribute("aria-label", b.name);
+      el.innerHTML = BILD_SVG;
+      el.addEventListener("click", (ev) => { ev.stopPropagation(); opt.beiBild?.(b.id); });
+      return { b, m: new maplibregl.Marker({ element: el }).setLngLat([b.lon, b.lat]).addTo(map) };
+    });
+    bildpunkteHeben();
   });
   aufraeumen.push(() => bildMarker.forEach(({ m }) => m.remove()));
 

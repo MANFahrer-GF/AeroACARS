@@ -302,11 +302,11 @@ describe("Bildpunkte", () => {
     flugkarteAnzeigen(d, akte(), OPT);
     expect(marken()).toEqual([]);
   });
-  it("mit Bildern: Knopf je Bild mit Namen, Klick meldet die Kennung, Aufraeumen entfernt die Marken", () => {
+  it("mit Bildern: Knopf je Bild mit Namen, Klick meldet die Kennung, Aufraeumen entfernt die Marken", async () => {
     const d = document.createElement("div");
     const beiBild = vi.fn();
-    const weg = flugkarteAnzeigen(d, akte(), { ...OPT, bilder: [{ id: "a", lat: 50, lon: 8, name: "Bild 11:00Z" }], beiBild });
-    expect(marken()).toHaveLength(1);
+    const weg = flugkarteAnzeigen(d, akte(), { ...OPT, bilder: Promise.resolve([{ id: "a", lat: 50, lon: 8, name: "Bild 11:00Z" }]), beiBild });
+    await vi.waitFor(() => expect(marken()).toHaveLength(1));
     const el = marken()[0].o.element;
     expect(marken()[0].lngLat).toEqual([8, 50]);
     expect(el.tagName).toBe("BUTTON");
@@ -316,9 +316,19 @@ describe("Bildpunkte", () => {
     weg();
     expect(marken()[0].entfernt).toBe(true);
   });
-  it("in 3D steht der Punkt in der Hoehe der Spur, in 2D am Boden, ein Bild ohne Hoehe bleibt am Boden", () => {
+  it("kommt die Liste erst nach dem Schliessen, setzt der Baustein nichts mehr", async () => {
     const d = document.createElement("div");
-    flugkarteAnzeigen(d, akte(), { ...OPT, bilder: [{ id: "hoch", lat: 50, lon: 8, name: "h", hoeheFt: 36000 }, { id: "ohne", lat: 50, lon: 8, name: "o", hoeheFt: null }] });
+    let liefern: (l: Array<{ id: string; lat: number; lon: number; name: string }>) => void = () => undefined;
+    const weg = flugkarteAnzeigen(d, akte(), { ...OPT, bilder: new Promise((ok) => { liefern = ok; }) });
+    weg();
+    liefern([{ id: "a", lat: 50, lon: 8, name: "n" }]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(marken()).toEqual([]);
+  });
+  it("in 3D steht der Punkt in der Hoehe der Spur, in 2D am Boden, ein Bild ohne Hoehe bleibt am Boden", async () => {
+    const d = document.createElement("div");
+    flugkarteAnzeigen(d, akte(), { ...OPT, bilder: Promise.resolve([{ id: "hoch", lat: 50, lon: 8, name: "h", hoeheFt: 36000 }, { id: "ohne", lat: 50, lon: 8, name: "o", hoeheFt: null }]) });
+    await vi.waitFor(() => expect(marken()).toHaveLength(2));
     const offset = (i: number) => (marken()[i] as unknown as { offset: number[] }).offset;
     const bewegen = () => (globalThis as any).__beiMove.forEach((f: (e: unknown) => void) => f({}));
     bewegen();

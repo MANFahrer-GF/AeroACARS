@@ -529,10 +529,11 @@ describe("Grossansicht", () => {
     await userEvent.click((await lupen())[0]);
     const knoepfe = Array.from(dialog().querySelectorAll("button"));
     expect(knoepfe.length).toBe(4);
-    for (let i = 0; i < knoepfe.length + 1; i++) {
-      fireEvent.keyDown(document.activeElement!, { key: "Tab" });
-      expect(dialog().contains(document.activeElement)).toBe(true);
-    }
+    knoepfe[3].focus();
+    fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+    expect(document.activeElement).toBe(knoepfe[0]);
+    fireEvent.keyDown(document.activeElement!, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(knoepfe[3]);
   });
 
   it("Klick auf das Bild schaltet volle Groesse, Blaettern passt wieder ein, Klick daneben schliesst", async () => {
