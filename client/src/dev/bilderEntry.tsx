@@ -12,6 +12,8 @@ import { Sidebar } from "../components/Sidebar";
 import { BilderTab } from "../components/bilder/BilderTab";
 import { BilderHintergrund } from "../components/bilder/BilderHintergrund";
 import FlugkarteFenster from "../flugkarte/FlugkarteFenster";
+import { LiveMapView } from "../components/LiveMapView";
+import type { ActiveFlightInfo } from "../types";
 
 const q = new URLSearchParams(window.location.search);
 const sprache = q.get("sprache") ?? "de";
@@ -37,13 +39,13 @@ createRoot(document.getElementById("root")!).render(
       />
       <main className="app">
         <BilderHintergrund />
-        <BilderTab
+        {q.get("livekarte") === "1" ? <LiveMapView activeFlight={{ pirep_id: "P412", dpt_airport: "EDDF", arr_airport: "LSZH" } as unknown as ActiveFlightInfo} simSnapshot={null} simKind="xplane12" onSwitchToBriefing={() => undefined} /> : <BilderTab
           pilotId="17"
           pilotName="Thomas K."
           aktiverFlug={imFlug ? { pirep_id: "P412", callsign: "GSG412", dpt: "EDDF", arr: "LSZH" } : null}
           simKind={q.get("sim") === "msfs" ? "msfs2024" : "xplane12"}
           onKarteOeffnen={(f) => { (window as unknown as { __karteGeoeffnet: unknown }).__karteGeoeffnet = f; }}
-        />
+        />}
       </main>
       {q.get("flugkarte") === "1" && <FlugkarteFenster pirepId="P412" onClose={() => undefined} />}
     </div>

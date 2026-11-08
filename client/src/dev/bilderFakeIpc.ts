@@ -175,7 +175,7 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
     case "bild_ordner_zeigen": case "bild_export": case "bild_aufnehmen": return undefined as T;
     case "flight_get_track": return Array.from({ length: 40 }, (_, i) => [8.56 + i * 0.012, 50.03 - i * 0.065]) as T;
     case "bild_kontext": return { staende: [], spur: [] } as T;
-    default: return undefined as T;
+    default: return (q.get("livekarte") === "1" ? [] : undefined) as T; // die echte Live-Karte erwartet Listen
   }
 }
 export const bildBytesHolen = async (pfad: string): Promise<Uint8Array> => new Uint8Array(await invoke<ArrayBuffer>("bild_lesen", { pfad }));
