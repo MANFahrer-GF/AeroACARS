@@ -111,6 +111,29 @@ describe("Bilder-Tab", () => {
     await waitFor(() => expect(screen.queryByText(/^\d+ ausgewählt$/)).toBeNull());
   });
 
+  // Michel 08.11.2026: Die LAN-Bruecke liefert die Oberflaeche ueber http://<LAN-IP> aus. Dort
+  // fehlt dem Browser crypto.randomUUID, „Jetzt senden“ blieb ohne jeden Aufruf und ohne Meldung.
+  it("Senden klappt auch ohne crypto.randomUUID (Tablet ueber die LAN-Bruecke, kein sicherer Kontext)", async () => {
+    const echt = globalThis.crypto;
+    vi.stubGlobal("crypto", { getRandomValues: echt.getRandomValues.bind(echt) });
+    try {
+      vorbereiten();
+      h.tablet = true;
+      h.senden = (a) => ({ sendung_id: a.sendungId, bilder: (a.bilder as Array<{ bild_id: string }>).map((b) => ({ bild_id: b.bild_id, status: "gesendet" })), kontingent: { rest: 7, grenze: 12, retry_after: 0 } });
+      zeigen();
+      const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+      await userEvent.click(boxen[0]);
+      await userEvent.click(screen.getByRole("button", { name: "1 Bild senden" }));
+      await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Jetzt senden" }));
+      await waitFor(() => expect(h.aufrufe.some((a) => a.cmd === "bild_senden")).toBe(true));
+      const a = h.aufrufe.find((x) => x.cmd === "bild_senden")!.args as { sendungId: string };
+      // Dasselbe Format, das bilder-kern und der Server pruefen (UUID, Version 4).
+      expect(a.sendungId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("ein Haken zeigt dieses Bild rechts, Detail und Leiste reden vom selben Bild", async () => {
     vorbereiten();
     zeigen();
