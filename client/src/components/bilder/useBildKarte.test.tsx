@@ -109,6 +109,37 @@ describe("useBildKarte", () => {
     unmount();
     expect(document.querySelector(".marken-vorschau")).toBeNull();
   });
+  it("Schalter Bilder: steht anfangs an, aus nimmt Marken und offene Vorschau weg, an setzt sie wieder", async () => {
+    h.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } })];
+    marker.length = 0;
+    const ref = { current: karte().m as never };
+    const { result } = renderHook(() => useBildKarte(ref, null, "P1"));
+    expect(result.current.bilderAn).toBe(true);
+    expect(marker).toHaveLength(1);
+    const ev = new MouseEvent("pointerenter");
+    Object.defineProperty(ev, "pointerType", { value: "mouse" });
+    marker[0].el!.dispatchEvent(ev);
+    await vi.waitFor(() => expect(document.querySelector(".marken-vorschau")).not.toBeNull());
+    act(() => result.current.setBilderAn(false));
+    expect(marker[0].entfernt).toBe(true);
+    expect(document.querySelector(".marken-vorschau")).toBeNull();
+    expect(marker).toHaveLength(1);
+    act(() => result.current.setBilderAn(true));
+    expect(marker).toHaveLength(2);
+    expect(marker[1].entfernt).toBe(false);
+  });
+  it("ein neuer Fokus aus dem Bilder-Tab schaltet die Bilder wieder ein, derselbe nicht", () => {
+    h.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } })];
+    const ref = { current: karte().m as never };
+    let fokus = { lat: 10, lon: 20, id: "a", pirep: "P1", n: 1 };
+    const { result, rerender } = renderHook(() => useBildKarte(ref, fokus, null));
+    act(() => result.current.setBilderAn(false));
+    rerender();
+    expect(result.current.bilderAn).toBe(false);
+    fokus = { ...fokus, n: 2 };
+    rerender();
+    expect(result.current.bilderAn).toBe(true);
+  });
   it("laedt die Liste einmal, wenn ein Flug laeuft und noch keine da ist; ohne Flug nicht", () => {
     h.ohneListe = true;
     h.laden.mockClear();

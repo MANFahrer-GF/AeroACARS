@@ -336,6 +336,45 @@ describe("Bildpunkte", () => {
     weg();
     expect(vorschau.marke.mock.results[0].value).toHaveBeenCalled();
   });
+  describe("Chip Bilder", () => {
+    const zwei = () => Promise.resolve([{ id: "a", lat: 50, lon: 8, name: "n" }, { id: "b", lat: 51, lon: 8, name: "m" }]);
+    const chip = (d: HTMLElement) => d.querySelector<HTMLButtonElement>("[data-bilder]");
+    const anzeigen = () => marken().map((m) => m.o.element.style.display);
+    it("ohne Bilder und bei leerer Liste gibt es ihn nicht (Admin-Webapp)", async () => {
+      const d = document.createElement("div");
+      flugkarteAnzeigen(d, akte(), OPT);
+      expect(chip(d)).toBeNull();
+      flugkarteAnzeigen(d, akte(), { ...OPT, bilder: Promise.resolve([]) });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(chip(d)).toBeNull();
+    });
+    it("nennt die Anzahl, steht anfangs an, blendet aus und ein und schliesst dabei die Vorschau", async () => {
+      const d = document.createElement("div");
+      vorschau.marke.mockClear();
+      flugkarteAnzeigen(d, akte(), { ...OPT, bilder: zwei(), bildVorschau: () => null });
+      await vi.waitFor(() => expect(chip(d)).not.toBeNull());
+      expect(chip(d)!.textContent).toBe("Bilder 2");
+      expect(chip(d)!.getAttribute("aria-pressed")).toBe("true");
+      expect(anzeigen()).toEqual(["", ""]);
+      expect(vorschau.marke.mock.results[0].value).not.toHaveBeenCalled();
+      chip(d)!.click();
+      expect(chip(d)!.getAttribute("aria-pressed")).toBe("false");
+      expect(anzeigen()).toEqual(["none", "none"]);
+      expect(vorschau.marke.mock.results[0].value).toHaveBeenCalled();
+      chip(d)!.click();
+      expect(chip(d)!.getAttribute("aria-pressed")).toBe("true");
+      expect(anzeigen()).toEqual(["", ""]);
+    });
+    it.each(["alle", "wichtig"])("Knopf %s holt ausgeblendete Bilder zurueck", async (knopf) => {
+      const d = document.createElement("div");
+      flugkarteAnzeigen(d, akte(), { ...OPT, bilder: zwei() });
+      await vi.waitFor(() => expect(chip(d)).not.toBeNull());
+      chip(d)!.click();
+      (d.querySelector(`[data-fk="${knopf}"]`) as HTMLButtonElement).click();
+      expect(chip(d)!.getAttribute("aria-pressed")).toBe("true");
+      expect(anzeigen()).toEqual(["", ""]);
+    });
+  });
   it("kommt die Liste erst nach dem Schliessen, setzt der Baustein nichts mehr", async () => {
     const d = document.createElement("div");
     let liefern: (l: Array<{ id: string; lat: number; lon: number; name: string }>) => void = () => undefined;

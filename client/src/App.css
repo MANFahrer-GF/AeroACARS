@@ -7807,7 +7807,9 @@ input:disabled {
   z-index: 500;
   left: 16px;
   top: 16px;
+  max-width: calc(100% - 32px);
   display: flex;
+  flex-wrap: wrap;                    /* schmales Fenster: lieber zweite Zeile als ueber die Karte hinaus */
   align-items: center;
   gap: 10px;                          /* was 14px */
   padding: 6px 10px;                   /* was 8px 12px */
@@ -7938,6 +7940,14 @@ input:disabled {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* Unter 1180 px bricht die Schalterleiste in eine zweite Zeile um. */
+@media (max-width: 1180px) {
+  .aa-livemap-panel {
+    top: 124px;
+    max-height: calc(100% - 236px);
+  }
 }
 
 /* §4.1 — Flugwerte card. */

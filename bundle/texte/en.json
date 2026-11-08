@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Moving the mouse over a picture point on the maps now shows a small preview of the picture with flight, time, altitude and phase. Pictures can now be viewed large: with the magnifier on the tile, a click on the picture on the right, and the points on the maps. The flight map now shows the pictures of the flight as points. Pictures can now also be sent from a tablet over the LAN bridge. With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked."
+    "neu_text": "Moving the mouse over a picture point on the maps now shows a small preview of the picture with flight, time, altitude and phase. The picture points on the live map and the flight map can now be hidden with the “Pictures” switch. Pictures can now be viewed large: with the magnifier on the tile, a click on the picture on the right, and the points on the maps. The flight map now shows the pictures of the flight as points. Pictures can now also be sent from a tablet over the LAN bridge. With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -3429,6 +3429,7 @@
     "group_layers": "LAYERS",
     "layer_track": "Track",
     "layer_taxi": "Taxi",
+    "layer_bilder": "Pictures",
     "layer_va": "VA Traffic",
     "taxi_loaded": "Taxi maps loaded: {{airports}}",
     "group_map": "MAP",

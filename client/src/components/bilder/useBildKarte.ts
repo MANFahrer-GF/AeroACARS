@@ -27,6 +27,7 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
   const { t } = useTranslation();
   const z = useBilder();
   const [kugel, setKugel] = useState(false);
+  const [bilderAn, setBilderAn] = useState(true);
   const [gross, setGross] = useState<{ id: string; bilder: Eintrag[] } | null>(null);
   const pirep = fokus?.pirep ?? aktivePirep;
   // Die Liste fuellt sonst erst der Bilder-Tab; ohne sie blieben die Punkte aus, bis er einmal offen war.
@@ -55,7 +56,7 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
   useEffect(() => {
     const map = mapRef.current;
     const { marken } = aktuell.current;
-    if (!map || marken.length === 0) return;
+    if (!map || marken.length === 0 || !bilderAn) return;
     const gesetzt = marken.map((m) => {
       const el = document.createElement("button");
       el.type = "button";
@@ -71,9 +72,10 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
       return { marke: new maplibregl.Marker({ element: el }).setLngLat([m.lon, m.lat]).addTo(map), vorschauZu };
     });
     return () => gesetzt.forEach((m) => { m.vorschauZu(); m.marke.remove(); });
-  }, [mapRef, markenSchluessel, fokus?.id, t]);
+  }, [mapRef, markenSchluessel, fokus?.id, t, bilderAn]);
 
   useEffect(() => {
+    if (fokus) setBilderAn(true); // sonst fliegt die Karte zu einem unsichtbaren Punkt
     const map = mapRef.current;
     if (!map || !fokus) return;
     map.flyTo({ center: [fokus.lon, fokus.lat], zoom: Math.max(map.getZoom(), 9), duration: 800 });
@@ -89,5 +91,5 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
     else map.once("load", setzen);
   }, [mapRef, kugel]);
 
-  return { kugel, setKugel, marken: marken.length, gross, grossZu: () => setGross(null) };
+  return { kugel, setKugel, bilderAn, setBilderAn, marken: marken.length, gross, grossZu: () => setGross(null) };
 }
