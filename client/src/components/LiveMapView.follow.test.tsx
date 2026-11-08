@@ -148,7 +148,13 @@ vi.mock("./ActivityLogPanel", () => ({ ActivityLogPanel: () => null }));
 vi.mock("../lib/trackStore", () => ({ getTrack: () => [], setTrack: () => {} }));
 vi.mock("../lib/aircraftIcon", () => ({ aircraftSvg: () => "<svg class='aircraft-svg'></svg>" }));
 vi.mock("../lib/phaseColors", () => ({ phaseColor: () => "#ffffff", phaseLabel: () => "Steigflug" }));
+const bilderTest = vi.hoisted(() => ({ eintraege: [] as unknown[] }));
+vi.mock("./bilder/bilderStore", async (original) => ({
+  ...(await original<typeof import("./bilder/bilderStore")>()),
+  useBilder: () => ({ liste: { eintraege: bilderTest.eintraege } }),
+}));
 
+import { eintrag } from "./bilder/logik/testhilfen";
 import { LiveMapView } from "./LiveMapView";
 
 const snap = (lat: number, lon: number) => ({
@@ -189,7 +195,20 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("LiveMapView Schalter Bilder", () => {
+  afterEach(() => { bilderTest.eintraege = []; });
+
+  it("fehlt, solange der Flug keine Bildpunkte hat", () => {
+    bilderTest.eintraege = [
+      eintrag({ id: "ohne-position", meta: { pirep_id: "P1", breite: null, laenge: null } }),
+      eintrag({ id: "anderer-flug", meta: { pirep_id: "P2", breite: 41, laenge: 28 } }),
+    ];
+    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
+    fireLoad();
+    expect(screen.queryByRole("button", { name: "Bilder" })).toBeNull();
+  });
+
   it("steht anfangs an, zeigt dann das Wort und schaltet aus und wieder ein", () => {
+    bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 41, laenge: 28 } })];
     render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
     fireLoad();
     const knopf = screen.getByRole("button", { name: "Bilder" });
