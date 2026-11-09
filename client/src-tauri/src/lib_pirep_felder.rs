@@ -175,6 +175,7 @@ fn build_heartbeat_body(
 /// every subsequent post returns 404 and the streamer would otherwise
 /// retry-spam forever. This stops the streamer cleanly and surfaces the
 /// situation to the user so they can re-file as a manual PIREP.
+/// Genauso bei HTTP 400 `pirep-cancelled` (`pirep_serverseitig_beendet`).
 fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, source: &str) {
     if flight.cancelled_remotely.swap(true, Ordering::SeqCst) {
         // Already handled by an earlier 404 in the same cycle.
@@ -196,7 +197,7 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
         ActivityLevel::Error,
         "PIREP wurde vom Server gecancelt".to_string(),
         Some(format!(
-            "{source} antwortet mit 404 — phpVMS hat den laufenden PIREP entfernt (vermutlich Inaktivitäts-Timeout). Bitte als Manual-PIREP einreichen."
+            "{source}: phpVMS führt den laufenden PIREP nicht mehr (entfernt oder storniert). Bitte als Manual-PIREP einreichen."
         )),
     );
     // Best-effort UI nudge — the dashboard listens for this and pops the

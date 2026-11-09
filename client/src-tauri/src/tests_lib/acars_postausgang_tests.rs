@@ -43,6 +43,36 @@
     }
 
     #[test]
+    fn lebenszeichen_wartezeit_steigt_bis_zum_normalen_takt() {
+        let sekunden = |n| lebenszeichen_wartezeit(n).as_secs();
+        assert_eq!(
+            [sekunden(1), sekunden(2), sekunden(3), sekunden(4), sekunden(5)],
+            [3, 6, 12, 24, 30]
+        );
+        assert_eq!(sekunden(0), 3);
+        assert_eq!(sekunden(u32::MAX), 30);
+    }
+
+    #[test]
+    fn meldung_endet_nur_bei_stornierung_oder_404() {
+        let storniert = r#"{"type":"https://phpvms.net/errors/pirep-cancelled","title":"PIREP has been cancelled"}"#;
+        assert!(pirep_serverseitig_beendet(&ApiError::NotFound));
+        assert!(pirep_serverseitig_beendet(&ApiError::Server {
+            status: 400,
+            body: storniert.into(),
+        }));
+        assert!(!pirep_serverseitig_beendet(&ApiError::Server {
+            status: 400,
+            body: r#"{"type":"https://phpvms.net/errors/validation"}"#.into(),
+        }));
+        assert!(!pirep_serverseitig_beendet(&ApiError::Server {
+            status: 500,
+            body: storniert.into(),
+        }));
+        assert!(!pirep_serverseitig_beendet(&ApiError::Network("weg".into())));
+    }
+
+    #[test]
     fn obergrenze_gilt_auch_nach_dem_zusammenfuehren() {
         let mut offen = AcarsOffen::new();
         offen.insert(

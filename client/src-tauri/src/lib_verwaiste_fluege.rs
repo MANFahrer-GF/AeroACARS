@@ -367,11 +367,11 @@ async fn flight_cancel_orphan(
         Ok(()) => {
             tracing::info!(pirep_id = %pirep_id, "orphan PIREP cancelled");
         }
-        Err(ApiError::NotFound) => {
-            // PIREP ist serverseitig schon weg — kein Problem, weiter.
+        Err(ref e) if pirep_serverseitig_beendet(e) => {
+            // PIREP ist serverseitig schon weg oder storniert — kein Problem, weiter.
             tracing::info!(
                 pirep_id = %pirep_id,
-                "orphan PIREP already gone on server (404) — continuing to bid cleanup"
+                "orphan PIREP already gone or cancelled on server — continuing to bid cleanup"
             );
         }
         Err(ApiError::Unauthenticated) | Err(ApiError::Forbidden) => {

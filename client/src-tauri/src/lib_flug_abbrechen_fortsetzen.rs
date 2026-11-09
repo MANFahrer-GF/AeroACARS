@@ -889,7 +889,11 @@ async fn flight_cancel(
     let client = current_client(&state)?;
     let result = {
         let _live = PHPVMS_LIVE_MELDUNG.lock().await;
-        client.cancel_pirep(&flight.pirep_id).await
+        // Schon storniert oder weg (HTTP 400/404) heisst: Das Ziel ist erreicht.
+        match client.cancel_pirep(&flight.pirep_id).await {
+            Err(ref e) if pirep_serverseitig_beendet(e) => Ok(()),
+            ergebnis => ergebnis,
+        }
     };
     // Clear local persistence — but only THIS flight's: the await above is
     // exactly the gap where a newly started flight could already own the
@@ -1145,10 +1149,11 @@ fn spawn_resume_sim_gate(
                                 // „vom Server gecancelt" aus — und die Oberflaeche
                                 // leerte kurz einen schon NEUEN Flug (Claude-QS
                                 // 24.09.2026).
-                                Err(ApiError::NotFound)
-                                    if !flight_hb.stop.load(Ordering::Relaxed) =>
+                                Err(ref e)
+                                    if pirep_serverseitig_beendet(e)
+                                        && !flight_hb.stop.load(Ordering::Relaxed) =>
                                 {
-                                    // PIREP auf dem Server geloescht — wie im
+                                    // PIREP auf dem Server geloescht oder storniert — wie im
                                     // Streamer. Setzt `flight.stop`; das Gate
                                     // endet damit beim naechsten Takt.
                                     handle_remote_cancellation(
