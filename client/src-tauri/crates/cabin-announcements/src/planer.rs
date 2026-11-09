@@ -270,6 +270,13 @@ enum Service {
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.plaetze_landung_agl_ft (v2.1.24: 2_000.0)
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_zuladung_kg (v2.1.24: 200.0)
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_zuladung_s (v2.1.24: 30)
+/// Sekunden, die das Beacon am Boden ununterbrochen an sein muss, bevor es
+/// „Türen zu“ auslöst (zusammen mit beladenem Flugzeug). Bewusst eine
+/// Konstante im Code und NICHT in bundle/tabellen/kabine.json: `Tabelle`
+/// (lib.rs) hat `deny_unknown_fields`, ein neuer Schlüssel würde alte Clients
+/// brechen. Messung QFA 197, 09.11.2026 (400 Flüge): Schaltertests lösten die
+/// Boden-Kette zu früh aus; 16 Fehlauslösungen → 4.
+const BEACON_STABIL_S: i64 = 15;
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_ofp_kg (v2.1.24: 300.0)
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_ofp_anteil (v2.1.24: 0.01)
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.boarding_ofp_s (v2.1.24: 60)
@@ -361,6 +368,15 @@ pub struct Planer {
     abgewaehlt: HashSet<Slot>,
     tueren_zu: bool,
     letztes_beacon: Option<bool>,
+    /// Beginn des ununterbrochenen Beacons am Boden (UTC-Epoch), gesetzt bei
+    /// der Flanke aus → an, gelöscht in jedem Takt ohne Beacon. Alte Stände
+    /// ohne das Feld lesen serde als `None`.
+    beacon_an_seit: Option<i64>,
+    /// Zeitfenster der Boarding-Musik (Befehl `Musik`): „Türen zu“ ist
+    /// `tueren_zu`, also eine Regel für Ansagen und Musik. Alte Stände ohne
+    /// das Feld laden mit dem Vorgabewert.
+    #[serde(default)]
+    musik_fenster: crate::musik::MusikFenster,
     letztes_fahrwerk: Option<bool>,
     /// Landelicht war seit dem Verlassen des Stands einmal aus (v2.0.28).
     landelicht_war_aus: bool,
@@ -698,6 +714,13 @@ impl Planer {
         self.schon(slot)
     }
 
+    /// Ein Takt der Boarding-Musik mit dem „Türen zu“ dieses Planers
+    /// (Pushback und Phase wirken hier schon, siehe `tick`).
+    pub fn musik(&mut self, flugart: crate::flugart::Flugart, takt: crate::musik::MusikTakt) -> crate::musik::MusikStand {
+        let abschnitt = self.musik_fenster.tick_mit_tueren_zu(flugart, &takt, self.tueren_zu);
+        crate::musik::MusikStand { abschnitt, ankunft_vorbei: self.musik_fenster.ankunft_vorbei() }
+    }
+
     /// „Türen zu“ ist erkannt (Beacon, Pushback oder Rollen) — dort endet
     /// die Boarding-Musik (2.1.1 G).
     pub fn tueren_zu(&self) -> bool {
@@ -918,7 +941,19 @@ impl Planer {
         // Flanke und mit Phase als Rückfall — je Flugzeug fehlen sie oder
         // sind anders belegt (Regel 17.10.; Michael BER181: ohne Pushback
         // kam der Block erst beim Rollen).
-        let beacon_an = t.am_boden && t.beacon == Some(true) && self.letztes_beacon == Some(false);
+        if t.am_boden && t.beacon == Some(true) && self.letztes_beacon == Some(false) {
+            self.beacon_an_seit = Some(t.jetzt);
+        }
+        if t.beacon != Some(true) {
+            self.beacon_an_seit = None;
+        }
+        // Beacon zählt erst nach BEACON_STABIL_S ununterbrochen UND bei
+        // beladenem Flugzeug (einseitig: überladen gilt als beladen; ohne ZFW
+        // oder OFP gilt es als beladen). Nachholen, solange das Beacon an bleibt.
+        let beladen = t.zfw_kg.zip(t.planned_zfw_kg).map_or(true, |(z, p)| {
+            p <= 0.0 || z >= p - (p * crate::tabelle().werte.boarding_ofp_anteil.wert).max(crate::tabelle().werte.boarding_ofp_kg.wert)
+        });
+        let beacon_an = t.am_boden && self.beacon_an_seit.is_some_and(|ab| t.jetzt - ab >= BEACON_STABIL_S) && beladen;
         if (beacon_an || t.pushback_aktiv || r >= rang(Pushback)) && r < rang(TakeoffRoll) {
             self.tueren_zu = true;
         }
@@ -2100,8 +2135,10 @@ mod tests {
         let mut p = Planer::fortsetzen(flug(120), Boarding);
         let mut takte: Vec<Tick> = (0..=20 * 60).step_by(10).map(|s| gate(s, Some(72_744.0), 2, false)).collect();
         takte.push(gate(20 * 60 + 10, Some(72_744.0), 2, true));
+        // Beacon zählt erst nach BEACON_STABIL_S (15 s) ununterbrochen.
+        takte.push(gate(20 * 60 + 10 + BEACON_STABIL_S, Some(72_744.0), 2, true));
         let z = melde_zeiten(&mut p, takte);
-        let beacon = 20 * 60 + 10;
+        let beacon = 20 * 60 + 10 + BEACON_STABIL_S;
         assert_eq!(
             z,
             vec![
@@ -2133,7 +2170,8 @@ mod tests {
         takte.extend((750..1390).step_by(10).map(|s| mit_ofp(gate(s, Some(plan), 2, false), plan)));
         let z = melde_zeiten(&mut p, takte);
         assert_eq!(z, vec![(750 + crate::tabelle().werte.boarding_ofp_s.wert, Slot::Boarding)], "60 s nach der Sofortladung, nicht erst am Beacon");
-        let f = slots(p.tick(&mit_ofp(gate(1390, Some(plan), 2, true), plan)));
+        p.tick(&mit_ofp(gate(1390, Some(plan), 2, true), plan));
+        let f = slots(p.tick(&mit_ofp(gate(1390 + BEACON_STABIL_S, Some(plan), 2, true), plan)));
         assert!(!f.contains(&Slot::Boarding) && f.contains(&Slot::BegruessungTuerenZu), "{f:?}");
     }
 
@@ -2193,7 +2231,13 @@ mod tests {
         let mut p = Planer::fortsetzen(flug(500), Boarding);
         let takte: Vec<Tick> = (0..2730).step_by(10).map(|s| mit_ofp(gate(s, Some(184_600.0), 2, false), plan)).collect();
         assert!(melde_zeiten(&mut p, takte).is_empty());
-        let f = slots(p.tick(&mit_ofp(gate(2730, Some(184_600.0), 2, true), plan)));
+        // 184.600 kg sind 76,9 % des Plans: Das Beacon allein löst nicht aus
+        // (Unterladung, QFA 197), erst der Pushback.
+        p.tick(&mit_ofp(gate(2730, Some(184_600.0), 2, true), plan));
+        assert!(slots(p.tick(&mit_ofp(gate(2730 + BEACON_STABIL_S, Some(184_600.0), 2, true), plan))).is_empty());
+        let mut pb = mit_ofp(gate(2800, Some(184_600.0), 2, true), plan);
+        pb.phase = Pushback;
+        let f = slots(p.tick(&pb));
         assert_eq!(&f[..2], &[Slot::Boarding, Slot::BoardingAbgeschlossen], "{f:?}");
     }
 
@@ -2251,7 +2295,8 @@ mod tests {
         q.tick(&gate(0, Some(50_000.0), 0, false));
         q.tick(&gate(10, Some(55_000.0), 0, false));
         assert!(slots(q.tick(&gate(40, Some(55_000.0), 0, false))).is_empty(), "abgewählt");
-        let f = slots(q.tick(&gate(50, Some(55_000.0), 0, true)));
+        q.tick(&gate(50, Some(55_000.0), 0, true));
+        let f = slots(q.tick(&gate(50 + BEACON_STABIL_S, Some(55_000.0), 0, true)));
         assert!(!f.contains(&Slot::Boarding) && f.contains(&Slot::BegruessungTuerenZu), "{f:?}");
         assert!(q.entfallene_abholen().is_empty());
     }
@@ -2280,6 +2325,8 @@ mod tests {
         p.tick(&boden(0, Boarding));
         let mut beacon = boden(600, Boarding);
         beacon.beacon = Some(true);
+        p.tick(&beacon);
+        beacon.jetzt = 600 + BEACON_STABIL_S;
         let f = slots(p.tick(&beacon));
         assert!(f.contains(&Slot::KommandoTuerenScharf) && f.contains(&Slot::BegruessungTuerenZu) && f.contains(&Slot::Sicherheit), "{f:?}");
         // Gegenprobe: Beacon schon beim Laden an → keine Flanke, erst beim Rollen.
@@ -2292,6 +2339,175 @@ mod tests {
         let mut rollen = boden(700, TaxiOut);
         rollen.beacon = Some(true);
         assert!(slots(q.tick(&rollen)).contains(&Slot::BegruessungTuerenZu));
+    }
+
+    /// Beacon-Takt am Gate: Zuladung, OFP-Plan, Beacon.
+    fn beacon_takt(jetzt: i64, zfw: Option<f64>, plan: Option<f64>, beacon: bool) -> Tick {
+        let mut t = gate(jetzt, zfw, 0, beacon);
+        t.planned_zfw_kg = plan;
+        t
+    }
+
+    /// Takt ausführen; gilt „Türen zu“ danach als ausgelöst?
+    fn tueren_zu_nach(p: &mut Planer, t: Tick) -> bool {
+        p.tick(&t);
+        p.tueren_zu
+    }
+
+    /// QFA 197 (09.11.2026; 400 Flüge): Schaltertest bei 70 % Zuladung, 114 s
+    /// Beacon, dann aus → keine Fehlauslösung; „Türen zu“ erst beim Pushback.
+    #[test]
+    fn beacon_schaltertest_bei_unterladung_loest_nicht_aus() {
+        let plan = 60_000.0;
+        let zfw = Some(plan * 0.70);
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, zfw, Some(plan), false));
+        for s in (10..=124).step_by(2) {
+            assert!(!tueren_zu_nach(&mut p, beacon_takt(s, zfw, Some(plan), true)), "Beacon {s} s");
+        }
+        assert!(!tueren_zu_nach(&mut p, beacon_takt(130, zfw, Some(plan), false)));
+        assert!(!p.tueren_zu);
+        let mut pb = beacon_takt(900, zfw, Some(plan), false);
+        pb.phase = Pushback;
+        pb.pushback_aktiv = true;
+        assert!(tueren_zu_nach(&mut p, pb), "Pushback löst aus");
+    }
+
+    /// Voll beladen: 14 s Beacon reichen nicht, 15 s ja.
+    #[test]
+    fn beacon_stabil_14_s_nein_15_s_ja_bei_voller_zuladung() {
+        let plan = 60_000.0;
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, Some(plan), Some(plan), false));
+        p.tick(&beacon_takt(100, Some(plan), Some(plan), true));
+        assert!(!tueren_zu_nach(&mut p, beacon_takt(114, Some(plan), Some(plan), true)), "14 s");
+        assert!(tueren_zu_nach(&mut p, beacon_takt(115, Some(plan), Some(plan), true)), "15 s");
+    }
+
+    /// Ohne OFP gilt das Flugzeug als beladen: nach 15 s ja.
+    #[test]
+    fn beacon_ohne_ofp_zaehlt_nach_15_s() {
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, Some(40_000.0), None, false));
+        p.tick(&beacon_takt(100, Some(40_000.0), None, true));
+        assert!(!tueren_zu_nach(&mut p, beacon_takt(114, Some(40_000.0), None, true)));
+        assert!(tueren_zu_nach(&mut p, beacon_takt(115, Some(40_000.0), None, true)));
+    }
+
+    /// Nachholen: Die Zuladung erreicht den Plan erst, während das Beacon an
+    /// ist → „Türen zu“ kommt dann.
+    #[test]
+    fn beacon_nachholen_wenn_zuladung_waehrend_beacon_fertig_wird() {
+        let plan = 60_000.0;
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, Some(plan * 0.8), Some(plan), false));
+        p.tick(&beacon_takt(100, Some(plan * 0.8), Some(plan), true));
+        assert!(!tueren_zu_nach(&mut p, beacon_takt(130, Some(plan * 0.8), Some(plan), true)));
+        assert!(tueren_zu_nach(&mut p, beacon_takt(140, Some(plan), Some(plan), true)));
+    }
+
+    /// Ein 3-s-Zucken, aus, wieder an: Die 15 s beginnen neu.
+    #[test]
+    fn beacon_zucken_setzt_die_stabil_zeit_zurueck() {
+        let plan = 60_000.0;
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, Some(plan), Some(plan), false));
+        p.tick(&beacon_takt(100, Some(plan), Some(plan), true));
+        assert!(!tueren_zu_nach(&mut p, beacon_takt(103, Some(plan), Some(plan), true)));
+        assert!(!tueren_zu_nach(&mut p, beacon_takt(104, Some(plan), Some(plan), false)));
+        p.tick(&beacon_takt(110, Some(plan), Some(plan), true));
+        assert!(!tueren_zu_nach(&mut p, beacon_takt(124, Some(plan), Some(plan), true)), "14 s nach dem Wiedereinschalten");
+        assert!(tueren_zu_nach(&mut p, beacon_takt(125, Some(plan), Some(plan), true)), "15 s nach dem Wiedereinschalten");
+    }
+
+    /// Überladen (104,6 % des Plans) gilt als beladen: die Prüfung ist einseitig.
+    #[test]
+    fn beacon_ueberladen_gilt_als_beladen() {
+        let plan = 60_000.0;
+        let zfw = Some(plan * 1.046);
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, zfw, Some(plan), false));
+        p.tick(&beacon_takt(100, zfw, Some(plan), true));
+        assert!(tueren_zu_nach(&mut p, beacon_takt(115, zfw, Some(plan), true)));
+    }
+
+    fn musik_takt(jetzt: i64, beacon: bool) -> crate::musik::MusikTakt {
+        crate::musik::MusikTakt { phase: Boarding, am_boden: true, beacon: Some(beacon), begruessung: true, jetzt, ..Default::default() }
+    }
+
+    /// Die Musik fragt den Planer: Eine Beacon-Flanke bei 70 % Zuladung
+    /// (Schaltertest) beendet sie nicht; sie endet erst mit dem „Türen zu“
+    /// des Planers (hier: Pushback).
+    #[test]
+    fn musik_endet_erst_mit_tueren_zu_des_planers() {
+        use crate::musik::Abschnitt;
+        let plan = 60_000.0;
+        let zfw = Some(plan * 0.70);
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, zfw, Some(plan), false));
+        assert_eq!(p.musik(Flugart::Linie, musik_takt(0, false)).abschnitt, Some(Abschnitt::Boarding));
+        for s in (10..=124).step_by(2) {
+            p.tick(&beacon_takt(s, zfw, Some(plan), true));
+            assert_eq!(p.musik(Flugart::Linie, musik_takt(s, true)).abschnitt, Some(Abschnitt::Boarding), "Beacon {s} s");
+        }
+        p.tick(&beacon_takt(130, zfw, Some(plan), false));
+        assert_eq!(p.musik(Flugart::Linie, musik_takt(130, false)).abschnitt, Some(Abschnitt::Boarding));
+        let mut pb = beacon_takt(900, zfw, Some(plan), false);
+        pb.phase = Pushback;
+        pb.pushback_aktiv = true;
+        p.tick(&pb);
+        let mut mt = musik_takt(900, false);
+        mt.phase = Pushback;
+        mt.pushback_aktiv = true;
+        assert_eq!(p.musik(Flugart::Linie, mt).abschnitt, None, "Pushback beendet die Musik");
+    }
+
+    /// Voll beladen: Die Musik endet 15 s nach dem Beacon, mit dem „Türen zu“.
+    #[test]
+    fn musik_endet_mit_dem_beacon_nach_15_s() {
+        let plan = 60_000.0;
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, Some(plan), Some(plan), false));
+        p.tick(&beacon_takt(100, Some(plan), Some(plan), true));
+        assert!(p.musik(Flugart::Linie, musik_takt(100, true)).abschnitt.is_some());
+        p.tick(&beacon_takt(114, Some(plan), Some(plan), true));
+        assert!(p.musik(Flugart::Linie, musik_takt(114, true)).abschnitt.is_some(), "14 s");
+        p.tick(&beacon_takt(115, Some(plan), Some(plan), true));
+        assert_eq!(p.musik(Flugart::Linie, musik_takt(115, true)).abschnitt, None, "15 s");
+    }
+
+    /// Sichern/Laden erhält das Musik-Fenster; ein alter Stand ohne das Feld lädt.
+    #[test]
+    fn musik_fenster_ueberlebt_sichern_und_alter_stand_laedt() {
+        let mut p = Planer::fortsetzen(flug(120), TaxiIn);
+        let mut t = musik_takt(0, true);
+        t.phase = TaxiIn;
+        t.nach_landung_vorbei = true;
+        t.triebwerke_an = Some(false);
+        assert!(p.musik(Flugart::Linie, t).abschnitt.is_some());
+        let json = serde_json::to_string(&p).unwrap();
+        let wieder: Planer = serde_json::from_str(&json).unwrap();
+        assert!(wieder == p, "Rundlauf");
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.as_object_mut().unwrap().remove("musik_fenster").is_some());
+        let alt: Planer = serde_json::from_value(v).unwrap();
+        assert!(alt != p, "Fenster war Teil des Stands");
+        let mut alt = alt;
+        assert!(alt.musik(Flugart::Linie, t).abschnitt.is_some(), "läuft mit frischem Fenster weiter");
+    }
+
+    /// Ein gesicherter Stand aus einer Version ohne `beacon_an_seit` lädt
+    /// (Option ohne Schlüssel = None) und läuft normal weiter.
+    #[test]
+    fn alter_stand_ohne_beacon_feld_laedt() {
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, None, None, false));
+        let mut v: serde_json::Value = serde_json::to_value(&p).unwrap();
+        assert!(v.as_object_mut().unwrap().remove("beacon_an_seit").is_some(), "Feld wird gesichert");
+        let mut alt: Planer = serde_json::from_value(v).unwrap();
+        assert!(alt == p);
+        alt.tick(&beacon_takt(100, None, None, true));
+        assert!(tueren_zu_nach(&mut alt, beacon_takt(115, None, None, true)));
     }
 
     #[test]
@@ -2826,13 +3042,15 @@ mod tests {
         p.tick(&gate(10, Some(52_000.0), 0, false));
         assert_eq!(slots(p.tick(&gate(40, Some(60_000.0), 0, false))), vec![Slot::Boarding]);
         assert!(slots(p.tick(&gate(600, Some(72_744.0), 0, false))).is_empty(), "nicht beim Ende der Beladung");
-        let f = slots(p.tick(&gate(900, Some(72_744.0), 0, true)));
+        p.tick(&gate(900, Some(72_744.0), 0, true));
+        let f = slots(p.tick(&gate(900 + BEACON_STABIL_S, Some(72_744.0), 0, true)));
         assert_eq!(&f[..2], &[Slot::BoardingAbgeschlossen, Slot::KommandoTuerenScharf], "{f:?}");
-        assert!(slots(p.tick(&gate(910, Some(72_744.0), 0, true))).is_empty(), "nur einmal");
+        assert!(slots(p.tick(&gate(910 + BEACON_STABIL_S, Some(72_744.0), 0, true))).is_empty(), "nur einmal");
         // Ohne ZFW (kein OFP, kein Signal): genauso.
         let mut o = Planer::fortsetzen(flug(40), Boarding);
         o.tick(&gate(0, None, 0, false));
-        assert!(slots(o.tick(&gate(400, None, 0, true))).contains(&Slot::BoardingAbgeschlossen));
+        o.tick(&gate(400, None, 0, true));
+        assert!(slots(o.tick(&gate(400 + BEACON_STABIL_S, None, 0, true))).contains(&Slot::BoardingAbgeschlossen));
         assert!(o.entfallene_abholen().is_empty());
         // Bizjet: gibt es nicht.
         let mut b = flug(40);
@@ -3293,12 +3511,13 @@ mod tests {
         assert_eq!(
             z,
             vec![
-                (300, Slot::Boarding),
-                (320, Slot::BoardingAbgeschlossen),
-                (323, Slot::KommandoTuerenScharf),
-                // 10 s nach dem Ende der Begrüßung (320), nicht 90 s.
-                (330, Slot::BegruessungTuerenZu),
-                (360, Slot::Sicherheit),
+                // Beacon ab 300 s, zählt nach BEACON_STABIL_S (15 s).
+                (315, Slot::Boarding),
+                (335, Slot::BoardingAbgeschlossen),
+                (338, Slot::KommandoTuerenScharf),
+                // 10 s nach dem Ende der Begrüßung (335), nicht 90 s.
+                (345, Slot::BegruessungTuerenZu),
+                (375, Slot::Sicherheit),
             ]
         );
     }

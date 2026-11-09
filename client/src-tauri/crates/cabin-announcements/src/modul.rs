@@ -38,6 +38,8 @@ pub enum Befehl {
     Abwaehlen { slots: Vec<Slot> },
     Erledigt { slot: Slot },
     TuerenZu,
+    /// Ab 3.0.0-beta.2.11: ein Takt der Boarding-Musik (aendert den Stand).
+    Musik { flugart: crate::flugart::Flugart, takt: crate::musik::MusikTakt },
     KommtNoch { slot: Slot, phase: FlightPhase },
     FlugzeitBekannt,
     IstKurzstrecke,
@@ -65,6 +67,7 @@ impl Befehl {
                     | Befehl::ServiceEnde { .. }
                     | Befehl::ServiceEntfallen
                     | Befehl::Abwaehlen { .. }
+                    | Befehl::Musik { .. }
             )
     }
 }
@@ -102,6 +105,7 @@ pub fn anwenden(p: &mut Planer, b: Befehl) -> Result<Value, String> {
         Befehl::Abwaehlen { slots } => wert(p.abwaehlen(slots)),
         Befehl::Erledigt { slot } => wert(p.erledigt(slot)),
         Befehl::TuerenZu => wert(p.tueren_zu()),
+        Befehl::Musik { flugart, takt } => wert(p.musik(flugart, takt)),
         Befehl::KommtNoch { slot, phase } => wert(p.kommt_noch(slot, phase)),
         Befehl::FlugzeitBekannt => wert(p.flugzeit_bekannt()),
         Befehl::IstKurzstrecke => wert(p.ist_kurzstrecke()),

@@ -13,6 +13,7 @@
 //!   spätestens 15 min nach „Aussteigen“, ohne Aussteigen-Ansage 20 min nach
 //!   „Triebwerke aus“; das Flugende stoppt sie im Host.
 
+use serde::{Deserialize, Serialize};
 use sim_core::FlightPhase;
 
 use crate::flugart::Flugart;
@@ -23,7 +24,7 @@ use crate::planer::rang;
 pub const ALLE: &str = "Alle";
 
 /// Was der Host je Takt über den Flug weiß.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct MusikTakt {
     pub phase: FlightPhase,
     pub am_boden: bool,
@@ -45,7 +46,7 @@ pub struct MusikTakt {
 }
 
 /// In welchem Abschnitt die Musik spielt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Abschnitt {
     Boarding,
     Ankunft,
@@ -54,10 +55,18 @@ pub enum Abschnitt {
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.ankunft_nach_aussteigen_s (v2.1.24: 15 * 60)
 // Wert seit v3: bundle/tabellen/kabine.json -> werte.ankunft_nach_triebwerke_aus_s (v2.1.24: 20 * 60)
 
+/// Antwort des Befehls `Musik`: Abschnitt jetzt und ob die Musik nach der
+/// Landung vorbei ist.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MusikStand {
+    pub abschnitt: Option<Abschnitt>,
+    pub ankunft_vorbei: bool,
+}
+
 /// Das Zeitfenster der Musik auf einem Flug. „Türen zu“ wie im Planer:
 /// Beacon geht am Boden an, sonst Pushback oder eine spätere Phase. Danach
 /// kommt auf diesem Flug keine Musik mehr.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MusikFenster {
     letztes_beacon: Option<bool>,
     tueren_zu: bool,
@@ -68,10 +77,21 @@ pub struct MusikFenster {
 
 impl MusikFenster {
     /// Soll jetzt Musik laufen, und in welchem Abschnitt?
+    /// Ohne Planer: „Türen zu“ ist die eigene Beacon-Flanke.
     pub fn tick(&mut self, flugart: Flugart, t: &MusikTakt) -> Option<Abschnitt> {
-        let r = rang(t.phase);
         let beacon_an = t.am_boden && t.beacon == Some(true) && self.letztes_beacon == Some(false);
         self.letztes_beacon = t.beacon;
+        self.schritt(flugart, t, beacon_an)
+    }
+
+    /// Mit Planer: „Türen zu“ kommt von dessen Regel (Beacon erst nach 15 s
+    /// und bei beladenem Flugzeug); die eigene Flanke zählt nicht.
+    pub fn tick_mit_tueren_zu(&mut self, flugart: Flugart, t: &MusikTakt, tueren_zu: bool) -> Option<Abschnitt> {
+        self.schritt(flugart, t, tueren_zu)
+    }
+
+    fn schritt(&mut self, flugart: Flugart, t: &MusikTakt, beacon_an: bool) -> Option<Abschnitt> {
+        let r = rang(t.phase);
         if beacon_an || t.pushback_aktiv || r >= rang(FlightPhase::Pushback) {
             self.tueren_zu = true;
         }

@@ -514,6 +514,9 @@ pub(crate) struct Lauf {
     /// Boarding-Musik (2.1.1 G): Zeitfenster, Quelle (einmal je Flug
     /// festgelegt, Design §5) und das Lied des Flugs.
     musik_fenster: cabin_announcements::musik::MusikFenster,
+    /// Musik nach der Landung vorbei, laut Planer-Fenster im Modul (mit
+    /// Planer laeuft `musik_fenster` nicht); bleibt nach einem Neuaufbau stehen.
+    musik_ankunft_vorbei: bool,
     musik_quelle: Option<MusikQuelle>,
     musik_lief: bool,
     /// Abschnitt, in dem die Musik zuletzt lief (Anzeige „läuft · …“).
@@ -543,6 +546,14 @@ pub(crate) struct Lauf {
     /// geplantes Ziel); ändert es sich, wird neu bestellt
     /// ([`ankunft_nach_umleitung`]).
     ankunft_ziel: Option<String>,
+}
+
+impl Lauf {
+    /// Musik nach der Landung vorbei: laut Planer-Fenster (Modul) oder, ohne
+    /// Planer, laut eigenem Fenster.
+    fn ankunft_vorbei(&self) -> bool {
+        self.musik_ankunft_vorbei || self.musik_fenster.ankunft_vorbei()
+    }
 }
 
 /// Restzeit und Landezeit, wie der Server sie in die Sinkflug-Ansage des
@@ -1634,7 +1645,7 @@ fn lied_anfragen(lauf: &Lauf, haken: bool, _phase: FlightPhase) -> bool {
     haken
         && lauf.lied.platte_geprueft
         && lauf.musik_quelle == Some(MusikQuelle::Lied)
-        && !lauf.musik_fenster.ankunft_vorbei()
+        && !lauf.ankunft_vorbei()
         && lauf.lied.datei.is_none()
         && lauf.lied.vorlage.is_none()
 }
@@ -1731,7 +1742,18 @@ fn musik_schritt(stats: &mut FlightStats, snap: &SimSnapshot, muster: &str, eige
         aussteigen_um,
         triebwerke_an: Some(snap.engines_running > 0),
     };
-    let abschnitt = lauf.musik_fenster.tick(art, &takt);
+    // Mit Planer entscheidet dessen Musik-Fenster (eine „Türen zu“-Regel für
+    // Ansagen und Musik); ohne Planer das eigene, mit der eigenen Flanke.
+    let abschnitt = match stats.kabinen_planer.as_mut() {
+        Some(p) => {
+            let st = p.musik(art, takt);
+            lauf.musik_ankunft_vorbei |= st.ankunft_vorbei;
+            // Ein neu aufgebauter Planer beginnt mit frischem Fenster:
+            // Einmal vorbei bleibt vorbei.
+            st.abschnitt.filter(|_| !lauf.musik_ankunft_vorbei)
+        }
+        None => lauf.musik_fenster.tick(art, &takt),
+    };
     let soll = abschnitt.is_some();
     if abschnitt.is_some() {
         lauf.musik_abschnitt = abschnitt;
@@ -1748,7 +1770,7 @@ fn musik_schritt(stats: &mut FlightStats, snap: &SimSnapshot, muster: &str, eige
         && !lauf.lied.laeuft
         && jetzt >= lauf.lied.naechster
         && lauf.lied.versuche < LIED_TON_VERSUCHE
-        && !lauf.musik_fenster.ankunft_vorbei())
+        && !lauf.ankunft_vorbei())
     .then(|| lauf.lied.vorlage.clone())
     .flatten();
     if holen.is_some() {
@@ -2100,7 +2122,7 @@ fn musik_ansicht(einst: &Einstellungen, lauf: Option<&Lauf>, airline: Option<Str
             _ if probe => "probe",
             _ if laeuft => if hoerbar { "laeuft" } else { "pausiert" },
             // Zwischen „Türen zu“ und der Landung wartet sie auf die Ankunft.
-            _ if lauf.musik_fenster.ankunft_vorbei() => "beendet",
+            _ if lauf.ankunft_vorbei() => "beendet",
             None => "ohne_flug",
             Some(MusikQuelle::Keine) => "keine",
             // „wird erzeugt“ nur, solange wirklich etwas unterwegs ist (Thomas
@@ -2167,7 +2189,7 @@ fn musik_neu_laden(lauf: &mut Lauf) -> Result<(), &'static str> {
     if lauf.musik_quelle != Some(MusikQuelle::Lied) {
         return Err("musik_keine");
     }
-    if lauf.musik_fenster.ankunft_vorbei() {
+    if lauf.ankunft_vorbei() {
         return Err("musik_vorbei");
     }
     if lauf.lied.datei.is_some() || lauf.lied.laeuft {
@@ -5961,11 +5983,41 @@ mod tests {
         assert!(holen >= 2, "nachgereicht: mehrere Versuche bis es kommt");
         let erstes = tun.iter().find(|(_, t)| matches!(t, MusikTun::Spielen(_))).map(|(s, _)| *s).expect("Musik lief");
         assert_eq!(erstes, 8 * 60 + 10 + 30, "mit der Begrüßung, nicht beim Anschnallzeichen");
-        // Beacon: einmal ausblenden, danach nichts mehr.
-        let (t, h) = musik_schritt(&mut st, &gate_snap(true), "A320", None, 12 * 60 + 10);
+        // Beacon: Die Musik fragt den Planer, das Beacon zählt erst nach 15 s.
+        let beacon_takt = |s: i64| cabin_announcements::Tick { jetzt: s, phase: crate::FlightPhase::Boarding, am_boden: true, anschnallzeichen: Some(2), beacon: Some(true), zfw_kg: Some(46_000.0), ..Default::default() };
+        let beacon_an = 12 * 60 + 10;
+        st.kabinen_planer.as_mut().unwrap().tick(&beacon_takt(beacon_an));
+        let (t, _) = musik_schritt(&mut st, &gate_snap(true), "A320", None, beacon_an);
+        assert_ne!(t, MusikTun::Ausblenden, "Beacon gerade an: Musik läuft weiter");
+        st.kabinen_planer.as_mut().unwrap().tick(&beacon_takt(beacon_an + 14));
+        let (t, _) = musik_schritt(&mut st, &gate_snap(true), "A320", None, beacon_an + 14);
+        assert_ne!(t, MusikTun::Ausblenden, "14 s reichen nicht");
+        // Nach 15 s: einmal ausblenden, danach nichts mehr.
+        st.kabinen_planer.as_mut().unwrap().tick(&beacon_takt(beacon_an + 15));
+        let (t, h) = musik_schritt(&mut st, &gate_snap(true), "A320", None, beacon_an + 15);
         assert_eq!((t, h), (MusikTun::Ausblenden, None));
-        let (t, _) = musik_schritt(&mut st, &gate_snap(true), "A320", None, 12 * 60 + 20);
+        let (t, _) = musik_schritt(&mut st, &gate_snap(true), "A320", None, beacon_an + 25);
         assert_eq!(t, MusikTun::Nichts);
+    }
+
+    /// Ein neu aufgebauter Planer (Neuaufbau nach Totalausfall) hat ein
+    /// frisches Musik-Fenster: Die vorbeie Ankunftsmusik startet nicht neu.
+    #[test]
+    fn neuaufbau_startet_die_ankunftsmusik_nicht_neu() {
+        let mut st = musik_stats("J", Some(150));
+        let eigene = Some(("DLH".to_string(), vec![PathBuf::from("/m/DLH/a.mp3")]));
+        st.kabinen_planer = Some(crate::kabinenplaner::Planer::fortsetzen(
+            cabin_announcements::Flugdaten { flugart: Some(Flugart::Linie), geplante_flugzeit_min: Some(45), ..Default::default() },
+            crate::FlightPhase::TaxiIn,
+        ));
+        st.phase = crate::FlightPhase::TaxiIn;
+        st.kabinen_planer.as_mut().unwrap().schon_gespielt([Slot::NachDerLandung]);
+        verbuchen(&mut st.kabinen_lauf, Slot::NachDerLandung, "gespielt", None, 10);
+        let mut rollen = gate_snap(true);
+        rollen.engines_running = 2;
+        assert!(matches!(musik_schritt(&mut st, &rollen, "A320", eigene, 100).0, MusikTun::Spielen(_)), "Gegenprobe: frisches Fenster spielt");
+        st.kabinen_lauf.musik_ankunft_vorbei = true;
+        assert_eq!(musik_schritt(&mut st, &rollen, "A320", None, 110).0, MusikTun::Ausblenden, "vorbei bleibt vorbei");
     }
 
     /// Zusatz I: nach der Ansage „nach der Landung“ läuft die Musik des
@@ -6045,7 +6097,7 @@ mod tests {
             aussteigen_um: Some(0), jetzt: cabin_announcements::tabelle().werte.ankunft_nach_aussteigen_s.wert + 1, ..Default::default()
         };
         assert_eq!(l.kabinen_lauf.musik_fenster.tick(cabin_announcements::flugart::Flugart::Linie, &ende), None);
-        assert!(l.kabinen_lauf.musik_fenster.ankunft_vorbei());
+        assert!(l.kabinen_lauf.ankunft_vorbei());
         assert!(!lied_einzeln_anfragen(&l.kabinen_lauf, true, crate::FlightPhase::BlocksOn, false, 0), "Musik nach der Landung vorbei: kein Lied mehr");
         // Fracht ohne Passagierzahl: steht fest, eigene Musik sofort im Boarding.
         let mut f = musik_stats("F", None);
