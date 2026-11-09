@@ -180,6 +180,19 @@ fn gleichschritt(name: &str, datei: &str, flugzeit_min: u32, reise_ft: u32, zwei
         let neu = p.tick(&tk);
         let neu_m: Vec<Faellig> = m.rufen(Befehl::Tick { tick: tk.clone() });
         assert_eq!(neu, neu_m, "{name} t={t}: Tick");
+        // Musik wie im Client: nach dem Planer-Takt, mit dessen „Türen zu“.
+        let mt = cabin_announcements::musik::MusikTakt {
+            phase,
+            am_boden: boden == 1,
+            beacon: tk.beacon,
+            pushback_aktiv: pushback == 1,
+            begruessung: p.erledigt(Slot::Boarding),
+            jetzt: t,
+            nach_landung_vorbei: !p.kommt_noch(Slot::NachDerLandung, phase),
+            aussteigen_um: None,
+            triebwerke_an: Some(triebwerke > 0),
+        };
+        assert_eq!(p.musik(Flugart::Linie, mt), m.rufen(Befehl::Musik { flugart: Flugart::Linie, takt: mt }), "{name} t={t}: Musik");
         let ruhe = p.ruhephase(&tk);
         assert_eq!(ruhe, m.rufen::<bool>(Befehl::Ruhephase { tick: tk.clone() }), "{name} t={t}: Ruhephase");
         let entf = p.entfallene_abholen();

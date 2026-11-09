@@ -372,6 +372,11 @@ pub struct Planer {
     /// der Flanke aus → an, gelöscht in jedem Takt ohne Beacon. Alte Stände
     /// ohne das Feld lesen serde als `None`.
     beacon_an_seit: Option<i64>,
+    /// Zeitfenster der Boarding-Musik (Befehl `Musik`): „Türen zu“ ist
+    /// `tueren_zu`, also eine Regel für Ansagen und Musik. Alte Stände ohne
+    /// das Feld laden mit dem Vorgabewert.
+    #[serde(default)]
+    musik_fenster: crate::musik::MusikFenster,
     letztes_fahrwerk: Option<bool>,
     /// Landelicht war seit dem Verlassen des Stands einmal aus (v2.0.28).
     landelicht_war_aus: bool,
@@ -707,6 +712,13 @@ impl Planer {
     /// Ist dieser Slot auf diesem Flug schon ausgelöst (oder übersprungen)?
     pub fn erledigt(&self, slot: Slot) -> bool {
         self.schon(slot)
+    }
+
+    /// Ein Takt der Boarding-Musik mit dem „Türen zu“ dieses Planers
+    /// (Pushback und Phase wirken hier schon, siehe `tick`).
+    pub fn musik(&mut self, flugart: crate::flugart::Flugart, takt: crate::musik::MusikTakt) -> crate::musik::MusikStand {
+        let abschnitt = self.musik_fenster.tick_mit_tueren_zu(flugart, &takt, self.tueren_zu);
+        crate::musik::MusikStand { abschnitt, ankunft_vorbei: self.musik_fenster.ankunft_vorbei() }
     }
 
     /// „Türen zu“ ist erkannt (Beacon, Pushback oder Rollen) — dort endet
@@ -2417,6 +2429,71 @@ mod tests {
         p.tick(&beacon_takt(0, zfw, Some(plan), false));
         p.tick(&beacon_takt(100, zfw, Some(plan), true));
         assert!(tueren_zu_nach(&mut p, beacon_takt(115, zfw, Some(plan), true)));
+    }
+
+    fn musik_takt(jetzt: i64, beacon: bool) -> crate::musik::MusikTakt {
+        crate::musik::MusikTakt { phase: Boarding, am_boden: true, beacon: Some(beacon), begruessung: true, jetzt, ..Default::default() }
+    }
+
+    /// Die Musik fragt den Planer: Eine Beacon-Flanke bei 70 % Zuladung
+    /// (Schaltertest) beendet sie nicht; sie endet erst mit dem „Türen zu“
+    /// des Planers (hier: Pushback).
+    #[test]
+    fn musik_endet_erst_mit_tueren_zu_des_planers() {
+        use crate::musik::Abschnitt;
+        let plan = 60_000.0;
+        let zfw = Some(plan * 0.70);
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, zfw, Some(plan), false));
+        assert_eq!(p.musik(Flugart::Linie, musik_takt(0, false)).abschnitt, Some(Abschnitt::Boarding));
+        for s in (10..=124).step_by(2) {
+            p.tick(&beacon_takt(s, zfw, Some(plan), true));
+            assert_eq!(p.musik(Flugart::Linie, musik_takt(s, true)).abschnitt, Some(Abschnitt::Boarding), "Beacon {s} s");
+        }
+        p.tick(&beacon_takt(130, zfw, Some(plan), false));
+        assert_eq!(p.musik(Flugart::Linie, musik_takt(130, false)).abschnitt, Some(Abschnitt::Boarding));
+        let mut pb = beacon_takt(900, zfw, Some(plan), false);
+        pb.phase = Pushback;
+        pb.pushback_aktiv = true;
+        p.tick(&pb);
+        let mut mt = musik_takt(900, false);
+        mt.phase = Pushback;
+        mt.pushback_aktiv = true;
+        assert_eq!(p.musik(Flugart::Linie, mt).abschnitt, None, "Pushback beendet die Musik");
+    }
+
+    /// Voll beladen: Die Musik endet 15 s nach dem Beacon, mit dem „Türen zu“.
+    #[test]
+    fn musik_endet_mit_dem_beacon_nach_15_s() {
+        let plan = 60_000.0;
+        let mut p = Planer::fortsetzen(flug(120), Boarding);
+        p.tick(&beacon_takt(0, Some(plan), Some(plan), false));
+        p.tick(&beacon_takt(100, Some(plan), Some(plan), true));
+        assert!(p.musik(Flugart::Linie, musik_takt(100, true)).abschnitt.is_some());
+        p.tick(&beacon_takt(114, Some(plan), Some(plan), true));
+        assert!(p.musik(Flugart::Linie, musik_takt(114, true)).abschnitt.is_some(), "14 s");
+        p.tick(&beacon_takt(115, Some(plan), Some(plan), true));
+        assert_eq!(p.musik(Flugart::Linie, musik_takt(115, true)).abschnitt, None, "15 s");
+    }
+
+    /// Sichern/Laden erhält das Musik-Fenster; ein alter Stand ohne das Feld lädt.
+    #[test]
+    fn musik_fenster_ueberlebt_sichern_und_alter_stand_laedt() {
+        let mut p = Planer::fortsetzen(flug(120), TaxiIn);
+        let mut t = musik_takt(0, true);
+        t.phase = TaxiIn;
+        t.nach_landung_vorbei = true;
+        t.triebwerke_an = Some(false);
+        assert!(p.musik(Flugart::Linie, t).abschnitt.is_some());
+        let json = serde_json::to_string(&p).unwrap();
+        let wieder: Planer = serde_json::from_str(&json).unwrap();
+        assert!(wieder == p, "Rundlauf");
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.as_object_mut().unwrap().remove("musik_fenster").is_some());
+        let alt: Planer = serde_json::from_value(v).unwrap();
+        assert!(alt != p, "Fenster war Teil des Stands");
+        let mut alt = alt;
+        assert!(alt.musik(Flugart::Linie, t).abschnitt.is_some(), "läuft mit frischem Fenster weiter");
     }
 
     /// Ein gesicherter Stand aus einer Version ohne `beacon_an_seit` lädt

@@ -20,7 +20,8 @@ use std::sync::{Mutex, PoisonError};
 
 use bewertung_host::{Host, Instanz};
 use cabin_announcements::modul::{self, Befehl};
-use cabin_announcements::{Entfall, Faellig, Flugdaten, Slot, Tick};
+use cabin_announcements::musik::{MusikStand, MusikTakt};
+use cabin_announcements::{Entfall, Faellig, Flugart, Flugdaten, Slot, Tick};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sim_core::FlightPhase;
@@ -144,7 +145,9 @@ impl Innen {
         if !b.aendert() {
             return;
         }
-        let takt = matches!(b, Befehl::Tick { .. });
+        // Auch nach der Musik: Die läuft in der Sim-Pause ohne Planer-Takt
+        // weiter, der Nachbau wüchse sonst je Takt um einen Befehl.
+        let takt = matches!(b, Befehl::Tick { .. } | Befehl::Musik { .. });
         self.nachbau.push(b);
         if takt {
             match self.weg.rufen(&Befehl::Sichern).and_then(|v| serde_json::from_value::<String>(v).map_err(|e| e.to_string())) {
@@ -288,6 +291,11 @@ impl Planer {
         self.rufen(Befehl::KapitaenSinkflugPrognose { landung_erwartet })
     }
 
+    /// Ein Takt der Boarding-Musik (Fenster samt „Türen zu“ im Modul).
+    pub fn musik(&mut self, flugart: Flugart, takt: MusikTakt) -> MusikStand {
+        self.rufen(Befehl::Musik { flugart, takt })
+    }
+
     pub fn tick(&mut self, t: &Tick) -> Vec<Faellig> {
         self.rufen(Befehl::Tick { tick: t.clone() })
     }
@@ -398,6 +406,63 @@ mod tests {
         assert!(fliegen(&mut q, 300, &["paket", "eingebaut"]) > 10);
         assert_eq!(q.wechsel_abholen().iter().map(|w| w.0).collect::<Vec<_>>(), ["paket", "nativ"]);
         assert!(!q.unbrauchbar());
+    }
+
+    /// Das Musik-Fenster ist Zustand des Planers: Bei einem Wechsel
+    /// Modul → eingebaut (→ nativ) geht es mit (`Musik` aendert den Stand,
+    /// steht also im Nachbau). Ein frisches Fenster wuerde „Triebwerke aus“
+    /// neu zaehlen und die Musik weiterspielen.
+    #[test]
+    fn musik_fenster_geht_beim_wechsel_nicht_verloren() {
+        use cabin_announcements::musik::{Abschnitt, MusikTakt};
+        let takt = |jetzt: i64| MusikTakt {
+            phase: FlightPhase::TaxiIn,
+            am_boden: true,
+            jetzt,
+            nach_landung_vorbei: true,
+            triebwerke_an: Some(false),
+            ..Default::default()
+        };
+        let ende = cabin_announcements::tabelle().werte.ankunft_nach_triebwerke_aus_s.wert;
+        for (wege, erwartet) in [(&["paket"][..], "eingebaut"), (&["paket", "eingebaut"][..], "nativ")] {
+            let mut p = Planer::starten(modul(), Some(modul()), cabin_announcements::EINGEBAUT, anlegen(FlightPhase::TaxiIn));
+            assert_eq!(p.musik(Flugart::Linie, takt(0)).abschnitt, Some(Abschnitt::Ankunft));
+            let wege: &'static [&'static str] = Box::leak(wege.to_vec().into_boxed_slice());
+            stoeren(wege);
+            let st = p.musik(Flugart::Linie, takt(ende + 1));
+            stoeren(&[]);
+            assert_eq!((st.abschnitt, st.ankunft_vorbei), (None, true), "Fenster uebernommen, Weg {erwartet}");
+            assert_eq!(p.wechsel_abholen().last().unwrap().0, erwartet);
+        }
+    }
+
+    /// Musik ohne Planer-Takt (Sim-Pause): Der Nachbau bleibt ein gesicherter
+    /// Stand und waechst nicht je Takt.
+    #[test]
+    fn musik_takte_lassen_den_nachbau_nicht_wachsen() {
+        let mut p = Planer::starten(modul(), Some(modul()), cabin_announcements::EINGEBAUT, anlegen(FlightPhase::TaxiIn));
+        for jetzt in 0..50 {
+            p.musik(Flugart::Linie, MusikTakt { phase: FlightPhase::TaxiIn, am_boden: true, jetzt, ..Default::default() });
+        }
+        assert_eq!(p.0.lock().unwrap().nachbau.len(), 1);
+    }
+
+    /// Neuer Client, noch altes Paketmodul (vor `Befehl::Musik`, Stand
+    /// e1a28922): Das Modul kennt den Befehl nicht, der Flug weicht auf das
+    /// eingebaute Modul aus und laeuft dort normal weiter.
+    #[test]
+    fn altes_paketmodul_ohne_musik_weicht_auf_das_eingebaute_aus() {
+        use cabin_announcements::musik::Abschnitt;
+        static ALT: &[u8] = include_bytes!("../tests/fixtures/kabine-vor-musik.wasm");
+        let mut p = Planer::starten(ALT, Some(modul()), cabin_announcements::EINGEBAUT, anlegen(FlightPhase::Preflight));
+        assert_eq!(p.wechsel_abholen(), vec![("paket", None)], "das alte Modul startet");
+        let takt = MusikTakt { phase: FlightPhase::TaxiIn, am_boden: true, jetzt: 0, nach_landung_vorbei: true, ..Default::default() };
+        assert_eq!(p.musik(Flugart::Linie, takt).abschnitt, Some(Abschnitt::Ankunft), "Antwort kommt vom eingebauten Modul");
+        let w = p.wechsel_abholen();
+        assert_eq!(w.iter().map(|w| w.0).collect::<Vec<_>>(), ["eingebaut"], "{w:?}");
+        assert!(w[0].1.as_deref().unwrap().starts_with("paket:"), "{w:?}");
+        assert!(fliegen(&mut p, usize::MAX, &[]) > 10, "Nachbau hat gegriffen");
+        assert!(p.wechsel_abholen().is_empty(), "kein weiterer Wechsel");
     }
 
     /// Uebernimmt kein Weg den Stand: unbrauchbar, Vorgabewerte, der Client
