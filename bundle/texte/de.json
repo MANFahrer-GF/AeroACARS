@@ -3434,6 +3434,8 @@
     "taxi_loaded": "Rollwege geladen: {{airports}}",
     "group_map": "KARTE",
     "center_on_flight": "Auf Flug zentrieren",
+    "panel_auf": "Panel aufklappen",
+    "panel_zu": "Panel einklappen",
     "follow": "Folgen",
     "own_flight": "EIGENER FLUG",
     "live": "LIVE",

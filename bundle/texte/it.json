@@ -3420,6 +3420,8 @@
     "taxi_loaded": "Mappe di rullaggio caricate: {{airports}}",
     "group_map": "MAPPA",
     "center_on_flight": "Centra sul volo",
+    "panel_auf": "Espandi pannello",
+    "panel_zu": "Comprimi pannello",
     "follow": "Segui",
     "own_flight": "VOLO PROPRIO",
     "live": "LIVE",

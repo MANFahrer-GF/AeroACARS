@@ -410,8 +410,8 @@ describe("Klick auf einen Kollegen", () => {
     });
     const hinweis = await screen.findByRole("status");
     expect(hinweis.textContent).toMatch(/keine Route/i);
-    // Und er muss oben drauf liegen: Die Leiste traegt z-index 500.
-    expect(Number(hinweis.style.zIndex)).toBeGreaterThan(500);
+    // Und er steht im Raster unter der Leiste (Lage: LiveMapView.hinweis.test.ts).
+    expect(hinweis.className).toContain("aa-livemap-hinweis");
   });
 });
 

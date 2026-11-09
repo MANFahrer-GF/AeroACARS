@@ -82,7 +82,7 @@ describe("Kartenbild", () => {
   it("zeigt die Hoehenwahl nur bei VATSIM", () => {
     // IVAO liefert keine Hoehenbaender — ein Regler ohne Wirkung waere
     // eine Luege.
-    expect(quelle).toContain('{netz === "vatsim" && (');
+    expect(quelle).toContain('{p.netz === "vatsim" && (');
   });
 
   it("filtert die Hoehe auf der Karte", () => {
@@ -136,7 +136,9 @@ describe("Darstellung wie auf der Live-Karte", () => {
   it("zeigt Zentrieren nur bei laufendem Flug", () => {
     // Ohne Flug hat es keine Wirkung, ein abgeblendeter Knopf belegt
     // trotzdem Platz.
-    expect(quelle).toContain("{activeFlight && effAircraft && (");
+    expect(quelle).toMatch(/hatFlug=\{!!activeFlight\}/);
+    expect(quelle).toMatch(/\{p\.hatFlug && \(/);
+    expect(quelle).toMatch(/\{p\.hatPosition && \(/);
   });
 
   it("nutzt die abgestimmten Symbole aus dem Tabler-Satz", () => {

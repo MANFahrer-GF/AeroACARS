@@ -133,6 +133,7 @@ vi.mock("../lib/aircraftIcon", () => ({ aircraftSvg: () => "<svg></svg>" }));
 vi.mock("../lib/phaseColors", () => ({ phaseColor: () => "#ffffff", phaseLabel: () => "Steigflug" }));
 
 import { LiveMapView } from "./LiveMapView";
+import { karteQuelltext } from "./livekarte/quelltext.testhilfe";
 
 const LYR_ROUTE = "aa-planned-route-line"; // Layer (siehe LiveMapView; "aa-planned-route" ist die SOURCE)
 const SRC_ROUTE = "aa-planned-route"; // Source mit der Routen-Geometrie
@@ -249,6 +250,15 @@ describe("LiveMapView Grundkarte", () => {
     expect(h.map!.sichtbar.get("h:wasser")).toBe("visible");
     expect(karteSichtbar()).toBe("none");
     expect(h.setStyle).toBe(0);
+  });
+
+  it("holt die Stile neu, sobald der Server andere Adressen nennt", () => {
+    expect(karteQuelltext()).toMatch(/grundkarteHolen\([\s\S]{0,240}\}, \[mapReady, grundlage\.dunkel, grundlage\.hell\]\)/);
+  });
+
+  it("kennt weder Stiltausch noch Nachlege-Schleife mehr", () => {
+    const q = karteQuelltext();
+    for (const altlast of ["map.setStyle(", '"styledata"', "ensureOverlays", "addOverlays("]) expect(q).not.toContain(altlast);
   });
 
   it("nimmt den gemerkten Satellit beim Start, sobald die Karte steht", async () => {

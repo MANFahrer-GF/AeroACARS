@@ -13,7 +13,7 @@
 
 import { BildGross } from "./bilder/BildGross";
 import { useBildKarte, type BildFokus } from "./bilder/useBildKarte";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -32,6 +32,8 @@ import { grundkarteBauen, grundkarteHolen, startStil, type Grundkartensteuerung 
 import { useLiveZugangTakt } from "../lib/liveInhalt";
 import { ohneDatumsgrenzenSprung } from "../lib/datumsgrenze";
 import { overlayFarben } from "./livekarte/farben";
+import { FlugPanel } from "./livekarte/FlugPanel";
+import { KartenLeiste } from "./livekarte/KartenLeiste";
 import { flugDatenSetzen, flugEbenenAnlegen, LYR_ROUTE_CASING, TRACK_LAYERS, type RouteFix } from "./livekarte/flugEbenen";
 import { fremdeRoutenAnlegen } from "./livekarte/fremdeRouten";
 import { netzEbenenAnlegen, useNetzKarte } from "./livekarte/netzKarte";
@@ -48,58 +50,6 @@ interface Aircraft {
   lat: number;
   hdg: number;
 }
-
-/** Die Symbole der Kartenleiste — Tabler Icons (MIT), eingebettet.
- *
- *  Zwei Fehlversuche vorher, beide von Thomas kassiert: erst Unicode-
- *  Zeichen (aus verschiedenen Schriftschnitten, unterschiedlich hoch, und
- *  ein Motiv stand doppelt), dann selbst gezeichnete Pfade. Beides war
- *  Ersatz fuer etwas, das laengst abgestimmt war — die Vorschau zeigte
- *  Tabler-Symbole, und die gibt es als offene Pfade.
- *
- *  Eingebettet statt nachgeladen: die Leiste laeuft im Fenster einer
- *  Anwendung, ein Netzzugriff fuer acht Glyphen waere eine Abhaengigkeit
- *  ohne Gegenwert. Quelle: github.com/tabler/tabler-icons, MIT.
- */
-function Sym({ pfad }: { pfad: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="15"
-      height="15"
-      aria-hidden="true"
-      focusable="false"
-      style={{ display: "block" }}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      dangerouslySetInnerHTML={{ __html: pfad }}
-    />
-  );
-}
-
-/** Tabler Icons (MIT). Jedes Motiv genau einmal — ausser dem Flugzeug,
- *  das sowohl "Kurs oben" als auch "VA-Verkehr" traegt; die beiden stehen
- *  in verschiedenen Gruppen und sind durch Beschriftung getrennt. */
-const PFAD: Record<string, string> = {
-  karte: "<path d=\"M3 7l6 -3l6 3l6 -3v13l-6 3l-6 -3l-6 3v-13\" /> <path d=\"M9 4v13\" /> <path d=\"M15 7v13\" />",
-  satellit: "<path d=\"M3.707 6.293l2.586 -2.586a1 1 0 0 1 1.414 0l5.586 5.586a1 1 0 0 1 0 1.414l-2.586 2.586a1 1 0 0 1 -1.414 0l-5.586 -5.586a1 1 0 0 1 0 -1.414\" /> <path d=\"M6 10l-3 3l3 3l3 -3\" /> <path d=\"M10 6l3 -3l3 3l-3 3\" /> <path d=\"M12 12l1.5 1.5\" /> <path d=\"M14.5 17a2.5 2.5 0 0 0 2.5 -2.5\" /> <path d=\"M15 21a6 6 0 0 0 6 -6\" />",
-  norden: "<path d=\"M12 5l0 14\" /> <path d=\"M18 11l-6 -6\" /> <path d=\"M6 11l6 -6\" />",
-  kurs: "<path d=\"M16 10h4a2 2 0 0 1 0 4h-4l-4 7h-3l2 -7h-4l-2 2h-3l2 -4l-2 -4h3l2 2h4l-2 -7h3l4 7\" />",
-  zentrieren: "<path d=\"M4 8v-2a2 2 0 0 1 2 -2h2\" /> <path d=\"M4 16v2a2 2 0 0 0 2 2h2\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v2\" /> <path d=\"M16 20h2a2 2 0 0 0 2 -2v-2\" /> <path d=\"M9 12l6 0\" /> <path d=\"M12 9l0 6\" />",
-  track: "<path d=\"M3 19a2 2 0 1 0 4 0a2 2 0 0 0 -4 0\" /> <path d=\"M19 7a2 2 0 1 0 0 -4a2 2 0 0 0 0 4\" /> <path d=\"M11 19h5.5a3.5 3.5 0 0 0 0 -7h-8a3.5 3.5 0 0 1 0 -7h4.5\" />",
-  // Rollweg: "traffic-cone". Vorher stand hier "building-airport" — das
-  // heisst aber "Flughafen", nicht "Rollweg", und seine acht Striche liefen
-  // bei 15 px zu einem Fleck zusammen. Ein Weg-Motiv verbietet sich: der
-  // naechstbeste Kandidat ("arrow-guide") traegt Punkt und Knick wie das
-  // Track-Symbol daneben. Der Hut meint den Bodenbereich, nicht den Weg —
-  // vier Striche, die auch klein noch eine Silhouette haben.
-  taxi: "<path d=\"M4 20l16 0\" /> <path d=\"M9.4 10l5.2 0\" /> <path d=\"M7.8 15l8.4 0\" /> <path d=\"M6 20l5 -15h2l5 15\" />",
-  bilder: "<path d=\"M4 8h3l2-3h6l2 3h3v11H4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3.5\" />",
-  va: "<path d=\"M16 10h4a2 2 0 0 1 0 4h-4l-4 7h-3l2 -7h-4l-2 2h-3l2 -4l-2 -4h3l2 2h4l-2 -7h3l4 7\" />",
-};
 
 function readTheme(): "dark" | "light" {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
@@ -394,18 +344,17 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       transformRequest: kartenAnfrage(() => grundlageRef.current.schluessel),
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
-    // Field feedback (2026-08-03): the attribution's `compact: true` reads
-    // as "collapsed by default, expands on click" — but MapLibre's own
-    // AttributionControl (`_updateCompact` in its source) actually adds
-    // BOTH `maplibregl-compact` AND the expanded `maplibregl-compact-show`
-    // class together on its very first render, so it starts OPEN and only
-    // collapses once the pilot clicks the (i) themselves. Force it closed
-    // once after load so "compact" really means collapsed-by-default.
-    map.once("load", () => {
-      const attrib = containerRef.current?.querySelector(".maplibregl-ctrl-attrib");
-      attrib?.classList.remove("maplibregl-compact-show");
-      attrib?.removeAttribute("open");
-    });
+    // `compact: true` startet in MapLibre aufgeklappt, sobald die erste Namensnennung da ist
+    // (`_updateCompact` setzt `compact` und `compact-show` zusammen). Einmal zuklappen, danach
+    // gehoert der (i)-Knopf dem Piloten. "sourcedata", weil die Quellen erst nach `load` kommen.
+    const nennungZu = () => {
+      const nennung = containerRef.current?.querySelector(".maplibregl-ctrl-attrib.maplibregl-compact-show");
+      if (!nennung) return;
+      nennung.classList.remove("maplibregl-compact-show");
+      nennung.removeAttribute("open");
+      map.off("sourcedata", nennungZu);
+    };
+    map.on("sourcedata", nennungZu);
     mapRef.current = map;
     // Follow nicht „einsperren", aber ehrlich: zieht der Nutzer die Karte selbst
     // weg (echter Pan = originalEvent gesetzt; unser easeTo/jumpTo löst KEIN
@@ -850,18 +799,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       ? "danger"
       : "ok";
 
-  // Das rechte Panel beginnt immer unter der Schalterleiste, auch wenn sie umbricht.
-  const schalterleisteRef = useRef<HTMLDivElement | null>(null);
-  useLayoutEffect(() => {
-    const leiste = schalterleisteRef.current;
-    if (!leiste || typeof ResizeObserver === "undefined") return;
-    const setzen = () =>
-      leiste.parentElement?.style.setProperty("--aa-panel-oben", `${Math.max(96, leiste.offsetTop + leiste.offsetHeight + 12)}px`);
-    setzen();
-    const beobachter = new ResizeObserver(setzen);
-    beobachter.observe(leiste);
-    return () => beobachter.disconnect();
-  }, []);
   return (
     <section className="aa-livemap">
       {/* README §2 — no buttons here at all; every control lives in the
@@ -899,10 +836,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           </div>
         </div>
         <div className="aa-livemap__header-right">
-          <div className="bt-karte__umschalter bt-karte__umschalter--kopf" role="group" aria-label={t("bilder.karte.umschalter")}>
-            <button type="button" aria-pressed={!bildKarte.kugel} aria-label={t("bilder.karte.flach")} onClick={() => bildKarte.setKugel(false)}>{t("bilder.karte.karte")}</button>
-            <button type="button" aria-pressed={bildKarte.kugel} aria-label={t("bilder.karte.kugel_lang")} onClick={() => bildKarte.setKugel(true)}>{t("bilder.karte.kugel")}</button>
-          </div>
           <span className="aa-livemap__header-vacount">{t("livemap.header_va_count", { count: vaVisible.length })}</span>
           <span className="aa-livemap__header-clock">
             {clock}
@@ -913,358 +846,133 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
 
       <div className="aa-livemap__body">
         <div className="aa-livemap__map" ref={containerRef}>
-          {/* Kurzer Hinweis, wenn zu einem angeklickten Kollegen keine
-              Route vorliegt — sonst sähe der Klick aus, als täte er nichts. */}
-          {fremdeRouteHinweis && (
-            <div
-              role="status"
-              onClick={() => setFremdeRouteHinweis(null)}
-              style={{
-                position: "absolute",
-                // UNTER die Kartenschalter-Leiste, und darueber in der
-                // Stapelung. Bei `top: 12` + `zIndex: 5` lag der Hinweis
-                // hinter der Leiste (die hat `z-index: 500`, App.css) —
-                // fuer den Piloten sah es aus, als tue der Klick nichts,
-                // waehrend der Grund verdeckt darunter stand (Thomas,
-                // 20.09.2026). Die Leiste endet bei rund 76px.
-                top: 92,
-                left: "50%",
-                transform: "translateX(-50%)",
-                zIndex: 600,
-                background: "rgba(20,26,33,0.92)",
-                border: "1px solid var(--border, #2a3344)",
-                borderRadius: 8,
-                padding: "6px 12px",
-                fontSize: "0.8rem",
-                color: "var(--text-muted, #9aa4b2)",
-                cursor: "pointer",
+          {/* Festes Raster statt gemessener Abstände: Leiste oben, Panel darunter, Systemzeile unten.
+              Bricht die Leiste um, rückt alles von selbst nach. */}
+          <div className="aa-livemap-ui">
+            <KartenLeiste
+              satellit={basemap === "sat"}
+              setzeSatellit={(an) => setBasemap(an ? "sat" : "auto")}
+              kugel={bildKarte.kugel}
+              setzeKugel={bildKarte.setKugel}
+              trackUp={trackUp}
+              setzeTrackUp={setTrackUp}
+              showTrack={showTrack}
+              umschaltenTrack={() => setShowTrack((v) => !v)}
+              showTaxi={showTaxi}
+              umschaltenTaxi={() => setShowTaxi((v) => !v)}
+              taxiPlaetze={groundLoaded}
+              bilderMarken={bildKarte.marken}
+              bilderAn={bildKarte.bilderAn}
+              umschaltenBilder={() => bildKarte.setBilderAn((v) => !v)}
+              showVa={showVa}
+              umschaltenVa={() => setShowVa((v) => !v)}
+              netz={netz}
+              setzeNetz={setNetz}
+              flAuto={flModus === "auto"}
+              umschaltenFlAuto={() => setFlModus((m) => (m === "auto" ? "fest" : "auto"))}
+              flWert={flWert}
+              setzeFlWert={(fl) => { setFlModus("fest"); setFlWert(fl); }}
+              flRegelbar={!(flModus === "auto" && simSnapshot != null)}
+              flAnzeige={
+                flModus === "auto" && simSnapshot != null
+                  ? `FL${String(Math.max(0, Math.round((simSnapshot.altitude_msl_ft ?? 0) / 100))).padStart(3, "0")}`
+                  : `FL${String(flWert).padStart(3, "0")}`
+              }
+              hatFlug={!!activeFlight}
+              hatPosition={!!effAircraft}
+              folgen={follow}
+              umschaltenFolgen={() => {
+                const neu = !follow;
+                setFollow(neu);
+                followEngageRef.current = neu;
+                suppressRouteFitRef.current = neu;
               }}
-            >
-              {fremdeRouteHinweis}
-            </div>
-          )}
-          {/* README §3 — Kartenschalter-Block, one overlay container, four
-              named groups. Every switch shows its own state (bold/accent =
-              active) — the whole point is that today's unlabeled icon
-              buttons didn't. */}
-          <div ref={schalterleisteRef} className="aa-livemap-controls aa-livemap-overlay">
-            {/* Symbole statt Woerter: eine Ja/Nein-Entscheidung kostete
-                hier zwei breite Wörter plus Überschrift. Vertretbar, weil
-                bei einem Zweier-Umschalter immer eine Hälfte hell ist —
-                der Zustand bleibt eindeutig, anders als bei unabhängigen
-                Schaltern. Die Bedeutung trägt der Tooltip. */}
-            <div className="aa-livemap-controls__group">
-              <div className="aa-livemap-seg">
-                <button
-                  type="button"
-                  className={`aa-livemap-seg__btn ${basemap !== "sat" ? "aa-livemap-seg__btn--active" : ""}`}
-                  aria-pressed={basemap !== "sat"}
-                  aria-label={t("livemap.view_map")}
-                  title={t("livemap.view_map")}
-                  onClick={() => setBasemap("auto")}
-                >
-                  <Sym pfad={PFAD.karte} />
-                </button>
-                <button
-                  type="button"
-                  className={`aa-livemap-seg__btn ${basemap === "sat" ? "aa-livemap-seg__btn--active" : ""}`}
-                  aria-pressed={basemap === "sat"}
-                  aria-label={t("livemap.view_sat")}
-                  title={t("livemap.view_sat")}
-                  onClick={() => setBasemap("sat")}
-                >
-                  <Sym pfad={PFAD.satellit} />
-                </button>
-              </div>
-            </div>
+              zentrieren={() => {
+                const map = mapRef.current;
+                if (!map || !effAircraft) return;
+                followEngageRef.current = true;
+                suppressRouteFitRef.current = true;
+                setFollow(true);
+                const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
+                map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
+              }}
+            />
 
-            <div className="aa-livemap-controls__group">
-              <div className="aa-livemap-seg">
-                <button
-                  type="button"
-                  className={`aa-livemap-seg__btn ${!trackUp ? "aa-livemap-seg__btn--active" : ""}`}
-                  aria-pressed={!trackUp}
-                  aria-label={t("livemap.orient_north")}
-                  title={t("livemap.orient_north")}
-                  onClick={() => setTrackUp(false)}
-                >
-                  <Sym pfad={PFAD.norden} />
-                </button>
-                <button
-                  type="button"
-                  className={`aa-livemap-seg__btn ${trackUp ? "aa-livemap-seg__btn--active" : ""}`}
-                  aria-pressed={trackUp}
-                  onClick={() => setTrackUp(true)}
-                  aria-label={t("livemap.orient_track")}
-                  title={t("livemap.orient_track")}
-                >
-                  <Sym pfad={PFAD.kurs} />
-                </button>
+            {/* Kurzer Hinweis, wenn zu einem angeklickten Kollegen keine Route vorliegt: Sonst sähe
+                der Klick aus, als täte er nichts. */}
+            {fremdeRouteHinweis && (
+              <div role="status" className="aa-livemap-hinweis aa-livemap-overlay" onClick={() => setFremdeRouteHinweis(null)}>
+                {fremdeRouteHinweis}
               </div>
-            </div>
+            )}
 
-            <div className="aa-livemap-controls__group">
-              <div className="aa-livemap-controls__row">
-                {/* Symbol UND Wort immer, in beiden Zustaenden. Diese vier sind
-                    unabhaengige Ein/Aus-Schalter; der Zustand haengt allein an
-                    der Faerbung (--active) und aria-pressed. Das Wort nur im
-                    An-Zustand zu zeigen liess die Leiste beim Umschalten in der
-                    Breite springen ("werden immer groesser"), darum nicht. */}
-                <button
-                  type="button"
-                  className={`aa-livemap-toggle ${showTrack ? "aa-livemap-toggle--active" : ""}`}
-                  aria-pressed={showTrack}
-                  aria-label={t("livemap.layer_track")}
-                  title={t("livemap.layer_track")}
-                  onClick={() => setShowTrack((v) => !v)}
+            {showOwnContent && (
+              <FlugPanel
+                flug={activeFlight!}
+                phase={phaseLabel}
+                werte={{ hoehe: stats.alt, gs: stats.gs, rest: stats.dtg, eta: nav.eta, restNm: nav.dtgNm }}
+                ereignisse={<LiveMapEventList events={events} callsign={ident} onJumpTo={flyToPosition} />}
+              />
+            )}
+
+            {/* README §7 — System-Zeile, overlay bottom-left. Field feedback
+                (2026-08-03): the "Systemmeldungen (n)" count-link was replaced
+                by the actual recorder connection detail (last send, total
+                sent) — the same LiveRecordingIndicator the sidebar already
+                shows, so "what/when/how much are we sending" lives where the
+                pilot is actually looking, not behind a bare counter. */}
+            <div className="aa-livemap-sysline aa-livemap-overlay">
+              {/* Wie lange der letzte Netz-Durchlauf gebraucht hat, getrennt
+                  nach Holen und Zeichnen. Beim ersten Zuschalten dauert es
+                  20-25 s, und aus der Ferne war nicht zu klaeren, woran —
+                  also misst es sich selbst. */}
+              {netzZeit && (
+                <span
+                  className="aa-livemap-sysline__text"
+                  style={{ opacity: 0.7, fontVariantNumeric: "tabular-nums" }}
+                  title={t("livemap.netz_zeit_hint", "Holen der Daten und Zeichnen der Flächen beim letzten Durchlauf")}
                 >
-                  <Sym pfad={PFAD.track} />
-                  <span className="aa-livemap-toggle__wort">{t("livemap.layer_track")}</span>
-                </button>
-                <button
-                  type="button"
-                  className={`aa-livemap-toggle ${showTaxi ? "aa-livemap-toggle--active" : ""}`}
-                  aria-pressed={showTaxi}
-                  onClick={() => setShowTaxi((v) => !v)}
-                  title={
-                    // v0.21: which airports actually have taxi-map coverage —
-                    // used to be its own "TAXI" stat tile in the old 9-tile
-                    // header strip (now removed per the new chrome's 4-value
-                    // Flugwerte card); the underlying "pilot should know this
-                    // exists" reason from that comment still applies, so it
-                    // moved to this toggle's tooltip instead of disappearing.
-                    groundLoaded.length > 0 ? t("livemap.taxi_loaded", { airports: groundLoaded.join(" · ") }) : undefined
-                  }
-                  aria-label={t("livemap.layer_taxi")}
-                >
-                  <Sym pfad={PFAD.taxi} />
-                  <span className="aa-livemap-toggle__wort">{t("livemap.layer_taxi")}</span>
-                </button>
-                {bildKarte.marken > 0 && (
-                  <button
-                    type="button"
-                    className={`aa-livemap-toggle ${bildKarte.bilderAn ? "aa-livemap-toggle--active" : ""}`}
-                    aria-pressed={bildKarte.bilderAn}
-                    aria-label={t("livemap.layer_bilder")}
-                    title={t("livemap.layer_bilder")}
-                    onClick={() => bildKarte.setBilderAn((v) => !v)}
-                  >
-                    <Sym pfad={PFAD.bilder} />
-                    <span className="aa-livemap-toggle__wort">{t("livemap.layer_bilder")}</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className={`aa-livemap-toggle ${showVa ? "aa-livemap-toggle--active" : ""}`}
-                  aria-pressed={showVa}
-                  onClick={() => setShowVa((v) => !v)}
-                  aria-label={t("livemap.layer_va")}
-                  title={t("livemap.layer_va")}
-                >
-                  <Sym pfad={PFAD.va} />
-                  <span className="aa-livemap-toggle__wort">{t("livemap.layer_va")}</span>
-                </button>
-                {/* Netz-Umschalter statt zweier Schalter: so KANN nicht
-                    beides zugleich an sein. Zwei Netze uebereinander
-                    ergeben ein Bild, in dem niemand mehr erkennt, wer
-                    welchen Luftraum betreut. */}
-                <span className="aa-livemap-seg" role="group" aria-label={t("livemap.netz", "Netz")}>
-                  {(["aus", "vatsim", "ivao"] as const).map((wert) => (
-                    <button
-                      key={wert}
-                      type="button"
-                      className={`aa-livemap-seg__btn ${netz === wert ? "aa-livemap-seg__btn--active" : ""}`}
-                      aria-pressed={netz === wert}
-                      onClick={() => setNetz(wert)}
-                      title={
-                        wert === "aus"
-                          ? t("livemap.netz_aus_hint", "Kein Online-Netz anzeigen")
-                          : wert === "vatsim"
-                            ? t("livemap.layer_vatsim_hint", "Sektoren nach Höhe (VATGlasses, CC BY-NC-SA), Lotsen und fremde Piloten aus dem VATSIM-Netz")
-                            : t("livemap.netz_ivao_hint", "Lotsen, ATIS und fremde Piloten aus dem IVAO-Netz. Flächen aus den FIR-Grenzen — IVAO gibt keine eigenen Sektoren heraus.")
-                      }
-                    >
-                      {wert === "aus"
-                        ? t("livemap.netz_aus", "Aus")
-                        : wert === "vatsim"
-                          ? "VATSIM"
-                          : "IVAO"}
-                    </button>
-                  ))}
+                  {netzZeit.erster ? "Netz (erstmals): " : "Netz: "}
+                  {(netzZeit.abruf / 1000).toFixed(1)} s holen ·{" "}
+                  {netzZeit.zeichnen === null
+                    ? "zeichnet …"
+                    : `${(netzZeit.zeichnen / 1000).toFixed(1)} s zeichnen`}
                 </span>
-                {/* Nur bei VATSIM: IVAO liefert keine Hoehenbaender, dort
-                    gelten die Flaechen fuer den ganzen Luftraum — ein
-                    Regler ohne Wirkung waere eine Luege. */}
-                {netz === "vatsim" && (
-                  <span className="aa-livemap-flwahl">
-                    {/* Feldbefund: der Regler war hinter "eigene Hoehe"
-                        versteckt — ein Bedienelement, das man suchen muss,
-                        ist falsch gebaut. Jetzt IMMER sichtbar; "eigene
-                        Hoehe" schaltet ihn nur still, solange der Flug die
-                        Hoehe liefert. Ohne Sim-Verbindung gilt ohnehin der
-                        Regler, egal was der Knopf sagt. */}
-                    <button
-                      type="button"
-                      className={`aa-livemap-toggle ${flModus === "auto" ? "aa-livemap-toggle--active" : ""}`}
-                      onClick={() => setFlModus((m) => (m === "auto" ? "fest" : "auto"))}
-                      title={t("livemap.fl_auto_hint", "Sektoren auf der eigenen Flughöhe zeigen")}
-                    >
-                      {t("livemap.fl_auto", "eigene Höhe")}
-                    </button>
-                    <input
-                      type="range"
-                      min={0}
-                      max={450}
-                      step={10}
-                      value={flWert}
-                      disabled={flModus === "auto" && simSnapshot != null}
-                      onChange={(e) => { setFlModus("fest"); setFlWert(Number(e.target.value)); }}
-                      aria-label={t("livemap.fl_regler", "Flugfläche für die Sektoransicht")}
-                    />
-                    <span className="aa-livemap-flwahl__wert">
-                      {flModus === "auto" && simSnapshot != null
-                        ? `FL${String(Math.max(0, Math.round((simSnapshot.altitude_msl_ft ?? 0) / 100))).padStart(3, "0")}`
-                        : `FL${String(flWert).padStart(3, "0")}`}
-                    </span>
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="aa-livemap-controls__group">
-              <div className="aa-livemap-controls__row">
-                {/* Nur bei laufendem Flug — ohne einen hat es keine Wirkung,
-                    und ein abgeblendeter Knopf belegt trotzdem Platz. Als
-                    Fadenkreuz statt als Satz: die Wirkung ist sofort
-                    ersichtlich, sobald man ihn einmal benutzt hat. */}
-                {activeFlight && effAircraft && (
-                <button
-                  type="button"
-                  className="aa-livemap-toggle"
-                  aria-label={t("livemap.center_on_flight")}
-                  title={t("livemap.center_on_flight")}
-                  onClick={() => {
-                    const map = mapRef.current;
-                    if (!map || !effAircraft) return;
-                    followEngageRef.current = true;
-                    suppressRouteFitRef.current = true;
-                    setFollow(true);
-                    const tz = targetFollowZoom(activeFlight?.phase ?? "", simSnapshot?.altitude_msl_ft);
-                    map.easeTo({ center: [effAircraft.lon, effAircraft.lat], zoom: tz, duration: 500 });
-                  }}
-                >
-                  <Sym pfad={PFAD.zentrieren} />
-                </button>
-                )}
-                {/* "Folgen" (continuous camera tracking) isn't in the
-                    handoff's own control table — confirmed with the user
-                    that it stays as its own switch, distinct from the
-                    one-shot centering button above (see follow.test.tsx for
-                    why: it auto-disables on a real user pan, which the
-                    centering button doesn't need to know about). */}
-                {activeFlight && (
-                  <button
-                    type="button"
-                    className={`aa-livemap-toggle ${follow ? "aa-livemap-toggle--active" : ""}`}
-                    aria-pressed={follow}
-                    onClick={() => {
-                      const next = !follow;
-                      setFollow(next);
-                      followEngageRef.current = next;
-                      suppressRouteFitRef.current = next;
-                    }}
-                  >
-                    {t("livemap.follow")}
-                  </button>
-                )}
-              </div>
+              )}
+              <span className={`aa-livemap-sysline__dot aa-livemap-sysline__dot--${recorderState}`} aria-hidden="true" />
+              <span className="aa-livemap-sysline__text">
+                {recorderState === "off"
+                  ? t("livemap.sys_inactive")
+                  : t("livemap.sys_active", {
+                      sim: simKindLabel(simKind),
+                      uplink: recorderState === "ok" ? t("livemap.sys_uplink_ok") : t("livemap.sys_uplink_lost"),
+                    })}
+              </span>
+              {/* QS-Runde 5: `sichtbar` gehoert hier dazu, nicht nur `activeFlight`.
+                  LiveRecordingIndicator haelt einen eigenen Sekundentakt fuer sein
+                  "vor X Sekunden" — mit der dauerhaft eingehaengten Karte liefe
+                  der sonst den ganzen Flug lang in einem unsichtbaren Teilbaum.
+                  Verdeckt gar nicht erst einhaengen ist billiger als jede Sperre
+                  im Inneren, und beim Auftauchen steht sofort der aktuelle Wert. */}
+              {activeFlight && sichtbar && (
+                <>
+                  <span className="aa-livemap-sysline__sep" aria-hidden="true" />
+                  <LiveRecordingIndicator
+                    lastPositionAt={activeFlight.last_position_at}
+                    queuedCount={activeFlight.queued_position_count}
+                    positionCount={activeFlight.position_count}
+                    connectionState={
+                      activeFlight.connection_state === "blocked"
+                        ? "blocked"
+                        : activeFlight.connection_state === "failing"
+                          ? "failing"
+                          : "live"
+                    }
+                  />
+                </>
+              )}
             </div>
           </div>
-
-          {showOwnContent && (
-            <div className="aa-livemap-panel">
-              {/* README §4.1 — Flugwerte card. */}
-              <div className="aa-livemap-flightcard aa-livemap-overlay">
-                <div className="aa-livemap-flightcard__head">
-                  <span className="aa-livemap-flightcard__rubric">{t("livemap.own_flight")}</span>
-                  <span className="aa-livemap-flightcard__live">{t("livemap.live")}</span>
-                </div>
-                <div className="aa-livemap-flightcard__route">
-                  <span className="aa-livemap-flightcard__airport">{activeFlight!.dpt_airport}</span>
-                  <span className="aa-livemap-flightcard__arrow" aria-hidden="true">→</span>
-                  <span className="aa-livemap-flightcard__airport">{activeFlight!.arr_airport}</span>
-                </div>
-                <div className="aa-livemap-flightcard__bar">
-                  <div
-                    className="aa-livemap-flightcard__bar-fill"
-                    style={{
-                      width: `${
-                        activeFlight!.distance_nm && nav.dtgNm != null
-                          ? Math.min(100, Math.max(0, ((activeFlight!.distance_nm - nav.dtgNm) / activeFlight!.distance_nm) * 100))
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
-                <div className="aa-livemap-flightcard__grid">
-                  {/* Field feedback (2026-08-03): phase used to be tucked
-                      into the footer as a small 12px dim caption next to
-                      the aircraft type/registration — technically present
-                      but easy to miss next to the bold 22px stat values
-                      here, so it didn't read as "a data field" at all.
-                      Promoted to its own full-width row, same label/value
-                      styling as the other stats (colored via phaseColor()
-                      like the aircraft marker itself, for a quick visual
-                      match). */}
-                  <div className="aa-livemap-flightcard__phase-row">
-                    <span className="aa-livemap-flightcard__label">{t("livemap.field_phase")}</span>
-                    <span
-                      className="aa-livemap-flightcard__value"
-                      style={{ color: phaseColor(activeFlight?.phase) }}
-                    >
-                      {phaseLabel}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="aa-livemap-flightcard__label">{t("livemap.field_alt")}</span>
-                    <span className="aa-livemap-flightcard__value">{stats.alt}</span>
-                  </div>
-                  <div>
-                    <span className="aa-livemap-flightcard__label">{t("livemap.field_gs")}</span>
-                    <span className="aa-livemap-flightcard__value">{stats.gs}</span>
-                  </div>
-                  <div>
-                    <span className="aa-livemap-flightcard__label">{t("livemap.field_rest")}</span>
-                    <span className="aa-livemap-flightcard__value">{stats.dtg}</span>
-                  </div>
-                  <div>
-                    <span className="aa-livemap-flightcard__label">{t("livemap.field_eta")}</span>
-                    <span className="aa-livemap-flightcard__value">{nav.eta}</span>
-                  </div>
-                </div>
-                <div className="aa-livemap-flightcard__foot">
-                  {/* README §4.1 wants "Muster + Registrierung" left. Uses
-                      `activeFlight`'s own phpVMS-sourced `aircraft_name`/
-                      `aircraft_icao` + `planned_registration` — not the live
-                      SIM snapshot (whatever's loaded in the sim isn't
-                      necessarily what phpVMS actually planned/booked). Phase
-                      moved to its own row in the grid above (see comment
-                      there) — this footer is single-purpose again. */}
-                  <span>
-                    {[activeFlight!.aircraft_name || activeFlight!.aircraft_icao, activeFlight!.planned_registration]
-                      .filter(Boolean)
-                      .join(" · ") || "—"}
-                  </span>
-                </div>
-              </div>
-
-              <LiveMapEventList
-                events={events}
-                callsign={ident}
-                onJumpTo={flyToPosition}
-              />
-            </div>
-          )}
 
           {/* Field feedback (2026-08-03): this card used to be shown whenever
               there was no own flight, VA traffic or not — it visibly blocked
@@ -1278,63 +986,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
             <LiveMapEmptyState next={next} onGoToBriefing={onSwitchToBriefing} />
           )}
 
-          {/* README §7 — System-Zeile, overlay bottom-left. Field feedback
-              (2026-08-03): the "Systemmeldungen (n)" count-link was replaced
-              by the actual recorder connection detail (last send, total
-              sent) — the same LiveRecordingIndicator the sidebar already
-              shows, so "what/when/how much are we sending" lives where the
-              pilot is actually looking, not behind a bare counter. */}
-          <div className="aa-livemap-sysline aa-livemap-overlay">
-            {/* Wie lange der letzte Netz-Durchlauf gebraucht hat, getrennt
-                nach Holen und Zeichnen. Beim ersten Zuschalten dauert es
-                20-25 s, und aus der Ferne war nicht zu klaeren, woran —
-                also misst es sich selbst. */}
-            {netzZeit && (
-              <span
-                className="aa-livemap-sysline__text"
-                style={{ opacity: 0.7, fontVariantNumeric: "tabular-nums" }}
-                title={t("livemap.netz_zeit_hint", "Holen der Daten und Zeichnen der Flächen beim letzten Durchlauf")}
-              >
-                {netzZeit.erster ? "Netz (erstmals): " : "Netz: "}
-                {(netzZeit.abruf / 1000).toFixed(1)} s holen ·{" "}
-                {netzZeit.zeichnen === null
-                  ? "zeichnet …"
-                  : `${(netzZeit.zeichnen / 1000).toFixed(1)} s zeichnen`}
-              </span>
-            )}
-            <span className={`aa-livemap-sysline__dot aa-livemap-sysline__dot--${recorderState}`} aria-hidden="true" />
-            <span className="aa-livemap-sysline__text">
-              {recorderState === "off"
-                ? t("livemap.sys_inactive")
-                : t("livemap.sys_active", {
-                    sim: simKindLabel(simKind),
-                    uplink: recorderState === "ok" ? t("livemap.sys_uplink_ok") : t("livemap.sys_uplink_lost"),
-                  })}
-            </span>
-            {/* QS-Runde 5: `sichtbar` gehoert hier dazu, nicht nur `activeFlight`.
-                LiveRecordingIndicator haelt einen eigenen Sekundentakt fuer sein
-                "vor X Sekunden" — mit der dauerhaft eingehaengten Karte liefe
-                der sonst den ganzen Flug lang in einem unsichtbaren Teilbaum.
-                Verdeckt gar nicht erst einhaengen ist billiger als jede Sperre
-                im Inneren, und beim Auftauchen steht sofort der aktuelle Wert. */}
-            {activeFlight && sichtbar && (
-              <>
-                <span className="aa-livemap-sysline__sep" aria-hidden="true" />
-                <LiveRecordingIndicator
-                  lastPositionAt={activeFlight.last_position_at}
-                  queuedCount={activeFlight.queued_position_count}
-                  positionCount={activeFlight.position_count}
-                  connectionState={
-                    activeFlight.connection_state === "blocked"
-                      ? "blocked"
-                      : activeFlight.connection_state === "failing"
-                        ? "failing"
-                        : "live"
-                  }
-                />
-              </>
-            )}
-          </div>
         </div>
       </div>
       {bildKarte.gross && <BildGross bilder={bildKarte.gross.bilder} startId={bildKarte.gross.id} onZu={bildKarte.grossZu} />}

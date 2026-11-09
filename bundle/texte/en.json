@@ -3434,6 +3434,8 @@
     "taxi_loaded": "Taxi maps loaded: {{airports}}",
     "group_map": "MAP",
     "center_on_flight": "Center on flight",
+    "panel_auf": "Expand panel",
+    "panel_zu": "Collapse panel",
     "follow": "Follow",
     "own_flight": "OWN FLIGHT",
     "live": "LIVE",
