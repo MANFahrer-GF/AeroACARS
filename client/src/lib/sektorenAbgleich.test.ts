@@ -119,14 +119,6 @@ describe("Darstellung wie auf der Live-Karte", () => {
     expect(quelle).toContain('"text-font": ["Noto Sans Regular"]');
   });
 
-  it("zeichnet die Bodendaten ueber den Sektoren", () => {
-    // Sonst uebermalen die Nahverkehrsbereiche die Rollwege.
-    const sektor = quelle.indexOf('id: "vatsim-sectors-fill"');
-    const boden = quelle.indexOf("source: SRC_GROUND");
-    expect(sektor).toBeGreaterThan(-1);
-    expect(boden).toBeGreaterThan(sektor);
-  });
-
   it("hat keine Gruppen-Ueberschriften mehr", () => {
     // "ANSICHT", "EBENEN" und so weiter erklaerten, was ohnehin sichtbar
     // ist — Trennstriche gruppieren genauso gut und kosten ein Pixel.

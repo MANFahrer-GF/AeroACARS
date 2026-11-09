@@ -472,3 +472,37 @@ describe("Datumsgrenze im Kartenausschnitt", () => {
     );
   });
 });
+
+describe("Bodendaten: Lade-Schwelle", () => {
+  async function karteBeiZoom(zoom: number) {
+    h.zoom = zoom;
+    h.ausschnitt = { s: 49, n: 51, w: 7, o: 10 };
+    h.mitte = { lng: 8.57, lat: 50.03 };
+    h.invokeAntworten = {
+      va_live_flights: [],
+      airport_ground_index: [{ icao: "EDDF", lat: 50.03, lon: 8.57 }],
+      airport_ground_get: null,
+    };
+    const { LiveMapView } = await import("./LiveMapView");
+    await act(async () => {
+      render(<LiveMapView />);
+    });
+    // Ohne geladenen Index prueft die Karte gar nichts; erst danach sagt das Ausbleiben etwas aus.
+    await waitFor(
+      () => expect(h.invokeRufe.some((r) => r.cmd === "airport_ground_index")).toBe(true),
+      { timeout: 3000 },
+    );
+    await act(async () => {
+      await new Promise((fertig) => setTimeout(fertig, 50));
+    });
+    return h.invokeRufe.filter((r) => r.cmd === "airport_ground_get").map((r) => r.args?.icao);
+  }
+
+  it("laedt ab Zoom 11", async () => {
+    expect(await karteBeiZoom(11)).toEqual(["EDDF"]);
+  });
+
+  it("laedt darunter noch nicht", async () => {
+    expect(await karteBeiZoom(10.9)).toEqual([]);
+  });
+});
