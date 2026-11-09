@@ -18,14 +18,15 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act, cleanup, waitFor } from "@testing-library/react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { karteQuelltext } from "./livekarte/quelltext.testhilfe";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../../../bundle/texte/de.json";
 
 const h = vi.hoisted(() => ({
-  marker: [] as Array<{ el: HTMLElement }>,
+  marker: [] as Array<{ el: HTMLElement; lngLat: [number, number] | null; rotation: number | null; entfernt: boolean }>,
+  // Jede Infokarte mit allem, was die Karte ihr gesagt hat: setHTML ist kein Leerlauf mehr.
+  popups: [] as Array<{ html: string[]; lngLat: [number, number] | null; offen: boolean }>,
   quellen: {} as Record<string, { type: string; features: unknown[] }>,
   invokeAntworten: {} as Record<string, unknown>,
   invokeRufe: [] as Array<{ cmd: string; args?: Record<string, unknown> }>,
@@ -53,21 +54,26 @@ vi.mock("../lib/ipc", () => ({
 vi.mock("maplibre-gl", () => {
   class FakeMarker {
     el: HTMLElement;
+    lngLat: [number, number] | null = null;
+    rotation: number | null = null;
+    entfernt = false;
     constructor(opts?: { element?: HTMLElement }) {
       this.el = opts?.element ?? document.createElement("div");
       h.marker.push(this);
     }
-    setLngLat() { return this; }
-    setRotation() { return this; }
+    setLngLat(ll: [number, number]) { this.lngLat = ll; return this; }
+    setRotation(r: number) { this.rotation = r; return this; }
     addTo() { return this; }
-    remove() { return this; }
+    remove() { this.entfernt = true; return this; }
     getElement() { return this.el; }
   }
   class FakePopup {
-    setLngLat() { return this; }
-    setHTML() { return this; }
-    addTo() { h.popupsOffen += 1; return this; }
-    remove() { if (h.popupsOffen > 0) h.popupsOffen -= 1; return this; }
+    rec = { html: [] as string[], lngLat: null as [number, number] | null, offen: false };
+    constructor() { h.popups.push(this.rec); }
+    setLngLat(ll: [number, number]) { this.rec.lngLat = ll; return this; }
+    setHTML(html: string) { this.rec.html.push(html); return this; }
+    addTo() { h.popupsOffen += 1; this.rec.offen = true; return this; }
+    remove() { if (h.popupsOffen > 0) h.popupsOffen -= 1; this.rec.offen = false; return this; }
     on() { return this; }
   }
   class FakeBounds {
@@ -80,7 +86,7 @@ vi.mock("maplibre-gl", () => {
     zoom = 4;
     addControl() { return this; }
     on(ev: string, cb: (e?: unknown) => void) {
-      if (ev === "load" || ev === "styledata") cb();
+      if (ev === "load") cb();
       return this;
     }
     once() { return this; }
@@ -94,7 +100,6 @@ vi.mock("maplibre-gl", () => {
     getCenter() { return h.mitte; }
     getZoom() { return h.zoom; }
     isStyleLoaded() { return true; }
-    setStyle() { return this; }
     // Quellen und Ebenen entstehen erst durch addSource/addLayer.
     //
     // Der erste Nachbau meldete auf `getSource`/`getLayer` IMMER etwas —
@@ -121,6 +126,7 @@ vi.mock("maplibre-gl", () => {
     getLayer(id: string) {
       return h.ebenen.has(id) ? { id } : undefined;
     }
+    setPaintProperty() { return this; }
     setLayoutProperty(id: string, _n: string, wert: string) {
       h.sichtbarkeit[id] = wert;
       return this;
@@ -193,10 +199,12 @@ async function karteMitKollege(routeAntwort: unknown) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("fetch", () => new Promise(() => {})); // Stile der Grundkarte: eigener Test
   h.marker = [];
   h.quellen = {};
   h.invokeRufe = [];
   h.popupsOffen = 0;
+  h.popups = [];
   h.sichtbarkeit = {};
   h.ebenen = new Set<string>();
   h.ausschnitt = { s: 40, n: 60, w: 0, o: 20 };
@@ -204,7 +212,7 @@ beforeEach(() => {
   h.zoom = 4;
   h.einpassungen = [];
 });
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("Klick auf einen Kollegen", () => {
   it("fragt die Route unter seiner Kennung ab", async () => {
@@ -346,6 +354,25 @@ describe("Klick auf einen Kollegen", () => {
     });
   });
 
+  it("baut die Kollegen-Marke beim naechsten Abruf nicht neu (Tablet: Tippen trifft)", async () => {
+    const takt = vi.spyOn(globalThis, "setInterval");
+    await karteMitKollege([P1, P2]);
+    const vorher = kollegenMarker();
+    const abruf = takt.mock.calls.find((c) => c[1] === 8000)?.[0] as () => void;
+    expect(abruf).toBeTypeOf("function");
+    h.invokeAntworten.va_live_flights = [
+      { ...KOLLEGE, position: { ...KOLLEGE.position, lat: 61 } },
+    ];
+    await act(async () => {
+      abruf();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    takt.mockRestore();
+    expect(kollegenMarker()).toBe(vorher);
+    expect(h.marker.filter((m) => m.el.className.includes("aa-ac-marker--va"))).toHaveLength(1);
+  });
+
   it("schaltet beim zweiten Klick auch die Infokarte wieder zu", async () => {
     // Vorher ging sie erneut auf und verdeckte die Route, und man musste
     // woanders hinklicken, um sie loszuwerden.
@@ -383,16 +410,13 @@ describe("Klick auf einen Kollegen", () => {
     // Sonst bleibt sie beim Ausschalten stehen. Der Vergleich laeuft
     // gegen den Quelltext, weil ein Rendertest eine Ebene, die es noch
     // nicht gibt, nicht kennen kann.
-    const quelle = readFileSync(
-      resolve(__dirname, "LiveMapView.tsx"),
-      "utf8",
-    );
+    const quelle = karteQuelltext();
     const angelegt = [...quelle.matchAll(/id: "(fremde-routen-[a-z-]+)"/g)].map(
       (m) => m[1],
     );
     const listeRoh = quelle.slice(
       quelle.indexOf("const FREMDE_ROUTEN_EBENEN"),
-      quelle.indexOf("const TRACK_LAYERS"),
+      quelle.indexOf("];", quelle.indexOf("const FREMDE_ROUTEN_EBENEN")),
     );
     const gefuehrt = [...listeRoh.matchAll(/"(fremde-routen-[a-z-]+)"/g)].map(
       (m) => m[1],
@@ -413,8 +437,8 @@ describe("Klick auf einen Kollegen", () => {
     });
     const hinweis = await screen.findByRole("status");
     expect(hinweis.textContent).toMatch(/keine Route/i);
-    // Und er muss oben drauf liegen: Die Leiste traegt z-index 500.
-    expect(Number(hinweis.style.zIndex)).toBeGreaterThan(500);
+    // Und er steht im Raster unter der Leiste (Lage: LiveMapView.hinweis.test.ts).
+    expect(hinweis.className).toContain("aa-livemap-hinweis");
   });
 });
 
@@ -454,5 +478,230 @@ describe("Datumsgrenze im Kartenausschnitt", () => {
         ).toBe(true),
       { timeout: 3000 },
     );
+  });
+});
+
+describe("Bodendaten: Lade-Schwelle", () => {
+  async function karteBeiZoom(zoom: number) {
+    h.zoom = zoom;
+    h.ausschnitt = { s: 49, n: 51, w: 7, o: 10 };
+    h.mitte = { lng: 8.57, lat: 50.03 };
+    h.invokeAntworten = {
+      va_live_flights: [],
+      airport_ground_index: [{ icao: "EDDF", lat: 50.03, lon: 8.57 }],
+      airport_ground_get: null,
+    };
+    const { LiveMapView } = await import("./LiveMapView");
+    await act(async () => {
+      render(<LiveMapView />);
+    });
+    // Ohne geladenen Index prueft die Karte gar nichts; erst danach sagt das Ausbleiben etwas aus.
+    await waitFor(
+      () => expect(h.invokeRufe.some((r) => r.cmd === "airport_ground_index")).toBe(true),
+      { timeout: 3000 },
+    );
+    await act(async () => {
+      await new Promise((fertig) => setTimeout(fertig, 50));
+    });
+    return h.invokeRufe.filter((r) => r.cmd === "airport_ground_get").map((r) => r.args?.icao);
+  }
+
+  it("laedt ab Zoom 11", async () => {
+    expect(await karteBeiZoom(11)).toEqual(["EDDF"]);
+  });
+
+  it("laedt darunter noch nicht", async () => {
+    expect(await karteBeiZoom(10.9)).toEqual([]);
+  });
+});
+
+// ── Abnahmeliste D1, D2, D4, D5: die Kollegen auf der Karte, durch die Komponente ────────────
+describe("VA-Verkehr: Abnahme D1, D2, D4, D5", () => {
+  const ZWEITER = {
+    ...KOLLEGE, id: "PIREP-ZWEITER", ident: "GSG9",
+    position: { lat: 52.0, lon: 9.0, gs: 10, heading: 90 }, // rollt: wird nicht fortgeschrieben
+  };
+  const lebendeVa = () => h.marker.filter((m) => m.el.className.includes("aa-ac-marker--va") && !m.entfernt);
+  const linien = () =>
+    (h.quellen["fremde-routen"]?.features ?? []).filter((x) => (x as { geometry: { type: string } }).geometry.type === "LineString") as Array<{ properties: { pirep_id: string } }>;
+  const eigenerFlug = {
+    pirep_id: "PIREP-KOLLEGE", airline_icao: "SKY", flight_number: "4084", dpt_airport: "ENGM", arr_airport: "ENEV",
+    phase: "cruise", distance_nm: 10, was_just_resumed: false,
+  };
+  async function fluss(ms = 20) {
+    await act(async () => { await new Promise((r) => setTimeout(r, ms)); });
+  }
+  /** Karte mit Kollegen; die Takte der Karte und die Uhr stehen unter der Kontrolle des Tests. */
+  async function startMitUhr(kollegen: unknown[], props: Record<string, unknown> = {}) {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(new Date("2026-11-09T10:00:00Z"));
+    h.invokeAntworten = { va_live_flights: kollegen, fremde_flugroute: [P1, P2], activity_log_get: [], hoppie_get_thread: [] };
+    const { LiveMapView } = await import("./LiveMapView");
+    await act(async () => { render(<LiveMapView {...(props as object)} />); });
+    await fluss();
+  }
+  const abrufe = () => h.invokeRufe.filter((r) => r.cmd === "va_live_flights").length;
+
+  it("D1: ruft die Kollegen alle 8 Sekunden ab, nicht frueher", async () => {
+    await startMitUhr([KOLLEGE]);
+    expect(abrufe()).toBe(1);
+    await act(async () => { vi.advanceTimersByTime(7_999); });
+    await fluss();
+    expect(abrufe()).toBe(1);
+    await act(async () => { vi.advanceTimersByTime(1); });
+    await fluss();
+    expect(abrufe()).toBe(2);
+  });
+
+  it("D1: zeigt den eigenen Flug nicht doppelt, nur die anderen Kollegen", async () => {
+    await startMitUhr([KOLLEGE, ZWEITER], { activeFlight: eigenerFlug, simSnapshot: null });
+    expect(lebendeVa()).toHaveLength(1);
+    expect(lebendeVa()[0].el.title).toContain("GSG9");
+  });
+
+  it("D1: rechnet die Kollegen zwischen den Abrufen mit Kurs und Geschwindigkeit weiter und rastet beim naechsten Abruf ein", async () => {
+    await startMitUhr([KOLLEGE, ZWEITER]);
+    const [schnell, langsam] = lebendeVa();
+    expect(schnell.lngLat).toEqual([11.1, 60.2]);
+    expect(schnell.rotation).toBe(20);
+    // 5 s mit 420 kt auf 020°: 0,5833 nm, davon 0,0091° nach Norden und 0,0067° nach Osten.
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    expect(schnell.lngLat![0]).toBeCloseTo(11.1066908, 4);
+    expect(schnell.lngLat![1]).toBeCloseTo(60.2091359, 4);
+    expect(langsam.lngLat, "unter 30 kt wird nicht fortgeschrieben").toEqual([9.0, 52.0]);
+    // Der naechste Abruf nennt die wahre Position, die Marke rastet darauf ein.
+    h.invokeAntworten.va_live_flights = [{ ...KOLLEGE, position: { ...KOLLEGE.position, lat: 60.5, heading: 45 } }, ZWEITER];
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    await fluss();
+    expect(schnell.lngLat).toEqual([11.1, 60.5]);
+    expect(schnell.rotation).toBe(45);
+  });
+
+  it("D2: die Infokarte nennt Rufzeichen, Pilot, Route, Phase, Hoehe, GS, ETA und Muster", async () => {
+    // Zielplatz genau 1° nördlich: 60 nm bei 420 kt = 9 Minuten nach 10:00z.
+    h.invokeAntworten = {
+      va_live_flights: [{
+        ...KOLLEGE, user: { name: "Kari Nordmann" }, aircraft: { icao: "A319", registration: "D-ABCD" },
+        position: { lat: 60.2, lon: 11.1, gs: 420, heading: 20, altitude_msl: 36000 },
+      }],
+      fremde_flugroute: [P1, P2],
+      airport_get: { lat: 61.2, lon: 11.1 },
+    };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-09T10:00:00Z"));
+    const { LiveMapView } = await import("./LiveMapView");
+    await act(async () => { render(<LiveMapView />); });
+    await waitFor(() => expect(kollegenMarker()).not.toBeNull(), { timeout: 3000 });
+    await act(async () => { kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await fluss();
+    const karte = h.popups[0];
+    expect(h.popups).toHaveLength(1);
+    expect(karte.lngLat).toEqual([11.1, 60.2]);
+    // Zuerst ohne ETA ("—"), weil der Zielplatz erst nachgeschlagen wird ...
+    expect(karte.html[0]).toContain('ETA</span><span class="aa-vapop__v">—');
+    // ... dann mit allem.
+    const html = karte.html.at(-1)!;
+    for (const teil of ["SK4084", "Kari Nordmann", "ENGM", "ENEV", "Cruise", "FL360", ">420<", "A319 · D-ABCD"]) expect(html, teil).toContain(teil);
+    expect(html).toContain('ETA</span><span class="aa-vapop__v">10:09z');
+  });
+
+  it.each([
+    ["en", "ALT"],
+    ["it", "QUOTA"],
+  ])("G8: die Infokarte des Kollegen beschriftet die Hoehe in der Sprache %s", async (sprache, hoehe) => {
+    await i18next.changeLanguage(sprache);
+    try {
+      await karteMitKollege([P1, P2]);
+      await act(async () => { kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await fluss();
+      const html = h.popups[0].html.at(-1)!;
+      expect(html).toContain(`${hoehe}</span><span class="aa-vapop__v">`);
+      expect(html).not.toContain("HÖHE");
+    } finally {
+      await i18next.changeLanguage("de");
+    }
+  });
+
+  it("D2: die offene Infokarte folgt dem Kollegen beim Neuaufbau und schliesst, wenn er weg ist", async () => {
+    const takt = vi.spyOn(globalThis, "setInterval");
+    await karteMitKollege([P1, P2]);
+    const abruf = takt.mock.calls.find((c) => c[1] === 8000)?.[0] as () => void;
+    takt.mockRestore();
+    await act(async () => { kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const karte = h.popups[0];
+    expect(karte.html.at(-1)).toContain('HÖHE</span><span class="aa-vapop__v">—'); // noch ohne Hoehe
+    h.invokeAntworten.va_live_flights = [{ ...KOLLEGE, position: { ...KOLLEGE.position, lat: 60.6, altitude_msl: 35000 } }];
+    await act(async () => { abruf(); await Promise.resolve(); await Promise.resolve(); });
+    await fluss();
+    expect(h.popups, "dieselbe Infokarte, nicht eine neue").toHaveLength(1);
+    expect(karte.lngLat).toEqual([11.1, 60.6]);
+    expect(karte.html.at(-1)).toContain("FL350");
+    // Der Kollege ist gelandet, ein anderer fliegt noch: die Infokarte schliesst trotzdem.
+    h.invokeAntworten.va_live_flights = [ZWEITER];
+    await act(async () => { abruf(); await Promise.resolve(); await Promise.resolve(); });
+    await fluss();
+    expect(karte.offen).toBe(false);
+  });
+
+  /** Beide Kollegen anklicken; danach liegen zwei Routen auf der Karte. */
+  async function zweiRouten() {
+    const takt = vi.spyOn(globalThis, "setInterval");
+    h.invokeAntworten = { va_live_flights: [KOLLEGE, ZWEITER], fremde_flugroute: [P1, P2] };
+    const { LiveMapView } = await import("./LiveMapView");
+    await act(async () => { render(<LiveMapView />); });
+    await waitFor(() => expect(lebendeVa()).toHaveLength(2), { timeout: 3000 });
+    const abruf = takt.mock.calls.find((c) => c[1] === 8000)?.[0] as () => void;
+    takt.mockRestore();
+    for (const m of lebendeVa()) await act(async () => { m.el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await waitFor(() => expect(linien()).toHaveLength(2));
+    const poll = async () => { await act(async () => { abruf(); await Promise.resolve(); await Promise.resolve(); }); await fluss(); };
+    return { poll };
+  }
+
+  it("D4: ein gelandeter Kollege verliert seine Route, ein fliegender behaelt sie, auch der letzte raeumt auf", async () => {
+    const { poll } = await zweiRouten();
+    h.invokeAntworten.va_live_flights = [ZWEITER];
+    await poll();
+    expect(linien().map((l) => l.properties.pirep_id)).toEqual(["PIREP-ZWEITER"]);
+    h.invokeAntworten.va_live_flights = [];
+    await poll();
+    expect(linien()).toHaveLength(0);
+  });
+
+  it("D4: ein fehlgeschlagener Abruf laesst die Routen stehen", async () => {
+    const { poll } = await zweiRouten();
+    h.invokeAntworten.va_live_flights = new Error("Netz weg");
+    await poll();
+    expect(linien()).toHaveLength(2);
+  });
+
+  it("D4: Ausschalten und Wiedereinschalten laesst die Routen stehen", async () => {
+    await zweiRouten();
+    const schalter = screen.getByRole("button", { name: /VA-Verkehr/i });
+    await act(async () => { schalter.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await fluss();
+    expect(linien(), "aus").toHaveLength(2);
+    await act(async () => { schalter.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await fluss();
+    expect(linien(), "wieder an").toHaveLength(2);
+    expect(lebendeVa(), "die Kollegen sind wieder da").toHaveLength(2);
+  });
+
+  it("D5: der Schalter VA-Verkehr nimmt Marken und Infokarte weg und bringt sie mit den Routen zurueck", async () => {
+    await karteMitKollege([P1, P2]);
+    await act(async () => { kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await waitFor(() => expect(linien()).toHaveLength(1));
+    expect(lebendeVa()).toHaveLength(1);
+    expect(h.popupsOffen).toBe(1);
+    const schalter = screen.getByRole("button", { name: /VA-Verkehr/i });
+    await act(async () => { schalter.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await waitFor(() => expect(lebendeVa()).toHaveLength(0));
+    expect(h.popupsOffen).toBe(0);
+    expect(h.sichtbarkeit["fremde-routen-line"]).toBe("none");
+    await act(async () => { schalter.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await waitFor(() => expect(lebendeVa()).toHaveLength(1));
+    expect(h.sichtbarkeit["fremde-routen-line"]).toBe("visible");
+    expect(h.sichtbarkeit["fremde-routen-punkte"]).toBe("visible");
+    expect(h.sichtbarkeit["fremde-routen-namen"]).toBe("visible");
   });
 });

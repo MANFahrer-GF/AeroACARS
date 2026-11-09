@@ -7,7 +7,7 @@
  *  Seitdem holt auch der Client alles und filtert selbst.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { karteQuelltext } from "../components/livekarte/quelltext.testhilfe";
 
 const holen = vi.fn();
 vi.mock("./ipc", () => ({
@@ -43,7 +43,7 @@ describe("Sektor-Abruf", () => {
 describe("Kartenbild", () => {
   // Pfad ab dem Projektordner: `import.meta.url` ist unter dem
   // Test-Werkzeug keine Datei-Adresse.
-  const quelle = readFileSync("src/components/LiveMapView.tsx", "utf8");
+  const quelle = karteQuelltext();
 
   it("holt alle Hoehenbaender statt einer Flugflaeche", () => {
     // Auf die Absicht pruefen, nicht auf die Schreibweise: der Aufruf ist
@@ -82,7 +82,7 @@ describe("Kartenbild", () => {
   it("zeigt die Hoehenwahl nur bei VATSIM", () => {
     // IVAO liefert keine Hoehenbaender — ein Regler ohne Wirkung waere
     // eine Luege.
-    expect(quelle).toContain('{netz === "vatsim" && (');
+    expect(quelle).toContain('{p.netz === "vatsim" && (');
   });
 
   it("filtert die Hoehe auf der Karte", () => {
@@ -106,7 +106,7 @@ describe("Darstellung wie auf der Live-Karte", () => {
   // Client malte jeden Platz als dunklen Punkt mit tuerkisem Rand, die
   // Live-Karte faerbt nach Stationsart. Weicht hier etwas ab, sieht der
   // Pilot etwas anderes als der Beobachter.
-  const quelle = readFileSync("src/components/LiveMapView.tsx", "utf8");
+  const quelle = karteQuelltext();
 
   it("faerbt Plaetze nach Stationsart", () => {
     expect(quelle).toContain('"twr", "#38bdf8"');
@@ -119,14 +119,6 @@ describe("Darstellung wie auf der Live-Karte", () => {
     expect(quelle).toContain('"text-font": ["Noto Sans Regular"]');
   });
 
-  it("zeichnet die Bodendaten ueber den Sektoren", () => {
-    // Sonst uebermalen die Nahverkehrsbereiche die Rollwege.
-    const sektor = quelle.indexOf('id: "vatsim-sectors-fill"');
-    const boden = quelle.indexOf("source: SRC_GROUND");
-    expect(sektor).toBeGreaterThan(-1);
-    expect(boden).toBeGreaterThan(sektor);
-  });
-
   it("hat keine Gruppen-Ueberschriften mehr", () => {
     // "ANSICHT", "EBENEN" und so weiter erklaerten, was ohnehin sichtbar
     // ist — Trennstriche gruppieren genauso gut und kosten ein Pixel.
@@ -136,7 +128,9 @@ describe("Darstellung wie auf der Live-Karte", () => {
   it("zeigt Zentrieren nur bei laufendem Flug", () => {
     // Ohne Flug hat es keine Wirkung, ein abgeblendeter Knopf belegt
     // trotzdem Platz.
-    expect(quelle).toContain("{activeFlight && effAircraft && (");
+    expect(quelle).toMatch(/hatFlug=\{!!activeFlight\}/);
+    expect(quelle).toMatch(/\{p\.hatFlug && \(/);
+    expect(quelle).toMatch(/\{p\.hatPosition && \(/);
   });
 
   it("nutzt die abgestimmten Symbole aus dem Tabler-Satz", () => {

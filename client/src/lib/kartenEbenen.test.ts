@@ -10,8 +10,7 @@
 // Sektoren, keine Lotsen, keine Türme, nur noch Verkehr. Der Test
 // verhindert die Wiederholung, indem er die Quelldatei selbst prüft.
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { karteQuelltext } from "../components/livekarte/quelltext.testhilfe";
 
 /** Eigenschaften, die in MapLibre KEINE datengetriebenen Ausdrücke
  *  annehmen — ein `case`/`get`/`has` darin lässt addLayer werfen. */
@@ -25,10 +24,9 @@ const OHNE_AUSDRUECKE = [
 
 // Vom Projektwurzelverzeichnis aus — der Test läuft unter vitest, das
 // die Wurzel als Arbeitsverzeichnis setzt.
-const QUELLE = resolve(process.cwd(), "src/components/LiveMapView.tsx");
 
 describe("Kartenebenen", () => {
-  const text = readFileSync(QUELLE, "utf8");
+  const text = karteQuelltext();
 
   for (const eigenschaft of OHNE_AUSDRUECKE) {
     it(`"${eigenschaft}" bekommt keinen Ausdruck`, () => {

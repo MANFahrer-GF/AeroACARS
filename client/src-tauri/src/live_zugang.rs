@@ -108,6 +108,16 @@ pub async fn live_inhalt(pfad: String) -> Result<serde_json::Value, UiError> {
     hole_inhalt(live_basis(), pilot_token(), &pfad).await
 }
 
+/// Schreibt die Dauer des ersten Netz-Zuschaltens ins Diagnose-Log, das mit
+/// jedem Flug hochgeht. Die Oberflaeche selbst kann in kein auslesbares Log
+/// schreiben. Nur zur Ursachensuche fuer die 20-25 s (Abnahme E7).
+#[tauri::command]
+pub fn netz_messung(netz: String, holen_ms: u32, zeichnen_ms: u32) {
+    if matches!(netz.as_str(), "vatsim" | "ivao") {
+        tracing::info!(netz = %netz, holen_ms, zeichnen_ms, "Netz erstmals zugeschaltet");
+    }
+}
+
 /// Der eigentliche Abruf. Adresse und Token kommen von aussen, damit der
 /// Ende-zu-Ende-Test (tools/pilot-vertraeglichkeit) ihn gegen einen lokalen
 /// Recorder laufen lassen kann; im Programm ruft nur `live_inhalt` ihn auf.

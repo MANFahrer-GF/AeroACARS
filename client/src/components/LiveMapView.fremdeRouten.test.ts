@@ -8,14 +8,9 @@
 // Der Test liest den Quelltext, wie die Nachbartests dieser Komponente: Ein
 // Verhaltenstest müsste die halbe MapLibre-Welt nachbauen.
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { karteQuelltext } from "./livekarte/quelltext.testhilfe";
 
-const quelle = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), "LiveMapView.tsx"),
-  "utf-8",
-);
+const quelle = karteQuelltext();
 
 function rumpf(name: string): string {
   const von = quelle.indexOf(`function ${name}(`);
@@ -50,7 +45,7 @@ describe("Karte: Routen der Kollegen", () => {
   it("zeichnet mehrere gleichzeitig, gedämpft und dünner als die eigene", () => {
     const zeichnen = rumpf("fremdeRoutenZeichnen");
     // Alle Einträge des Refs werden zu Linien — nicht nur der letzte.
-    expect(zeichnen).toMatch(/fremdeRoutenRef\.current\.entries\(\)/);
+    expect(zeichnen).toMatch(/routen\.entries\(\)/);
     expect(zeichnen).toMatch(/LineString/);
     // Und Linien mit weniger als zwei Punkten fallen raus.
     expect(zeichnen).toMatch(/punkte\.length >= 2/);
@@ -77,12 +72,12 @@ describe("Karte: Routen der Kollegen", () => {
     // als die eigene — genau das Gegenteil der Absicht (Abnahme
     // 20.09.2026). Geprueft wird das Verhaeltnis in beiden Stilen.
     const paare = (block: string) => {
-      const m = /"line-opacity":\s*sat \? ([\d.]+) : ([\d.]+)/.exec(block);
+      const m = new RegExp(`${block}, "line-opacity", sat \\? ([\\d.]+) : ([\\d.]+)`).exec(quelle);
       expect(m, "line-opacity haengt nicht am Kartenstil").not.toBeNull();
       return [Number(m![1]), Number(m![2])] as const;
     };
-    const [eigenSat, eigenVektor] = paare(eigene);
-    const [fremdSat, fremdVektor] = paare(ebene);
+    const [eigenSat, eigenVektor] = paare("LYR_ROUTE");
+    const [fremdSat, fremdVektor] = paare('"fremde-routen-line"');
     expect(fremdSat, "auf der Satellitenkarte deckender als die eigene").toBeLessThan(eigenSat);
     expect(fremdVektor, "auf der Vektorkarte deckender als die eigene").toBeLessThan(eigenVektor);
     // Und nicht so blass, dass sie wieder verschwindet: Der alte Wert
@@ -146,30 +141,5 @@ describe("Karte: Routen der Kollegen", () => {
     // Umschalten nicht.
     const deps = stelle.slice(stelle.indexOf("}, ["), stelle.indexOf("}, [") + 40);
     expect(deps).toMatch(/\[\s*showVa\s*,/);
-  });
-
-  it("zieht die Sichtbarkeit nach einem Kartenstil-Wechsel nach", () => {
-    // `addOverlays` legt die Ebene neu an — neue Ebenen sind sichtbar.
-    // Ohne das Nachziehen kaemen die Routen zurueck, obwohl die
-    // Kollegen-Anzeige aus ist (Abnahme 20.09.2026). Der Effekt oben
-    // rettet das NICHT: seine Abhaengigkeiten aendern sich dabei nicht.
-    const taxi = quelle.slice(quelle.indexOf("const taxiVis = showTaxiRef.current"));
-    const rest = taxi.slice(0, 900);
-    expect(rest, "nicht ueber beide Ebenen").toMatch(/FREMDE_ROUTEN_EBENEN/);
-    expect(rest).toMatch(/showVaRef\.current \? "visible" : "none"/);
-    // Ein State statt eines Refs waere hier immer der Stand vom ersten
-    // Rendern — `addOverlays` haengt an einem einmaligen Handler.
-    expect(quelle).toMatch(/const showVaRef = useRef\(showVa\);\s*\n\s*showVaRef\.current = showVa;/);
-  });
-
-  it("stellt eingeblendete Routen nach einem Neuaufbau der Karte wieder her", () => {
-    // Nach einem Kartenstil-Wechsel ist die Quelle leer, das Ref nicht.
-    // Bis zum ENDE des Anlege-Blocks lesen, nicht 1400 Zeichen weit:
-    // Beim Einfuegen der Punkt-Ebene rutschte der Aufruf aus dem festen
-    // Fenster, und der Test schlug an, obwohl nichts kaputt war.
-    const von = quelle.indexOf('map.addSource("fremde-routen"');
-    const bis = quelle.indexOf("\n    }\n", von);
-    const anlegen = quelle.slice(von, bis > von ? bis : von + 3000);
-    expect(anlegen).toMatch(/fremdeRoutenZeichnen\(map\)/);
   });
 });

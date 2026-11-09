@@ -23,56 +23,27 @@ const tsx = readFileSync(
 );
 const css = readFileSync(resolve(__dirname, "..", "App.css"), "utf8");
 
-/** Groesster z-index, den ein Element der Kartenschicht traegt. */
-function hoechsteEbeneDerKarte(): number {
-  const werte: number[] = [];
-  for (const klasse of [".aa-livemap-controls", ".aa-livemap-panel"]) {
-    const start = css.indexOf(`${klasse} {`);
-    expect(start, `${klasse} nicht in App.css gefunden`).toBeGreaterThan(-1);
-    const block = css.slice(start, css.indexOf("}", start));
-    const treffer = block.match(/z-index:\s*(\d+)/);
-    expect(treffer, `${klasse} ohne z-index`).not.toBeNull();
-    werte.push(Number(treffer![1]));
-  }
-  return Math.max(...werte);
-}
-
-/** Der Inline-Stil des Hinweis-Bandes. */
-function hinweisStil(): { top: number; zIndex: number } {
-  const anker = tsx.indexOf("{fremdeRouteHinweis && (");
-  expect(anker, "Hinweis-Band nicht gefunden").toBeGreaterThan(-1);
-  // Kommentare RAUS, bevor gesucht wird: Der Block erklaert den alten
-  // Zustand („Bei `top: 12` + `zIndex: 5` lag der Hinweis hinter der
-  // Leiste") — ein Regex ueber den Rohtext liest genau diese Zahlen und
-  // meldet einen Fehler, den es nicht gibt. Beim ersten Lauf ist mir das
-  // passiert.
-  const block = tsx
-    .slice(anker, anker + 1900)
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
-  const top = block.match(/top:\s*(\d+)/);
-  const z = block.match(/zIndex:\s*(\d+)/);
-  expect(top, "kein top im Hinweis-Band").not.toBeNull();
-  expect(z, "kein zIndex im Hinweis-Band").not.toBeNull();
-  return { top: Number(top![1]), zIndex: Number(z![1]) };
+function cssBlock(klasse: string): string {
+  const start = css.indexOf(`${klasse} {`);
+  expect(start, `${klasse} nicht in App.css gefunden`).toBeGreaterThan(-1);
+  return css.slice(start, css.indexOf("}", start));
 }
 
 describe("Hinweis auf der Live-Karte", () => {
-  it("liegt ueber der Kartenschalter-Leiste, nicht darunter", () => {
-    const { zIndex } = hinweisStil();
-    expect(zIndex).toBeGreaterThan(hoechsteEbeneDerKarte());
+  it("steht im Raster unter der Leiste statt mit festen Zahlen darueber", () => {
+    // Mit `top: 92` lag der Hinweis bei umbrochener Leiste auf ihr (Thomas, 20.09.2026).
+    expect(cssBlock(".aa-livemap-controls")).toMatch(/grid-row:\s*1/);
+    expect(cssBlock(".aa-livemap-hinweis")).toMatch(/grid-row:\s*2/);
+    expect(tsx).toMatch(/className="aa-livemap-hinweis aa-livemap-overlay"/);
   });
 
-  it("beginnt unterhalb der Leiste, statt sie zu ueberdecken", () => {
-    // Die Leiste sitzt auf top:16 und ist rund 60px hoch (zwei Zeilen
-    // Schalter mit Rubrik). Der Hinweis darf erst danach anfangen —
-    // sonst sitzt er auf ihr, auch wenn er obenauf liegt.
-    const { top } = hinweisStil();
-    const leisteStart = Number(
-      css
-        .slice(css.indexOf(".aa-livemap-controls {"))
-        .match(/top:\s*(\d+)/)![1],
-    );
-    expect(top).toBeGreaterThan(leisteStart + 60);
+  it("nimmt die Karte nicht als Klickflaeche in Beschlag", () => {
+    expect(cssBlock(".aa-livemap-ui")).toMatch(/pointer-events:\s*none/);
+    expect(cssBlock(".aa-livemap-ui > *")).toMatch(/pointer-events:\s*auto/);
+  });
+
+  it("kommt ohne gemessene Oberkante aus", () => {
+    expect(tsx).not.toContain("--aa-panel-oben");
+    expect(css).not.toContain("--aa-panel-oben");
   });
 });

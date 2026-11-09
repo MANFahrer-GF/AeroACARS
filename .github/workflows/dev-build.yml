@@ -39,6 +39,10 @@ on:
         description: 'macOS mit Apple Developer ID signieren + notarisieren (Secrets noetig)'
         type: boolean
         default: false
+      nur_eingebaut:
+        description: 'Vorschau eines Zweigs: nur der eingebaute Stand, keine Generation vom Server (sonst ersetzt die aktive Generation die Oberflaeche dieses Builds). Wirkt nicht zusammen mit beta.'
+        type: boolean
+        default: false
       beta:
         description: 'Beta-Installer: Produktionskennung com.aeroacars.app3 (tauri.beta.conf.json), signierte Updater-Dateien + latest.json fuer den Beta-Kanal als Artefakt; ohne Tag und Release'
         type: boolean
@@ -212,6 +216,7 @@ jobs:
           VITE_SENTRY_DSN_CLIENT: ${{ inputs.beta && secrets.VITE_SENTRY_DSN_CLIENT || '' }}
           # Pruefsumme des Plugin-Pakets (leer ohne beta = Dev-Build, Warnung).
           AEROACARS_XPLANE_PLUGIN_SHA256: ${{ needs.plugin-zip.outputs.sha256 }}
+          AEROACARS_OHNE_PAKETE: ${{ inputs.nur_eingebaut && !inputs.beta && '1' || '' }}
         run: npx tauri build --bundles nsis --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Upload installer
@@ -300,6 +305,7 @@ jobs:
           VITE_SENTRY_DSN_CLIENT: ${{ inputs.beta && secrets.VITE_SENTRY_DSN_CLIENT || '' }}
           # Pruefsumme des Plugin-Pakets (leer ohne beta = Dev-Build, Warnung).
           AEROACARS_XPLANE_PLUGIN_SHA256: ${{ needs.plugin-zip.outputs.sha256 }}
+          AEROACARS_OHNE_PAKETE: ${{ inputs.nur_eingebaut && !inputs.beta && '1' || '' }}
         run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/${{ inputs.beta && 'tauri.beta.conf.json' || 'tauri.lokal.conf.json' }}
 
       - name: Apple-Signatur pruefen

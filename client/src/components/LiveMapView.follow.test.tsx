@@ -36,6 +36,8 @@ beforeAll(async () => {
 // Mock-Factory ihn referenzieren darf — sie wird an den Modulanfang gehoistet).
 const h = vi.hoisted(() => ({
   mapHandlers: {} as Record<string, Array<(e?: unknown) => void>>,
+  einpassen: [] as Array<{ padding?: unknown }>,
+  va: [] as unknown[],
   easeTo: [] as Array<{ center?: [number, number]; zoom?: number }>,
   jumpTo: [] as Array<{ center?: [number, number]; zoom?: number }>,
 }));
@@ -62,6 +64,7 @@ vi.mock("maplibre-gl", () => {
   class FakeBounds { extend() { return this; } }
   class FakeNav {}
   class FakeMap {
+    resize() { return this; }
     center = { lng: 6, lat: 48 };
     zoom = 4;
     addControl() { return this; }
@@ -89,7 +92,7 @@ vi.mock("maplibre-gl", () => {
     getCenter() { return this.center; }
     getZoom() { return this.zoom; }
     isStyleLoaded() { return true; }
-    setStyle() { return this; }
+    fitBounds(_b: unknown, o: { padding?: unknown }) { h.einpassen.push(o); return this; }
     addSource() { return this; }
     // 12.08.2026 (VATSIM-Overlay): das Piloten-Symbol registriert ein
     // Kartenbild. Der Nachbau kennt die Bild-API, wie die echte Karte.
@@ -99,6 +102,7 @@ vi.mock("maplibre-gl", () => {
     getSource() { return { setData: () => {} }; }
     getLayer() { return {}; }
     setLayoutProperty() { return this; }
+    setPaintProperty() { return this; }
     easeTo(o: { center?: [number, number]; zoom?: number }) {
       h.easeTo.push(o);
       if (o.center) this.center = { lng: o.center[0], lat: o.center[1] };
@@ -132,7 +136,7 @@ vi.mock("../lib/ipc", () => ({
   isTauri: false,
   invoke: vi.fn(async (cmd: string) => {
     if (cmd === "flight_get_route_fixes") return [];
-    if (cmd === "va_live_flights") return { data: [] };
+    if (cmd === "va_live_flights") return { data: h.va };
     if (cmd === "airport_get") return { lat: null, lon: null };
     if (cmd === "airport_ground_index") return [];
     if (cmd === "airport_ground_get") return null;
@@ -187,7 +191,10 @@ function fireLoad() {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("fetch", () => new Promise(() => {})); // Stile der Grundkarte: eigener Test
   h.mapHandlers = {};
+  h.einpassen.length = 0;
+  h.va = [];
   h.easeTo.length = 0;
   h.jumpTo.length = 0;
   document.documentElement.dataset.theme = "dark";
@@ -207,7 +214,65 @@ describe("LiveMapView Schalter Bilder", () => {
     expect(screen.queryByRole("button", { name: "Bilder" })).toBeNull();
   });
 
-  it("steht anfangs an, zeigt dann das Wort und schaltet aus und wieder ein", () => {
+  it("Schalter der Leiste zeigen das Wort in beiden Zustaenden (Breite springt nicht)", () => {
+    bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 41, laenge: 28 } })];
+    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
+    fireLoad();
+    for (const name of ["Bilder", "Track", "Taxiweg", "VA-Verkehr"]) {
+      const knopf = screen.getByRole("button", { name });
+      for (let i = 0; i < 2; i++) {
+        expect(knopf.querySelector(".aa-livemap-toggle__wort"), `${name} pressed=${knopf.getAttribute("aria-pressed")}`).not.toBeNull();
+        fireEvent.click(knopf);
+      }
+    }
+  });
+
+  it("steht ohne laufenden Flug mit Bildpunkten aller Fluege trotzdem da", () => {
+    bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P9", breite: 41, laenge: 28 } })];
+    render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+    fireLoad();
+    const knopf = screen.getByRole("button", { name: "Bilder" });
+    // Der Leer-Kasten laege sonst ueber den Punkten; erst mit ausgeblendeten Punkten kommt er zurueck.
+    expect(document.querySelector(".aa-livemap-idle")).toBeNull();
+    fireEvent.click(knopf);
+    expect(document.querySelector(".aa-livemap-idle")).not.toBeNull();
+  });
+
+  it("Kollegen in der Luft ziehen die Karte nicht von den eigenen Bildpunkten weg", async () => {
+    h.va = [{ id: "v1", position: { lat: 50, lon: 8 } }];
+    bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P9", breite: 35, laenge: 139 } })];
+    render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+    fireLoad();
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(h.einpassen.map((o) => o.padding)).toEqual([{ top: 120, bottom: 60, left: 60, right: 60 }]);
+  });
+
+  it("schaltet man die Bilder aus, springt die Karte beim naechsten Abruf nicht auf die Kollegen", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      h.va = [{ id: "v1", position: { lat: 50, lon: 8 } }];
+      bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P9", breite: 35, laenge: 139 } })];
+      render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+      fireLoad();
+      await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+      fireEvent.click(screen.getByRole("button", { name: "Bilder" }));
+      h.va = [{ id: "v1", position: { lat: 50.5, lon: 8.5 } }];
+      await act(async () => { vi.advanceTimersByTime(12_000); await new Promise((r) => setTimeout(r, 20)); });
+      expect(h.einpassen.map((o) => o.padding)).toEqual([{ top: 120, bottom: 60, left: 60, right: 60 }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ohne Bildpunkte wird weiter auf die Kollegen eingepasst", async () => {
+    h.va = [{ id: "v1", position: { lat: 50, lon: 8 } }];
+    render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+    fireLoad();
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(h.einpassen.map((o) => o.padding)).toEqual([60]);
+  });
+
+  it("steht anfangs an, behaelt das Wort und schaltet aus und wieder ein", () => {
     bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 41, laenge: 28 } })];
     render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
     fireLoad();
@@ -216,39 +281,9 @@ describe("LiveMapView Schalter Bilder", () => {
     expect(knopf.textContent?.trim()).toBe("Bilder");
     fireEvent.click(knopf);
     expect(knopf.getAttribute("aria-pressed")).toBe("false");
-    expect(knopf.textContent?.trim()).toBe("");
+    expect(knopf.textContent?.trim()).toBe("Bilder");
     fireEvent.click(knopf);
     expect(knopf.getAttribute("aria-pressed")).toBe("true");
-  });
-});
-
-describe("LiveMapView Abstand Panel unter der Schalterleiste", () => {
-  afterEach(() => vi.unstubAllGlobals());
-
-  function messen(hoehe: number) {
-    let melden = () => {};
-    vi.stubGlobal("ResizeObserver", class { constructor(cb: () => void) { melden = cb; } observe() {} disconnect() {} });
-    const { container } = render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
-    fireLoad();
-    const leiste = container.querySelector<HTMLElement>(".aa-livemap-controls")!;
-    Object.defineProperty(leiste, "offsetTop", { configurable: true, value: 17 });
-    const setzeHoehe = (h: number) => Object.defineProperty(leiste, "offsetHeight", { configurable: true, value: h });
-    const oben = () => leiste.parentElement!.style.getPropertyValue("--aa-panel-oben");
-    setzeHoehe(hoehe);
-    melden();
-    return { oben, setzeHoehe, melden: () => melden() };
-  }
-
-  it("bleibt bei einer Zeile an der bisherigen Stelle", () => {
-    expect(messen(56).oben()).toBe("96px");
-  });
-
-  it("rueckt unter die umgebrochene Leiste und zieht bei Aenderung nach", () => {
-    const m = messen(132); // drei Zeilen: Unterkante 149
-    expect(m.oben()).toBe("161px");
-    m.setzeHoehe(95);
-    m.melden();
-    expect(m.oben()).toBe("124px");
   });
 });
 
@@ -347,5 +382,21 @@ describe("LiveMapView Follow-Kamera", () => {
     const c = h.easeTo.at(-1)!.center!;
     expect(c[0]).toBeCloseTo(28.7, 1);
     expect(c[1]).toBeCloseTo(41.2, 1);
+  });
+});
+
+describe("LiveMapView Leer-Kasten (F5)", () => {
+  it("verdeckt keine Kollegen: er bleibt weg, solange welche fliegen, und kommt ohne sie zurueck", async () => {
+    h.va = [{ id: "v1", position: { lat: 50, lon: 8 } }];
+    render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+    fireLoad();
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(document.querySelector(".aa-livemap-idle"), "Kollegen in der Luft").toBeNull();
+    // Gegenstueck: ohne sichtbare Kollegen (Anzeige aus) steht er da, danach ist er wieder weg.
+    fireEvent.click(screen.getByRole("button", { name: "VA-Verkehr" }));
+    expect(document.querySelector(".aa-livemap-idle"), "VA-Verkehr aus").not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "VA-Verkehr" }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(document.querySelector(".aa-livemap-idle"), "VA-Verkehr wieder an").toBeNull();
   });
 });

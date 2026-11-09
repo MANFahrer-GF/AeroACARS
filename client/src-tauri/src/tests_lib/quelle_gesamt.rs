@@ -326,6 +326,8 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Abgabestellen (`flight_end` gefiled und Warteschlange, `flight_end_manual`), `bilder::nachlauf_nach_flugende` in `clear_persisted_flight`. Tests
 /// `bilder::tests::nachlauf_beginnt_an_allen_abgaben_und_nie_beim_abbrechen`, `bilder-kern` (`nachlauf::tests::*`).
 /// — plus Health-Report 08.11.: AGL-Ausreisser am Boden (`wieder_weggestiegen`, Tests `touchdown_dump_faellig_tests`), `testlauf` in der Startzeile, `bestaetigter_aufsetzer` (Test `bestaetigter_aufsetzer_geht_vor_verworfenem_kandidaten`).
+/// — plus Live-Karte 09.11. (Abnahme E7): Befehl `live_zugang::netz_messung` in der
+/// Befehlsliste, sonst nichts an `lib.rs`. Test `tests/befehlsliste.rs`, Bruecke `DENY_SET`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -336,4 +338,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "d2e6b3ac259a4933e4107331c382bb2140e40ef493dbb924020d5786570d3402";
+const HASH_VOR_DER_ZERLEGUNG: &str = "f98127578e8bff7e45e61b17c88468f5d6123b5485ebdce3a7547fa18e2dbf32";

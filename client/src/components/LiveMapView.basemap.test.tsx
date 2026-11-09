@@ -1,16 +1,8 @@
-// Deterministischer Schutz fürs Basemap-Umschalten der Live-Karte (v0.16.27).
+// Grundkarte der Live-Karte: Der Wechsel schaltet nur Sichtbarkeiten.
 //
-// Bug (Thomas): Satellit ↔ dunkle Karte umschalten — beim ERSTEN Mal blieb die
-// Route da, beim ZWEITEN war sie weg (bis Tab-Wechsel). Ursache: `setStyle()`
-// wirft alle Layer weg; ein EINMALIGER Re-Add (v0.16.26-Poll) feuert, während
-// der alte Overlay-Layer noch existiert → addOverlays' „nur-wenn-fehlt"-Guard
-// überspringt → danach wischt setStyle den Layer → Route weg. Beim 1. Mal gibt
-// es keinen Alt-Layer, der den Skip auslöst → klappt scheinbar.
-//
-// Dieser Test stellt die Race NACH (FakeMap mit VERZÖGERTEM Layer-Wipe) und
-// prüft, dass beim MEHRFACHEN Umschalten sowohl der Route-LAYER als auch die
-// echte Route-GEOMETRIE (LineString-Feature in der Source) erhalten bleiben.
-// Mit dem alten Einmal-Poll wäre der Layer ab dem 2. Umschalten weg.
+// Frueher tauschte jeder Wechsel den ganzen Stil; dabei gingen Route und Ebenen verloren (v0.16.27,
+// ab dem zweiten Umschalten) und die Weltkugel wurde flach. Dieser Test sichert das Verhalten am
+// Bauteil: `setStyle` faellt nie, die Overlays bleiben dieselben, die Geometrie bleibt erhalten.
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
 import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
@@ -35,14 +27,22 @@ beforeAll(async () => {
 });
 
 const h = vi.hoisted(() => ({
-  map: null as null | { layers: Set<string>; sourceData: Map<string, { features?: unknown[] }> },
+  map: null as null | { layers: Set<string>; sichtbar: Map<string, string>; sourceData: Map<string, { features?: unknown[] }> },
   handlers: {} as Record<string, Array<(e?: unknown) => void>>,
+  setStyle: 0,
+  angelegt: 0,
+  farben: new Map<string, unknown>(),
+  marker: [] as Array<{ el: HTMLElement }>,
+  projektionen: [] as string[], // jeder setProjection-Aufruf (Typ)
+  va: [] as unknown[],
+  route: [] as unknown[], // Antwort von fremde_flugroute
+  zoom: 4,
 }));
 
 vi.mock("maplibre-gl", () => {
   class FakeMarker {
     el: HTMLElement;
-    constructor(opts?: { element?: HTMLElement }) { this.el = opts?.element ?? document.createElement("div"); }
+    constructor(opts?: { element?: HTMLElement }) { this.el = opts?.element ?? document.createElement("div"); h.marker.push(this); }
     setLngLat() { return this; }
     setRotation() { return this; }
     addTo() { return this; }
@@ -57,7 +57,7 @@ vi.mock("maplibre-gl", () => {
     sources = new Set<string>();
     sourceData = new Map<string, { features?: unknown[] }>(); // gespeicherte setData-Payloads
     center = { lng: 6, lat: 48 };
-    zoom = 4;
+    zoom = h.zoom;
     constructor() { h.map = this; }
     addControl() { return this; }
     on(ev: string, cb: (e?: unknown) => void) { (h.handlers[ev] ||= []).push(cb); return this; }
@@ -82,25 +82,26 @@ vi.mock("maplibre-gl", () => {
     getZoom() { return this.zoom; }
     isStyleLoaded() { return true; } // immer „geladen" → modelliert das Race-Fenster direkt nach setStyle
     getLayer(id: string) { return this.layers.has(id) ? ({} as unknown) : undefined; }
-    setLayoutProperty() { return this; }
+    sichtbar = new Map<string, string>();
+    setLayoutProperty(id: string, _k: string, v: string) { this.sichtbar.set(id, v); return this; }
+    setPaintProperty(id: string, k: string, v: unknown) { h.farben.set(`${id}|${k}`, v); return this; }
+    addSprite() { return this; }
+    removeSprite() { return this; }
+    getGlyphs() { return ""; }
+    setGlyphs() { return this; }
     getSource(id: string) {
       if (!this.sources.has(id)) return undefined;
       return { setData: (d: { features?: unknown[] }) => { this.sourceData.set(id, d); } } as unknown;
     }
-    addLayer(o: { id: string }) { this.layers.add(o.id); return this; }
+    addLayer(o: { id: string; layout?: { visibility?: string } }) { this.layers.add(o.id); if (o.layout?.visibility) this.sichtbar.set(o.id, o.layout.visibility); h.angelegt += 1; return this; }
     addSource(id: string) { this.sources.add(id); return this; }
     hasImage() { return false; }
     addImage() { return this; }
     removeLayer(id: string) { this.layers.delete(id); return this; }
     removeSource(id: string) { this.sources.delete(id); this.sourceData.delete(id); return this; }
-    setStyle() {
-      // RACE-MODELL: setStyle wischt Quellen+Layer (und ihre Daten) VERZÖGERT,
-      // nicht sofort. So existiert der alte Overlay-Layer noch, wenn ein
-      // einmaliger Re-Add feuert (Guard überspringt), und verschwindet erst
-      // 50 ms später — exakt die echte Race.
-      setTimeout(() => { this.layers.clear(); this.sources.clear(); this.sourceData.clear(); }, 50);
-      return this;
-    }
+    setStyle() { h.setStyle += 1; return this; }
+    setProjection(p: { type: string }) { h.projektionen.push(p.type); return this; }
+    setFilter() { return this; }
     easeTo() { return this; }
     jumpTo() { return this; }
     // v1.6.11: die Karte bleibt beim Reiterwechsel eingehaengt und misst sich
@@ -121,10 +122,13 @@ vi.mock("../lib/ipc", () => ({
       { ident: "WP3", lat: 48.4, lon: 11.0, kind: "wpt" },
     ];
     if (cmd === "flight_get_track") return [[9, 49], [9.5, 48.8]];
-    if (cmd === "va_live_flights") return { data: [] };
+    if (cmd === "va_live_flights") return { data: h.va };
+    if (cmd === "fremde_flugroute") return h.route;
     if (cmd === "airport_get") return { lat: null, lon: null };
-    if (cmd === "airport_ground_index") return [];
-    if (cmd === "airport_ground_get") return null;
+    if (cmd === "airport_ground_index") return h.zoom >= 12 ? [{ icao: "EDDF", lat: 48.1, lon: 6.1 }] : [];
+    if (cmd === "airport_ground_get") return h.zoom >= 12
+      ? { icao: "EDDF", geojson: JSON.stringify({ type: "FeatureCollection", features: [{ type: "Feature", properties: { k: "runway", r: "07C" }, geometry: { type: "LineString", coordinates: [[6.1, 48.1], [6.2, 48.1]] } }] }) }
+      : null;
     // Livemap-4a's Ereignisliste (useMapEvents) polls both of these.
     if (cmd === "activity_log_get") return [];
     if (cmd === "hoppie_get_thread") return [];
@@ -133,15 +137,33 @@ vi.mock("../lib/ipc", () => ({
   listen: vi.fn(async () => () => {}),
   openExternal: vi.fn(async () => {}),
 }));
+// Netz: feste Antwort statt Datafeed und Server, damit der Schalter wirklich Daten auf die Karte bringt.
+vi.mock("../lib/vatsimKarte", async (original) => ({
+  ...(await original<typeof import("../lib/vatsimKarte")>()),
+  fetchVatsimData: async () => ({ pilots: [], controllers: [], atis: [] }),
+}));
+vi.mock("../lib/vatglassesKarte", async (original) => {
+  const leer = { type: "FeatureCollection", features: [] };
+  const flaeche = { type: "Feature", properties: { ruf: "EDGG", farbe: "#38bdf8", fl_von: 0, fl_bis: 999 }, geometry: { type: "Polygon", coordinates: [[[8, 49], [10, 49], [10, 50], [8, 49]]] } };
+  return {
+    ...(await original<typeof import("../lib/vatglassesKarte")>()),
+    ladeSektoren: async () => ({
+      flaechen: { type: "FeatureCollection", features: [flaeche] }, marken: leer, nahbereich: leer, nahbereichMarken: leer,
+      gebucht: leer, plaetze: leer, firFlaechen: leer, firMarken: leer, abgedeckt: new Set<string>(),
+    }),
+  };
+});
 vi.mock("./ActivityLogPanel", () => ({ ActivityLogPanel: () => null }));
 vi.mock("../lib/trackStore", () => ({ getTrack: () => [], setTrack: () => {} }));
 vi.mock("../lib/aircraftIcon", () => ({ aircraftSvg: () => "<svg></svg>" }));
 vi.mock("../lib/phaseColors", () => ({ phaseColor: () => "#ffffff", phaseLabel: () => "Steigflug" }));
 
 import { LiveMapView } from "./LiveMapView";
+import { karteQuelltext } from "./livekarte/quelltext.testhilfe";
 
 const LYR_ROUTE = "aa-planned-route-line"; // Layer (siehe LiveMapView; "aa-planned-route" ist die SOURCE)
 const SRC_ROUTE = "aa-planned-route"; // Source mit der Routen-Geometrie
+const CASING = "aa-planned-route-casing";
 
 const snap = {
   lat: 49, lon: 9, altitude_msl_ft: 6000, groundspeed_kt: 280, indicated_airspeed_kt: 250,
@@ -183,6 +205,16 @@ function layerPresent() { return h.map!.layers.has(LYR_ROUTE); }
 beforeEach(() => {
   h.map = null;
   h.handlers = {};
+  h.setStyle = 0;
+  h.angelegt = 0;
+  h.farben.clear();
+  h.marker = [];
+  h.projektionen = [];
+  h.va = [];
+  h.route = [];
+  h.zoom = 4;
+  const stil = (n: string) => ({ version: 8, sprite: `https://x/${n}`, sources: { protomaps: { type: "vector", tiles: ["https://x/{z}.mvt"] } }, layers: [{ id: "wasser", type: "fill", source: "protomaps", "source-layer": "w" }] });
+  vi.stubGlobal("fetch", (url: string) => Promise.resolve({ ok: true, json: async () => stil(url.includes("dark") ? "d" : "h") }));
   document.documentElement.dataset.theme = "dark";
   localStorage.clear();
   vi.useFakeTimers();
@@ -190,47 +222,207 @@ beforeEach(() => {
 afterEach(() => {
   vi.runOnlyPendingTimers();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   cleanup();
 });
 
-describe("LiveMapView Basemap-Umschalten — Overlays + Geometrie bleiben (v0.16.27)", () => {
-  it("Route-Layer UND Routen-Geometrie überleben MEHRFACHES Umschalten", async () => {
-    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap as never} />);
-    fireLoad();
-    await flushAsync(); // Routen-Fixes laden
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0); // echte Route gezeichnet
-
-    toggleBasemap(); // 1. Umschalten (dunkel → Satellit) — klappte schon vorher
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0);
-
-    toggleBasemap(); // 2. Umschalten (Satellit → dunkel) — HIER verschwand v0.16.26
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0);
-
-    toggleBasemap(); // 3. Umschalten
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0);
-
-    toggleBasemap(); // 4. Umschalten — bleibt stabil
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0);
-  });
-
-  it("selbstkorrigierend: ein während des Race-Fensters weggewischter Layer kommt zurück", async () => {
-    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap as never} />);
+describe("LiveMapView Grundkarte", () => {
+  async function bereit() {
+    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap as never} simKind={undefined} onSwitchToBriefing={() => {}} />);
     fireLoad();
     await flushAsync();
     settle(600);
-    toggleBasemap();
-    settle(600); // erholt sich nach dem verzögerten Wipe + Re-Add
+    await flushAsync();
+  }
+  const karteSichtbar = () => h.map!.sichtbar.get("d:wasser");
+
+  it("laesst Overlays und Routen-Geometrie stehen, auch nach mehrfachem Umschalten", async () => {
+    await bereit();
     expect(layerPresent()).toBe(true);
     expect(routeGeometryCount()).toBeGreaterThan(0);
+    const vorher = h.angelegt;
+    for (let i = 0; i < 4; i++) {
+      toggleBasemap();
+      settle(600);
+      expect(layerPresent()).toBe(true);
+      expect(routeGeometryCount()).toBeGreaterThan(0);
+    }
+    expect(h.angelegt, "beim Umschalten darf nichts neu angelegt werden").toBe(vorher);
+    expect(h.setStyle, "der Stil wird nie getauscht").toBe(0);
+  });
+
+  it("schaltet zwischen Karte und Satellit, die Routen-Unterlage nur auf Satellit", async () => {
+    await bereit();
+    expect(karteSichtbar()).toBe("visible");
+    expect(h.map!.sichtbar.get("esri-imagery")).toBe("none");
+    expect(h.map!.sichtbar.get(CASING)).toBe("none");
+    toggleBasemap();
+    settle(600);
+    expect(karteSichtbar()).toBe("none");
+    expect(h.map!.sichtbar.get("esri-imagery")).toBe("visible");
+    expect(h.map!.sichtbar.get(CASING)).toBe("visible");
+    expect(localStorage.getItem("aaLivemapBasemap")).toBe("sat");
+  });
+
+  it("zieht die Overlay-Farben mit: auf Satellit heller Track und dunkle Halos", async () => {
+    await bereit();
+    toggleBasemap();
+    settle(600);
+    expect(h.farben.get("aa-flown-track-line|line-color")).toBe("#f2f5fa");
+    expect(h.farben.get("aa-planned-wpts-labels|text-halo-color")).toBe("#0b0f16");
+  });
+
+  it("folgt dem App-Theme, ohne den Stil zu tauschen", async () => {
+    await bereit();
+    expect(h.map!.sichtbar.get("h:wasser")).toBe("none");
+    act(() => { document.documentElement.dataset.theme = "light"; });
+    await flushAsync();
+    settle(50);
+    expect(h.map!.sichtbar.get("h:wasser")).toBe("visible");
+    expect(karteSichtbar()).toBe("none");
+    expect(h.setStyle).toBe(0);
+  });
+
+  it("legt die Bodendaten unter Netz, Kollegen-Routen und eigenen Flug", async () => {
+    await bereit();
+    const ebenen = [...h.map!.layers];
+    const pos = (id: string) => { const i = ebenen.indexOf(id); expect(i, id).toBeGreaterThanOrEqual(0); return i; };
+    expect(pos("aa-ground-stand-labels")).toBeLessThan(pos("vatsim-sectors-fill"));
+    expect(pos("vatsim-sectors-fill")).toBeLessThan(pos(LYR_ROUTE));
+  });
+
+  it("holt die Stile neu, sobald der Server andere Adressen nennt", () => {
+    expect(karteQuelltext()).toMatch(/grundkarteHolen\([\s\S]{0,240}\}, \[mapReady, grundlage\.dunkel, grundlage\.hell, grundlage\.schluessel\]\)/);
+  });
+
+  it("kennt weder Stiltausch noch Nachlege-Schleife mehr", () => {
+    const q = karteQuelltext();
+    for (const altlast of ["map.setStyle(", '"styledata"', "ensureOverlays", "addOverlays("]) expect(q).not.toContain(altlast);
+  });
+
+  it("nimmt den gemerkten Satellit beim Start, sobald die Karte steht", async () => {
+    localStorage.setItem("aaLivemapBasemap", "sat");
+    await bereit();
+    expect(h.map!.sichtbar.get("esri-imagery")).toBe("visible");
+    expect(karteSichtbar()).toBe("none");
+  });
+});
+
+// ── Abnahmeliste Live-Karte, Zeilen A3 bis A6 ───────────────────────────────────────────────
+describe("LiveMapView Grundkarte: Abnahme A3 bis A6", () => {
+  async function bereit() {
+    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap as never} simKind={undefined} onSwitchToBriefing={() => {}} />);
+    fireLoad();
+    await flushAsync();
+    settle(600);
+    await flushAsync();
+  }
+  const KOLLEGE = {
+    id: "PIREP-KOLLEGE", ident: "SK4084", dpt_airport_id: "ENGM", arr_airport_id: "ENEV", aircraft: { icao: "A319" },
+    status_text: "Cruise", position: { lat: 60.2, lon: 11.1, gs: 420, heading: 20 },
+  };
+  const klick = (name: string | RegExp) => { act(() => { fireEvent.click(screen.getByRole("button", { name })); }); };
+
+  it("A3: haengt keinen styledata-Handler an die Karte", async () => {
+    await bereit();
+    for (let i = 0; i < 4; i++) { toggleBasemap(); settle(600); }
+    // Gegenstueck: die Aufzeichnung sieht die Anmeldungen der Karte (sonst bewiese das Ausbleiben nichts).
+    expect(Object.keys(h.handlers)).toEqual(expect.arrayContaining(["load", "dragstart"]));
+    expect(Object.keys(h.handlers)).not.toContain("styledata");
+  });
+
+  it("A3: das Umschalten startet keine 120-ms-Schleife", async () => {
+    const takte: unknown[] = [];
+    for (const art of ["setTimeout", "setInterval"] as const) {
+      const echt = globalThis[art];
+      vi.spyOn(globalThis, art).mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
+        takte.push(ms);
+        return (echt as (...a: unknown[]) => unknown)(fn, ms, ...rest);
+      }) as never);
+    }
+    await bereit();
+    for (let i = 0; i < 4; i++) { toggleBasemap(); settle(600); }
+    // Gegenstueck: die Aufzeichnung kennt die Takte der Karte (Uhr im Kopf: 1000 ms).
+    expect(takte).toContain(1000);
+    expect(takte).not.toContain(120);
+  });
+
+  it("A4: Route, Track, Netz, Taxi und Kollegen-Routen behalten Daten und Schalterstand nach 4x Umschalten", async () => {
+    h.zoom = 12; // Bodendaten werden erst ab hier geladen
+    h.va = [KOLLEGE];
+    h.route = [{ lon: 11.1, lat: 60.2, name: "GM604" }, { lon: 16.5, lat: 68.5, name: "ENEV" }];
+    await bereit();
+    // Kollegen-Route einblenden: Klick auf die Marke des Kollegen
+    const marke = h.marker.map((m) => m.el).find((el) => el.className.includes("aa-ac-marker--va"))!;
+    expect(marke).toBeTruthy();
+    await act(async () => { marke.dispatchEvent(new MouseEvent("click", { bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
+    await flushAsync();
+    // Netz an, dann Track, Taxiweg und VA-Verkehr aus
+    klick("VATSIM");
+    await flushAsync();
+    await flushAsync();
+    klick("Track");
+    klick("Taxiweg");
+    klick(/VA-Verkehr/);
+
+    const quellen = ["aa-planned-route", "aa-planned-wpts", "aa-flown-track", "aa-flown-track-dots", "aa-ground", "fremde-routen", "vatsim-sectors", "vatsim-sectors-umriss"];
+    const schalterEbenen = ["aa-planned-route-line", "aa-planned-route-casing", "aa-planned-wpts-circles", "aa-flown-track-line", "aa-flown-track-dots-circles",
+      "aa-ground-runway", "aa-ground-apron", "fremde-routen-line", "fremde-routen-punkte", "fremde-routen-namen"];
+    const zustand = () => ({
+      daten: Object.fromEntries(quellen.map((q) => [q, JSON.stringify(h.map!.sourceData.get(q)?.features ?? null)])),
+      ebenen: [...h.map!.layers],
+      sichtbar: Object.fromEntries(schalterEbenen.map((e) => [e, h.map!.sichtbar.get(e)])),
+      netz: screen.getByRole("button", { name: "VATSIM" }).getAttribute("aria-pressed"),
+      knoepfe: ["Track", "Taxiweg", "VA-Verkehr"].map((n) => screen.getByRole("button", { name: new RegExp(n) }).getAttribute("aria-pressed")),
+    });
+    const vorher = zustand();
+    // Ohne diese Vorbedingungen waere der Vergleich leer: Jede Quelle traegt wirklich Daten.
+    for (const q of quellen) expect(vorher.daten[q], q).not.toBe(JSON.stringify([]));
+    for (const q of quellen) expect(vorher.daten[q], q).not.toBe("null");
+    expect(vorher.netz).toBe("true");
+    expect(vorher.knoepfe).toEqual(["false", "false", "false"]);
+    expect(Object.values(vorher.sichtbar).every((v) => v === "none"), "alle Schalter-Ebenen aus").toBe(true);
+
+    const angelegt = h.angelegt;
+    for (let i = 0; i < 4; i++) {
+      toggleBasemap();
+      settle(600);
+      await flushAsync();
+      expect(zustand(), `nach Umschalten ${i + 1}`).toEqual(vorher);
+    }
+    expect(h.angelegt).toBe(angelegt);
+  });
+
+  it("A5: die Kollegen-Route liegt unter der eigenen und ist auf beiden Grundkarten schwaecher", async () => {
+    await bereit();
+    const ebenen = [...h.map!.layers];
+    expect(ebenen.indexOf("fremde-routen-line")).toBeGreaterThanOrEqual(0);
+    expect(ebenen.indexOf("fremde-routen-line")).toBeLessThan(ebenen.indexOf(LYR_ROUTE));
+    const deckkraft = (id: string) => h.farben.get(`${id}|line-opacity`) as number;
+    // Karte
+    expect([deckkraft("fremde-routen-line"), deckkraft(LYR_ROUTE)]).toEqual([0.62, 0.7]);
+    toggleBasemap();
+    settle(600);
+    // Satellit
+    expect([deckkraft("fremde-routen-line"), deckkraft(LYR_ROUTE)]).toEqual([0.85, 0.95]);
+  });
+
+  it("A6: Satellit- und Theme-Wechsel lassen die Weltkugel stehen", async () => {
+    await bereit();
+    act(() => { fireEvent.click(screen.getByRole("button", { name: "Karte als Weltkugel" })); });
+    expect(h.projektionen.at(-1)).toBe("globe");
+    const vorher = [...h.projektionen];
+    for (let i = 0; i < 4; i++) { toggleBasemap(); settle(600); }
+    act(() => { document.documentElement.dataset.theme = "light"; });
+    await flushAsync();
+    settle(50);
+    act(() => { document.documentElement.dataset.theme = "dark"; });
+    await flushAsync();
+    settle(50);
+    expect(h.projektionen, "kein weiterer setProjection-Aufruf").toEqual(vorher);
+    expect(localStorage.getItem("aaLivemapKugel")).toBe("1");
+    // Gegenstueck: die Aufzeichnung sieht einen echten Wechsel zurueck auf flach.
+    act(() => { fireEvent.click(screen.getByRole("button", { name: "Flache Karte" })); });
+    expect(h.projektionen.at(-1)).toBe("mercator");
   });
 });

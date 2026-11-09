@@ -17,10 +17,19 @@ use sha2::{Digest, Sha256};
 /// Pruefschluessel der Laufzeit-Pakete (minisign, Base64), aktiv + Reserve
 /// (P-3.10). Der aktive signiert in CI (Secret `BUNDLE_MINISIGN_KEY`), der
 /// Reserveschluessel liegt offline und wird nur beim Schluesselwechsel benutzt.
-const PRUEFSCHLUESSEL: &[&str] = &[
-    "RWS3XSmTUeW2CWT94kbZKuf9E8DT6aBEtdEWEgNm48HLdY3TqTT9QbWn",
-    "RWRs0NG12y4cVsFVpERYP76rfw0Zo2DiQ+Ja9W1ZoX0BRtpLWeRBzk4I",
-];
+///
+/// Vorschau eines Zweigs (dev-build.yml, Eingang `nur_eingebaut`): Ohne
+/// Pruefschluessel holt das Programm keine Generation und zeigt nur den
+/// eingebauten Stand. Sonst ersetzte die aktive Generation die Oberflaeche des
+/// Builds, und die Vorschau zeigte gar nicht den Zweig. Release und Beta setzen
+/// die Variable nie (Waechter in lokalerBuild.test.ts).
+const PRUEFSCHLUESSEL: &[&str] = match option_env!("AEROACARS_OHNE_PAKETE") {
+    Some(wert) if !wert.is_empty() => &[],
+    _ => &[
+        "RWS3XSmTUeW2CWT94kbZKuf9E8DT6aBEtdEWEgNm48HLdY3TqTT9QbWn",
+        "RWRs0NG12y4cVsFVpERYP76rfw0Zo2DiQ+Ja9W1ZoX0BRtpLWeRBzk4I",
+    ],
+};
 
 /// Faehigkeiten dieses Programms fuer `requires` im Manifest (P-2.15).
 /// `ui-befehle-1` (P-8.11): die Befehlsliste befehle.json dieses Programms —

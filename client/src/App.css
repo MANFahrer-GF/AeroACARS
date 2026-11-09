@@ -7795,55 +7795,61 @@ input:disabled {
   inset: 0;
 }
 
-/* §3 — Kartenschalter-Block: one overlay, four named groups, 16px from the
-   top-left corner. */
-/* Field feedback (2026-08-03): "die Icons ... zu groß, zu extrem präsent" —
-   this whole overlay (segmented Karte/Satellit + Norden/Kurs + layer
-   toggles) dominated the map view. Trimmed padding/gaps + button size
-   below, same recipe as this round's other card-shrink fixes: smaller
-   footprint, same labels, same click targets, nothing restructured. */
-.aa-livemap-controls {
+/* Das Raster ueber der Karte: Leiste oben, darunter Hinweis und Panel, unten die Systemzeile.
+   Bricht die Leiste um, rueckt alles von selbst nach; gemessen wird nichts. Die Zelle unten rechts
+   haelt Platz fuer Zoom und Namensnennung frei. Die Flaeche selbst nimmt keine Klicks an. */
+.aa-livemap-ui {
   position: absolute;
+  inset: 12px;
   z-index: 500;
-  left: 16px;
-  top: 16px;
-  max-width: calc(100% - 32px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  pointer-events: none;
+}
+.aa-livemap-ui > * {
+  pointer-events: auto;
+}
+.aa-livemap-ui::after {
+  content: "";
+  grid-column: 2;
+  grid-row: 3;
+  width: 44px;
+  height: 100px; /* Zoom plus zugeklappte Namensnennung: 112 px Block abzueglich 12 px Rand */
+  pointer-events: none;
+}
+
+/* Die Leiste: feste Hoehe je Knopf, Gruppen durch eine Haarlinie getrennt. */
+.aa-livemap-controls {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  justify-self: start;
+  max-width: 100%;
   display: flex;
-  flex-wrap: wrap;                    /* schmales Fenster: lieber zweite Zeile als ueber die Karte hinaus */
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;                          /* was 14px */
-  padding: 6px 10px;                   /* was 8px 12px */
+  gap: 6px 10px;
+  padding: 6px 8px 6px 0;
+  overflow: hidden; /* schneidet die Trennlinie am Zeilenanfang ab, auch wenn die Leiste umbricht */
 }
 .aa-livemap-controls__group {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-/* Trennstriche statt Überschriften: "ANSICHT", "EBENEN" und so weiter
-   erklärten, was ohnehin sichtbar ist. Eine Haarlinie gruppiert genauso
-   gut und kostet ein Pixel statt achtzig. */
-.aa-livemap-controls__group + .aa-livemap-controls__group {
-  border-left: 1px solid var(--line);
-  padding-left: 10px;
-  margin-left: 4px;
-}
-/* Symbol-Schalter brauchen keine Wortbreite. */
-.aa-livemap-seg__btn > span[aria-hidden],
-.aa-livemap-toggle > span[aria-hidden] {
-  font-size: 13px;
-  line-height: 1;
-}
-.aa-livemap-controls__rubric {
-  font-family: var(--font-mono);
-  font-size: var(--fs-100);
-  font-weight: var(--fw-bold);
-  letter-spacing: var(--ls-caps);
-  color: var(--text-dim);
-  text-transform: uppercase;
-}
-.aa-livemap-controls__row {
-  display: flex;
+  align-items: center;
   gap: 6px;
+  margin-left: -1px;
+  border-left: 1px solid var(--line);
+  padding-left: 9px;
+}
+.aa-livemap-hinweis {
+  grid-column: 1;
+  grid-row: 2;
+  justify-self: center;
+  align-self: start;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
 }
 /* Segmented control (ANSICHT/AUSRICHTUNG): two segments, no gap, one outer
    radius — active = --bg on --acc, inactive = --text-dim on --surface. */
@@ -7863,6 +7869,12 @@ input:disabled {
 }
 .aa-livemap-seg__btn {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-width: 32px;
+  padding: 0 9px;
   border: none;
   border-left: 1px solid var(--line);
   background: var(--surface);
@@ -7870,7 +7882,7 @@ input:disabled {
   font-family: var(--font-sans);
   font-size: 11px;
   font-weight: var(--fw-bold);
-  padding: 6px 11px;
+  white-space: nowrap;
   cursor: pointer;
 }
 .aa-livemap-seg__btn:first-child {
@@ -7884,24 +7896,29 @@ input:disabled {
   background: color-mix(in srgb, var(--acc) 85%, black);
   color: var(--bg);
 }
-/* Single toggle (EBENEN/KARTE "Folgen"): same optic, rounded all round. */
-.aa-livemap-toggle {
+/* Einzelner Ein/Aus-Schalter: Symbol und Wort in einer Zeile, feste Hoehe. */
+.aa-livemap-toggle,
+.aa-livemap-seg__solo {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
   border: 1px solid var(--line);
+  border-radius: var(--r-md);
   background: var(--surface);
   color: var(--text-dim);
   font-family: var(--font-sans);
-  font-size: 11px;                     /* was 12px */
+  font-size: 11px;
   font-weight: var(--fw-bold);
-  padding: 6px 11px;                   /* was 8px 14px */
-  border-radius: var(--r-md);
+  white-space: nowrap;
   cursor: pointer;
 }
-/* Variante B: das Wort erscheint nur im aktiven Zustand, damit man bei
-   unabhaengigen Ein/Aus-Schaltern nicht raten muss. Der Abstand haengt am
-   Wort, nicht am Knopf — sonst bliebe im Aus-Zustand eine Luecke stehen. */
-.aa-livemap-toggle__wort {
-  margin-left: 6px;
+.aa-livemap-seg__solo {
+  width: 32px;
+  padding: 0;
 }
 .aa-livemap-toggle--active {
   background: var(--acc);
@@ -7913,35 +7930,18 @@ input:disabled {
   color: var(--bg);
 }
 
-/* §4 — right panel: flex column, 296px, 16px from the top-right corner. */
+/* Rechtes Panel: festes Mass, einklappbar, beginnt im Raster unter der Leiste. */
 .aa-livemap-panel {
-  position: absolute;
-  z-index: 500;
-  right: 16px;
-  /* Field feedback (2026-08-03): both this panel and .aa-livemap-controls
-     used to anchor at top:16px independently — with no awareness of each
-     other's width, the Kartenschalter-Block's rightmost "KARTE" group
-     could sit UNDER this panel (same z-index, later in the DOM wins) and
-     get visually covered. The panel must never overlap the controls row,
-     so it always starts below it instead of beside it — not dependent on
-     window width. 96px clears the controls row's rubric + one button row
-     + padding with room to spare. */
-  width: 296px;
-  /* Field feedback (2026-08-03): the events log was crowding/overlapping
-     the bottom-right zoom (+/-) and attribution controls. Root cause: this
-     was always meant to be "100% - top(96px) - README §1's own 112px
-     bottom-right clearance for zoom+attribution" = 208px, but the pre-
-     existing calc only ever subtracted a single 112px term and silently
-     ignored its own top offset entirely, so the panel could reach up to
-     `top` pixels further down than intended — a pre-existing shortfall,
-     not something this round introduced, just never corrected until now. */
-  /* Die Leiste bricht je nach Kartenbreite, Sprache und aktiven Schaltern um:
-     LiveMapView misst ihre Unterkante und setzt daraus --aa-panel-oben. */
-  top: var(--aa-panel-oben, 96px);
-  max-height: calc(100% - var(--aa-panel-oben, 96px) - 112px);
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  width: 256px;
+  max-height: 100%;
+  min-height: 0;
+  overflow-y: auto; /* wenig Hoehe: das Panel rollt, statt die Ereignisse zu quetschen */
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 /* §4.1 — Flugwerte card. */
@@ -7949,13 +7949,31 @@ input:disabled {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 8px;
+  padding: 10px 12px;
 }
 .aa-livemap-flightcard__head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.aa-livemap-flightcard__head > :first-child {
+  flex: 1;
+}
+.aa-livemap-flightcard__klappe {
+  appearance: none;
+  width: 24px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
 }
 .aa-livemap-flightcard__rubric {
   font-family: var(--font-mono);
@@ -7978,7 +7996,7 @@ input:disabled {
 }
 .aa-livemap-flightcard__airport {
   font-family: var(--font-mono);
-  font-size: 26px;
+  font-size: 18px;
   font-weight: var(--fw-bold);
   letter-spacing: 0.03em;
 }
@@ -8000,7 +8018,7 @@ input:disabled {
 .aa-livemap-flightcard__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px 14px;
+  gap: 6px 12px;
 }
 .aa-livemap-flightcard__grid > div {
   display: flex;
@@ -8014,8 +8032,8 @@ input:disabled {
    reads as "the header stat" rather than a fifth equal grid cell. */
 .aa-livemap-flightcard__phase-row {
   grid-column: 1 / -1;
-  padding-bottom: 8px;
-  margin-bottom: 2px;
+  padding-bottom: 6px;
+  margin-bottom: 0;
   border-bottom: 1px solid var(--line);
 }
 .aa-livemap-flightcard__label {
@@ -8027,16 +8045,16 @@ input:disabled {
 }
 .aa-livemap-flightcard__value {
   font-family: var(--font-mono);
-  font-size: 22px;
+  font-size: 15px;
   font-weight: var(--fw-bold);
   font-variant-numeric: tabular-nums;
 }
 .aa-livemap-flightcard__foot {
   display: flex;
   justify-content: space-between;
-  padding-top: 10px;
+  padding-top: 6px;
   border-top: 1px solid var(--line);
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim);
 }
 .aa-livemap-flightcard__foot span:last-child {
@@ -8045,8 +8063,8 @@ input:disabled {
 
 /* §4.2 — Ereignisliste. */
 .aa-livemap-events {
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
+  min-height: 84px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -8056,7 +8074,7 @@ input:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 11px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--line);
 }
 .aa-livemap-events__title {
@@ -8150,7 +8168,7 @@ button.aa-livemap-events__row:hover {
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 420px;
+  width: min(420px, calc(100% - 32px));
   padding: 22px 24px;
   display: flex;
   flex-direction: column;
@@ -8198,11 +8216,11 @@ button.aa-livemap-events__row:hover {
    und `right` würde von der Box-Auflösung ignoriert; `max-width` allein
    drückt exakt dieselbe Grenze klarer aus.) */
 .aa-livemap-sysline {
-  position: absolute;
-  z-index: 500;
-  left: 16px;
-  bottom: 16px;
-  max-width: calc(100% - 32px);
+  grid-column: 1 / -1;
+  grid-row: 3;
+  justify-self: start;
+  align-self: end;
+  max-width: calc(100% - 56px); /* rechts stehen Zoom und Namensnennung */
   display: flex;
   flex-wrap: wrap;
   align-items: center;

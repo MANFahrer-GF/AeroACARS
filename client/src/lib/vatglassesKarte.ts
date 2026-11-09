@@ -13,6 +13,7 @@
 
 import { mitZeitgrenze } from "./abbruch";
 import { liveInhalt } from "./liveInhalt";
+import type { VatsimPilot } from "./vatsimKarte";
 
 /** Welches Netz die Karte zeigt. Nie beide zugleich — zwei Netze
  *  uebereinander ergeben ein Bild, in dem niemand mehr erkennt, wer
@@ -34,10 +35,14 @@ export interface SektorenFuerKarte {
   nahbereich: GeoJSON.FeatureCollection;
   nahbereichMarken: GeoJSON.FeatureCollection;
   gebucht: GeoJSON.FeatureCollection;
+  /** Fremde Piloten des gewaehlten Netzes, nur bei IVAO belegt: VATSIM holt
+   *  der Client aus dem eigenen Datafeed. */
+  piloten: VatsimPilot[];
 }
 
 function leer(): SektorenFuerKarte {
   return {
+    piloten: [],
     flaechen: { type: "FeatureCollection", features: [] },
     marken: { type: "FeatureCollection", features: [] },
     nahbereich: { type: "FeatureCollection", features: [] },
@@ -94,6 +99,7 @@ export async function ladeSektoren(
       marken?: GeoJSON.FeatureCollection;
       abgedeckt?: string[];
       gebucht?: GeoJSON.FeatureCollection;
+      piloten?: VatsimPilot[];
       tracon?: {
         flaechen?: GeoJSON.FeatureCollection;
         marken?: GeoJSON.FeatureCollection;
@@ -113,6 +119,7 @@ export async function ladeSektoren(
       nahbereich: d.tracon?.flaechen ?? l.nahbereich,
       nahbereichMarken: d.tracon?.marken ?? l.nahbereichMarken,
       gebucht: d.gebucht ?? l.gebucht,
+      piloten: d.piloten ?? l.piloten,
       plaetze: d.atc?.plaetze ?? l.plaetze,
       firFlaechen: d.atc?.firFlaechen ?? l.firFlaechen,
       firMarken: d.atc?.firMarken ?? l.firMarken,

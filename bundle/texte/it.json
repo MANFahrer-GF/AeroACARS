@@ -1859,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Passando il mouse su un punto immagine nelle mappe ora appare una piccola anteprima dell'immagine con volo, ora, quota e fase. I punti immagine sulla mappa live e sulla mappa del volo ora si possono nascondere con l'interruttore «Immagini». Ora le immagini si possono vedere ingrandite: con la lente sulla miniatura, con un clic sull'immagine a destra e con i punti sulle mappe. La mappa del volo mostra ora le immagini del volo come punti. Ora le immagini si possono inviare anche dal tablet tramite il bridge LAN. Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato. Le immagini in modalità finestra mostrano ora solo l'immagine del simulatore, senza barra del titolo e bordo."
+    "neu_text": "Passando il mouse su un punto immagine nelle mappe ora appare una piccola anteprima dell'immagine con volo, ora, quota e fase. I punti immagine sulla mappa live e sulla mappa del volo ora si possono nascondere con l'interruttore «Immagini». Ora le immagini si possono vedere ingrandite: con la lente sulla miniatura, con un clic sull'immagine a destra e con i punti sulle mappe. La mappa del volo mostra ora le immagini del volo come punti. Ora le immagini si possono inviare anche dal tablet tramite il bridge LAN. Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato. Le immagini in modalità finestra mostrano ora solo l'immagine del simulatore, senza barra del titolo e bordo. La mappa live è stata ricostruita dall'interno: passando tra chiaro, scuro e satellite, rotta, traccia, traffico e rete restano semplicemente al loro posto. La barra della mappa ha pulsanti fissi in pochi gruppi, il pannello informazioni volo si può chiudere e nulla si sovrappone più, anche nelle finestre piccole. I punti immagine sono sulla mappa appena si apre, anche senza un volo in corso, e il globo resta quando si cambia mappa e dopo il riavvio."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -3420,6 +3420,8 @@
     "taxi_loaded": "Mappe di rullaggio caricate: {{airports}}",
     "group_map": "MAPPA",
     "center_on_flight": "Centra sul volo",
+    "panel_auf": "Espandi pannello",
+    "panel_zu": "Comprimi pannello",
     "follow": "Segui",
     "own_flight": "VOLO PROPRIO",
     "live": "LIVE",
@@ -3446,7 +3448,6 @@
     "netz_aus": "Off",
     "netz_aus_hint": "Non mostrare nessuna rete online",
     "netz_ivao_hint": "Controllori, ATIS e altri piloti dalla rete IVAO. Le aree derivano dai confini FIR — IVAO non pubblica settori propri.",
-    "netz_zeit_hint": "Recupero dei dati e disegno delle aree nell'ultimo ciclo",
     "fl_auto": "quota propria",
     "fl_auto_hint": "Mostra i settori alla propria quota",
     "fl_regler": "Livello di volo per i settori",

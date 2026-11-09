@@ -1,6 +1,6 @@
 // Vorschau des Bilder-Tabs (vite.bilder.config.mjs): Seitenleiste und Tab mit gestellten
 // `invoke`-Antworten. Parameter: ?fall=... &sprache=de|en|it &theme=dark|light
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -13,7 +13,8 @@ import { BilderTab } from "../components/bilder/BilderTab";
 import { BilderHintergrund } from "../components/bilder/BilderHintergrund";
 import FlugkarteFenster from "../flugkarte/FlugkarteFenster";
 import { LiveMapView } from "../components/LiveMapView";
-import type { ActiveFlightInfo } from "../types";
+import type { BildFokus } from "../components/bilder/useBildKarte";
+import type { ActiveFlightInfo, SimSnapshot } from "../types";
 
 const q = new URLSearchParams(window.location.search);
 const sprache = q.get("sprache") ?? "de";
@@ -28,6 +29,16 @@ void i18n.use(initReactI18next).init({
 
 const fall = q.get("fall") ?? "normal";
 const imFlug = !["ohneflug", "leer", "leerein"].includes(fall);
+// ?karte=voll: feste Sim-Position auf der Route (Marker, Folgen, Zentrieren, eigene Höhe).
+const SIM = { lat: 49.2, lon: 8.6, heading_deg_true: 180, heading_deg_magnetic: 178, altitude_msl_ft: 36000, groundspeed_kt: 450, aircraft_icao: "A20N" } as unknown as SimSnapshot;
+
+// Reiterwechsel (A11) und Fokus aus dem Bilder-Tab (F4) von aussen stellbar: window.__karteSetzen.
+function KarteVorschau() {
+  const [sichtbar, setSichtbar] = useState(true);
+  const [bildFokus, setBildFokus] = useState<BildFokus | null>(null);
+  (window as unknown as { __karteSetzen: unknown }).__karteSetzen = { setSichtbar, setBildFokus };
+  return <LiveMapView activeFlight={imFlug ? ({ pirep_id: "P412", dpt_airport: "EDDF", arr_airport: "LSZH", distance_nm: 120 } as unknown as ActiveFlightInfo) : null} simSnapshot={q.has("karte") && imFlug ? SIM : null} simKind="xplane12" onSwitchToBriefing={() => undefined} sichtbar={sichtbar} bildFokus={bildFokus} />;
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -39,7 +50,7 @@ createRoot(document.getElementById("root")!).render(
       />
       <main className="app">
         <BilderHintergrund />
-        {q.get("livekarte") === "1" ? <LiveMapView activeFlight={{ pirep_id: "P412", dpt_airport: "EDDF", arr_airport: "LSZH" } as unknown as ActiveFlightInfo} simSnapshot={null} simKind="xplane12" onSwitchToBriefing={() => undefined} /> : <BilderTab
+        {q.get("livekarte") === "1" ? <KarteVorschau /> : <BilderTab
           pilotId="17"
           pilotName="Thomas K."
           aktiverFlug={imFlug ? { pirep_id: "P412", callsign: "GSG412", dpt: "EDDF", arr: "LSZH" } : null}
