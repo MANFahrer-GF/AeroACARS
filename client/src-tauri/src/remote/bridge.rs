@@ -1712,6 +1712,9 @@ mod tests {
         // aussperrt, traegt ihn hier MIT Begruendung ein, statt ihn im
         // Dispatch stillschweigend fehlen zu lassen.
         const DENY_SET: &[&str] = &[
+            // Messung des ersten Netz-Zuschaltens (Abnahme E7): gesucht ist die
+            // Zeit im Client am Sim-PC. Werte vom Tablet wuerden sein Log vermischen.
+            "netz_messung",
             // Kabinenansagen (Beta): Der Ton spielt auf dem Sim-PC. Vom
             // Tablet aus gibt es nichts zu bedienen.
             "kabinen_einstellungen_lesen",
