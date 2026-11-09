@@ -175,17 +175,18 @@ impl PhpvmsMeldungen {
 /// der Bahndisziplin; genau in Anflug und Ausrollen fehlten so Sekunden.
 /// Die Positionsmeldungen sind seit v0.6.0 auf dieselbe Weise entkoppelt.
 ///
-/// Scheitert ein Lebenszeichen, wird nach `LEBENSZEICHEN_NEUVERSUCH` mit dem
-/// dann neuesten Stand erneut gesendet (vorher: im nächsten Takt). Ein 404
-/// beendet den Flug wie bisher (`handle_remote_cancellation` setzt
-/// `flight.stop`, der Streamer endet im nächsten Takt).
+/// Scheitert ein Lebenszeichen, wird nach `lebenszeichen_wartezeit` mit dem
+/// dann neuesten Stand erneut gesendet (3 s, steigend bis zum normalen Takt von
+/// 30 s). Sagt phpVMS, dass es den PIREP nicht mehr gibt
+/// (`pirep_serverseitig_beendet`), endet der Flug
+/// (`handle_remote_cancellation` setzt `flight.stop`, der Streamer endet im
+/// nächsten Takt).
 fn spawn_phpvms_meldungen(
     app: AppHandle,
     flight: Arc<ActiveFlight>,
     client: Client,
     meine_generation: u64,
 ) -> PhpvmsMeldungen {
-    const LEBENSZEICHEN_NEUVERSUCH: Duration = Duration::from_secs(3);
     let (lz_tx, mut lz_rx) = tokio::sync::watch::channel::<Option<Lebenszeichen>>(None);
     {
         let (app, flight, client) = (app.clone(), flight.clone(), client.clone());
@@ -201,6 +202,7 @@ fn spawn_phpvms_meldungen(
                         || flight.generation.load(Ordering::SeqCst) != meine_generation
                 }
             };
+            let mut fehlversuche = 0u32;
             while lz_rx.changed().await.is_ok() {
                 {
                     let Some(lz) = lz_rx.borrow_and_update().clone() else {
@@ -216,6 +218,7 @@ fn spawn_phpvms_meldungen(
                     }
                     match antwort {
                         Ok(()) => {
+                            fehlversuche = 0;
                             if let Ok(mut stats) = flight.stats.lock() {
                                 stats.last_heartbeat_at = Some(Utc::now());
                             }
@@ -228,7 +231,7 @@ fn spawn_phpvms_meldungen(
                                 "PIREP heartbeat sent"
                             );
                         }
-                        Err(ApiError::NotFound) => {
+                        Err(ref e) if pirep_serverseitig_beendet(e) => {
                             drop(_live);
                             handle_remote_cancellation(&app, &flight, "POST update");
                             return;
@@ -241,7 +244,8 @@ fn spawn_phpvms_meldungen(
                                 "PIREP heartbeat failed"
                             );
                             drop(_live);
-                            tokio::time::sleep(LEBENSZEICHEN_NEUVERSUCH).await;
+                            fehlversuche = fehlversuche.saturating_add(1);
+                            tokio::time::sleep(lebenszeichen_wartezeit(fehlversuche)).await;
                             if ueberholt() {
                                 return;
                             }
@@ -257,4 +261,11 @@ fn spawn_phpvms_meldungen(
         lebenszeichen: lz_tx,
         pirep_id: flight.pirep_id.clone(),
     }
+}
+
+/// Wartezeit vor dem nächsten Lebenszeichen nach `fehlversuche` Fehlschlägen:
+/// 3, 6, 12, 24, dann 30 s. Ein Dauerfehler hämmerte sonst alle 3 s auf phpVMS
+/// (08.11.2026: 1285 Anfragen in 79 Minuten); 30 s ist der normale Takt.
+fn lebenszeichen_wartezeit(fehlversuche: u32) -> Duration {
+    Duration::from_secs((3u64 << fehlversuche.saturating_sub(1).min(4)).min(30))
 }

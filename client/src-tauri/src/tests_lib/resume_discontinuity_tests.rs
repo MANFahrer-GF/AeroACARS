@@ -515,15 +515,15 @@
         );
         // Ein geloeschter PIREP beendet den Flug, wie im Streamer.
         assert!(
-            warte_zweig.contains("ApiError::NotFound")
+            warte_zweig.contains("pirep_serverseitig_beendet(")
                 && warte_zweig.contains("handle_remote_cancellation("),
-            "404 im Gate-Heartbeat wird nicht behandelt"
+            "404 oder Stornierung im Gate-Heartbeat wird nicht behandelt"
         );
         // Ohne Leerraum verglichen — rustfmt bricht die Bedingung um.
         let ohne_leerraum: String = warte_zweig.split_whitespace().collect();
         assert!(
             ohne_leerraum.contains(concat!(
-                "Err(ApiError::NotFound)if!flight_hb.stop",
+                "Err(refe)ifpirep_serverseitig_beendet(e)&&!flight_hb.stop",
                 ".load("
             )),
             "ein verspaeteter 404 trifft auch einen schon beendeten Flug"

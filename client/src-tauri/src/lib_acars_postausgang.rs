@@ -254,6 +254,17 @@ fn ist_pirep_abgebrochen(body: &str) -> bool {
         .is_some_and(|t| t == "pirep-cancelled" || t.ends_with("/pirep-cancelled"))
 }
 
+/// Sagt die Antwort auf eine Meldung an den PIREP, dass es ihn serverseitig
+/// nicht mehr gibt? 404 = entfernt, 400 `pirep-cancelled` = storniert (zum
+/// Beispiel „Flugzeug wechseln“ in PaxStudio). Beides heilt kein Neuversuch.
+fn pirep_serverseitig_beendet(e: &ApiError) -> bool {
+    match e {
+        ApiError::NotFound => true,
+        ApiError::Server { status: 400, body } => ist_pirep_abgebrochen(body),
+        _ => false,
+    }
+}
+
 /// Nach so vielen Tagen werden Zeilen eines nicht (mehr) gefundenen PIREPs
 /// verworfen, der nicht der aktive Flug ist.
 const ACARS_ABLAUF_TAGE: i64 = 7;
@@ -288,7 +299,7 @@ fn acars_pirep_verwerfen(app: &AppHandle, offen: &mut AcarsOffen, pirep_id: &str
         verworfen = offen.get(pirep_id).map_or(0, |q| q.len()),
         "PIREP nimmt keine ACARS-Zeilen mehr an — Zeilen liegen in der Quarantäne"
     );
-    if matches!(grund, ApiError::NotFound) {
+    if pirep_serverseitig_beendet(grund) {
         let aktiv = app
             .state::<AppState>()
             .active_flight

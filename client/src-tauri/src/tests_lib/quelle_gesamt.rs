@@ -328,6 +328,8 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// — plus Health-Report 08.11.: AGL-Ausreisser am Boden (`wieder_weggestiegen`, Tests `touchdown_dump_faellig_tests`), `testlauf` in der Startzeile, `bestaetigter_aufsetzer` (Test `bestaetigter_aufsetzer_geht_vor_verworfenem_kandidaten`).
 /// — plus Live-Karte 09.11. (Abnahme E7): Befehl `live_zugang::netz_messung` in der
 /// Befehlsliste, sonst nichts an `lib.rs`. Test `tests/befehlsliste.rs`, Bruecke `DENY_SET`.
+/// — plus Stornierter PIREP 09.11.: `pirep_serverseitig_beendet` in Lebenszeichen, Positions-Worker, Fortsetzen-Tor und
+/// ACARS-Postausgang, `lebenszeichen_wartezeit`. Tests `meldung_endet_nur_bei_stornierung_oder_404`, `lebenszeichen_wartezeit_*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -338,4 +340,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "f98127578e8bff7e45e61b17c88468f5d6123b5485ebdce3a7547fa18e2dbf32";
+const HASH_VOR_DER_ZERLEGUNG: &str = "4d2978d91b160113c4159c4de33ea0c5bf79da508bfee6e229cdd1e58d016372";
