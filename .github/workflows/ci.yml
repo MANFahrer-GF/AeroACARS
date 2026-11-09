@@ -1,8 +1,8 @@
 name: CI
 
 # Build- + Test-Verifikation VOR dem Release. Ergaenzt release.yml, die
-# nur auf Version-Tags laeuft: hier bekommt JEDER Push / PR eine echte
-# Kompilier- und Testrunde — inklusive des Windows-only MSFS-Adapters
+# nur auf Version-Tags laeuft: hier bekommt jeder PR und jeder Push auf die
+# Hauptzweige eine echte Kompilier- und Testrunde — inklusive des Windows-only MSFS-Adapters
 # (sim-msfs / telemetry.rs mit dem Byte-Level-Lockstep-Test), der auf der
 # Linux-Werkbank nicht kompiliert. Kein Signieren, kein Release-Upload —
 # reine Verifikation. Modelliert nach dem Preflight-Gate + Build-Setup in
@@ -27,7 +27,10 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    # Nur die Hauptzweige (Thomas 09.11.2026): Arbeitszweige prueft der PR-Lauf.
+    # Ein Push-Lauf auf einem Arbeitszweig sah die Cache-Marken von v3 nicht
+    # (Cache-Scope) und baute Windows/macOS unnoetig nach. Ohne PR: von Hand starten.
+    branches: [v3, main]
     paths:
       - 'client/**'
       - 'scripts/**'
