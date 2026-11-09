@@ -108,6 +108,50 @@ const einstellungen: Record<string, string> = fall === "leer" ? {} : { "aeroacar
 let kontingent = { rest: fall === "kontingent0" ? 0 : 9, grenze: 12, retry_after: fall === "kontingent0" ? 1500 : 0 };
 let nachfrage = 0;
 
+// ---------- Live-Karte mit Daten (?karte=voll, &volumen=1: Sektoren in echter Menge) ----------
+const PLAETZE: Record<string, { lat: number; lon: number }> = { EDDF: { lat: 50.03, lon: 8.56 }, LSZH: { lat: 47.46, lon: 8.55 }, EDDB: { lat: 52.36, lon: 13.5 }, EDDH: { lat: 53.63, lon: 9.99 }, EGLL: { lat: 51.47, lon: -0.45 } };
+let vaAbrufe = 0;
+const kollege = (id: string, nr: string, name: string, von: string, nach: string, la: number, lo: number, kurs: number, status: string) => ({ id, ident: `GSG${nr}`, flight_number: nr, status_text: status, airline: { icao: "GSG" }, aircraft: { icao: "A20N", registration: "D-AGSG", name: "A320neo" }, dpt_airport_id: von, arr_airport_id: nach, user: { name }, position: { lat: la, lon: lo, heading: kurs, altitude: 34000, altitude_msl: 34000, gs: 440, vs: 0 } });
+const kollegen = () => [kollege("V1", "201", "Anna B.", "EDDB", "EDDF", 51.4, 11.0, 235, "Cruise"), kollege("V2", "202", "Ben C.", "EDDH", "LSZH", 51.0, 9.4, 185, "Cruise"), kollege("V3", "203", "Cem D.", "EGLL", "EDDF", 51.3, 4.0, 110, "Approach")];
+type Punkt = [number, number];
+const merkmal = (geometry: GeoJSON.Geometry, properties: Record<string, unknown>) => ({ type: "Feature" as const, geometry, properties });
+const sammlung = (features: unknown[]) => ({ type: "FeatureCollection" as const, features });
+function bodendaten(lo: number, la: number) {
+  const p = (x: number, y: number): Punkt => [lo + x, la + y];
+  const linie = (k: string, von: Punkt, nach: Punkt, extra: Record<string, unknown> = {}) => merkmal({ type: "LineString", coordinates: [von, nach] }, { k, ...extra });
+  const flaeche = (k: string, x: number, y: number, b: number, extra: Record<string, unknown> = {}) => merkmal({ type: "Polygon", coordinates: [[p(x, y), p(x + b, y), p(x + b, y + b), p(x, y + b), p(x, y)]] }, { k, ...extra });
+  return sammlung([
+    flaeche("apron", 0, 0, 0.006), flaeche("terminal", 0.002, 0.002, 0.002),
+    linie("runway", p(-0.02, -0.006), p(0.02, -0.006), { r: "07L/25R" }),
+    linie("taxiway", p(-0.01, -0.003), p(0.01, -0.003), { r: "N" }),
+    linie("taxiway", p(0, -0.003), p(0, 0), { r: "L", c: "blue" }),
+    linie("taxiway", p(0.004, -0.003), p(0.004, 0), { r: "M", c: "orange" }),
+    linie("taxilane", p(0, 0), p(0.006, 0)),
+    merkmal({ type: "Point", coordinates: p(0.003, 0.001) }, { k: "gate", r: "A12" }),
+    merkmal({ type: "Point", coordinates: p(0.005, 0.001) }, { k: "parking_position", r: "V7" }),
+    merkmal({ type: "Point", coordinates: p(-0.002, -0.004) }, { k: "holding_position" }),
+  ]);
+}
+const rechteck = (lo: number, la: number, b: number, h: number, ecken = 4): GeoJSON.Polygon => {
+  const ring: Punkt[] = Array.from({ length: ecken }, (_, i) => { const w = (i / ecken) * 2 * Math.PI; return [lo + (b / 2) * Math.cos(w), la + (h / 2) * Math.sin(w)]; });
+  ring.push(ring[0]);
+  return { type: "Polygon", coordinates: [ring] };
+};
+function sektoren() {
+  const flaechen = q.has("volumen")
+    ? Array.from({ length: 1014 }, (_, i) => merkmal(rechteck(-170 + (i % 78) * 4.4, -50 + Math.floor(i / 78) * 8, 4.2, 7.6, 40), { ruf: `S${i}_CTR`, gesprochen: `Sektor ${i}`, frequenz: "128.900", farbe: ["#4ade80", "#60a5fa", "#f59e0b"][i % 3], fl_von: (i % 4) * 100, fl_bis: (i % 4) * 100 + 100 }))
+    : [merkmal(rechteck(9, 50, 4, 3, 24), { ruf: "EDGG_CTR", gesprochen: "Langen Radar", frequenz: "128.900", farbe: "#60a5fa", fl_von: 0, fl_bis: 660 }),
+       merkmal({ type: "Polygon", coordinates: [[[178, -20], [182, -20], [182, -15], [178, -15], [178, -20]]] }, { ruf: "NFFF_CTR", gesprochen: "Nadi Radar", frequenz: "124.100", farbe: "#f59e0b", fl_von: 0, fl_bis: 660 })];
+  return {
+    flaechen: sammlung(flaechen),
+    marken: sammlung(q.has("volumen")
+      ? Array.from({ length: 1014 }, (_, i) => merkmal({ type: "Point", coordinates: [-170 + (i % 78) * 4.4, -50 + Math.floor(i / 78) * 8] }, { ruf: `S${i}_CTR`, farbe: "#60a5fa", frequenz: "128.900", fl_von: (i % 4) * 100, fl_bis: (i % 4) * 100 + 100 }))
+      : [merkmal({ type: "Point", coordinates: [11, 51.5] }, { ruf: "EDGG_CTR", farbe: "#60a5fa", frequenz: "128.900" })]),
+    abgedeckt: ["EDGG"],
+    atc: { plaetze: sammlung([merkmal({ type: "Point", coordinates: [8.56, 50.03] }, { icao: "EDDF", tone: "twr", hat_app: 1, t_twr: 1, t_gnd: 1, t_del: 0, t_atis: 1, count: 3 })]) },
+  };
+}
+
 export async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   log(cmd, args);
   const a = (args ?? {}) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -175,6 +219,15 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
     case "bild_ordner_zeigen": case "bild_export": case "bild_aufnehmen": return undefined as T;
     case "flight_get_track": return Array.from({ length: 40 }, (_, i) => [8.56 + i * 0.012, 50.03 - i * 0.065]) as T;
     case "bild_kontext": return { staende: [], spur: [] } as T;
+    case "va_live_flights": if (q.has("karte")) { vaAbrufe++; return { data: kollegen().filter((f) => f.id !== "V3" || vaAbrufe <= 3) } as T; } break;
+    case "fremde_flugroute": if (q.has("karte")) return (a.pirepId === "V2" ? [] : [{ lon: 13.3, lat: 52.5, name: "EDDB" }, { lon: 11.5, lat: 50.9, name: "ERF" }, { lon: 8.57, lat: 50.03, name: "EDDF" }]) as T; break;
+    case "airport_get": if (q.has("karte")) return (PLAETZE[a.icao] ?? {}) as T; break;
+    case "flight_get_route_fixes": if (q.has("karte")) return [{ ident: "EDDF", lat: 50.03, lon: 8.56, kind: "airport" }, { ident: "TOC", lat: 49.8, lon: 8.7, kind: "wpt" }, { ident: "KRH", lat: 49.2, lon: 8.6, kind: "wpt" }, { ident: "TOD", lat: 48.2, lon: 8.5, kind: "wpt" }, { ident: "LSZH", lat: 47.46, lon: 8.55, kind: "airport" }] as T; break;
+    case "airport_ground_index": if (q.has("karte")) return [{ icao: "EDDF", lat: 50.03, lon: 8.56 }, { icao: "XDAT", lat: -16.7, lon: -179.95 }] as T; break;
+    case "airport_ground_get": if (q.has("karte")) { const p = a.icao === "XDAT" ? [-179.95, -16.7] : [8.56, 50.03]; return { icao: a.icao, geojson: JSON.stringify(bodendaten(p[0], p[1])) } as T; } break;
+    case "live_inhalt": if (q.has("karte") && String(a.pfad).startsWith("/api/vatglasses")) return sektoren() as T; break;
+  }
+  switch (cmd) {
     default: return (q.get("livekarte") === "1" ? [] : undefined) as T; // die echte Live-Karte erwartet Listen
   }
 }
