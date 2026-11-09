@@ -72,7 +72,7 @@ export function schluesselIn(quelle: string): string[] {
       if (z === ")") tiefe--;
       i++;
     }
-    for (const text of teil) if (/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(text)) void text;
+    for (const text of teil) if (/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(text)) gefunden.add(text);
   }
   return [...gefunden].sort();
 }
