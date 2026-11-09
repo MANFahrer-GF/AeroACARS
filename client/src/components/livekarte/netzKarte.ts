@@ -185,10 +185,12 @@ interface NetzAngaben {
   sichtbar: boolean;
   zugangTakt: number;
   simSnapshotRef: MutableRefObject<SimSnapshot | null>;
+  /** Die eigene Flugflaeche (Hundert Fuss), null ohne Sim-Verbindung; wandert sie, filtert der Regler mit. */
+  eigeneFl: number | null;
 }
 
 /** Holt die Netzdaten, solange ein Netz gewaehlt ist, und haengt Hoehenfilter und Klickfenster an. */
-export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapshotRef }: NetzAngaben) {
+export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapshotRef, eigeneFl }: NetzAngaben) {
   // VATSIM-Overlay (Sektoren + Lotsen + fremde Piloten). Standard AUS und
   // gemerkt: das ist eine bewusste Zuschaltung, kein Dauerzustand — die
   // Karte gehoert zuerst dem eigenen Flug.
@@ -376,14 +378,11 @@ export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapsh
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !showVatsim) return;
-    const eigeneFl = simSnapshotRef.current
-      ? Math.max(0, Math.round((simSnapshotRef.current.altitude_msl_ft ?? 0) / 100))
-      : null;
     hoehenfilterSetzen(
       map,
       flModus === "auto" && eigeneFl != null ? eigeneFl : flWert,
     );
-  }, [mapReady, showVatsim, flModus, flWert]);
+  }, [mapReady, showVatsim, flModus, flWert, eigeneFl]);
 
   // Klickfenster fuer das VATSIM-Overlay — Klartext statt Rohdaten
   // (dieselbe Bauform wie auf der Live-Karte der Webapp).

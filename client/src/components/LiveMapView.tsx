@@ -145,7 +145,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   );
   const simSnapshotRef = useRef<SimSnapshot | null>(null);
   useEffect(() => { simSnapshotRef.current = simSnapshot; });
-  const { netz, setNetz, flModus, setFlModus, flWert, setFlWert, netzZeit } = useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapshotRef });
+  const { netz, setNetz, flModus, setFlModus, flWert, setFlWert, netzZeit } = useNetzKarte({
+    mapRef, mapReady, sichtbar, zugangTakt, simSnapshotRef,
+    eigeneFl: simSnapshot ? Math.max(0, Math.round((simSnapshot.altitude_msl_ft ?? 0) / 100)) : null,
+  });
   const groundLoaded = useTaxiKarte(mapRef, mapReady);
   const [theme, setTheme] = useState<"dark" | "light">(readTheme());
   // Wird der Reiter wieder vorgeholt, muss MapLibre seine Leinwand neu
