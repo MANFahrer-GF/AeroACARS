@@ -1,8 +1,8 @@
 name: CI
 
 # Build- + Test-Verifikation VOR dem Release. Ergaenzt release.yml, die
-# nur auf Version-Tags laeuft: hier bekommt JEDER Push / PR eine echte
-# Kompilier- und Testrunde — inklusive des Windows-only MSFS-Adapters
+# nur auf Version-Tags laeuft: hier bekommt jeder PR und jeder Push auf die
+# Hauptzweige eine echte Kompilier- und Testrunde — inklusive des Windows-only MSFS-Adapters
 # (sim-msfs / telemetry.rs mit dem Byte-Level-Lockstep-Test), der auf der
 # Linux-Werkbank nicht kompiliert. Kein Signieren, kein Release-Upload —
 # reine Verifikation. Modelliert nach dem Preflight-Gate + Build-Setup in
@@ -27,7 +27,10 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    # Nur die Hauptzweige (Thomas 09.11.2026): Arbeitszweige prueft der PR-Lauf.
+    # Ein Push-Lauf auf einem Arbeitszweig sah die Cache-Marken von v3 nicht
+    # (Cache-Scope) und baute Windows/macOS unnoetig nach. Ohne PR: von Hand starten.
+    branches: [v3, main]
     paths:
       - 'client/**'
       - 'scripts/**'
@@ -50,9 +53,12 @@ jobs:
   aenderungen:
     name: Kern oder nur Paket?
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     outputs:
-      kern: ${{ github.event_name == 'workflow_dispatch' || steps.kern.outputs.cache-hit != 'true' }}
-      linux: ${{ github.event_name == 'workflow_dispatch' || steps.linux.outputs.cache-hit != 'true' }}
+      kern: ${{ github.event_name == 'workflow_dispatch' || steps.gesehen.outputs.kern != 'true' }}
+      linux: ${{ github.event_name == 'workflow_dispatch' || steps.gesehen.outputs.linux != 'true' }}
       kern_marke: ${{ steps.marke.outputs.kern }}
       linux_marke: ${{ steps.marke.outputs.linux }}
     steps:
@@ -64,24 +70,26 @@ jobs:
           linux=$( (echo "$kern"; git ls-tree HEAD bundle client/src-tauri/crates/cabin-announcements client/src-tauri/crates/kabine-wasm) | sha256sum | cut -c1-20)
           echo "kern=$kern" >> "$GITHUB_OUTPUT"
           echo "linux=$linux" >> "$GITHUB_OUTPUT"
-      - name: Kern schon geprueft?
-        id: kern
-        uses: actions/cache/restore@v4
-        with:
-          path: .ci-marke
-          key: ci-kern-ok-${{ steps.marke.outputs.kern }}
-          lookup-only: true
-      - name: Kern + Paket auf Linux schon geprueft?
-        id: linux
-        uses: actions/cache/restore@v4
-        with:
-          path: .ci-marke
-          key: ci-linux-ok-${{ steps.marke.outputs.linux }}
-          lookup-only: true
+      - name: Schon geprueft? (Marken aller Zweige)
+        id: gesehen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KERN: ci-kern-ok-${{ steps.marke.outputs.kern }}
+          LINUX: ci-linux-ok-${{ steps.marke.outputs.linux }}
+        # Ueber die API statt actions/cache: Der Cache ist je Zweig abgeschottet, ein
+        # Lauf auf v3 saehe die Marke des PR nicht und baute denselben Stand noch einmal.
+        # Der Schluessel ist der Fingerabdruck des Baums. Scheitert die Abfrage, wird gebaut.
+        run: |
+          da() {
+            n=$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=$1&per_page=100" --jq "[.actions_caches[] | select(.key == \"$1\")] | length" 2>/dev/null || echo 0)
+            [ "${n:-0}" -gt 0 ] && echo true || echo false
+          }
+          echo "kern=$(da "$KERN")" >> "$GITHUB_OUTPUT"
+          echo "linux=$(da "$LINUX")" >> "$GITHUB_OUTPUT"
       - name: Ergebnis
         run: |
-          echo "Windows/macOS/UI-Selbsttest: ${{ steps.kern.outputs.cache-hit == 'true' && 'Kern unveraendert und schon gruen — entfaellt' || 'laufen' }}" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "Linux-Rust: ${{ steps.linux.outputs.cache-hit == 'true' && 'Kern und Paket unveraendert — entfaellt' || 'laeuft' }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Windows/macOS/UI-Selbsttest: ${{ steps.gesehen.outputs.kern == 'true' && 'Kern unveraendert und schon gruen — entfaellt' || 'laufen' }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Linux-Rust: ${{ steps.gesehen.outputs.linux == 'true' && 'Kern und Paket unveraendert — entfaellt' || 'laeuft' }}" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # ─── Windows: der einzige Runner, der den MSFS-Adapter kompiliert ────
   # sim-msfs (telemetry.rs, Lockstep, from_block-Byte-Tests) ist
