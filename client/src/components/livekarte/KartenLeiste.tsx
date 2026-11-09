@@ -178,6 +178,7 @@ export function KartenLeiste(p: KartenLeisteAngaben) {
               type="button"
               className={`aa-livemap-seg__btn ${p.netz === wert ? "aa-livemap-seg__btn--active" : ""}`}
               aria-pressed={p.netz === wert}
+              aria-label={wert === "aus" ? t("livemap.netz_aus", "Aus") : wert === "vatsim" ? "VATSIM" : "IVAO"}
               onClick={() => p.setzeNetz(wert)}
               title={
                 wert === "aus"
@@ -200,6 +201,7 @@ export function KartenLeiste(p: KartenLeisteAngaben) {
               type="button"
               className={`aa-livemap-toggle ${p.flAuto ? "aa-livemap-toggle--active" : ""}`}
               aria-pressed={p.flAuto}
+              aria-label={t("livemap.fl_auto", "eigene Höhe")}
               onClick={p.umschaltenFlAuto}
               title={t("livemap.fl_auto_hint", "Sektoren auf der eigenen Flughöhe zeigen")}
             >
@@ -214,6 +216,7 @@ export function KartenLeiste(p: KartenLeisteAngaben) {
               disabled={!p.flRegelbar}
               onChange={(e) => p.setzeFlWert(Number(e.target.value))}
               aria-label={t("livemap.fl_regler", "Flugfläche für die Sektoransicht")}
+              title={t("livemap.fl_regler", "Flugfläche für die Sektoransicht")}
             />
             <span className="aa-livemap-flwahl__wert">{p.flAnzeige}</span>
           </span>
@@ -238,6 +241,8 @@ export function KartenLeiste(p: KartenLeisteAngaben) {
             type="button"
             className={`aa-livemap-toggle ${p.folgen ? "aa-livemap-toggle--active" : ""}`}
             aria-pressed={p.folgen}
+            aria-label={t("livemap.follow")}
+            title={t("livemap.follow")}
             onClick={p.umschaltenFolgen}
           >
             {t("livemap.follow")}
