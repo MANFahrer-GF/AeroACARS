@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { karteQuelltext } from "./livekarte/quelltext.testhilfe";
 
 /**
  * Wächter über die Sichtbarkeits-Sperren der Live-Karte (QS 18.08.2026).
@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 
 // Pfad relativ zum Projektstamm — genauso wie in `sektorenAbgleich.test.ts`.
 // `import.meta.url` scheidet aus: unter jsdom ist es kein file:-URL.
-const roh = readFileSync("src/components/LiveMapView.tsx", "utf8");
+const roh = karteQuelltext();
 
 /**
  * Kommentare raus, Zeilenzahl erhalten.
@@ -72,7 +72,7 @@ describe("LiveMapView — Sichtbarkeits-Sperren", () => {
   it("sperrt den Marker-/Kamera-Effekt, der an der Telemetrie hängt", () => {
     // Dieser Effekt hat keinen Takt — er feuert bei JEDEM Telemetriepaket und
     // fährt `easeTo`/`jumpTo`. Ohne Sperre die teuerste Stelle von allen.
-    const pos = quelle.indexOf("pushSources(map, {");
+    const pos = quelle.indexOf("flugDatenSetzen(map, {");
     expect(pos).toBeGreaterThan(0);
     expect(quelle.slice(effektAnfang(pos), pos)).toContain("!sichtbar");
   });

@@ -18,8 +18,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act, cleanup, waitFor } from "@testing-library/react";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { karteQuelltext } from "./livekarte/quelltext.testhilfe";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../../../bundle/texte/de.json";
@@ -384,16 +383,13 @@ describe("Klick auf einen Kollegen", () => {
     // Sonst bleibt sie beim Ausschalten stehen. Der Vergleich laeuft
     // gegen den Quelltext, weil ein Rendertest eine Ebene, die es noch
     // nicht gibt, nicht kennen kann.
-    const quelle = readFileSync(
-      resolve(__dirname, "LiveMapView.tsx"),
-      "utf8",
-    );
+    const quelle = karteQuelltext();
     const angelegt = [...quelle.matchAll(/id: "(fremde-routen-[a-z-]+)"/g)].map(
       (m) => m[1],
     );
     const listeRoh = quelle.slice(
       quelle.indexOf("const FREMDE_ROUTEN_EBENEN"),
-      quelle.indexOf("const TRACK_LAYERS"),
+      quelle.indexOf("];", quelle.indexOf("const FREMDE_ROUTEN_EBENEN")),
     );
     const gefuehrt = [...listeRoh.matchAll(/"(fremde-routen-[a-z-]+)"/g)].map(
       (m) => m[1],

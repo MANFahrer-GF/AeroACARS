@@ -8,14 +8,9 @@
 // Der Test liest den Quelltext, wie die Nachbartests dieser Komponente: Ein
 // Verhaltenstest müsste die halbe MapLibre-Welt nachbauen.
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { karteQuelltext } from "./livekarte/quelltext.testhilfe";
 
-const quelle = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), "LiveMapView.tsx"),
-  "utf-8",
-);
+const quelle = karteQuelltext();
 
 function rumpf(name: string): string {
   const von = quelle.indexOf(`function ${name}(`);
@@ -50,7 +45,7 @@ describe("Karte: Routen der Kollegen", () => {
   it("zeichnet mehrere gleichzeitig, gedämpft und dünner als die eigene", () => {
     const zeichnen = rumpf("fremdeRoutenZeichnen");
     // Alle Einträge des Refs werden zu Linien — nicht nur der letzte.
-    expect(zeichnen).toMatch(/fremdeRoutenRef\.current\.entries\(\)/);
+    expect(zeichnen).toMatch(/routen\.entries\(\)/);
     expect(zeichnen).toMatch(/LineString/);
     // Und Linien mit weniger als zwei Punkten fallen raus.
     expect(zeichnen).toMatch(/punkte\.length >= 2/);

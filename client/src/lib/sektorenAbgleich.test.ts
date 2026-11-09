@@ -7,7 +7,7 @@
  *  Seitdem holt auch der Client alles und filtert selbst.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
+import { karteQuelltext } from "../components/livekarte/quelltext.testhilfe";
 
 const holen = vi.fn();
 vi.mock("./ipc", () => ({
@@ -43,7 +43,7 @@ describe("Sektor-Abruf", () => {
 describe("Kartenbild", () => {
   // Pfad ab dem Projektordner: `import.meta.url` ist unter dem
   // Test-Werkzeug keine Datei-Adresse.
-  const quelle = readFileSync("src/components/LiveMapView.tsx", "utf8");
+  const quelle = karteQuelltext();
 
   it("holt alle Hoehenbaender statt einer Flugflaeche", () => {
     // Auf die Absicht pruefen, nicht auf die Schreibweise: der Aufruf ist
@@ -106,7 +106,7 @@ describe("Darstellung wie auf der Live-Karte", () => {
   // Client malte jeden Platz als dunklen Punkt mit tuerkisem Rand, die
   // Live-Karte faerbt nach Stationsart. Weicht hier etwas ab, sieht der
   // Pilot etwas anderes als der Beobachter.
-  const quelle = readFileSync("src/components/LiveMapView.tsx", "utf8");
+  const quelle = karteQuelltext();
 
   it("faerbt Plaetze nach Stationsart", () => {
     expect(quelle).toContain('"twr", "#38bdf8"');
