@@ -1,9 +1,8 @@
 // Bilder auf der Live-Karte (P-11.36): Marken auf der Karte, Fokus auf die Stelle, die im
 // Bilder-Tab angeklickt wurde, und der Umschalter Karte/Weltkugel (`setProjection` mit `globe`,
-// MapLibre 5). Welche Marken: ohne aktiven Flug alle anzeigbaren Bilder mit Position aller
-// Fluege; mit aktivem Flug dessen Bilder plus die des Fluges aus dem Fokus (der Fokus
-// verdraengt den aktiven Flug nicht). Haengt sich an die Karte von `LiveMapView`; ohne Bilder
-// und ohne Fokus tut der Haken nichts. Ein Klick auf eine Marke liefert `gross` mit den Bildern
+// MapLibre 5). Marken: alle anzeigbaren Bilder mit Position aller Fluege, auch waehrend eines
+// Flugs (Thomas 09.11.2026); der Schalter blendet sie aus. Haengt sich an die Karte von
+// `LiveMapView`; ohne Bilder und ohne Fokus tut der Haken nichts. Ein Klick auf eine Marke liefert `gross` mit den Bildern
 // DESSELBEN Flugs, das `LiveMapView` als Grossansicht zeigt. Die Projektion wird gesetzt, sobald
 // der Stil steht; die Wahl "Weltkugel" bleibt in localStorage (`aaLivemapKugel`).
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
@@ -28,6 +27,7 @@ export interface BildFokus {
 }
 
 const KUGEL_SCHLUESSEL = "aaLivemapKugel";
+const BILDER_SCHLUESSEL = "aaLivemapBilder";
 
 export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fokus: BildFokus | null, aktivePirep: string | null, sichtbar = true) {
   const { t } = useTranslation();
@@ -35,9 +35,13 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
   const [kugel, setKugel] = useState(() => {
     try { return typeof localStorage !== "undefined" && localStorage.getItem(KUGEL_SCHLUESSEL) === "1"; } catch { return false; }
   });
-  const [bilderAn, setBilderAn] = useState(true);
+  const [bilderAn, setBilderAn] = useState(() => {
+    try { return typeof localStorage === "undefined" || localStorage.getItem(BILDER_SCHLUESSEL) !== "0"; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(BILDER_SCHLUESSEL, bilderAn ? "1" : "0"); } catch { /* Speichern ist best-effort */ }
+  }, [bilderAn]);
   const [gross, setGross] = useState<{ id: string; bilder: Eintrag[] } | null>(null);
-  const fokusPirep = fokus?.pirep ?? null;
   // Die Liste fuellt sonst erst der Bilder-Tab; ohne sie blieben die Punkte aus, bis er einmal offen war.
   // `sichtbar` als Abhaengigkeit: Scheitert der erste Abruf beim Programmstart, holt ihn das Oeffnen der Karte nach.
   const ohneListe = !z.liste;
@@ -45,9 +49,9 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
   const flugBilder = useMemo(
     () =>
       (z.liste?.eintraege ?? [])
-        .filter((e) => anzeigbar(e) && (aktivePirep === null || flugSchluessel(e) === aktivePirep || (fokusPirep !== null && flugSchluessel(e) === fokusPirep)))
+        .filter(anzeigbar)
         .sort((a, b) => (bildZeitIso(a) ?? "").localeCompare(bildZeitIso(b) ?? "")),
-    [z.liste, aktivePirep, fokusPirep],
+    [z.liste],
   );
   const marken = useMemo(
     () =>

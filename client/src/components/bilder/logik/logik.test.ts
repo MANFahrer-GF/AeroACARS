@@ -4,7 +4,7 @@ import { GRENZEN, TABELLE, tabelleLesen } from "./grenzen";
 import { bildMetaBauen, datenStufe } from "./meta";
 import { entscheide, gruppeFuer, massePassen } from "./uebernahmeRegel";
 import { serienBilden } from "./serien";
-import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppieren, platzJeFlug, seitenweise, wurdeGesendet, flugOptionenBauen, type Gruppe } from "./gruppen";
+import { KEIN_FILTER, bytesText, filtern, gesendeteAelterAls, gruppeZu, gruppieren, platzJeFlug, seitenweise, wurdeGesendet, flugOptionenBauen, type Gruppe } from "./gruppen";
 import { bereinigen, offenNachHaken, umschalten, serieUmschalten } from "./auswahl";
 import { kontingentAnzeige, reichtKontingent, retrySekunden } from "./kontingent";
 import { infoZeile, sendeMeta, vorschauBauen } from "./nachrichtVorschau";
@@ -137,6 +137,27 @@ describe("Serien, Gruppen, Filter, Seiten", () => {
     expect(s1.gruppen.reduce((n, x) => n + x.kacheln.length, 0)).toBe(3);
     expect(s9.seite).toBe(2);
     expect(s9.gruppen.reduce((n, x) => n + x.kacheln.length, 0)).toBe(1);
+  });
+  it("eine eingeklappte Gruppe zaehlt als ein Platz und behaelt alle Kacheln", () => {
+    const viele = Array.from({ length: 7 }, (_, i) => eintrag({ id: `v${i}`, meta: { pirep_id: i < 4 ? "P1" : "P2", zeit_utc: t(i * 3600) } }));
+    const g = gruppieren(viele, GRENZEN);
+    // P2 (neuer) steht vorn und bleibt offen, P1 ist zu: drei Kacheln plus ein Kopf statt sieben Kacheln.
+    const s = seitenweise(g, 0, 3, (k) => k === "P1");
+    expect(s.seiten).toBe(2);
+    expect(s.gruppen.map((x) => [x.schluessel, x.kacheln.length])).toEqual([["P2", 3]]);
+    const s1 = seitenweise(g, 1, 3, (k) => k === "P1");
+    expect(s1.gruppen.map((x) => [x.schluessel, x.kacheln.length])).toEqual([["P1", 4]]);
+  });
+  it("gruppeZu: im Flug die anderen Fluege, Ohne Flug nie von selbst, Filter oeffnet, Hand gewinnt", () => {
+    const keine = new Map<string, boolean>();
+    expect(gruppeZu("P1", "P2", false, keine)).toBe(true);
+    expect(gruppeZu("P2", "P2", false, keine)).toBe(false);
+    expect(gruppeZu("", "P2", false, keine)).toBe(false);
+    expect(gruppeZu("P1", null, false, keine)).toBe(false);
+    expect(gruppeZu("P1", "P2", true, keine)).toBe(false);
+    expect(gruppeZu("P1", "P2", false, new Map([["P1", false]]))).toBe(false);
+    expect(gruppeZu("P2", "P2", false, new Map([["P2", true]]))).toBe(true);
+    expect(gruppeZu("P1", "P2", true, new Map([["P1", true]]))).toBe(true);
   });
   it("Platz je Flug und Bytes-Text", () => {
     const m = platzJeFlug([eintrag({ meta: { pirep_id: "P1" }, bytes: 500 }), eintrag({ meta: { pirep_id: "P1" }, bytes: 700 }), eintrag({ meta: { pirep_id: null }, bytes: 5 })]);

@@ -5550,6 +5550,8 @@
       "ohne_flug": "No flight · {{datum}}",
       "ohne_flug_ohne_datum": "No flight",
       "laeuft": "in progress",
+      "einklappen": "Collapse flight",
+      "aufklappen": "Expand flight",
       "gesendet_n": "{{count}} sent",
       "zuordnen": "Assign flight",
       "herkunft": "Imported from {{ordner}}",

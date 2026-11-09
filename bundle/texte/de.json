@@ -5550,6 +5550,8 @@
       "ohne_flug": "Ohne Flug · {{datum}}",
       "ohne_flug_ohne_datum": "Ohne Flug",
       "laeuft": "läuft gerade",
+      "einklappen": "Flug einklappen",
+      "aufklappen": "Flug aufklappen",
       "gesendet_n": "{{count}} gesendet",
       "zuordnen": "Flug zuordnen",
       "herkunft": "Übernommen aus {{ordner}}",

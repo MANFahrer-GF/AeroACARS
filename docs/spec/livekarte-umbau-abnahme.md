@@ -81,7 +81,7 @@ Fenstergrößen für jede Klickrunde: 1490×720 (Thomas), 1920×1080, 1280×800,
 | Nr | Funktion | Erwartung | Test | Klick |
 |----|----------|-----------|------|-------|
 | F1 | Punkte ohne Flug | Alle anzeigbaren Bilder aller Flüge, einmal eingepasst, Schalter „Bilder“ sichtbar | ☑ | ☑ |
-| F2 | Punkte mit Flug | Bilder des Flugs plus Fokus | ☑ | ☑ |
+| F2 | Punkte mit Flug | Alle Bilder aller Flüge wie ohne Flug, Kamera bleibt beim Piloten (Thomas 09.11.2026) | ☑ | ☑ |
 | F3 | Marke öffnen | Großansicht mit den Bildern desselben Flugs, Vorschau beim Überfahren | ☑ | ☑ |
 | F4 | Fokus aus dem Bilder-Tab | Karte fliegt hin, Schalter geht an | ☑ | ☑ |
 | F5 | Leer-Kasten | Verdeckt keine Punkte oder Kollegen | ☑ | ☑ |

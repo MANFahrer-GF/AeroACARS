@@ -192,6 +192,7 @@ function fireLoad() {
 
 beforeEach(() => {
   vi.stubGlobal("fetch", () => new Promise(() => {})); // Stile der Grundkarte: eigener Test
+  localStorage.removeItem("aaLivemapBilder");
   h.mapHandlers = {};
   h.einpassen.length = 0;
   h.va = [];
@@ -204,14 +205,18 @@ afterEach(() => cleanup());
 describe("LiveMapView Schalter Bilder", () => {
   afterEach(() => { bilderTest.eintraege = []; });
 
-  it("fehlt, solange der Flug keine Bildpunkte hat", () => {
-    bilderTest.eintraege = [
-      eintrag({ id: "ohne-position", meta: { pirep_id: "P1", breite: null, laenge: null } }),
-      eintrag({ id: "anderer-flug", meta: { pirep_id: "P2", breite: 41, laenge: 28 } }),
-    ];
+  it("fehlt nur, wenn es gar keinen Bildpunkt gibt", () => {
+    bilderTest.eintraege = [eintrag({ id: "ohne-position", meta: { pirep_id: "P1", breite: null, laenge: null } })];
     render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
     fireLoad();
     expect(screen.queryByRole("button", { name: "Bilder" })).toBeNull();
+  });
+
+  it("ist auch da, wenn der laufende Flug noch kein Bild hat, aeltere Fluege aber schon", () => {
+    bilderTest.eintraege = [eintrag({ id: "gestern", meta: { pirep_id: "P2", breite: 41, laenge: 28 } })];
+    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
+    fireLoad();
+    expect(screen.getByRole("button", { name: "Bilder" })).toBeTruthy();
   });
 
   it("Schalter der Leiste zeigen das Wort in beiden Zustaenden (Breite springt nicht)", () => {

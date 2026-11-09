@@ -119,7 +119,11 @@ button.bt-chip:hover { color: var(--text); }
 .bt-liste[data-ziehen="an"] { outline: 2px dashed var(--acc); outline-offset: -8px; }
 .bt-leerhinweis { text-align: center; color: var(--text-dim); padding: var(--sp-6) var(--sp-4); max-width: 520px; margin: 0 auto; }
 .bt-gruppe { display: flex; flex-direction: column; gap: 10px; }
-.bt-gruppe__kopf { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: var(--fs-300); color: var(--text-dim); }
+.bt-gruppe__kopf { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: var(--fs-300); color: var(--text-dim); cursor: pointer; }
+.bt-gruppe__klappe { display: grid; place-items: center; width: 26px; height: 26px; margin-right: -6px; padding: 0; background: none; border: 0; border-radius: 6px; color: var(--text-dim); cursor: pointer; }
+.bt-gruppe__klappe:hover { color: var(--text); background: var(--surface-2, rgba(127, 127, 127, .15)); }
+.bt-gruppe__klappe svg { transition: transform .15s ease; }
+.bt-gruppe__klappe[aria-expanded="false"] svg { transform: rotate(-90deg); }
 .bt-gruppe__datum { font-weight: 700; color: var(--text); font-size: var(--fs-400); }
 .bt-gruppe__zuordnen { background: none; border: 0; padding: 0 8px; min-height: 26px; color: var(--acc); font: inherit; font-weight: 600; cursor: pointer; }
 .bt-gruppe__zuordnen:hover { text-decoration: underline; }

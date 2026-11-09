@@ -84,7 +84,8 @@ function datensatz(): Zeile[] {
     { id: "o1", gruppe: "ohne-flug", szene: 6, iso: tag(8, "21:10"), meta: { quelle: "keine", ...flug(null, null, null, null, "", ""), flugzeug_titel: null, flugzeug_icao: null, simulator: null, breite: null, laenge: null, hoehe_ft: null, gs_kt: null, kurs: null, phase: null, naechster_flugplatz: null } },
     { id: "o2", gruppe: "ohne-flug", szene: 7, iso: tag(8, "21:12"), meta: { quelle: "keine", ...flug(null, null, null, null, "", ""), flugzeug_titel: null, flugzeug_icao: null, simulator: null, breite: null, laenge: null, hoehe_ft: null, gs_kt: null, kurs: null, phase: null, naechster_flugplatz: null } },
   ];
-  return z;
+  // Neuer Flug laeuft, noch ohne Bild; aeltere Fluege haben welche.
+  return fall === "neuflug" ? z.filter((r) => r.gruppe !== "P412") : z;
 }
 
 let zeilen = datensatz();
