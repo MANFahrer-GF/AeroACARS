@@ -39,7 +39,7 @@ createRoot(document.getElementById("root")!).render(
       />
       <main className="app">
         <BilderHintergrund />
-        {q.get("livekarte") === "1" ? <LiveMapView activeFlight={{ pirep_id: "P412", dpt_airport: "EDDF", arr_airport: "LSZH" } as unknown as ActiveFlightInfo} simSnapshot={null} simKind="xplane12" onSwitchToBriefing={() => undefined} /> : <BilderTab
+        {q.get("livekarte") === "1" ? <LiveMapView activeFlight={imFlug ? ({ pirep_id: "P412", dpt_airport: "EDDF", arr_airport: "LSZH" } as unknown as ActiveFlightInfo) : null} simSnapshot={null} simKind="xplane12" onSwitchToBriefing={() => undefined} /> : <BilderTab
           pilotId="17"
           pilotName="Thomas K."
           aktiverFlug={imFlug ? { pirep_id: "P412", callsign: "GSG412", dpt: "EDDF", arr: "LSZH" } : null}

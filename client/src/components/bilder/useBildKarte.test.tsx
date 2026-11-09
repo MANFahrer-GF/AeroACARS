@@ -27,7 +27,7 @@ import { useBildKarte } from "./useBildKarte";
 function karte() {
   const aufrufe: unknown[] = [];
   const handler: Record<string, Array<() => void>> = {};
-  return { aufrufe, handler, m: { setProjection: (p: unknown) => aufrufe.push(["projektion", p]), flyTo: (o: unknown) => aufrufe.push(["fly", o]), getZoom: () => 4, isStyleLoaded: () => true, once: vi.fn(), on: (ev: string, cb: () => void) => { (handler[ev] ??= []).push(cb); }, off: (ev: string, cb: () => void) => { handler[ev] = (handler[ev] ?? []).filter((x) => x !== cb); }, getContainer: () => document.body } };
+  return { aufrufe, handler, m: { setProjection: (p: unknown) => aufrufe.push(["projektion", p]), flyTo: (o: unknown) => aufrufe.push(["fly", o]), getZoom: () => 4, isStyleLoaded: () => true, once: vi.fn(), on: (ev: string, cb: () => void) => { (handler[ev] ??= []).push(cb); }, off: (ev: string, cb: () => void) => { handler[ev] = (handler[ev] ?? []).filter((x) => x !== cb); }, getContainer: () => document.body, fitBounds: (b: unknown, o: unknown) => aufrufe.push(["einpassen", b, o]) } };
 }
 beforeEach(() => { try { localStorage.removeItem("aaLivemapKugel"); } catch { /* egal */ } });
 
@@ -40,6 +40,29 @@ describe("useBildKarte", () => {
     expect(k.aufrufe.at(-1)).toEqual(["projektion", { type: "globe" }]);
     act(() => result.current.setKugel(false));
     expect(k.aufrufe.at(-1)).toEqual(["projektion", { type: "mercator" }]);
+  });
+  it("ohne Flug wird einmal auf alle Punkte eingepasst, mit Flug, Fokus oder verdeckter Karte nicht", () => {
+    h.eintraege = [
+      eintrag({ id: "tokio", meta: { pirep_id: "P1", breite: 35, laenge: 139 } }),
+      eintrag({ id: "osaka", meta: { pirep_id: "P1", breite: 34, laenge: 135 } }),
+    ];
+    const einpassen = (k: ReturnType<typeof karte>) => k.aufrufe.filter((a) => (a as unknown[])[0] === "einpassen");
+    const ohne = karte();
+    const { rerender } = renderHook(() => useBildKarte({ current: ohne.m as never }, null, null));
+    rerender();
+    expect(einpassen(ohne)).toHaveLength(1);
+    expect((einpassen(ohne)[0] as unknown[])[1]).toEqual([[135, 34], [139, 35]]);
+    const mitFlug = karte();
+    renderHook(() => useBildKarte({ current: mitFlug.m as never }, null, "P1"));
+    expect(einpassen(mitFlug)).toHaveLength(0);
+    const mitFokus = karte();
+    renderHook(() => useBildKarte({ current: mitFokus.m as never }, { lat: 35, lon: 139, id: "tokio", pirep: "P1", n: 1 }, null));
+    expect(einpassen(mitFokus)).toHaveLength(0);
+    const verdeckt = karte();
+    const v = renderHook(({ s }) => useBildKarte({ current: verdeckt.m as never }, null, null, s), { initialProps: { s: false } });
+    expect(einpassen(verdeckt)).toHaveLength(0);
+    v.rerender({ s: true });
+    expect(einpassen(verdeckt)).toHaveLength(1);
   });
   it("Marken bei aktivem Flug nur fuer dessen Bilder mit Position; Fokus fliegt zur Stelle", () => {
     h.eintraege = [

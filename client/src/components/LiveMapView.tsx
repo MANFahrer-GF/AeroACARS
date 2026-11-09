@@ -2620,7 +2620,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       ? "danger"
       : "ok";
 
-  const bildKarte = useBildKarte(mapRef, bildFokus, activeFlight?.pirep_id ?? null);
+  const bildKarte = useBildKarte(mapRef, bildFokus, activeFlight?.pirep_id ?? null, sichtbar);
 
   // Das rechte Panel beginnt immer unter der Schalterleiste, auch wenn sie umbricht.
   const schalterleisteRef = useRef<HTMLDivElement | null>(null);
@@ -3044,8 +3044,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
               pilot explicitly wants to see when they're not flying
               themselves. The OLD behaviour only showed the equivalent
               full-map sentence when there was NEITHER an own flight NOR any
-              VA traffic — restoring that exact gate here. */}
-          {!showOwnContent && vaVisible.length === 0 && (
+              VA traffic — restoring that exact gate here. Bildpunkte zaehlen
+              genauso: die Karte laege sonst ueber ihnen, sie waeren nicht klickbar. */}
+          {!showOwnContent && vaVisible.length === 0 && !(bildKarte.bilderAn && bildKarte.marken > 0) && (
             <LiveMapEmptyState next={next} onGoToBriefing={onSwitchToBriefing} />
           )}
 

@@ -29,7 +29,7 @@ export interface BildFokus {
 
 const KUGEL_SCHLUESSEL = "aaLivemapKugel";
 
-export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fokus: BildFokus | null, aktivePirep: string | null) {
+export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fokus: BildFokus | null, aktivePirep: string | null, sichtbar = true) {
   const { t } = useTranslation();
   const z = useBilder();
   const [kugel, setKugel] = useState(() => {
@@ -81,6 +81,23 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
     });
     return () => gesetzt.forEach((m) => { m.vorschauZu(); m.marke.remove(); });
   }, [mapRef, markenSchluessel, fokus?.id, t, bilderAn]);
+
+  // Ohne Flug startet die Karte ueber Europa: Einmal auf die Punkte einpassen, sonst liegen etwa
+  // Bilder aus Japan ausserhalb des Bildes. Nicht bei verdeckter Karte (Groesse 0) und nicht gegen einen Fokus.
+  const eingepasst = useRef(false);
+  useEffect(() => {
+    if (aktivePirep !== null) { eingepasst.current = false; return; }
+    const map = mapRef.current;
+    const { marken } = aktuell.current;
+    if (!map || !sichtbar || !bilderAn || fokus || eingepasst.current || marken.length === 0) return;
+    eingepasst.current = true;
+    const laengen = marken.map((m) => m.lon);
+    const breiten = marken.map((m) => m.lat);
+    map.fitBounds(
+      [[Math.min(...laengen), Math.min(...breiten)], [Math.max(...laengen), Math.max(...breiten)]],
+      { padding: { top: 120, bottom: 60, left: 60, right: 60 }, maxZoom: 6, duration: 0 },
+    );
+  }, [mapRef, aktivePirep, markenSchluessel, sichtbar, bilderAn, fokus]);
 
   useEffect(() => {
     if (fokus) setBilderAn(true); // sonst fliegt die Karte zu einem unsichtbaren Punkt

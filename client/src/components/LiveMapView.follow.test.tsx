@@ -90,6 +90,7 @@ vi.mock("maplibre-gl", () => {
     getZoom() { return this.zoom; }
     isStyleLoaded() { return true; }
     setStyle() { return this; }
+    fitBounds() { return this; }
     addSource() { return this; }
     // 12.08.2026 (VATSIM-Overlay): das Piloten-Symbol registriert ein
     // Kartenbild. Der Nachbau kennt die Bild-API, wie die echte Karte.
@@ -225,7 +226,11 @@ describe("LiveMapView Schalter Bilder", () => {
     bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P9", breite: 41, laenge: 28 } })];
     render(<LiveMapView activeFlight={null} simSnapshot={null} />);
     fireLoad();
-    expect(screen.getByRole("button", { name: "Bilder" })).toBeTruthy();
+    const knopf = screen.getByRole("button", { name: "Bilder" });
+    // Der Leer-Kasten laege sonst ueber den Punkten; erst mit ausgeblendeten Punkten kommt er zurueck.
+    expect(document.querySelector(".aa-livemap-idle")).toBeNull();
+    fireEvent.click(knopf);
+    expect(document.querySelector(".aa-livemap-idle")).not.toBeNull();
   });
 
   it("steht anfangs an, behaelt das Wort und schaltet aus und wieder ein", () => {
