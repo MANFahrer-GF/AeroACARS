@@ -368,6 +368,77 @@ describe("Sektoren auf der Karte (E2)", () => {
   });
 });
 
+describe("Lotsen und Plaetze (E4)", () => {
+  type Ebene = { type: string; source: string; filter?: unknown; layout: Record<string, unknown>; paint: Record<string, unknown> };
+  const ebene = (id: string) => h.ebenen.get(id) as unknown as Ebene;
+
+  it("faerbt den Platzpunkt nach Stationsart: Turm blau, Rollkontrolle violett, sonst Turm-Blau", async () => {
+    await karte();
+    const punkt = ebene("vatsim-atc-airports-circle");
+    expect(punkt.type).toBe("circle");
+    expect(punkt.source).toBe("vatsim-atc-airports");
+    expect(punkt.paint["circle-color"]).toEqual(["match", ["get", "tone"], "twr", "#38bdf8", "gnd", "#818cf8", "#38bdf8"]);
+    expect(punkt.paint["circle-radius"]).toEqual(["case", [">", ["get", "count"], 1], 7, 5.5]);
+  });
+
+  it("legt den Anflug (APP) als gelben Ring um den Platz, nur wo es eine APP-Station gibt", async () => {
+    await karte();
+    const ring = ebene("vatsim-atc-app-ring");
+    expect(ring.type).toBe("circle");
+    expect(ring.source).toBe("vatsim-atc-airports");
+    expect(ring.filter).toEqual(["==", ["get", "hat_app"], 1]);
+    expect(ring.paint["circle-color"]).toBe("rgba(0,0,0,0)");
+    expect(ring.paint["circle-stroke-color"]).toBe("#fbbf24");
+    expect(ring.paint["circle-stroke-width"]).toBe(1.6);
+    expect(ring.paint["circle-radius"]).toEqual(["interpolate", ["linear"], ["zoom"], 4, 9, 8, 20]);
+  });
+
+  it("schreibt ICAO und die Stationsbuchstaben A, D, G, T in festen Farben in eine Zeile", async () => {
+    await karte();
+    const label = ebene("vatsim-atc-airports-label");
+    expect(label.type).toBe("symbol");
+    expect(label.layout["text-field"]).toEqual([
+      "format",
+      ["get", "icao"], {},
+      "  ", {},
+      ["get", "t_atis"], { "text-color": "#eab308" },
+      ["get", "t_del"], { "text-color": "#60a5fa" },
+      ["get", "t_gnd"], { "text-color": "#4ade80" },
+      ["get", "t_twr"], { "text-color": "#f87171" },
+    ]);
+  });
+
+  it("gibt dem Platz Stationsart, APP-Zeichen und Buchstaben aus den Serverdaten mit auf die Karte", async () => {
+    const platz = punkt(8.57, 50.03, { icao: "EDDF", tone: "gnd", count: 4, hat_app: 1, t_atis: "A", t_del: "D", t_gnd: "G", t_twr: "T" });
+    (h.sektoren.atc as { plaetze: unknown }).plaetze = fc([platz]);
+    await karte();
+    fireEvent.click(knopf("VATSIM"));
+    await waitFor(() => expect(quelle("vatsim-atc-airports")?.features.length).toBe(1));
+    expect(quelle("vatsim-atc-airports")!.features[0].properties).toEqual({
+      icao: "EDDF", tone: "gnd", count: 4, hat_app: 1, t_atis: "A", t_del: "D", t_gnd: "G", t_twr: "T",
+    });
+  });
+
+  it("zeigt im Klickfenster des Platzes die Stationen in der Reihenfolge ATIS, DEL, GND, TWR, APP mit Info-Buchstabe", async () => {
+    await karte();
+    fireEvent.click(knopf("VATSIM"));
+    await waitFor(() => expect(quelle("vatsim-pilots")?.features.length).toBe(1));
+    const stationen = [
+      { tag: "APP", callsign: "EDDF_APP", frequency: "125.350" },
+      { tag: "TWR", callsign: "EDDF_TWR", frequency: "118.700" },
+      { tag: "ATIS", callsign: "EDDF_ATIS", frequency: "118.020", code: "K" },
+      { tag: "GND", callsign: "EDDF_GND", frequency: "121.800" },
+    ];
+    klick({ "vatsim-atc-airports-circle": { icao: "EDDF", positions: JSON.stringify(stationen) } });
+    const html = offenePopups()[0].html;
+    const folge = ["EDDF_ATIS", "EDDF_GND", "EDDF_TWR", "EDDF_APP"].map((c) => html.indexOf(c));
+    expect(folge.every((i) => i > 0)).toBe(true);
+    expect([...folge].sort((a, b) => a - b)).toEqual(folge);
+    expect(html).toContain("INFO: K");
+    expect(html).toContain("vatsim-pop-chip--atis");
+  });
+});
+
 describe("Hoehenregler (E3)", () => {
   const regler = () => screen.queryByRole("slider") as HTMLInputElement | null;
   const anzeige = () => document.querySelector(".aa-livemap-flwahl__wert")?.textContent;
