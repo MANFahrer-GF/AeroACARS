@@ -152,6 +152,7 @@
     "logbook_stats": "fachlich",
     "metar_get": "fachlich",
     "navdata_zwischenspeicher_bestand": "lesen",
+    "netz_messung": "fachlich",
     "news_fetch": "fachlich",
     "ofp_callsign_warning_get": "lesen",
     "paket_datei": "lesen",

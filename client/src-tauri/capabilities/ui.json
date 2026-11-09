@@ -142,6 +142,7 @@
     "allow-logbook-stats",
     "allow-metar-get",
     "allow-navdata-zwischenspeicher-bestand",
+    "allow-netz-messung",
     "allow-news-fetch",
     "allow-ofp-callsign-warning-get",
     "allow-paket-datei",
