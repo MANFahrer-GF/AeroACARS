@@ -34,6 +34,15 @@ interface VaFlight {
   } | null;
 }
 
+/** Eine Kollegen-Marke; `flug` und `lngLat` folgen dem letzten Abruf. */
+interface VaMarke {
+  marker: maplibregl.Marker;
+  karte: maplibregl.Map;
+  flug: VaFlight;
+  lngLat: [number, number];
+  muster: string | undefined;
+}
+
 function escHtml(s: unknown): string {
   return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
 }
@@ -91,7 +100,7 @@ interface VaAngaben {
 export function useVaVerkehr({ mapRef, mapReady, sichtbar, activeFlight, bilderVorrang }: VaAngaben) {
   const { t } = useTranslation();
   const [showVa, setShowVa] = useState(true); // VA-Verkehr ein-/ausblenden
-  const vaMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const vaMarkersRef = useRef<Map<string, VaMarke>>(new Map());
   // Die eingeblendeten Routen der Kollegen: Kennung → Punkte.
   //
   // Thomas, 20.09.2026: „auf die anderen Flieger klicken und zusätzlich die
@@ -283,8 +292,6 @@ export function useVaVerkehr({ mapRef, mapReady, sichtbar, activeFlight, bilderV
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    vaMarkersRef.current.forEach((m) => m.remove());
-    vaMarkersRef.current = [];
     // Routen von Kollegen aufräumen, die nicht mehr unterwegs sind.
     // Sonst bliebe die Linie als Geisterspur stehen, nachdem der Marker
     // verschwunden ist — und ohne Marker könnte niemand sie ausschalten
@@ -320,20 +327,32 @@ export function useVaVerkehr({ mapRef, mapReady, sichtbar, activeFlight, bilderV
     const pts: [number, number][] = [];
     const dr: { marker: maplibregl.Marker; lat: number; lon: number; hdg: number; gs: number }[] = [];
     const popupTargets = new Map<string, { lngLat: [number, number]; f: VaFlight }>();
-    for (const f of vaVisible) {
+    const nochSichtbar = new Set<string>();
+    vaVisible.forEach((f, index) => {
       const lat = f.position?.lat;
       const lon = f.position?.lon;
-      if (typeof lat !== "number" || typeof lon !== "number") continue;
+      if (typeof lat !== "number" || typeof lon !== "number") return;
       const lngLat: [number, number] = [lon, lat];
-      popupTargets.set(String(f.id ?? f.ident ?? f.flight_number ?? ""), { lngLat, f });
+      const kennung = String(f.id ?? f.ident ?? f.flight_number ?? "");
+      popupTargets.set(kennung, { lngLat, f });
+      // Dieselbe Marke weiterverwenden: Ein Neubau bei jedem 8-s-Abruf nahm dem
+      // Tippen auf dem Tablet das Element unter dem Finger weg.
+      const schluessel = kennung || `ohne-kennung-${index}`;
+      nochSichtbar.add(schluessel);
+      let marke = vaMarkersRef.current.get(schluessel);
+      if (marke && marke.karte !== map) {
+        marke.marker.remove();
+        marke = undefined;
+      }
+      if (!marke) {
       const el = document.createElement("div");
       el.className = "aa-ac-marker aa-ac-marker--va";
-      el.innerHTML = aircraftSvg(f.aircraft?.icao);
-      el.style.setProperty("--ac-color", phaseColor(f.status_text ?? (f.phase != null ? String(f.phase) : null)));
-      el.title = `${f.ident ?? f.flight_number ?? "?"} · ${f.aircraft?.icao ?? ""} · ${f.dpt_airport_id ?? ""}→${f.arr_airport_id ?? ""}`;
+      const neu: VaMarke = { marker: new maplibregl.Marker({ element: el, rotationAlignment: "map" }), karte: map, flug: f, lngLat, muster: undefined };
       // Klick → Popup mit Flugdaten (ersetzt ein evtl. offenes Popup).
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        // Immer der Stand des letzten Abrufs, die Marke lebt länger als ein Takt.
+        const { flug: f, lngLat } = neu;
         const thisId = String(f.id ?? f.ident ?? f.flight_number ?? "");
         // Route des Kollegen ein- oder ausblenden (Thomas, 20.09.2026).
         void fremdeRouteUmschalten(String(f.id ?? ""), map);
@@ -372,10 +391,28 @@ export function useVaVerkehr({ mapRef, mapReady, sichtbar, activeFlight, bilderV
           if (vaPopupRef.current === popup && vaPopupIdRef.current === thisId) popup.setHTML(vaPopupHtml(f, eta));
         });
       });
-      const marker = new maplibregl.Marker({ element: el, rotationAlignment: "map" }).setLngLat(lngLat).setRotation(f.position?.heading ?? 0).addTo(map);
-      vaMarkersRef.current.push(marker);
+      neu.marker.setLngLat(lngLat).addTo(map);
+      vaMarkersRef.current.set(schluessel, neu);
+      marke = neu;
+      }
+      marke.flug = f;
+      marke.lngLat = lngLat;
+      const el = marke.marker.getElement();
+      if (marke.muster !== (f.aircraft?.icao ?? "")) {
+        marke.muster = f.aircraft?.icao ?? "";
+        el.innerHTML = aircraftSvg(f.aircraft?.icao);
+      }
+      el.style.setProperty("--ac-color", phaseColor(f.status_text ?? (f.phase != null ? String(f.phase) : null)));
+      el.title = `${f.ident ?? f.flight_number ?? "?"} · ${f.aircraft?.icao ?? ""} · ${f.dpt_airport_id ?? ""}→${f.arr_airport_id ?? ""}`;
+      const marker = marke.marker;
+      marker.setLngLat(lngLat).setRotation(f.position?.heading ?? 0);
       dr.push({ marker, lat, lon, hdg: f.position?.heading ?? 0, gs: f.position?.gs ?? 0 });
       pts.push(lngLat);
+    });
+    for (const [schluessel, marke] of vaMarkersRef.current) {
+      if (nochSichtbar.has(schluessel)) continue;
+      marke.marker.remove();
+      vaMarkersRef.current.delete(schluessel);
     }
     vaDrRef.current = dr;
     vaDrT0Ref.current = Date.now();

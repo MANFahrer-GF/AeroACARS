@@ -346,6 +346,25 @@ describe("Klick auf einen Kollegen", () => {
     });
   });
 
+  it("baut die Kollegen-Marke beim naechsten Abruf nicht neu (Tablet: Tippen trifft)", async () => {
+    const takt = vi.spyOn(globalThis, "setInterval");
+    await karteMitKollege([P1, P2]);
+    const vorher = kollegenMarker();
+    const abruf = takt.mock.calls.find((c) => c[1] === 8000)?.[0] as () => void;
+    expect(abruf).toBeTypeOf("function");
+    h.invokeAntworten.va_live_flights = [
+      { ...KOLLEGE, position: { ...KOLLEGE.position, lat: 61 } },
+    ];
+    await act(async () => {
+      abruf();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    takt.mockRestore();
+    expect(kollegenMarker()).toBe(vorher);
+    expect(h.marker.filter((m) => m.el.className.includes("aa-ac-marker--va"))).toHaveLength(1);
+  });
+
   it("schaltet beim zweiten Klick auch die Infokarte wieder zu", async () => {
     // Vorher ging sie erneut auf und verdeckte die Route, und man musste
     // woanders hinklicken, um sie loszuwerden.

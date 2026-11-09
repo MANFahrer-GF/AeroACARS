@@ -64,6 +64,7 @@ vi.mock("maplibre-gl", () => {
   class FakeBounds { extend() { return this; } }
   class FakeNav {}
   class FakeMap {
+    resize() { return this; }
     center = { lng: 6, lat: 48 };
     zoom = 4;
     addControl() { return this; }
