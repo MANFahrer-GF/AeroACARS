@@ -189,6 +189,23 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        // Crew-Story-Fenster am Tablet wie am Sim-PC: Pfadpruefung und
+        // Schluessel bleiben im Kern auf dem Sim-PC.
+        "modul_api" => {
+            #[derive(Deserialize)]
+            struct A {
+                methode: String,
+                pfad: String,
+                #[serde(default)]
+                abfrage: Option<std::collections::BTreeMap<String, String>>,
+                #[serde(default)]
+                koerper: Option<serde_json::Value>,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::modul_api::modul_api(app.clone(), a.methode, a.pfad, a.abfrage, a.koerper).await),
+                Err(e) => Err(e),
+            }
+        }
         // Reine Auskunft ueber die Platte des Hosts. Ueber die Bruecke
         // erlaubt, weil das Tablet dieselbe Frage stellen darf wie der
         // PC — es liest nichts, was der Pilot nicht ohnehin sieht.

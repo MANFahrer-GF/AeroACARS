@@ -20,6 +20,8 @@ import type {
   UiError,
 } from "../types";
 import { ManualFlightModal } from "./ManualFlightModal";
+import { CrewStoryFenster } from "./CrewStoryFenster";
+import { FlugBuchenMenue } from "./FlugBuchenMenue";
 import { PUENKTLICH_BIS_MIN } from "../lib/flugzeiten";
 
 /**
@@ -480,6 +482,22 @@ export function BidsList({
   } | null>(null);
   /** v0.5.27: Manual/VFR-Mode-Modal — Bid für den's gerade geöffnet ist. */
   const [manualModalBid, setManualModalBid] = useState<Bid | null>(null);
+  const [crewStory, setCrewStory] = useState<{ flight: Flight; nurLesen: boolean; ohneKern: boolean } | null>(null);
+  // Neuer Kern (Fähigkeit `modul-api-1`, Muster wie `bilder-1` in App.tsx).
+  const [modulApiAn, setModulApiAn] = useState(false);
+  useEffect(() => {
+    let weg = false;
+    void Promise.resolve(invoke<{ faehigkeiten?: unknown }>("paket_info"))
+      .then((i) => {
+        if (!weg) setModulApiAn(Array.isArray(i?.faehigkeiten) && i.faehigkeiten.includes("modul-api-1"));
+      })
+      .catch(() => {
+        if (!weg) setModulApiAn(false);
+      });
+    return () => {
+      weg = true;
+    };
+  }, []);
   /** v0.12.12-dev: Wetter-Briefing-Lade-Hinweis. Erscheint per Toast für 5 s
    *  beim Klick auf "Wetter-Briefing öffnen" und informiert den Pilot, dass
    *  die GSG-Seite ihre Daten live holt → Browser-Tab kann bis 30 s laden. */
@@ -851,6 +869,14 @@ export function BidsList({
     }
   }
 
+  // Crew Story: mit `modul-api-1` das Fenster; auf einem älteren Programm die
+  // OFP-Seite, auf der dasselbe Fenster liegt; ohne OFP nur der Hinweis.
+  function openCrewStory(bid: Bid, nurLesen: boolean) {
+    if (modulApiAn) setCrewStory({ flight: bid.flight, nurLesen, ohneKern: false });
+    else if (bid.flight.simbrief?.id) void openOfp(bid.flight);
+    else setCrewStory({ flight: bid.flight, nurLesen, ohneKern: true });
+  }
+
   async function openOfp(flight: Flight) {
     if (!flight.simbrief?.id) return;
     // paxstudio-theme convention; works on GSG and most paxstudio-based VAs.
@@ -1001,6 +1027,7 @@ export function BidsList({
             onAcknowledgeMismatch={() => {}}
             onOfp={() => void openOfp(laufenderBid.flight)}
             onFlightPage={() => void openFlightPage(laufenderBid.flight)}
+            onCrewStory={() => openCrewStory(laufenderBid, true)}
             onWeather={() => {
               setWeatherLoadHint(true);
               window.setTimeout(() => setWeatherLoadHint(false), 5000);
@@ -1025,6 +1052,7 @@ export function BidsList({
           )}
         </h2>
         <div className="bids__header-right">
+          <FlugBuchenMenue baseUrl={baseUrl} onOeffnen={(url) => void openUrl(url).catch(() => {})} />
           {bidsLoadedAt !== null && (
             <span className="bids__stand">
               {t("bids.stand", { time: formatZuluHm(bidsLoadedAt) })}
@@ -1232,6 +1260,7 @@ export function BidsList({
                   onManualStart={() => setManualModalBid(mainBid)}
                   onOfp={() => void openOfp(mainBid.flight)}
                   onFlightPage={() => void openFlightPage(mainBid.flight)}
+                  onCrewStory={() => openCrewStory(mainBid, false)}
                   onWeather={() => {
                     setWeatherLoadHint(true);
                     window.setTimeout(() => setWeatherLoadHint(false), 5000);
@@ -1310,6 +1339,16 @@ export function BidsList({
           </>
         );
       })()}
+
+      {crewStory && (
+        <CrewStoryFenster
+          key={crewStory.flight.id}
+          flight={crewStory.flight}
+          nurLesen={crewStory.nurLesen}
+          ohneKern={crewStory.ohneKern}
+          onClose={() => setCrewStory(null)}
+        />
+      )}
 
       {/* v0.5.27 Manual/VFR-Mode-Modal */}
       {manualModalBid && (
@@ -1399,6 +1438,7 @@ interface MainBidCardProps {
   onOfp: () => void;
   onFlightPage: () => void;
   onWeather: () => void;
+  onCrewStory: () => void;
   /** Nur ansehen (Buchung des laufenden Flugs): keine IFR/VFR-Wahl, kein
    *  Start-Knopf — die Links (OFP, Flugseite, Wetter) bleiben. */
   nurAnsicht?: boolean;
@@ -1427,6 +1467,7 @@ function MainBidCard({
   onOfp,
   onFlightPage,
   onWeather,
+  onCrewStory,
 }: MainBidCardProps) {
   const { t, i18n } = useTranslation();
   const flight = bid.flight;
@@ -1975,6 +2016,9 @@ function MainBidCard({
             title={t("bids.open_weather_briefing_hint")}
           >
             {t("bids.open_weather_briefing")}
+          </button>
+          <button type="button" className="bid-card__link" onClick={onCrewStory}>
+            {t("bids.crew_story.titel")}
           </button>
         </div>
         {!nurAnsicht && (

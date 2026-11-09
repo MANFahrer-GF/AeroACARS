@@ -162,6 +162,15 @@ fn hilfe_tickets_ist_fachlich() {
     assert_eq!(liste.get("hilfe_tickets").map(String::as_str), Some("fachlich"));
 }
 
+/// Crew-Story-Fenster (`modul-api-1`): Host fest, Pfade aus dem Paket, Pruefung
+/// im Kern, Schluessel bleibt im Kern. Das eigene Fenster mit dem
+/// Speichern-Knopf ist die Bestaetigung, also keine Rueckfrage der Huelle.
+#[test]
+fn modul_api_ist_fachlich() {
+    let liste = liste();
+    assert_eq!(liste.get("modul_api").map(String::as_str), Some("fachlich"));
+}
+
 /// Thomas 31.10.2026: Einstellungen › Cockpit zeigt den hinterlegten
 /// Hoppie-Logon-Code im Klartext, damit der Pilot ihn nachpruefen kann.
 /// Lesen gibt der Oberflaeche nichts, was sie beim Eintippen nicht schon

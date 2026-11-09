@@ -75,6 +75,7 @@ mod discord_rpc;
 mod live_zugang;
 // Hilfe anfordern: Diagnose auf live, Ticket im HelpDesk (P-9.20 bis P-9.22).
 mod hilfe;
+mod modul_api;
 mod sim_auto;
 // 03.10.2026: Zustand der Anzeigekomponente (WebView2) beim Start ins Log.
 mod webview_diagnose;
@@ -1153,6 +1154,7 @@ pub fn run() {
             hilfe::hilfe_vorschau,
             hilfe::hilfe_anfordern,
             hilfe::hilfe_tickets,
+            modul_api::modul_api,
             landungs_eingabe::landung_nachbewertung,
             discord_rpc::discord_rpc_get_settings,
             discord_rpc::discord_rpc_set_settings,

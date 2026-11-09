@@ -155,6 +155,7 @@
     "allow-logbook-pireps",
     "allow-logbook-stats",
     "allow-metar-get",
+    "allow-modul-api",
     "allow-navdata-zwischenspeicher-bestand",
     "allow-netz-messung",
     "allow-news-fetch",
