@@ -164,7 +164,7 @@ fn dlh16_boarding_folgt_dem_einsteigen() {
     let boarding = tageszeit(a.gespielt[&Slot::Boarding]);
     assert!((um("14:41:30")..um("14:43:30")).contains(&boarding), "Boarding beim Einsteigen, war {}", uhr(boarding));
     let fertig = tageszeit(*a.gespielt.get(&Slot::BoardingAbgeschlossen).expect("Boarding completed kam"));
-    assert!((um("14:52:23")..um("14:52:40")).contains(&fertig), "beim Beacon: {}", uhr(fertig));
+    assert!((um("14:52:38")..um("14:52:55")).contains(&fertig), "15 s nach dem Beacon: {}", uhr(fertig));
     assert!(tageszeit(a.gespielt[&Slot::KommandoTuerenScharf]) > fertig);
     assert!(fertig < tageszeit(a.gespielt[&Slot::BegruessungTuerenZu]));
     let start = tageszeit(a.gespielt[&Slot::KommandoStart]);
@@ -189,7 +189,8 @@ fn dlh418_tueren_erst_bei_stehenden_triebwerken() {
 fn qaf446_vorab_geladen_alles_noch_vor_dem_start() {
     let (d, a) = fliegen(include_str!("daten/qaf446.json"), 410, 38_000);
     let beacon = d.ticks.iter().find(|x| x.7 == 1).expect("Beacon").0;
-    assert_eq!(a.gespielt[&Slot::Boarding], beacon, "Begrüßung beim Beacon");
+    // Beacon zählt erst nach 15 s ununterbrochen (BEACON_STABIL_S).
+    assert!((beacon + 15..beacon + 25).contains(&a.gespielt[&Slot::Boarding]), "Begrüßung 15 s nach dem Beacon (Takt-Raster)");
     for s in [Slot::BoardingAbgeschlossen, Slot::KommandoTuerenScharf, Slot::BegruessungTuerenZu, Slot::Sicherheit] {
         assert!(a.gespielt[&s] > beacon && a.gespielt[&s] < d.abheben, "{s:?} am Boden");
     }
