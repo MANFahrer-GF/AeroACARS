@@ -76,6 +76,16 @@ describe("Grundkarte", () => {
     expect(k.ebenen.filter((e) => /^[dh]:/.test(e.id))).toHaveLength(10); // nichts doppelt
   });
 
+  it("ersetzt beim zweiten Einsetzen die Gruppen durch die neuen Stile (A8)", () => {
+    const k = karte();
+    const g = grundkarteBauen(k.m as never);
+    g.einsetzen(STILE);
+    const neu = stil("neu", [{ id: "nur-neu", type: "fill", source: "protomaps", "source-layer": "w", paint: {} }] as never);
+    g.einsetzen({ dunkel: neu, hell: STILE.hell });
+    const dunkle = k.ebenen.filter((e) => e.id.startsWith("d:")).map((e) => e.id);
+    expect(dunkle).toEqual(["d:nur-neu"]);
+  });
+
   it("nutzt eine gleiche Quelle nur einmal, verschiedene getrennt", () => {
     const k = karte();
     grundkarteBauen(k.m as never).einsetzen(STILE);
@@ -163,6 +173,20 @@ describe("Grundkarte holen", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(g.einsetzen).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(15_000);
+    expect(g.einsetzen).toHaveBeenCalledTimes(1);
+  });
+
+  it("bricht eine haengende Verbindung nach der Frist ab und versucht es erneut", async () => {
+    const haengt = (_u: string, o: { signal: AbortSignal }) =>
+      new Promise((_, nein) => o.signal.addEventListener("abort", () => nein(new Error("abgebrochen"))));
+    const abruf = vi.fn().mockImplementationOnce(haengt).mockImplementationOnce(haengt).mockImplementation(() => antwort());
+    vi.stubGlobal("fetch", abruf);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const g = steuerung();
+    grundkarteHolen(g, { dunkel: "https://a", hell: "https://b" }, () => undefined);
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(abruf).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1_000 + 15_000);
     expect(g.einsetzen).toHaveBeenCalledTimes(1);
   });
 

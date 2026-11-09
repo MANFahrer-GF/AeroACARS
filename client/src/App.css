@@ -7830,16 +7830,16 @@ input:disabled {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
-  padding: 6px 8px;
+  padding: 6px 8px 6px 0;
+  overflow: hidden; /* schneidet die Trennlinie am Zeilenanfang ab, auch wenn die Leiste umbricht */
 }
 .aa-livemap-controls__group {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-.aa-livemap-controls__group + .aa-livemap-controls__group {
+  margin-left: -1px;
   border-left: 1px solid var(--line);
-  padding-left: 10px;
+  padding-left: 9px;
 }
 .aa-livemap-hinweis {
   grid-column: 1;

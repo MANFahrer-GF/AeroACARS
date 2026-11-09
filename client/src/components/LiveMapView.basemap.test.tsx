@@ -252,8 +252,16 @@ describe("LiveMapView Grundkarte", () => {
     expect(h.setStyle).toBe(0);
   });
 
+  it("legt die Bodendaten unter Netz, Kollegen-Routen und eigenen Flug", async () => {
+    await bereit();
+    const ebenen = [...h.map!.layers];
+    const pos = (id: string) => { const i = ebenen.indexOf(id); expect(i, id).toBeGreaterThanOrEqual(0); return i; };
+    expect(pos("aa-ground-stand-labels")).toBeLessThan(pos("vatsim-sectors-fill"));
+    expect(pos("vatsim-sectors-fill")).toBeLessThan(pos(LYR_ROUTE));
+  });
+
   it("holt die Stile neu, sobald der Server andere Adressen nennt", () => {
-    expect(karteQuelltext()).toMatch(/grundkarteHolen\([\s\S]{0,240}\}, \[mapReady, grundlage\.dunkel, grundlage\.hell\]\)/);
+    expect(karteQuelltext()).toMatch(/grundkarteHolen\([\s\S]{0,240}\}, \[mapReady, grundlage\.dunkel, grundlage\.hell, grundlage\.schluessel\]\)/);
   });
 
   it("kennt weder Stiltausch noch Nachlege-Schleife mehr", () => {

@@ -218,8 +218,7 @@ describe("LiveMapView Schalter Bilder", () => {
     render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
     fireLoad();
     for (const name of ["Bilder", "Track", "Taxiweg", "VA-Verkehr"]) {
-      const knopf = screen.queryByRole("button", { name }) as HTMLElement | null;
-      if (!knopf) continue;
+      const knopf = screen.getByRole("button", { name });
       for (let i = 0; i < 2; i++) {
         expect(knopf.querySelector(".aa-livemap-toggle__wort"), `${name} pressed=${knopf.getAttribute("aria-pressed")}`).not.toBeNull();
         fireEvent.click(knopf);
@@ -245,6 +244,23 @@ describe("LiveMapView Schalter Bilder", () => {
     fireLoad();
     await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
     expect(h.einpassen.map((o) => o.padding)).toEqual([{ top: 120, bottom: 60, left: 60, right: 60 }]);
+  });
+
+  it("schaltet man die Bilder aus, springt die Karte beim naechsten Abruf nicht auf die Kollegen", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      h.va = [{ id: "v1", position: { lat: 50, lon: 8 } }];
+      bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P9", breite: 35, laenge: 139 } })];
+      render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+      fireLoad();
+      await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+      fireEvent.click(screen.getByRole("button", { name: "Bilder" }));
+      h.va = [{ id: "v1", position: { lat: 50.5, lon: 8.5 } }];
+      await act(async () => { vi.advanceTimersByTime(12_000); await new Promise((r) => setTimeout(r, 20)); });
+      expect(h.einpassen.map((o) => o.padding)).toEqual([{ top: 120, bottom: 60, left: 60, right: 60 }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("ohne Bildpunkte wird weiter auf die Kollegen eingepasst", async () => {

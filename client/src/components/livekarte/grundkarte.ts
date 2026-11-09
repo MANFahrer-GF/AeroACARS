@@ -20,6 +20,8 @@ export const EBENE_ANKER = "aa-grund-ende";
 const EBENE_FLAECHE = "aa-grund-flaeche";
 const SAT_EBENEN = ["esri-imagery", "esri-reference"];
 const WIEDERHOLEN_MS = 15_000;
+/** Haengt die Verbindung, kaeme sonst nie ein Fehler und damit nie ein neuer Versuch. */
+const STIL_FRIST_MS = 20_000;
 
 /** Solange die Vektorstile noch fehlen (oder ohne Netz), steht diese Flaeche da. */
 const FLAECHE: Record<Grundkarte, string> = { dunkel: "#0b121b", hell: "#eef1f4", satellit: "#05070a" };
@@ -157,26 +159,33 @@ export function grundkarteHolen(
   adressen: { dunkel: string; hell: string },
   anfrage: (url: string) => { url: string } | undefined,
 ): () => void {
-  const abbruch = new AbortController();
+  let abbruch = new AbortController();
+  let beendet = false;
   let uhr = 0;
   // Selbst holen heisst: Der Umschreiber aus `transformRequest` greift hier nicht von allein.
-  const stil = async (url: string): Promise<StyleSpecification> => {
-    const antwort = await fetch(anfrage(url)?.url ?? url, { signal: abbruch.signal });
+  const stil = async (url: string, signal: AbortSignal): Promise<StyleSpecification> => {
+    const antwort = await fetch(anfrage(url)?.url ?? url, { signal });
     if (!antwort.ok) throw new Error(`Kartenstil: HTTP ${antwort.status}`);
     return (await antwort.json()) as StyleSpecification;
   };
   const holen = async () => {
+    abbruch = new AbortController();
+    const { signal } = abbruch;
+    const frist = window.setTimeout(() => abbruch.abort(), STIL_FRIST_MS);
     try {
-      const [dunkel, hell] = await Promise.all([stil(adressen.dunkel), stil(adressen.hell)]);
-      if (!abbruch.signal.aborted) steuerung.einsetzen({ dunkel, hell });
+      const [dunkel, hell] = await Promise.all([stil(adressen.dunkel, signal), stil(adressen.hell, signal)]);
+      if (!beendet) steuerung.einsetzen({ dunkel, hell });
     } catch (e) {
-      if (abbruch.signal.aborted) return;
+      if (beendet) return;
       console.warn("[karte] Kartenstil nicht geladen, neuer Versuch folgt:", e);
       uhr = window.setTimeout(() => void holen(), WIEDERHOLEN_MS);
+    } finally {
+      window.clearTimeout(frist);
     }
   };
   void holen();
   return () => {
+    beendet = true;
     abbruch.abort();
     window.clearTimeout(uhr);
   };

@@ -114,6 +114,9 @@ export function useVaVerkehr({ mapRef, mapReady, sichtbar, activeFlight, bilderV
   // reopening/refreshing a popup for the same destination doesn't re-fetch.
   const airportCoordCacheRef = useRef(new Map<string, [number, number] | null>());
   const vaFittedRef = useRef(false);
+  // Als Ref: Die Liste der Bilder kommt oft erst nach dem Start des Abruf-Effekts an.
+  const bilderVorrangRef = useRef(bilderVorrang);
+  bilderVorrangRef.current = bilderVorrang;
   // Dead-Reckoning: VA-Marker zwischen den 12-s-Polls flüssig weiterrechnen.
   const vaDrRef = useRef<{ marker: maplibregl.Marker; lat: number; lon: number; hdg: number; gs: number }[]>([]);
   const vaDrT0Ref = useRef(0);
@@ -397,8 +400,10 @@ export function useVaVerkehr({ mapRef, mapReady, sichtbar, activeFlight, bilderV
     // Nur auf die VA-Flieger einpassen, wenn KEIN eigener Flug die Kamera führt
     // (sonst würde es dich vom eigenen Flug wegziehen). Und nur einmal. Eigene
     // Bildpunkte gehen vor: useBildKarte passt ohne Flug auf sie ein.
-    if (pts.length >= 1 && !vaFittedRef.current && !activeFlight && !bilderVorrang) {
+    if (pts.length >= 1 && !vaFittedRef.current && !activeFlight) {
+      // Auch bei Vorrang als erledigt merken: Sonst sprange die Kamera, sobald „Bilder“ ausgeht.
       vaFittedRef.current = true;
+      if (bilderVorrangRef.current) return;
       // Kleinster Bogen: Kollegen beiderseits der Datumsgrenze ergeben sonst
       // einen Ausschnitt ueber fast die ganze Welt.
       const bogen = punkteAufKleinstemBogen(pts);

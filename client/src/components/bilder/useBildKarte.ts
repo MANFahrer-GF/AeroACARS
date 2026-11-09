@@ -13,6 +13,7 @@ import { bilderStore, useBilder } from "./bilderStore";
 import { bildZeitIso } from "./Kacheln";
 import { anzeigbar, flugSchluessel } from "./logik/gruppen";
 import { markeMitVorschau } from "../../flugkarte/markenVorschau";
+import { punkteAufKleinstemBogen } from "../../lib/datumsgrenze";
 import { useMarkenVorschau } from "./useMarkenVorschau";
 import type { Eintrag } from "./logik/typen";
 import "./bilder.css";
@@ -86,12 +87,14 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
   // Bilder aus Japan ausserhalb des Bildes. Nicht bei verdeckter Karte (Groesse 0) und nicht gegen einen Fokus.
   const eingepasst = useRef(false);
   useEffect(() => {
-    if (aktivePirep !== null) { eingepasst.current = false; return; }
+    // Mit Flug gehoert die Kamera dem Piloten, auch nach der Abgabe springt sie nicht auf alle Punkte.
+    if (aktivePirep !== null) { eingepasst.current = true; return; }
     const map = mapRef.current;
     const { marken } = aktuell.current;
     if (!map || !sichtbar || !bilderAn || fokus || eingepasst.current || marken.length === 0) return;
     eingepasst.current = true;
-    const laengen = marken.map((m) => m.lon);
+    // Kleinster Bogen: Bilder beiderseits der Datumsgrenze ergaeben sonst einen Ausschnitt ueber die ganze Welt.
+    const laengen = punkteAufKleinstemBogen(marken.map((m) => [m.lon, m.lat])).map(([lon]) => lon);
     const breiten = marken.map((m) => m.lat);
     map.fitBounds(
       [[Math.min(...laengen), Math.min(...breiten)], [Math.max(...laengen), Math.max(...breiten)]],

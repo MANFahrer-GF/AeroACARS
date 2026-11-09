@@ -370,9 +370,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       try {
         grundkarteRef.current = grundkarteBauen(map);
         // Reihenfolge = Stapelung: Die Bodendaten liegen unter Route, Spur und Flugzeug.
+        taxiEbenenAnlegen(map);
         netzEbenenAnlegen(map);
         fremdeRoutenAnlegen(map);
-        taxiEbenenAnlegen(map);
         flugEbenenAnlegen(map);
       } catch (e) {
         console.error("[karte] Ebenen konnten nicht angelegt werden:", e);
@@ -417,7 +417,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       { dunkel: grundlage.dunkel, hell: grundlage.hell },
       kartenAnfrage(() => grundlageRef.current.schluessel),
     );
-  }, [mapReady, grundlage.dunkel, grundlage.hell]);
+  }, [mapReady, grundlage.dunkel, grundlage.hell, grundlage.schluessel]);
 
   // Kartenausrichtung an den Steuerkurs koppeln.
   //

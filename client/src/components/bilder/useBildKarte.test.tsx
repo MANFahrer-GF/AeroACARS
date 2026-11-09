@@ -173,6 +173,26 @@ describe("useBildKarte", () => {
     expect(h.laden).toHaveBeenCalledTimes(1);
     h.ohneListe = false;
   });
+  it("passt ueber die Datumsgrenze auf den kleinen Bogen ein, nicht ueber die ganze Welt", () => {
+    h.eintraege = [
+      eintrag({ id: "ost", meta: { pirep_id: "P1", breite: 10, laenge: 170 } }),
+      eintrag({ id: "west", meta: { pirep_id: "P1", breite: 20, laenge: -170 } }),
+    ];
+    const k = karte();
+    renderHook(() => useBildKarte({ current: k.m as never }, null, null));
+    const box = (k.aufrufe.find((a) => (a as unknown[])[0] === "einpassen") as unknown[])[1];
+    expect(box).toEqual([[170, 10], [190, 20]]);
+  });
+  it("springt nach der Abgabe nicht auf alle Punkte", () => {
+    h.eintraege = [
+      eintrag({ id: "tokio", meta: { pirep_id: "P1", breite: 35, laenge: 139 } }),
+      eintrag({ id: "osaka", meta: { pirep_id: "P1", breite: 34, laenge: 135 } }),
+    ];
+    const k = karte();
+    const { rerender } = renderHook(({ flug }) => useBildKarte({ current: k.m as never }, null, flug), { initialProps: { flug: "P1" as string | null } });
+    rerender({ flug: null });
+    expect(k.aufrufe.filter((a) => (a as unknown[])[0] === "einpassen")).toHaveLength(0);
+  });
   it("scheitert der Abruf beim Start, holt das Oeffnen der Karte ihn nach", () => {
     h.ohneListe = true;
     h.laden.mockClear();
