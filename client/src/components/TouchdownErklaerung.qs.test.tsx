@@ -35,7 +35,9 @@ describe("Erklärungen der Touchdown-Kacheln", () => {
 // Version 19 — gesetzt an der Wurzel (`LandungsAbschnitte`), gelesen im echten
 // InfoBadge (hier ohne Attrappe).
 describe("Versionshinweis an allen Erklärungen", () => {
-  it("Altbestand: jedes geöffnete Fenster trägt den Hinweis, Version 19 keines", async () => {
+  // Eigenes Zeitlimit: Öffnet jedes Erklärfenster und braucht bei voll
+  // ausgelastetem Rechner über 5 s (gemessen 10 s bei Last 224).
+  it("Altbestand: jedes geöffnete Fenster trägt den Hinweis, Version 19 keines", { timeout: 30_000 }, async () => {
     vi.doUnmock("./InfoBadge");
     vi.resetModules();
     const { fireEvent } = await import("@testing-library/react");

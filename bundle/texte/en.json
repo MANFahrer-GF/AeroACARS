@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "The live map now shows the picture points of all flights, even during a flight. While a flight is running, earlier flights are collapsed in the Pictures tab; a click on the header expands them. Moving the mouse over a picture point on the maps now shows a small preview of the picture with flight, time, altitude and phase. The picture points on the live map and the flight map can now be hidden with the “Pictures” switch. Pictures can now be viewed large: with the magnifier on the tile, a click on the picture on the right, and the points on the maps. The flight map now shows the pictures of the flight as points. Pictures can now also be sent from a tablet over the LAN bridge. With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked. Pictures in windowed mode now show only the simulator image, without title bar and border. The live map has been rebuilt from the inside: when switching between light, dark and satellite, route, track, traffic and network display simply stay in place. The map bar has fixed buttons in a few groups, the flight info panel can be collapsed, and nothing overlaps any more, even in small windows. Picture points are on the map as soon as it opens, even without a running flight, and the globe stays when the map is changed and after a restart."
+    "neu_text": "In the bookings list, “Book a flight” now takes you straight to the schedule, live flights, free flight and SkyAdventures on the website. With the new AeroACARS version, “Crew Story” on a booking opens a small window for the story of that flight. The live map now shows the picture points of all flights, even during a flight. While a flight is running, earlier flights are collapsed in the Pictures tab; a click on the header expands them. Moving the mouse over a picture point on the maps now shows a small preview of the picture with flight, time, altitude and phase. The picture points on the live map and the flight map can now be hidden with the “Pictures” switch. Pictures can now be viewed large: with the magnifier on the tile, a click on the picture on the right, and the points on the maps. The flight map now shows the pictures of the flight as points. Pictures can now also be sent from a tablet over the LAN bridge. With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked. Pictures in windowed mode now show only the simulator image, without title bar and border. The live map has been rebuilt from the inside: when switching between light, dark and satellite, route, track, traffic and network display simply stay in place. The map bar has fixed buttons in a few groups, the flight info panel can be collapsed, and nothing overlaps any more, even in small windows. Picture points are on the map as soon as it opens, even without a running flight, and the globe stays when the map is changed and after a restart."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -2879,7 +2879,49 @@
     "empty_title": "No flights booked",
     "empty_hint": "Book a flight on your phpVMS site and click \"Refresh\" here — it'll show up.",
     "empty_action": "Book a flight",
-    "laufender_flug": "Current flight"
+    "laufender_flug": "Current flight",
+    "buchen": "Book a flight",
+    "buchen_flugplan": "Schedule",
+    "buchen_live": "Live flights",
+    "buchen_freiflug": "Free flight",
+    "buchen_adventures": "SkyAdventures (tours, events)",
+    "crew_story": {
+      "titel": "Crew Story",
+      "laedt": "Loading story …",
+      "platzhalter": "For example: a wedding party on board, the bride is sitting front right.",
+      "frist": "Can be changed until AeroACARS records the flight.",
+      "gesperrt_hinweis": "Flight already running: the story stays as last saved.",
+      "speichern": "Save",
+      "speichert": "Saving …",
+      "schliessen": "Close",
+      "trotzdem_schliessen": "Close anyway",
+      "erneut": "Try again",
+      "nicht_gespeichert_schliessen": "The text has not been saved and will be lost when you close this window.",
+      "neues_aeroacars": "For a Crew Story on a flight without an OFP you need the new AeroACARS version.",
+      "server_titel": "Version from the other place:",
+      "server_leer": "(no story)",
+      "pruefung": {
+        "prueft": "Checking …",
+        "uebernommen": "✅ Will be used: the captain or cabin crew will work the story into their announcements.",
+        "teilweise": "⚠️ Partly used. Left out:",
+        "abgelehnt": "❌ Will not be used:",
+        "abgelehnt_ohne": "❌ Will not be used: the story does not fit the rules.",
+        "nicht_geprueft": "Could not be checked right now, it will be checked during the flight."
+      },
+      "meldung": {
+        "gespeichert": "Saved",
+        "gesperrt": "Flight already running. Your text is still here, but the last saved version applies.",
+        "geaendert": "Changed elsewhere. Your text is still here: save again and it applies.",
+        "kein_zugang": "Crew Story is turned off for your account.",
+        "flug_unbekannt": "This flight no longer exists on the website.",
+        "ungueltig": "The text was not accepted. Please shorten it and try again.",
+        "zu_oft": "Too many attempts. Please wait a moment and try again.",
+        "anmeldung": "You are no longer logged in. Please log in again.",
+        "netz": "No connection to the website. Please try again.",
+        "server": "The website did not respond as expected. Please try again later.",
+        "nicht_gespeichert": "Not saved. Please try again."
+      }
+    }
   },
   "flight": {
     "error": {

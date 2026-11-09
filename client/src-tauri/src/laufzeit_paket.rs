@@ -77,7 +77,10 @@ const PRUEFSCHLUESSEL: &[&str] = match option_env!("AEROACARS_OHNE_PAKETE") {
 /// danach einen anderen Ort oder ein anderes Flugzeug zeigt. Erst damit zeigt
 /// das Wiederaufnahme-Fenster „Flug abgeben“; ein aelteres Programm wuerde
 /// mit den Live-Werten abgeben. Nicht in `requires`, wie `bilder-1`.
-const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-2", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-3", "ui-befehle-4", "hilfe-formular-1", "kabine-lage-1", "zusatz-1", "bilder-1", "abgabe-ankunft-1"];
+/// `modul-api-1`: Kernbefehl `modul_api`, Pfade aus `tabellen/modul-api.json`.
+/// Nicht in `requires`: Die Oberflaeche fragt die Faehigkeit ab und faellt auf
+/// einem aelteren Programm auf die OFP-Seite zurueck.
+const FAEHIGKEITEN: &[&str] = &["ourairports-1", "grenzwerte-2", "xplane-profile-1", "cpdlc-1", "flotte-1", "texte-1", "spurweiten-1", "vref-1", "hoehengruppen-1", "klappen-1", "kabine-1", "endpunkte-1", "msfs-profile-1", "bewertung-1", "kabine-modul-1", "ui-befehle-3", "ui-befehle-4", "hilfe-formular-1", "kabine-lage-1", "zusatz-1", "bilder-1", "abgabe-ankunft-1", "modul-api-1"];
 
 const RUNWAYS: &str = "ourairports/runways.csv";
 const AIRPORTS: &str = "ourairports/airports.csv";
@@ -94,10 +97,13 @@ const ENDPUNKTE: &str = "endpunkte.json";
 /// Datei **optional**: Ein Paket von vor `hilfe-formular-1` gilt auf diesem
 /// Programm weiter (P-2.30), nur ohne Zusatzfelder.
 const HILFE_FORMULAR: &str = "tabellen/hilfe-formular.json";
+/// Erlaubte Pfade des Kernbefehls `modul_api` (`modul-api-1`). Optional wie
+/// [`HILFE_FORMULAR`]: Ein Paket ohne die Datei gilt weiter, nur ohne Pfade.
+const MODUL_API: &str = "tabellen/modul-api.json";
 
 /// Fehlt diese Datei im Paket und darf sie fehlen?
 fn darf_fehlen(p: &Paket, pfad: &str) -> bool {
-    pfad == HILFE_FORMULAR && p.manifest.datei(pfad).is_none()
+    (pfad == HILFE_FORMULAR || pfad == MODUL_API) && p.manifest.datei(pfad).is_none()
 }
 const MSFS_PROFILE: &str = "profile/msfs.json";
 const BEWERTUNG: &str = "module/bewertung.wasm";
@@ -155,6 +161,8 @@ pub(crate) struct AktiverStand {
     /// Zusatzfelder der Hilfe-Seite: die Namen, die `hilfe_anfordern`
     /// annimmt (die Oberflaeche liest dieselbe Datei ueber `paket_datei`).
     pub hilfe_formular: crate::hilfe::HilfeFormular,
+    /// Pfade, die `modul_api` an phpVMS durchreicht (leer = keine).
+    pub modul_api: paket_endpunkte::ModulApi,
     /// MSFS-Paketprofile fuer neue Add-ons (Etappe 2, P-3.52).
     pub msfs_profile: sim_core::msfs_paketprofil::Datei,
     /// Bewertungsmodul (WASM, P-4.31) dieses Stands.
@@ -254,6 +262,11 @@ fn stand_aus_paket(p: Paket) -> Result<AktiverStand, String> {
         } else {
             crate::hilfe::hilfe_formular_lesen(text(HILFE_FORMULAR)?)?
         },
+        modul_api: if darf_fehlen(&p, MODUL_API) {
+            paket_endpunkte::ModulApi::default()
+        } else {
+            paket_endpunkte::modul_api_lesen(text(MODUL_API)?)?
+        },
         msfs_profile: sim_core::msfs_paketprofil::lesen(text(MSFS_PROFILE)?)?,
         bewertung: Box::leak(p.datei(BEWERTUNG).map_err(|e| e.to_string())?.into_boxed_slice()),
         kabine_modul: Box::leak(p.datei(KABINE_MODUL).map_err(|e| e.to_string())?.into_boxed_slice()),
@@ -281,6 +294,7 @@ fn eingebauter_stand() -> Result<AktiverStand, String> {
         kabine_json: eingebauter_text(KABINE)?,
         endpunkte: paket_endpunkte::lesen(eingebauter_text(ENDPUNKTE)?)?,
         hilfe_formular: crate::hilfe::hilfe_formular_lesen(eingebauter_text(HILFE_FORMULAR)?)?,
+        modul_api: paket_endpunkte::modul_api_lesen(eingebauter_text(MODUL_API)?)?,
         msfs_profile: sim_core::msfs_paketprofil::lesen(eingebauter_text(MSFS_PROFILE)?)?,
         bewertung: eingebaute_datei(BEWERTUNG).ok_or(BEWERTUNG)?,
         kabine_modul: eingebaute_datei(KABINE_MODUL).ok_or(KABINE_MODUL)?,
@@ -1359,6 +1373,7 @@ fn selbsttest(p: &Paket) -> Result<(), String> {
         (KABINE, |t| cabin_announcements::lesen(t).map(|_| ())),
         (ENDPUNKTE, |t| paket_endpunkte::lesen(t).map(|_| ())),
         (HILFE_FORMULAR, |t| crate::hilfe::hilfe_formular_lesen(t).map(|_| ())),
+        (MODUL_API, |t| paket_endpunkte::modul_api_lesen(t).map(|_| ())),
         (MSFS_PROFILE, |t| sim_core::msfs_paketprofil::lesen(t).map(|_| ())),
     ] {
         if darf_fehlen(p, pfad) {
@@ -1680,6 +1695,23 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert_eq!(stand_aus_paket(p).unwrap().endpunkte.helpdesk_pfad(), "/api/helpdesk/v2/tickets");
         e["helpdesk_pfad"] = "https://evil.example/api/t".into();
         assert!(selbsttest(&eingebaut_mit(&[(ENDPUNKTE, e.to_string().as_bytes())]).paket().unwrap()).is_err());
+    }
+
+    /// `modul-api-1`: Die Pfade kommen aus dem Paket, ein Paket ohne die Datei
+    /// gilt weiter (ohne Pfade), ein gesperrter Pfad verwirft das Paket.
+    #[test]
+    fn modul_api_kommt_aus_dem_paket() {
+        let briefing = "/api/kabinenansagen/briefing";
+        assert!(stand().modul_api.erlaubt(briefing), "eingebauter Stand nennt das Briefing");
+        let p = eingebaut_mit(&[(MODUL_API, br#"{"format":1,"pfade":["/api/anderes/modul"]}"#)]).paket().unwrap();
+        assert_eq!(selbsttest(&p), Ok(()));
+        let s = stand_aus_paket(p).unwrap();
+        assert!(s.modul_api.erlaubt("/api/anderes/modul/x") && !s.modul_api.erlaubt(briefing));
+        let alt = eingebaut_mit_ohne(&[], &[MODUL_API]).paket().unwrap();
+        assert_eq!(selbsttest(&alt), Ok(()));
+        assert!(!stand_aus_paket(alt).unwrap().modul_api.erlaubt(briefing));
+        let fehler = selbsttest(&eingebaut_mit(&[(MODUL_API, br#"{"format":1,"pfade":["/api/pireps"]}"#)]).paket().unwrap()).unwrap_err();
+        assert!(fehler.contains("modul-api.json"), "{fehler}");
     }
 
     /// P-2.30: Ein Paket von vor `hilfe-formular-1` (ohne die Datei, ohne

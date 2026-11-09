@@ -41,7 +41,9 @@ function kontrast(vorne: string, hinten: string): number {
 }
 
 describe("Farbige Texte im Druck abgedunkelt", () => {
-  it("jeder Text mit eigener Farbe und jede SVG-Beschriftung fällt unter die Druckregel", async () => {
+  // Eigenes Zeitlimit: Rendert alle Beispiel-Landungen und braucht bei voll
+  // ausgelastetem Rechner über 5 s (gemessen 7,5 s bei Last 224).
+  it("jeder Text mit eigener Farbe und jede SVG-Beschriftung fällt unter die Druckregel", { timeout: 30_000 }, async () => {
     const sel = druckSelektoren();
     expect(sel.length).toBeGreaterThan(2);
     const { LandingDetail } = await import("./LandingPanel");

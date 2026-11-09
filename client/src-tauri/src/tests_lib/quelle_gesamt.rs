@@ -330,6 +330,8 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Befehlsliste, sonst nichts an `lib.rs`. Test `tests/befehlsliste.rs`, Bruecke `DENY_SET`.
 /// — plus Stornierter PIREP 09.11.: `pirep_serverseitig_beendet` in Lebenszeichen, Positions-Worker, Fortsetzen-Tor und
 /// ACARS-Postausgang, `lebenszeichen_wartezeit`. Tests `meldung_endet_nur_bei_stornierung_oder_404`, `lebenszeichen_wartezeit_*`.
+/// — plus Crew-Story-Fenster 09.11. (`modul-api-1`): `mod modul_api;` und der Befehl `modul_api::modul_api`, sonst nichts an `lib.rs`.
+/// Tests `modul_api::tests::*`, `paket-endpunkte` (`modul_api_*`), `tests/befehlsliste.rs::modul_api_ist_fachlich`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -340,4 +342,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "4d2978d91b160113c4159c4de33ea0c5bf79da508bfee6e229cdd1e58d016372";
+const HASH_VOR_DER_ZERLEGUNG: &str = "c4414b65d132fccbcb5211f922e59ccc0e5664f7a7813a0219f5f57ec66b1b17";

@@ -1859,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "La mappa live ora mostra i punti immagine di tutti i voli, anche durante un volo. Mentre un volo è in corso, i voli precedenti sono compressi nella scheda Immagini; un clic sull'intestazione li espande. Passando il mouse su un punto immagine nelle mappe ora appare una piccola anteprima dell'immagine con volo, ora, quota e fase. I punti immagine sulla mappa live e sulla mappa del volo ora si possono nascondere con l'interruttore «Immagini». Ora le immagini si possono vedere ingrandite: con la lente sulla miniatura, con un clic sull'immagine a destra e con i punti sulle mappe. La mappa del volo mostra ora le immagini del volo come punti. Ora le immagini si possono inviare anche dal tablet tramite il bridge LAN. Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato. Le immagini in modalità finestra mostrano ora solo l'immagine del simulatore, senza barra del titolo e bordo. La mappa live è stata ricostruita dall'interno: passando tra chiaro, scuro e satellite, rotta, traccia, traffico e rete restano semplicemente al loro posto. La barra della mappa ha pulsanti fissi in pochi gruppi, il pannello informazioni volo si può chiudere e nulla si sovrappone più, anche nelle finestre piccole. I punti immagine sono sulla mappa appena si apre, anche senza un volo in corso, e il globo resta quando si cambia mappa e dopo il riavvio."
+    "neu_text": "Nell'elenco delle prenotazioni, “Prenota un volo” porta ora direttamente a operativo voli, voli live, volo libero e SkyAdventures sul sito. Con la nuova versione di AeroACARS, “Crew Story” su una prenotazione apre una piccola finestra per la storia del volo. La mappa live ora mostra i punti immagine di tutti i voli, anche durante un volo. Mentre un volo è in corso, i voli precedenti sono compressi nella scheda Immagini; un clic sull'intestazione li espande. Passando il mouse su un punto immagine nelle mappe ora appare una piccola anteprima dell'immagine con volo, ora, quota e fase. I punti immagine sulla mappa live e sulla mappa del volo ora si possono nascondere con l'interruttore «Immagini». Ora le immagini si possono vedere ingrandite: con la lente sulla miniatura, con un clic sull'immagine a destra e con i punti sulle mappe. La mappa del volo mostra ora le immagini del volo come punti. Ora le immagini si possono inviare anche dal tablet tramite il bridge LAN. Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato. Le immagini in modalità finestra mostrano ora solo l'immagine del simulatore, senza barra del titolo e bordo. La mappa live è stata ricostruita dall'interno: passando tra chiaro, scuro e satellite, rotta, traccia, traffico e rete restano semplicemente al loro posto. La barra della mappa ha pulsanti fissi in pochi gruppi, il pannello informazioni volo si può chiudere e nulla si sovrappone più, anche nelle finestre piccole. I punti immagine sono sulla mappa appena si apre, anche senza un volo in corso, e il globo resta quando si cambia mappa e dopo il riavvio."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -2865,7 +2865,49 @@
     "empty_title": "Nessun volo prenotato",
     "empty_hint": "Prenota un volo su german-sky-group.eu e clicca qui su „Aggiorna\" — apparirà qui.",
     "empty_action": "Prenota un volo",
-    "laufender_flug": "Volo in corso"
+    "laufender_flug": "Volo in corso",
+    "buchen": "Prenota un volo",
+    "buchen_flugplan": "Operativo voli",
+    "buchen_live": "Voli live",
+    "buchen_freiflug": "Volo libero",
+    "buchen_adventures": "SkyAdventures (tour, eventi)",
+    "crew_story": {
+      "titel": "Crew Story",
+      "laedt": "Caricamento della storia …",
+      "platzhalter": "Per esempio: un gruppo di nozze a bordo, la sposa siede davanti a destra.",
+      "frist": "Modificabile finché AeroACARS non registra il volo.",
+      "gesperrt_hinweis": "Volo già in corso: la storia resta come salvata per ultima.",
+      "speichern": "Salva",
+      "speichert": "Salvataggio …",
+      "schliessen": "Chiudi",
+      "trotzdem_schliessen": "Chiudi comunque",
+      "erneut": "Riprova",
+      "nicht_gespeichert_schliessen": "Il testo non è stato salvato e andrà perso chiudendo la finestra.",
+      "neues_aeroacars": "Per la Crew Story su un volo senza OFP serve la nuova versione di AeroACARS.",
+      "server_titel": "Versione dall'altra posizione:",
+      "server_leer": "(nessuna storia)",
+      "pruefung": {
+        "prueft": "Verifica in corso …",
+        "uebernommen": "✅ Verrà usata: il comandante o la cabina la riprenderanno negli annunci.",
+        "teilweise": "⚠️ Usata in parte. Omesso:",
+        "abgelehnt": "❌ Non verrà usata:",
+        "abgelehnt_ohne": "❌ Non verrà usata: la storia non rispetta le regole.",
+        "nicht_geprueft": "Non è stato possibile verificarla ora, verrà verificata durante il volo."
+      },
+      "meldung": {
+        "gespeichert": "Salvato",
+        "gesperrt": "Volo già in corso. Il tuo testo è ancora qui, ma vale l'ultima versione salvata.",
+        "geaendert": "Modificato altrove. Il tuo testo è ancora qui: salva di nuovo e varrà questo.",
+        "kein_zugang": "La Crew Story è disattivata per il tuo account.",
+        "flug_unbekannt": "Questo volo non esiste più sul sito.",
+        "ungueltig": "Il testo non è stato accettato. Accorcialo e riprova.",
+        "zu_oft": "Troppi tentativi. Attendi un momento e riprova.",
+        "anmeldung": "Non sei più connesso. Accedi di nuovo.",
+        "netz": "Nessuna connessione al sito. Riprova.",
+        "server": "Il sito non ha risposto come previsto. Riprova più tardi.",
+        "nicht_gespeichert": "Non salvato. Riprova."
+      }
+    }
   },
   "flight": {
     "error": {

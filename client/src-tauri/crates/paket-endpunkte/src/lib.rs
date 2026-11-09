@@ -133,6 +133,90 @@ fn pruefe_pfad(pfad: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Laengster erlaubter Pfad der allgemeinen Modul-Schnittstelle.
+pub const MODUL_API_PFAD_MAX: usize = 120;
+/// Hoechstens so viele Eintraege in `tabellen/modul-api.json`.
+pub const MODUL_API_PFADE_MAX: usize = 32;
+
+/// Erstes Segment nach `/api/`, das die Modul-Schnittstelle nie erreicht: die
+/// Kern-Schnittstelle von phpVMS (`RouteServiceProvider::mapApiRoutes`). Mit
+/// dem Schluessel des Piloten liessen sich dort Fluege, Buchungen und PIREPs
+/// aendern. Fest im Programm, das Paket kann die Liste nicht verkleinern.
+const MODUL_API_KERN: &[&str] = &[
+    "acars", "airlines", "airports", "bids", "cron", "fleet", "flights", "news", "pireps", "settings", "status", "subfleet",
+    "user", "users", "version",
+];
+/// Segment, das nirgends im Pfad stehen darf: die kostenpflichtige
+/// Drehbuch-Bestellung der Kabinenansagen.
+const MODUL_API_DREHBUCH: &str = "drehbuch";
+
+/// Prueft einen Pfad der Modul-Schnittstelle, bei jedem Aufruf und fuer jeden
+/// Eintrag der Paketliste: beginnt mit `/api/`, hoechstens
+/// [`MODUL_API_PFAD_MAX`] Zeichen, nur `[A-Za-z0-9/_.-]`, kein `..`, `//` oder
+/// `.`-Segment, kein abschliessender Schraegstrich, kein phpVMS-Kernpfad und
+/// kein Segment `drehbuch`. Gross-/Kleinschreibung zaehlt bei der Sperre nicht.
+pub fn modul_api_pfad_pruefen(pfad: &str) -> Result<(), String> {
+    if pfad.len() > MODUL_API_PFAD_MAX {
+        return Err("zu lang".into());
+    }
+    let rest = pfad.strip_prefix("/api/").ok_or("muss mit /api/ beginnen")?;
+    if rest.is_empty() || pfad.ends_with('/') {
+        return Err("Form ungueltig".into());
+    }
+    if !pfad.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'.' | b'-')) {
+        return Err("Zeichen ungueltig".into());
+    }
+    if pfad.contains("..") || pfad.contains("//") || pfad.split('/').any(|s| s == ".") {
+        return Err("Form ungueltig".into());
+    }
+    let klein = rest.to_ascii_lowercase();
+    if klein.split('/').next().is_some_and(|erstes| MODUL_API_KERN.contains(&erstes)) {
+        return Err("phpVMS-Kernpfad gesperrt".into());
+    }
+    if klein.split('/').any(|s| s == MODUL_API_DREHBUCH) {
+        return Err("Drehbuch-Pfad gesperrt".into());
+    }
+    Ok(())
+}
+
+/// Die Pfade aus `tabellen/modul-api.json`. Eigene Datei statt Feld in
+/// `endpunkte.json`: [`Endpunkte`] weist unbekannte Felder ab, ein aelterer
+/// Client wuerde eine Generation mit dem neuen Feld verwerfen.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModulApi {
+    pfade: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ModulApiDatei {
+    format: u32,
+    pfade: Vec<String>,
+}
+
+impl ModulApi {
+    /// Steht der Pfad auf der Paketliste? Trifft nur auf Segmentgrenze:
+    /// `/api/a/b` deckt `/api/a/b/c`, aber nicht `/api/a/bc`.
+    pub fn erlaubt(&self, pfad: &str) -> bool {
+        self.pfade.iter().any(|p| pfad == p || pfad.strip_prefix(p.as_str()).is_some_and(|r| r.starts_with('/')))
+    }
+}
+
+/// Liest `tabellen/modul-api.json` (fail-closed: ein schlechter Eintrag
+/// verwirft das Paket im Selbsttest).
+pub fn modul_api_lesen(json: &str) -> Result<ModulApi, String> {
+    let d: ModulApiDatei = serde_json::from_str(json).map_err(|x| format!("modul-api.json: {x}"))?;
+    if d.format != 1 {
+        return Err(format!("modul-api.json: Format {} unbekannt", d.format));
+    }
+    if d.pfade.len() > MODUL_API_PFADE_MAX {
+        return Err("modul-api.json: zu viele Pfade".into());
+    }
+    for pfad in &d.pfade {
+        modul_api_pfad_pruefen(pfad).map_err(|x| format!("modul-api.json: {pfad}: {x}"))?;
+    }
+    Ok(ModulApi { pfade: d.pfade })
+}
+
 fn pruefe_url(url: &str, erlaubt: &str) -> Result<(), String> {
     let rest = url.strip_prefix("https://").ok_or("nur https")?;
     let host = rest.split('/').next().unwrap_or("");
@@ -208,6 +292,84 @@ mod tests {
         let mut kein_text = gut;
         kein_text["helpdesk_pfad"] = 5.into();
         assert!(lesen(&kein_text.to_string()).is_err());
+    }
+
+    #[test]
+    fn modul_api_pfad_grenzen() {
+        for gut in ["/api/kabinenansagen/briefing", "/api/kabinenansagen/briefing/pruefen", "/api/x", "/api/flightsx", "/api/a.b/c-d_e"] {
+            assert_eq!(modul_api_pfad_pruefen(gut), Ok(()), "{gut}");
+        }
+        let lang = format!("/api/{}", "a".repeat(MODUL_API_PFAD_MAX - 5));
+        assert!(modul_api_pfad_pruefen(&lang).is_ok(), "genau an der Grenze");
+        for boese in [
+            format!("{lang}b"),
+            "".into(),
+            "/api/".into(),
+            "/api".into(),
+            "api/x".into(),
+            "/x/api/y".into(),
+            "/api/x/".into(),
+            "/api//x".into(),
+            "/api/x//y".into(),
+            "/api/./x".into(),
+            "/api/x/.".into(),
+            "/api/../admin".into(),
+            "/api/x/../user".into(),
+            "/api/x?api_key=1".into(),
+            "/api/x#y".into(),
+            "/api/x%2F..".into(),
+            "/api/x y".into(),
+            "/api/x\\y".into(),
+            "/api/x@evil.example".into(),
+            "https://evil.example/api/x".into(),
+            "//evil.example/api/x".into(),
+            "/api/kabin\u{e4}".into(),
+        ] {
+            assert!(modul_api_pfad_pruefen(&boese).is_err(), "{boese}");
+        }
+    }
+
+    #[test]
+    fn modul_api_kernpfade_und_drehbuch_gesperrt() {
+        for kern in MODUL_API_KERN {
+            let pfad = format!("/api/{kern}");
+            assert!(modul_api_pfad_pruefen(&pfad).is_err(), "{pfad}");
+            let tiefer = format!("/api/{kern}/1/comments");
+            assert!(modul_api_pfad_pruefen(&tiefer).is_err(), "{tiefer}");
+            let gross = format!("/api/{}", kern.to_uppercase());
+            assert!(modul_api_pfad_pruefen(&gross).is_err(), "{gross}");
+        }
+        for boese in ["/api/kabinenansagen/drehbuch", "/api/kabinenansagen/DrehBuch/bestellen", "/api/drehbuch"] {
+            assert!(modul_api_pfad_pruefen(boese).is_err(), "{boese}");
+        }
+        assert!(modul_api_pfad_pruefen("/api/kabinenansagen/drehbuecher").is_ok(), "nur das ganze Segment");
+    }
+
+    #[test]
+    fn modul_api_liste_trifft_nur_auf_segmentgrenze() {
+        let m = modul_api_lesen(r#"{"format":1,"notiz":["x"],"pfade":["/api/kabinenansagen/briefing"],"kuenftig":true}"#).unwrap();
+        assert!(m.erlaubt("/api/kabinenansagen/briefing"));
+        assert!(m.erlaubt("/api/kabinenansagen/briefing/pruefen"));
+        assert!(!m.erlaubt("/api/kabinenansagen/briefings"));
+        assert!(!m.erlaubt("/api/kabinenansagen"));
+        assert!(!m.erlaubt("/api/helpdesk/tickets"));
+        assert!(!ModulApi::default().erlaubt("/api/kabinenansagen/briefing"), "leere Liste erlaubt nichts");
+    }
+
+    #[test]
+    fn modul_api_datei_fail_closed() {
+        for boese in [
+            r#"{"format":2,"pfade":[]}"#.to_string(),
+            r#"{"format":1}"#.to_string(),
+            r#"{"format":1,"pfade":"/api/x"}"#.to_string(),
+            r#"{"format":1,"pfade":["/api/user"]}"#.to_string(),
+            r#"{"format":1,"pfade":["/api/x","/api/kabinenansagen/drehbuch"]}"#.to_string(),
+            r#"{"format":1,"pfade":["https://evil.example/api/x"]}"#.to_string(),
+            format!(r#"{{"format":1,"pfade":[{}]}}"#, vec![r#""/api/x""#; MODUL_API_PFADE_MAX + 1].join(",")),
+        ] {
+            assert!(modul_api_lesen(&boese).is_err(), "{boese}");
+        }
+        assert_eq!(modul_api_lesen(r#"{"format":1,"pfade":[]}"#).unwrap(), ModulApi::default());
     }
 
     #[test]

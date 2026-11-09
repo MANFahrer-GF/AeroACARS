@@ -4382,6 +4382,34 @@ input:disabled {
   opacity: 0.6;
 }
 
+.bids__buchen { position: relative; }
+.bids__buchen > .bids__refresh { white-space: nowrap; }
+.bids__buchen-menue {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.bids__buchen-menue button {
+  padding: 7px 10px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+}
+.bids__buchen-menue button:hover { background: var(--line); }
+
 /* Sim-position warning row (v0.1.29).
  * Only appears when something's actually off — sim claims connected
  * but lat/lon is still 0,0 (= adapter default before first real
@@ -6671,6 +6699,37 @@ input:disabled {
   flex-direction: column;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
+.crew-story { max-width: 520px; }
+.crew-story__body { display: flex; flex-direction: column; gap: 10px; }
+.crew-story__body > .manual-modal__error,
+.crew-story__body > .manual-modal__warning { margin: 0; }
+.crew-story__hinweis { margin: 0; font-size: 0.9rem; }
+.crew-story__text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.crew-story__text:read-only { opacity: 0.75; }
+.crew-story__zeile { display: flex; justify-content: space-between; gap: 12px; font-size: 0.78rem; color: var(--text-muted); }
+.crew-story__zaehler { white-space: nowrap; font-family: var(--font-mono, monospace); }
+.crew-story__server { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; }
+.crew-story__server-titel { margin-bottom: 2px; font-size: 0.78rem; color: var(--text-muted); }
+.crew-story__server-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.crew-story__pruefung { padding: 8px 12px; border-left: 3px solid rgb(140, 140, 140); border-radius: 4px; background: rgba(140, 140, 140, 0.12); font-size: 0.85rem; }
+.crew-story__pruefung-kopf { font-weight: 600; }
+.crew-story__pruefung--prueft .crew-story__pruefung-kopf { font-weight: 400; }
+.crew-story__pruefung ul { margin: 2px 0 0 18px; padding: 0; }
+.crew-story__pruefung--uebernommen { border-left-color: rgb(46, 160, 67); background: rgba(46, 160, 67, 0.12); }
+.crew-story__pruefung--teilweise { border-left-color: rgb(214, 150, 0); background: rgba(214, 150, 0, 0.12); }
+.crew-story__pruefung--abgelehnt { border-left-color: rgb(214, 60, 60); background: rgba(214, 60, 60, 0.12); }
+.crew-story__ok { font-size: 0.85rem; color: var(--sem-ok, rgb(46, 160, 67)); }
 .manual-modal__head {
   padding: 20px 24px 12px;
   border-bottom: 1px solid var(--border);

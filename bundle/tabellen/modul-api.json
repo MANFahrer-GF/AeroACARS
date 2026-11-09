@@ -1,0 +1,9 @@
+{
+ "format": 1,
+ "notiz": [
+  "Pfade, die der Kernbefehl modul_api (Faehigkeit modul-api-1) mit dem phpVMS-Schluessel des Piloten an den festen GSG-Host durchreicht. Ein Eintrag deckt auch alle Unterpfade (Segmentgrenze), briefing also auch briefing/pruefen.",
+  "Je Eintrag: beginnt mit /api/, hoechstens 120 Zeichen, nur A-Z a-z 0-9 / _ . -, kein .., kein //, kein abschliessendes /. Hoechstens 32 Eintraege.",
+  "Fest im Programm gesperrt, auch wenn es hier steht (das Paket wird dann verworfen): die phpVMS-Kernschnittstelle (acars, airlines, airports, bids, cron, fleet, flights, news, pireps, settings, status, subfleet, user, users, version) und jedes Segment drehbuch."
+ ],
+ "pfade": ["/api/kabinenansagen/briefing"]
+}
