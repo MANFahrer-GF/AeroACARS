@@ -3462,7 +3462,6 @@
     "netz_aus": "Aus",
     "netz_aus_hint": "Kein Online-Netz anzeigen",
     "netz_ivao_hint": "Lotsen, ATIS und fremde Piloten aus dem IVAO-Netz. Flächen aus den FIR-Grenzen — IVAO gibt keine eigenen Sektoren heraus.",
-    "netz_zeit_hint": "Holen der Daten und Zeichnen der Flächen beim letzten Durchlauf",
     "fl_auto": "eigene Höhe",
     "fl_auto_hint": "Sektoren auf der eigenen Flughöhe zeigen",
     "fl_regler": "Flugfläche für die Sektoransicht",

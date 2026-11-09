@@ -4,6 +4,7 @@ import maplibregl from "maplibre-gl";
 import { buildPilotFeatures, emptyFC, fetchVatsimData, esc as vatsimEsc } from "../../lib/vatsimKarte";
 import { ladeSektoren, type Netz } from "../../lib/vatglassesKarte";
 import { umrissOhneNaht } from "../../lib/datumsgrenze";
+import { invoke } from "../../lib/ipc";
 import type { SimSnapshot } from "../../types";
 import { ebeneAnlegen } from "./werkzeug";
 
@@ -199,18 +200,10 @@ export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapsh
   // welchen Luftraum betreut. Die Ausschliesslichkeit steckt deshalb in
   // der Bauform — ein Umschalter statt zweier Schalter, es GEHT nicht
   // anders. Siehe docs/spec/livemap-netze-und-leiste.md.
-  /** Wie lange der letzte Netz-Durchlauf gedauert hat, in Millisekunden.
-   *
-   *  Eingebaut, weil das Zuschalten beim ersten Mal 20-25 s dauert und ich
-   *  es aus der Ferne nicht eingrenzen konnte: Datenkette gemessen 471 ms,
-   *  Server hoechstens 1,2 s ueber 27 Abrufe, Grafikkarte arbeitet (die
-   *  Software-Rendering-These ist damit tot). Bleibt das Zeichnen — und das
-   *  misst sich nur dort, wo es passiert. `zeichnen` laeuft bis die Karte
-   *  nach dem Setzen der Daten zur Ruhe kommt, erfasst also auch das
-   *  Zerlegen der Geometrie im Hintergrund. */
-  const [netzZeit, setNetzZeit] = useState<
-    { abruf: number; zeichnen: number | null; erster: boolean } | null
-  >(null);
+  // Das allererste Zuschalten dauert im Feld 20-25 s, die Ursache ist nicht
+  // geklaert. Gemessen wird einmal je Programmstart und nur ins Diagnose-Log
+  // des Clients (netz_messung); Piloten sehen davon nichts (Thomas 09.11.2026,
+  // Auswertung nach dem Rollout in der Live-Version).
   const netzErsterRef = useRef(true);
 
   // Beim Start IMMER aus. Nicht gemerkt, bewusst.
@@ -339,29 +332,25 @@ export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapsh
         // Entscheidung, welches davon zu sehen ist.
         hoehenfilterSetzen(map, fl);
 
-        // Bis die Karte zur Ruhe kommt: das ist der Teil, der beim ersten
-        // Zuschalten so lange braucht.
-        const tGesetzt = performance.now();
-        const erster = netzErsterRef.current;
-        netzErsterRef.current = false;
-        const abruf = Math.round(tGesetzt - tStart);
-        // SOFORT anzeigen, mit noch offenem Zeichnen-Wert.
-        //
-        // Vorher hing die ganze Anzeige an `idle`. Kommt die Karte nie zur
-        // Ruhe — weil dauernd Kacheln nachladen —, erschien gar nichts, und
-        // die Messung schwieg genau dann, wenn es interessant wurde
-        // (Feldbefund Thomas: "habe ich nicht gesehen").
-        setNetzZeit({ abruf, zeichnen: null, erster });
-        let fertig = false;
-        const abschliessen = () => {
-          if (fertig || beendet) return;
-          fertig = true;
-          setNetzZeit({ abruf, zeichnen: Math.round(performance.now() - tGesetzt), erster });
-        };
-        map.once("idle", abschliessen);
-        // Sicherheitsnetz: kommt die Ruhe nicht, gilt der Wert nach 60 s
-        // als das, was er ist — mindestens so lange.
-        window.setTimeout(abschliessen, 60_000);
+        if (netzErsterRef.current) {
+          netzErsterRef.current = false;
+          const tGesetzt = performance.now();
+          const holenMs = Math.round(tGesetzt - tStart);
+          let frist = 0;
+          const abschliessen = () => {
+            window.clearTimeout(frist);
+            map.off("idle", abschliessen);
+            // Fehlt der Befehl (Generation auf aelterem Client, Tablet), entfaellt nur die Messung.
+            void invoke("netz_messung", {
+              netz,
+              holenMs,
+              zeichnenMs: Math.round(performance.now() - tGesetzt),
+            }).catch(() => {});
+          };
+          map.once("idle", abschliessen);
+          // Kommt die Karte nie zur Ruhe, gilt der Wert als „mindestens so lange“.
+          frist = window.setTimeout(abschliessen, 60_000);
+        }
       } catch (e) {
         if (!beendet && (e as Error)?.name !== "AbortError") {
           console.warn("[vatsim] Abruf fehlgeschlagen:", e);
@@ -483,7 +472,7 @@ export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapsh
     };
   }, [mapReady]);
 
-  return { netz, setNetz, flModus, setFlModus, flWert, setFlWert, netzZeit };
+  return { netz, setNetz, flModus, setFlModus, flWert, setFlWert };
 }
 
 /** Gelbes Chevron fuer fremde VATSIM-Piloten — identisch zur Webapp-Karte. */

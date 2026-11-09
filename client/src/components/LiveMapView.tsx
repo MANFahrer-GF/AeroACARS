@@ -145,7 +145,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   );
   const simSnapshotRef = useRef<SimSnapshot | null>(null);
   useEffect(() => { simSnapshotRef.current = simSnapshot; });
-  const { netz, setNetz, flModus, setFlModus, flWert, setFlWert, netzZeit } = useNetzKarte({
+  const { netz, setNetz, flModus, setFlModus, flWert, setFlWert } = useNetzKarte({
     mapRef, mapReady, sichtbar, zugangTakt, simSnapshotRef,
     eigeneFl: simSnapshot ? Math.max(0, Math.round((simSnapshot.altitude_msl_ft ?? 0) / 100)) : null,
   });
@@ -809,23 +809,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                 shows, so "what/when/how much are we sending" lives where the
                 pilot is actually looking, not behind a bare counter. */}
             <div className="aa-livemap-sysline aa-livemap-overlay">
-              {/* Wie lange der letzte Netz-Durchlauf gebraucht hat, getrennt
-                  nach Holen und Zeichnen. Beim ersten Zuschalten dauert es
-                  20-25 s, und aus der Ferne war nicht zu klaeren, woran —
-                  also misst es sich selbst. */}
-              {netzZeit && (
-                <span
-                  className="aa-livemap-sysline__text"
-                  style={{ opacity: 0.7, fontVariantNumeric: "tabular-nums" }}
-                  title={t("livemap.netz_zeit_hint", "Holen der Daten und Zeichnen der Flächen beim letzten Durchlauf")}
-                >
-                  {netzZeit.erster ? "Netz (erstmals): " : "Netz: "}
-                  {(netzZeit.abruf / 1000).toFixed(1)} s holen ·{" "}
-                  {netzZeit.zeichnen === null
-                    ? "zeichnet …"
-                    : `${(netzZeit.zeichnen / 1000).toFixed(1)} s zeichnen`}
-                </span>
-              )}
               <span className={`aa-livemap-sysline__dot aa-livemap-sysline__dot--${recorderState}`} aria-hidden="true" />
               <span className="aa-livemap-sysline__text">
                 {recorderState === "off"

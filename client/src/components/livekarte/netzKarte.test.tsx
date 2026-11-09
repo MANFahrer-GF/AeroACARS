@@ -75,7 +75,7 @@ vi.mock("maplibre-gl", () => {
       else h.handlers.push({ ev, cb: a });
       return this;
     }
-    once() { return this; }
+    once(ev: string, cb: (e?: unknown) => void) { h.handlers.push({ ev, cb }); return this; }
     off(ev: string, a: string | ((e?: unknown) => void), b?: (e?: unknown) => void) {
       const cb = typeof a === "string" ? b : a;
       h.handlers = h.handlers.filter((x) => !(x.ev === ev && x.cb === cb));
@@ -146,6 +146,7 @@ vi.mock("../../lib/phaseColors", () => ({ phaseColor: () => "#ffffff", phaseLabe
 
 import { LiveMapView } from "../LiveMapView";
 import { _vatsimCacheLeeren } from "../../lib/vatsimKarte";
+import { karteQuelltext } from "./quelltext.testhilfe";
 
 const fc = (features: Array<Record<string, unknown>> = []) => ({ type: "FeatureCollection", features });
 const flaeche = (ruf: string, farbe: string, ring: number[][], mehr: Merkmale = {}) => ({
@@ -330,6 +331,31 @@ describe("Online-Netz: Aus / VATSIM / IVAO (E1)", () => {
     await waitFor(() => expect(h.datenLog.length).toBeGreaterThan(marke));
     expect(h.datenLog.slice(marke).filter((e) => e.features === 0 && e.id === "vatsim-pilots")).toEqual([]);
     expect(quelle("vatsim-pilots")?.features.length).toBeGreaterThan(0);
+  });
+
+  it("E7: meldet die Messung genau einmal ans Log und zeigt sie nirgends an", async () => {
+    await karte();
+    const messungen = () => h.rufe.filter((r) => r.cmd === "netz_messung");
+    const ruhe = () => act(() => { h.handlers.filter((x) => x.ev === "idle").forEach((x) => x.cb()); });
+    fireEvent.click(knopf("VATSIM"));
+    await waitFor(() => expect(quelle("vatsim-sectors")?.features.length).toBeGreaterThan(0));
+    await waitFor(() => expect(h.handlers.some((x) => x.ev === "idle")).toBe(true));
+    expect(messungen(), "erst wenn die Karte zur Ruhe kommt").toEqual([]);
+    ruhe();
+    expect(messungen()).toHaveLength(1);
+    expect(messungen()[0].args).toEqual({ netz: "vatsim", holenMs: expect.any(Number), zeichnenMs: expect.any(Number) });
+    expect(document.body.textContent).not.toMatch(/holen|zeichnen|erstmals/i);
+
+    fireEvent.click(knopf("IVAO"));
+    await waitFor(() => expect(sektorAbrufe()).toHaveLength(2));
+    await waitFor(() => expect(quelle("vatsim-sectors")?.features.length).toBeGreaterThan(0));
+    ruhe();
+    expect(messungen(), "nur das allererste Zuschalten").toHaveLength(1);
+  });
+
+  it("G8: die Messzeile kehrt nicht in die Oberflaeche zurueck", () => {
+    const quelltext = karteQuelltext();
+    expect(quelltext).not.toMatch(/\} s (holen|zeichnen)|Netz \(erstmals|netzZeit|netz_zeit_hint/);
   });
 
   it("raeumt beim Wechsel auf Aus alle fuenf Quellen leer", async () => {

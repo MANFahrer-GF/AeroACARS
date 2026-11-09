@@ -1149,6 +1149,7 @@ pub fn run() {
             // v0.9.0 (#Discord-RPC): Settings + Status + Push-State + Test.
             // Inhalte (Skin, Kartenstil, VATGlasses) mit Pilot-Token (29.09.2026).
             live_zugang::live_inhalt,
+            live_zugang::netz_messung,
             hilfe::hilfe_vorschau,
             hilfe::hilfe_anfordern,
             hilfe::hilfe_tickets,

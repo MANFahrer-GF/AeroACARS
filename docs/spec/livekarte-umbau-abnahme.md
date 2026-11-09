@@ -19,7 +19,7 @@ Fenstergrößen für jede Klickrunde: 1490×720 (Thomas), 1920×1080, 1280×800,
 | A3 | Kein Stiltausch | `setStyle` wird nie gerufen, kein `styledata`-Handler, keine 120-ms-Schleife | ☑ | – |
 | A4 | Overlays überleben jeden Wechsel | Route, Track, Taxi, Netz, Kollegen-Routen behalten Daten und Schalterstand, auch nach 4× Umschalten | ☑ | ☑ |
 | A5 | Farben je Grundkarte | Auf Satellit: heller Track, dunkle Halos, Routen-Unterlage; Kollegen-Route bleibt unter der eigenen | ☑ | ☑ |
-| A6 | Weltkugel | Bleibt nach Satellit-/Theme-Wechsel, Reiterwechsel, Schließen/Öffnen (`aaLivemapKugel`); Reiterwechsel im echten Client belegt | ☑ | ☐ |
+| A6 | Weltkugel | Bleibt nach Satellit-/Theme-Wechsel, Reiterwechsel, Schließen/Öffnen (`aaLivemapKugel`); Reiterwechsel im echten Client: Prüfung nach dem Rollout in der Live-Version (Thomas 09.11.) | ☑ | ☐ Prüfung nach dem Rollout in der Live-Version (Thomas 09.11.) |
 | A7 | Schlüssel an jeder Anfrage | Stil, Kacheln, Schriften, Sprites laufen über `kartenAnfrage`; auch ein später eintreffender Schlüssel wirkt | ☑ | – |
 | A8 | Serverseitig getauschte Adressen | Neue Stil-Adressen aus `/api/basemap` wirken ohne Neustart | ☑ | – |
 | A9 | Ohne Netz oder Stilfehler | Karte, Overlays und Satellit bleiben bedienbar, Stil wird nachgeholt | ☑ | ☑ |
@@ -74,7 +74,7 @@ Fenstergrößen für jede Klickrunde: 1490×720 (Thomas), 1920×1080, 1280×800,
 | E4 | Lotsen und Plätze | Farben nach Station, App-Ring, ATIS-Buchstaben | ☑ | ☑ |
 | E5 | Fremde Piloten | Ab Zoom 4,5, gedreht | ☑ | ☑ |
 | E6 | Klickfenster | Pilot, Platz, Sektor; nur eines zugleich, Vorrang bei Überlappung | ☑ | ☑ |
-| E7 | Zeit bis sichtbar | Ursache der 20–25 s beim ersten Zuschalten gemessen und behoben; Messcode raus | ☐ | ☐ |
+| E7 | Zeit bis sichtbar | Ursache der 20–25 s beim ersten Zuschalten ist **nicht** behoben, die Zeit kann im Rollout noch bestehen. Sichtbare Messzeile raus (Wächter), Messung nur noch im Diagnose-Log (`netz_messung`, ab neuem Client). Prüfung nach dem Rollout in der Live-Version (Thomas 09.11.) | ☐ Prüfung nach dem Rollout in der Live-Version (Thomas 09.11.) | ☐ Prüfung nach dem Rollout in der Live-Version (Thomas 09.11.) |
 
 ## F. Bilder
 
@@ -85,7 +85,7 @@ Fenstergrößen für jede Klickrunde: 1490×720 (Thomas), 1920×1080, 1280×800,
 | F3 | Marke öffnen | Großansicht mit den Bildern desselben Flugs, Vorschau beim Überfahren | ☑ | ☑ |
 | F4 | Fokus aus dem Bilder-Tab | Karte fliegt hin, Schalter geht an | ☑ | ☑ |
 | F5 | Leer-Kasten | Verdeckt keine Punkte oder Kollegen | ☑ | ☑ |
-| F6 | Punkte gleich beim Öffnen | Ohne Umweg über den Bilder-Tab da, auch nach Neustart, ohne Flug und während Kollegen fliegen; im echten Client belegt | ☑ | ☐ |
+| F6 | Punkte gleich beim Öffnen | Ohne Umweg über den Bilder-Tab da, auch nach Neustart, ohne Flug und während Kollegen fliegen; im echten Client: Prüfung nach dem Rollout in der Live-Version (Thomas 09.11.) | ☑ | ☐ Prüfung nach dem Rollout in der Live-Version (Thomas 09.11.) |
 
 ## G. Oberfläche und Einbindung
 
