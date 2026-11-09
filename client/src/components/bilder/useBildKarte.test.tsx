@@ -173,6 +173,16 @@ describe("useBildKarte", () => {
     expect(h.laden).toHaveBeenCalledTimes(1);
     h.ohneListe = false;
   });
+  it("scheitert der Abruf beim Start, holt das Oeffnen der Karte ihn nach", () => {
+    h.ohneListe = true;
+    h.laden.mockClear();
+    const k = karte();
+    const { rerender } = renderHook(({ sichtbar }) => useBildKarte({ current: k.m as never }, null, null, sichtbar), { initialProps: { sichtbar: false } });
+    expect(h.laden).toHaveBeenCalledTimes(1);
+    rerender({ sichtbar: true });
+    expect(h.laden).toHaveBeenCalledTimes(2);
+    h.ohneListe = false;
+  });
   it("ohne aktiven Flug stehen die Bilder aller Fluege mit Position auf der Karte", () => {
     h.eintraege = [
       eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } }),

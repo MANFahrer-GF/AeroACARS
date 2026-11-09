@@ -85,6 +85,7 @@ Fenstergrößen für jede Klickrunde: 1490×720 (Thomas), 1920×1080, 1280×800,
 | F3 | Marke öffnen | Großansicht mit den Bildern desselben Flugs, Vorschau beim Überfahren | ☐ | ☐ |
 | F4 | Fokus aus dem Bilder-Tab | Karte fliegt hin, Schalter geht an | ☐ | ☐ |
 | F5 | Leer-Kasten | Verdeckt keine Punkte oder Kollegen | ☐ | ☐ |
+| F6 | Punkte gleich beim Öffnen | Ohne Umweg über den Bilder-Tab da, auch nach Neustart, ohne Flug und während Kollegen fliegen; im echten Client belegt | ☐ | ☐ |
 
 ## G. Oberfläche und Einbindung
 

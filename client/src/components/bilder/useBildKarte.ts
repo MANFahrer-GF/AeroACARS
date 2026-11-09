@@ -38,8 +38,9 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
   const [gross, setGross] = useState<{ id: string; bilder: Eintrag[] } | null>(null);
   const fokusPirep = fokus?.pirep ?? null;
   // Die Liste fuellt sonst erst der Bilder-Tab; ohne sie blieben die Punkte aus, bis er einmal offen war.
+  // `sichtbar` als Abhaengigkeit: Scheitert der erste Abruf beim Programmstart, holt ihn das Oeffnen der Karte nach.
   const ohneListe = !z.liste;
-  useEffect(() => { if (ohneListe) void bilderStore.laden(); }, [ohneListe]);
+  useEffect(() => { if (ohneListe) void bilderStore.laden(); }, [ohneListe, sichtbar]);
   const flugBilder = useMemo(
     () =>
       (z.liste?.eintraege ?? [])

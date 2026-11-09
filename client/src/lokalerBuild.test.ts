@@ -77,6 +77,16 @@ describe("Dev-Kennung (P-11.21)", () => {
     expect(beta.identifier).toBeUndefined();
     expect(readFileSync("../.github/workflows/release.yml", "utf8")).not.toContain("tauri.lokal");
   });
+
+  it("schaltet die Generationen nur im Vorschau-Build ab, nie in Beta oder Release", () => {
+    const dev = readFileSync("../.github/workflows/dev-build.yml", "utf8");
+    const zeilen = dev.split("\n").filter((z) => z.includes("AEROACARS_OHNE_PAKETE:"));
+    expect(zeilen.length).toBe(2);
+    for (const z of zeilen) expect(z).toContain("inputs.nur_eingebaut && !inputs.beta && '1' || ''");
+    for (const w of ["release.yml", "bundle.yml", "paket-plattformen.yml"]) {
+      expect(readFileSync(`../.github/workflows/${w}`, "utf8")).not.toContain("AEROACARS_OHNE_PAKETE");
+    }
+  });
 });
 
 /** Beta-Update-Kanal: Beta-Installer aktualisieren sich selbst, aber nur aus
