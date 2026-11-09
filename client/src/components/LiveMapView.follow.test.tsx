@@ -91,7 +91,6 @@ vi.mock("maplibre-gl", () => {
     getCenter() { return this.center; }
     getZoom() { return this.zoom; }
     isStyleLoaded() { return true; }
-    setStyle() { return this; }
     fitBounds(_b: unknown, o: { padding?: unknown }) { h.einpassen.push(o); return this; }
     addSource() { return this; }
     // 12.08.2026 (VATSIM-Overlay): das Piloten-Symbol registriert ein
@@ -102,6 +101,7 @@ vi.mock("maplibre-gl", () => {
     getSource() { return { setData: () => {} }; }
     getLayer() { return {}; }
     setLayoutProperty() { return this; }
+    setPaintProperty() { return this; }
     easeTo(o: { center?: [number, number]; zoom?: number }) {
       h.easeTo.push(o);
       if (o.center) this.center = { lng: o.center[0], lat: o.center[1] };
@@ -190,6 +190,7 @@ function fireLoad() {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("fetch", () => new Promise(() => {})); // Stile der Grundkarte: eigener Test
   h.mapHandlers = {};
   h.einpassen.length = 0;
   h.va = [];

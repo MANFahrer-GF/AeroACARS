@@ -80,7 +80,7 @@ vi.mock("maplibre-gl", () => {
     zoom = 4;
     addControl() { return this; }
     on(ev: string, cb: (e?: unknown) => void) {
-      if (ev === "load" || ev === "styledata") cb();
+      if (ev === "load") cb();
       return this;
     }
     once() { return this; }
@@ -94,7 +94,6 @@ vi.mock("maplibre-gl", () => {
     getCenter() { return h.mitte; }
     getZoom() { return h.zoom; }
     isStyleLoaded() { return true; }
-    setStyle() { return this; }
     // Quellen und Ebenen entstehen erst durch addSource/addLayer.
     //
     // Der erste Nachbau meldete auf `getSource`/`getLayer` IMMER etwas —
@@ -121,6 +120,7 @@ vi.mock("maplibre-gl", () => {
     getLayer(id: string) {
       return h.ebenen.has(id) ? { id } : undefined;
     }
+    setPaintProperty() { return this; }
     setLayoutProperty(id: string, _n: string, wert: string) {
       h.sichtbarkeit[id] = wert;
       return this;
@@ -193,6 +193,7 @@ async function karteMitKollege(routeAntwort: unknown) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("fetch", () => new Promise(() => {})); // Stile der Grundkarte: eigener Test
   h.marker = [];
   h.quellen = {};
   h.invokeRufe = [];

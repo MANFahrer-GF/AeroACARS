@@ -211,7 +211,7 @@ describe("useBildKarte", () => {
     act(() => marker[0].el!.click());
     expect(result.current.gross?.bilder.map((b) => b.id)).toEqual(["a1", "a2"]);
   });
-  it("Weltkugel: die Projektion wird bei jedem style.load neu gesetzt (setStyle setzt sie zurueck), der Listener wird abgebaut", () => {
+  it("Weltkugel: die Projektion wird beim style.load gesetzt, der Listener wird abgebaut", () => {
     const k = karte();
     const { result, unmount } = renderHook(() => useBildKarte({ current: k.m as never }, null, null));
     act(() => result.current.setKugel(true));

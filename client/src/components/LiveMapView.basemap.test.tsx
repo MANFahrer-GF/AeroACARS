@@ -1,16 +1,8 @@
-// Deterministischer Schutz fürs Basemap-Umschalten der Live-Karte (v0.16.27).
+// Grundkarte der Live-Karte: Der Wechsel schaltet nur Sichtbarkeiten.
 //
-// Bug (Thomas): Satellit ↔ dunkle Karte umschalten — beim ERSTEN Mal blieb die
-// Route da, beim ZWEITEN war sie weg (bis Tab-Wechsel). Ursache: `setStyle()`
-// wirft alle Layer weg; ein EINMALIGER Re-Add (v0.16.26-Poll) feuert, während
-// der alte Overlay-Layer noch existiert → addOverlays' „nur-wenn-fehlt"-Guard
-// überspringt → danach wischt setStyle den Layer → Route weg. Beim 1. Mal gibt
-// es keinen Alt-Layer, der den Skip auslöst → klappt scheinbar.
-//
-// Dieser Test stellt die Race NACH (FakeMap mit VERZÖGERTEM Layer-Wipe) und
-// prüft, dass beim MEHRFACHEN Umschalten sowohl der Route-LAYER als auch die
-// echte Route-GEOMETRIE (LineString-Feature in der Source) erhalten bleiben.
-// Mit dem alten Einmal-Poll wäre der Layer ab dem 2. Umschalten weg.
+// Frueher tauschte jeder Wechsel den ganzen Stil; dabei gingen Route und Ebenen verloren (v0.16.27,
+// ab dem zweiten Umschalten) und die Weltkugel wurde flach. Dieser Test sichert das Verhalten am
+// Bauteil: `setStyle` faellt nie, die Overlays bleiben dieselben, die Geometrie bleibt erhalten.
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
 import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
@@ -35,8 +27,11 @@ beforeAll(async () => {
 });
 
 const h = vi.hoisted(() => ({
-  map: null as null | { layers: Set<string>; sourceData: Map<string, { features?: unknown[] }> },
+  map: null as null | { layers: Set<string>; sichtbar: Map<string, string>; sourceData: Map<string, { features?: unknown[] }> },
   handlers: {} as Record<string, Array<(e?: unknown) => void>>,
+  setStyle: 0,
+  angelegt: 0,
+  farben: new Map<string, unknown>(),
 }));
 
 vi.mock("maplibre-gl", () => {
@@ -82,25 +77,24 @@ vi.mock("maplibre-gl", () => {
     getZoom() { return this.zoom; }
     isStyleLoaded() { return true; } // immer „geladen" → modelliert das Race-Fenster direkt nach setStyle
     getLayer(id: string) { return this.layers.has(id) ? ({} as unknown) : undefined; }
-    setLayoutProperty() { return this; }
+    sichtbar = new Map<string, string>();
+    setLayoutProperty(id: string, _k: string, v: string) { this.sichtbar.set(id, v); return this; }
+    setPaintProperty(id: string, k: string, v: unknown) { h.farben.set(`${id}|${k}`, v); return this; }
+    addSprite() { return this; }
+    removeSprite() { return this; }
+    getGlyphs() { return ""; }
+    setGlyphs() { return this; }
     getSource(id: string) {
       if (!this.sources.has(id)) return undefined;
       return { setData: (d: { features?: unknown[] }) => { this.sourceData.set(id, d); } } as unknown;
     }
-    addLayer(o: { id: string }) { this.layers.add(o.id); return this; }
+    addLayer(o: { id: string; layout?: { visibility?: string } }) { this.layers.add(o.id); if (o.layout?.visibility) this.sichtbar.set(o.id, o.layout.visibility); h.angelegt += 1; return this; }
     addSource(id: string) { this.sources.add(id); return this; }
     hasImage() { return false; }
     addImage() { return this; }
     removeLayer(id: string) { this.layers.delete(id); return this; }
     removeSource(id: string) { this.sources.delete(id); this.sourceData.delete(id); return this; }
-    setStyle() {
-      // RACE-MODELL: setStyle wischt Quellen+Layer (und ihre Daten) VERZÖGERT,
-      // nicht sofort. So existiert der alte Overlay-Layer noch, wenn ein
-      // einmaliger Re-Add feuert (Guard überspringt), und verschwindet erst
-      // 50 ms später — exakt die echte Race.
-      setTimeout(() => { this.layers.clear(); this.sources.clear(); this.sourceData.clear(); }, 50);
-      return this;
-    }
+    setStyle() { h.setStyle += 1; return this; }
     easeTo() { return this; }
     jumpTo() { return this; }
     // v1.6.11: die Karte bleibt beim Reiterwechsel eingehaengt und misst sich
@@ -142,6 +136,7 @@ import { LiveMapView } from "./LiveMapView";
 
 const LYR_ROUTE = "aa-planned-route-line"; // Layer (siehe LiveMapView; "aa-planned-route" ist die SOURCE)
 const SRC_ROUTE = "aa-planned-route"; // Source mit der Routen-Geometrie
+const CASING = "aa-planned-route-casing";
 
 const snap = {
   lat: 49, lon: 9, altitude_msl_ft: 6000, groundspeed_kt: 280, indicated_airspeed_kt: 250,
@@ -183,6 +178,11 @@ function layerPresent() { return h.map!.layers.has(LYR_ROUTE); }
 beforeEach(() => {
   h.map = null;
   h.handlers = {};
+  h.setStyle = 0;
+  h.angelegt = 0;
+  h.farben.clear();
+  const stil = (n: string) => ({ version: 8, sprite: `https://x/${n}`, sources: { protomaps: { type: "vector", tiles: ["https://x/{z}.mvt"] } }, layers: [{ id: "wasser", type: "fill", source: "protomaps", "source-layer": "w" }] });
+  vi.stubGlobal("fetch", (url: string) => Promise.resolve({ ok: true, json: async () => stil(url.includes("dark") ? "d" : "h") }));
   document.documentElement.dataset.theme = "dark";
   localStorage.clear();
   vi.useFakeTimers();
@@ -190,47 +190,71 @@ beforeEach(() => {
 afterEach(() => {
   vi.runOnlyPendingTimers();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   cleanup();
 });
 
-describe("LiveMapView Basemap-Umschalten — Overlays + Geometrie bleiben (v0.16.27)", () => {
-  it("Route-Layer UND Routen-Geometrie überleben MEHRFACHES Umschalten", async () => {
-    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap as never} />);
-    fireLoad();
-    await flushAsync(); // Routen-Fixes laden
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0); // echte Route gezeichnet
-
-    toggleBasemap(); // 1. Umschalten (dunkel → Satellit) — klappte schon vorher
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0);
-
-    toggleBasemap(); // 2. Umschalten (Satellit → dunkel) — HIER verschwand v0.16.26
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0);
-
-    toggleBasemap(); // 3. Umschalten
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0);
-
-    toggleBasemap(); // 4. Umschalten — bleibt stabil
-    settle(600);
-    expect(layerPresent()).toBe(true);
-    expect(routeGeometryCount()).toBeGreaterThan(0);
-  });
-
-  it("selbstkorrigierend: ein während des Race-Fensters weggewischter Layer kommt zurück", async () => {
-    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap as never} />);
+describe("LiveMapView Grundkarte", () => {
+  async function bereit() {
+    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap as never} simKind={undefined} onSwitchToBriefing={() => {}} />);
     fireLoad();
     await flushAsync();
     settle(600);
-    toggleBasemap();
-    settle(600); // erholt sich nach dem verzögerten Wipe + Re-Add
+    await flushAsync();
+  }
+  const karteSichtbar = () => h.map!.sichtbar.get("d:wasser");
+
+  it("laesst Overlays und Routen-Geometrie stehen, auch nach mehrfachem Umschalten", async () => {
+    await bereit();
     expect(layerPresent()).toBe(true);
     expect(routeGeometryCount()).toBeGreaterThan(0);
+    const vorher = h.angelegt;
+    for (let i = 0; i < 4; i++) {
+      toggleBasemap();
+      settle(600);
+      expect(layerPresent()).toBe(true);
+      expect(routeGeometryCount()).toBeGreaterThan(0);
+    }
+    expect(h.angelegt, "beim Umschalten darf nichts neu angelegt werden").toBe(vorher);
+    expect(h.setStyle, "der Stil wird nie getauscht").toBe(0);
+  });
+
+  it("schaltet zwischen Karte und Satellit, die Routen-Unterlage nur auf Satellit", async () => {
+    await bereit();
+    expect(karteSichtbar()).toBe("visible");
+    expect(h.map!.sichtbar.get("esri-imagery")).toBe("none");
+    expect(h.map!.sichtbar.get(CASING)).toBe("none");
+    toggleBasemap();
+    settle(600);
+    expect(karteSichtbar()).toBe("none");
+    expect(h.map!.sichtbar.get("esri-imagery")).toBe("visible");
+    expect(h.map!.sichtbar.get(CASING)).toBe("visible");
+    expect(localStorage.getItem("aaLivemapBasemap")).toBe("sat");
+  });
+
+  it("zieht die Overlay-Farben mit: auf Satellit heller Track und dunkle Halos", async () => {
+    await bereit();
+    toggleBasemap();
+    settle(600);
+    expect(h.farben.get("aa-flown-track-line|line-color")).toBe("#f2f5fa");
+    expect(h.farben.get("aa-planned-wpts-labels|text-halo-color")).toBe("#0b0f16");
+  });
+
+  it("folgt dem App-Theme, ohne den Stil zu tauschen", async () => {
+    await bereit();
+    expect(h.map!.sichtbar.get("h:wasser")).toBe("none");
+    act(() => { document.documentElement.dataset.theme = "light"; });
+    await flushAsync();
+    settle(50);
+    expect(h.map!.sichtbar.get("h:wasser")).toBe("visible");
+    expect(karteSichtbar()).toBe("none");
+    expect(h.setStyle).toBe(0);
+  });
+
+  it("nimmt den gemerkten Satellit beim Start, sobald die Karte steht", async () => {
+    localStorage.setItem("aaLivemapBasemap", "sat");
+    await bereit();
+    expect(h.map!.sichtbar.get("esri-imagery")).toBe("visible");
+    expect(karteSichtbar()).toBe("none");
   });
 });

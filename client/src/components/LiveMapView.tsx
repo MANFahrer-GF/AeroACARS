@@ -19,7 +19,7 @@ import {
   buildPilotFeatures, emptyFC, fetchVatsimData, esc as vatsimEsc,
 } from "../lib/vatsimKarte";
 import { ladeSektoren, type Netz } from "../lib/vatglassesKarte";
-import maplibregl, { type StyleSpecification } from "maplibre-gl";
+import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { invoke } from "../lib/ipc";
 import type { ActiveFlightInfo, Bid, SimSnapshot } from "../types";
@@ -32,6 +32,7 @@ import { useMapEvents, LiveMapEventList } from "./LiveMapEvents";
 import { LiveMapEmptyState, nextBidInfo, type NextBidInfo } from "./LiveMapEmptyState";
 import { LiveRecordingIndicator } from "./LiveRecordingIndicator";
 import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
+import { grundkarteBauen, grundkarteHolen, startStil, type Grundkartensteuerung } from "./livekarte/grundkarte";
 import { useLiveZugangTakt } from "../lib/liveInhalt";
 import {
   laengeNebenVorgaenger,
@@ -42,38 +43,7 @@ import {
 
 // Die Stil-Adressen kommen vom Server — siehe `BasemapContext`. CARTO
 // verlangt seit dem 26.08.2026 einen Schlüssel, und der soll austauschbar
-// sein, ohne dass jeder Pilot ein Update braucht.
-//
-// Satellit (Esri World Imagery + Namens-Overlay, kein API-Key). Manuell wählbar
-// über den Karten-Toggle. glyphs auf die CARTO-Fonts (führen "Noto Sans Regular"
-// wie dark/light — demotiles hat den Font NICHT, sonst fehlten Waypoint-Namen).
-//
-// ⚠ Auch die SCHRIFTEN kommen von CARTO. Der Satellitenstil braucht den
-// Schlüssel deshalb genauso, obwohl seine Kacheln von Esri stammen —
-// sonst fehlten dort eines Tages alle Beschriftungen.
-const satStil = (glyphen: string): StyleSpecification => ({
-  version: 8,
-  glyphs: glyphen,
-  sources: {
-    "esri-imagery": {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-      maxzoom: 19,
-      attribution: "Imagery © Esri, Maxar, Earthstar Geographics, USDA, USGS, AeroGRID, IGN, GIS User Community",
-    },
-    "esri-reference": {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-      maxzoom: 19,
-    },
-  },
-  layers: [
-    { id: "esri-imagery", type: "raster", source: "esri-imagery" },
-    { id: "esri-reference", type: "raster", source: "esri-reference" },
-  ],
-});
+// sein, ohne dass jeder Pilot ein Update braucht. Aufbau: `livekarte/grundkarte.ts`.
 
 interface RouteFix {
   ident: string;
@@ -399,9 +369,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  // v0.21: Bodendaten der Taxi-Karte. Ref (nicht State), weil `addOverlays`
-  // sie beim Basemap-Wechsel braucht — und das laeuft ausserhalb des Renders.
-  const groundRef = useRef<GeoJSON.FeatureCollection | null>(null);
   const [groundLoaded, setGroundLoaded] = useState<string[]>([]);
   const acMarkerRef = useRef<maplibregl.Marker | null>(null);
   const pinMarkersRef = useRef<maplibregl.Marker[]>([]);
@@ -440,13 +407,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // „auf-die-ganze-Route-zoomen"-Logik auslöst. Nur BEWUSSTES Abhaken von Follow
   // soll auf die Route fitten — ein Pan lässt die Ansicht einfach stehen.
   const suppressRouteFitRef = useRef(false);
-  const dataRef = useRef<{
-    fixes: RouteFix[];
-    track: [number, number][];
-    dep?: [number, number];
-    arr?: [number, number];
-    nextIdent?: string;
-  }>({ fixes: [], track: [] });
+  const grundkarteRef = useRef<Grundkartensteuerung | null>(null);
 
   const [mapReady, setMapReady] = useState(false);
   const [follow, setFollow] = useState(true);
@@ -462,13 +423,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const [trackUp, setTrackUp] = useState<boolean>(
     () => typeof localStorage !== "undefined" && localStorage.getItem("aaLivemapTrackUp") === "1",
   );
-  const basemapRef = useRef<"auto" | "sat">(basemap);
   const [showVa, setShowVa] = useState(true); // VA-Verkehr ein-/ausblenden
-  // Als Ref, weil `addOverlays` aus einem einmalig registrierten
-  // `styledata`-Handler gerufen wird und dort den AKTUELLEN Stand braucht —
-  // genauso wie showTrackRef/showTaxiRef weiter unten.
-  const showVaRef = useRef(showVa);
-  showVaRef.current = showVa;
   // VATSIM-Overlay (Sektoren + Lotsen + fremde Piloten). Standard AUS und
   // gemerkt: das ist eine bewusste Zuschaltung, kein Dauerzustand — die
   // Karte gehoert zuerst dem eigenen Flug.
@@ -500,10 +455,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // solange niemand sie angefordert hat.
   const [netz, setNetz] = useState<Netz>("aus");
   const showVatsim = netz !== "aus";
-  const vatsimPilotsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
-  const vatsimAtcRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
-  const vatsimSectorsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
-  const vatsimSectorLabelsRef = useRef<GeoJSON.FeatureCollection>(emptyFC());
   const vatsimPopupRef = useRef<maplibregl.Popup | null>(null);
   // Welche Flugflaeche die Sektoren zeigen. "auto" folgt dem eigenen Flug —
   // die Karte beantwortet dann durchgehend "wer ist fuer MICH zustaendig".
@@ -548,10 +499,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       pilots: GeoJSON.FeatureCollection, atc: GeoJSON.FeatureCollection,
       sectors: GeoJSON.FeatureCollection, labels: GeoJSON.FeatureCollection,
     ) => {
-      vatsimPilotsRef.current = pilots;
-      vatsimAtcRef.current = atc;
-      vatsimSectorsRef.current = sectors;
-      vatsimSectorLabelsRef.current = labels;
       (map.getSource("vatsim-pilots") as maplibregl.GeoJSONSource | undefined)?.setData(pilots);
       (map.getSource("vatsim-atc-airports") as maplibregl.GeoJSONSource | undefined)?.setData(atc);
       (map.getSource("vatsim-sectors") as maplibregl.GeoJSONSource | undefined)?.setData(sectors);
@@ -976,20 +923,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effFixes, effAircraft, effArr, activeFlight?.distance_nm, simSnapshot?.groundspeed_kt]);
 
-  // dataRef für die styledata-Re-Adds aktuell halten
-  dataRef.current = { fixes: effFixes, track: effTrackLive, dep: effDep, arr: effArr, nextIdent: nav.nextIdent };
-
   // ---- Map einmalig erstellen ----
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style:
-        basemapRef.current === "sat"
-          ? satStil(grundlage.glyphen)
-          : readTheme() === "dark"
-            ? grundlage.dunkel
-            : grundlage.hell,
+      style: startStil(grundlage.glyphen),
       center: [6, 48],
       zoom: 4,
       attributionControl: { compact: true },
@@ -1033,18 +972,12 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       // Datenabruf nie an. Auf der Karte blieb nur der Verkehr übrig,
       // der aus einer anderen Quelle kommt.
       try {
+        grundkarteRef.current = grundkarteBauen(map);
         addOverlays(map);
       } catch (e) {
         console.error("[karte] Ebenen konnten nicht angelegt werden:", e);
       } finally {
         setMapReady(true);
-      }
-    });
-    map.on("styledata", () => {
-      // Auch hier: ein Fehler darf den Stilwechsel nicht abbrechen.
-      if (map.isStyleLoaded()) {
-        try { addOverlays(map); }
-        catch (e) { console.error("[karte] Ebenen nach Stilwechsel:", e); }
       }
     });
     return () => {
@@ -1065,61 +998,66 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     return () => obs.disconnect();
   }, []);
   useEffect(() => {
-    basemapRef.current = basemap;
     try {
       localStorage.setItem("aaLivemapBasemap", basemap);
     } catch {
       /* persist best-effort */
     }
-    // setStyle() wirft ALLE Quellen+Layer weg — die Overlays (Route/Track/WPTs)
-    // müssen danach neu angelegt werden. Tücke beim MEHRFACHEN Umschalten: ein
-    // EINMALIGER Re-Add (sobald isStyleLoaded()) kann mit dem Stil-Abbau RACEN —
-    // feuert er, während der alte Overlay-Layer noch existiert, überspringt
-    // addOverlays' „nur-wenn-fehlt"-Guard das Neu-Anlegen, danach wischt setStyle
-    // den Layer weg → Route weg (genau ab dem 2. Umschalten; beim 1. gibt's noch
-    // keinen Alt-Layer, der den Skip auslöst). Darum NICHT einmalig, sondern
-    // SELBSTKORRIGIEREND: ein paar Sekunden lang die Overlays IMMER WIEDER
-    // anlegen, sobald sie fehlen (kein Einzelschuss, der verlieren kann;
-    // konvergiert, sobald der Stil sich beruhigt). isStyleLoaded() statt `idle`
-    // (das im Follow-Modus durch easeTo ausgehungert wird) → kamera-/kachel-
-    // unabhängig. Unmount-/Re-Run-sicher (cancelled + mapRef-Check).
     const map = mapRef.current;
-    if (!map) return;
-    map.setStyle(
-      basemap === "sat"
-        ? satStil(grundlage.glyphen)
-        : theme === "dark"
-          ? grundlage.dunkel
-          : grundlage.hell,
-    );
-    let cancelled = false;
-    let elapsed = 0;
-    const ensureOverlays = () => {
-      if (cancelled || mapRef.current !== map) return; // unmounted / Karte ersetzt
-      // Sentinel LYR_ROUTE: fehlt der Route-Layer, legt addOverlays ALLE Overlays
-      // (Route/Casing/Track/WPTs/Labels) wieder an — sie werden gemeinsam erzeugt.
-      if (map.isStyleLoaded() && !map.getLayer(LYR_ROUTE)) addOverlays(map);
-      elapsed += 120;
-      if (elapsed < 4000) setTimeout(ensureOverlays, 120);
-    };
-    ensureOverlays();
-    return () => {
-      cancelled = true;
-    };
-  }, [theme, basemap]);
+    if (!map || !mapReady) return;
+    grundkarteRef.current?.zeigen(basemap === "sat" ? "satellit" : theme === "dark" ? "dunkel" : "hell");
+    overlayFarben(map, basemap === "sat");
+  }, [theme, basemap, mapReady]);
 
-  // ---- Overlays anlegen (idempotent) + aus dataRef füllen ----
-  function addOverlays(map: maplibregl.Map) {
-    const sat = basemapRef.current === "sat";
+  // Vektorstile holen, und neu, sobald der Server andere Adressen nennt.
+  useEffect(() => {
+    if (!mapReady || !grundkarteRef.current) return;
+    return grundkarteHolen(
+      grundkarteRef.current,
+      { dunkel: grundlage.dunkel, hell: grundlage.hell },
+      kartenAnfrage(() => grundlageRef.current.schluessel),
+    );
+  }, [mapReady, grundlage.dunkel, grundlage.hell]);
+
+  /** Alles, was sich mit der Grundkarte aendert. Auf Satellit (dunkel-buntes Bild) gilt immer die
+   *  Behandlung der dunklen Karte: heller Track und Text, dunkle Halos, sonst verschwaende alles im Bild. */
+  function overlayFarben(map: maplibregl.Map, sat: boolean) {
     const accent = cssVar("--accent", "#0a84ff");
-    // Auf Satellit (immer dunkel-buntes Bild) die „dunkle-Karte"-Behandlung
-    // ERZWINGEN — heller Track/Text + dunkle Halos, unabhängig vom App-Theme;
-    // sonst verschwänden Track/Route/Labels auf dem Bild. So sieht alles auf
-    // Sat aus wie auf der dunklen Karte.
     const trackColor = sat ? "#f2f5fa" : cssVar("--map-track", "#e8e8e8");
     const haloColor = sat ? "#0b0f16" : cssVar("--surface", "#ffffff");
     const textColor = sat ? "#f4f7fc" : cssVar("--text", "#e8edf2");
     const warning = cssVar("--warning", "#ff9f0a");
+    const istNaechster = ["==", ["get", "isNext"], true];
+    const istToc = ["in", ["get", "kind"], ["literal", ["TOC", "TOD"]]];
+    const werte: [string, string, unknown][] = [
+      // An denselben Kartenstil gekoppelt wie die eigene Route: Fest auf 0,85 war die
+      // Kollegen-Linie auf der Vektorkarte deckender als die eigene (Abnahme 20.09.2026).
+      ["fremde-routen-line", "line-opacity", sat ? 0.85 : 0.62],
+      ["fremde-routen-punkte", "circle-opacity", sat ? 0.85 : 0.62],
+      ["fremde-routen-namen", "text-opacity", sat ? 0.9 : 0.75],
+      [LYR_GROUND_APRON, "line-color", sat ? "#8aa0b4" : "#3a4a5c"],
+      [LYR_GROUND_APRON, "line-opacity", sat ? 0.5 : 0.7],
+      [LYR_GROUND_RWY, "line-color", sat ? "#e8edf2" : "#c9ccd1"],
+      [LYR_GROUND_RWY, "line-opacity", sat ? 0.75 : 0.9],
+      [LYR_GROUND_TERMINAL, "line-color", sat ? "#c4b5fd" : "#8b7fd4"],
+      [LYR_ROUTE, "line-color", accent],
+      [LYR_ROUTE, "line-opacity", sat ? 0.95 : 0.7],
+      [LYR_TRACK, "line-color", trackColor],
+      [LYR_TRACK_DOTS, "circle-color", trackColor],
+      [LYR_TRACK_DOTS, "circle-stroke-color", haloColor],
+      // nächster Wegpunkt größer hervorgehoben (Stratos-Look).
+      [LYR_WPTS, "circle-color", ["case", istNaechster, accent, istToc, warning, accent]],
+      [LYR_WPTS, "circle-stroke-color", haloColor],
+      [LYR_WPT_LABELS, "text-color", textColor],
+      [LYR_WPT_LABELS, "text-halo-color", haloColor],
+    ];
+    for (const [ebene, eigenschaft, wert] of werte) {
+      if (map.getLayer(ebene)) map.setPaintProperty(ebene, eigenschaft, wert);
+    }
+  }
+
+  // ---- Overlays einmalig anlegen; Daten und Farben setzen die Effekte ----
+  function addOverlays(map: maplibregl.Map) {
     const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
     // ── Taxi-Karte ────────────────────────────────────────────────────────
@@ -1137,14 +1075,14 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     //    Kennung + Frequenz IN der Flaeche. Quellen immer anlegen; ob
     //    Daten drinstehen, entscheidet der Poll (showVatsim).
     if (!map.getSource("vatsim-sectors")) {
-      map.addSource("vatsim-sectors", { type: "geojson", data: vatsimSectorsRef.current });
+      map.addSource("vatsim-sectors", { type: "geojson", data: empty });
     }
     // Eigene Quelle fuer den Rand: ohne die Schnittkante bei ±180°, sonst
     // zieht sich eine Naht mitten durch die Pazifik-Sektoren.
     if (!map.getSource("vatsim-sectors-umriss")) {
       map.addSource("vatsim-sectors-umriss", {
         type: "geojson",
-        data: umrissOhneNaht(vatsimSectorsRef.current),
+        data: empty,
       });
     }
     {
@@ -1182,7 +1120,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       });
     }
     if (!map.getSource("vatsim-sector-labels")) {
-      map.addSource("vatsim-sector-labels", { type: "geojson", data: vatsimSectorLabelsRef.current });
+      map.addSource("vatsim-sector-labels", { type: "geojson", data: empty });
     }
     if (!map.getLayer("vatsim-sector-labels-symbol")) {
       {
@@ -1218,7 +1156,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       }
     }
     if (!map.getSource("vatsim-atc-airports")) {
-      map.addSource("vatsim-atc-airports", { type: "geojson", data: vatsimAtcRef.current });
+      map.addSource("vatsim-atc-airports", { type: "geojson", data: empty });
     }
     {
       ebeneAnlegen(map, {
@@ -1288,7 +1226,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       } catch { /* dito */ }
     }
     if (!map.getSource("vatsim-pilots")) {
-      map.addSource("vatsim-pilots", { type: "geojson", data: vatsimPilotsRef.current });
+      map.addSource("vatsim-pilots", { type: "geojson", data: empty });
     }
     if (!map.hasImage("vatsim-plane")) {
       const img = makeVatsimPlaneImage();
@@ -1337,7 +1275,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           // Vektorkarte DECKENDER als die eigene — das Gegenteil der
           // Absicht und der Zusage in den Release-Notes (Abnahme
           // 20.09.2026). Sie bleibt jetzt in beiden Stilen darunter.
-          "line-opacity": sat ? 0.85 : 0.62,
           "line-dasharray": [4, 3],
         },
       });
@@ -1349,7 +1286,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         paint: {
           "circle-radius": 2.8,
           "circle-color": "#8fb0d4",
-          "circle-opacity": sat ? 0.85 : 0.62,
         },
       });
       ebeneAnlegen(map, {
@@ -1372,22 +1308,16 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         },
         paint: {
           "text-color": "#8fb0d4",
-          "text-opacity": sat ? 0.9 : 0.75,
           "text-halo-color": "rgba(10,16,24,0.85)",
           "text-halo-width": 1.2,
         },
       });
-      // Nach einem Neuaufbau der Karte (Kartenstil gewechselt, Reiter neu
-      // geöffnet) ist die Quelle leer, die eingeblendeten Routen stehen
-      // aber noch im Ref. Ohne das hier wären sie unsichtbar, und ein
-      // Klick hätte sie „ausgeblendet", statt sie zu zeigen.
-      fremdeRoutenZeichnen(map);
     }
 
     if (!map.getSource(SRC_GROUND)) {
       map.addSource(SRC_GROUND, {
         type: "geojson",
-        data: groundRef.current ?? empty,
+        data: empty,
         // ODbL verlangt Namensnennung. An der Quelle statt irgendwo im UI:
         // so kann sie nicht vergessen werden, wenn jemand die Karte umbaut.
         attribution: "Bodendaten © OpenStreetMap contributors (ODbL)",
@@ -1401,9 +1331,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         minzoom: GROUND_MIN_ZOOM,
         filter: ["==", ["get", "k"], "apron"],
         paint: {
-          "line-color": sat ? "#8aa0b4" : "#3a4a5c",
           "line-width": 1,
-          "line-opacity": sat ? 0.5 : 0.7,
         },
       });
     }
@@ -1511,9 +1439,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         filter: ["==", ["get", "k"], "runway"],
         layout: { "line-cap": "butt" },
         paint: {
-          "line-color": sat ? "#e8edf2" : "#c9ccd1",
           "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3, 16, 12, 18, 24],
-          "line-opacity": sat ? 0.75 : 0.9,
         },
       });
     }
@@ -1556,7 +1482,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         minzoom: 13,
         filter: ["==", ["get", "k"], "terminal"],
         paint: {
-          "line-color": sat ? "#c4b5fd" : "#8b7fd4",
           "line-width": 1.4,
           "line-opacity": 0.85,
         },
@@ -1656,7 +1581,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     // Nur auf Satellit: dunkle Unterlage UNTER der Route (zuerst hinzufügen =
     // liegt unter der eigentlichen Linie), damit die blaue gestrichelte Route
     // auf hellem/buntem Bild nicht verschwindet. Auf Dark/Light nicht nötig.
-    if (sat && !map.getLayer(LYR_ROUTE_CASING)) {
+    if (!map.getLayer(LYR_ROUTE_CASING)) {
       map.addLayer({
         id: LYR_ROUTE_CASING,
         type: "line",
@@ -1674,7 +1599,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         layout: { "line-cap": "butt", "line-join": "round" },
         // Stratos-Look: GEPLANTE Route gestrichelt (die tatsächlich GEFLOGENE
         // Spur ist durchgezogen — so unterscheidet man Plan vs. Ist auf einen Blick).
-        paint: { "line-color": accent, "line-width": 2.5, "line-opacity": sat ? 0.95 : 0.7, "line-dasharray": [2, 2] },
+        paint: { "line-width": 2.5, "line-dasharray": [2, 2] },
       });
     }
     if (!map.getLayer(LYR_TRACK)) {
@@ -1683,7 +1608,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         type: "line",
         source: SRC_TRACK,
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": trackColor, "line-width": 3 },
+        paint: { "line-width": 3 },
       });
     }
     // Breadcrumb-Punkte entlang des geflogenen Tracks (wie Stratos).
@@ -1694,9 +1619,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         source: SRC_TRACK_DOTS,
         paint: {
           "circle-radius": 2.4,
-          "circle-color": trackColor,
           "circle-stroke-width": 1,
-          "circle-stroke-color": haloColor,
         },
       });
     }
@@ -1706,21 +1629,13 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
         type: "circle",
         source: SRC_WPTS,
         paint: {
-          // nächster Wegpunkt größer hervorgehoben (Stratos-Look).
           "circle-radius": [
             "case",
             ["==", ["get", "isNext"], true], 6,
             ["in", ["get", "kind"], ["literal", ["TOC", "TOD"]]], 5,
             3,
           ],
-          "circle-color": [
-            "case",
-            ["==", ["get", "isNext"], true], accent,
-            ["in", ["get", "kind"], ["literal", ["TOC", "TOD"]]], warning,
-            accent,
-          ],
           "circle-stroke-width": ["case", ["==", ["get", "isNext"], true], 2, 1],
-          "circle-stroke-color": haloColor,
         },
       });
     }
@@ -1745,33 +1660,10 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
           "text-padding": 4,
         },
         paint: {
-          "text-color": textColor,
-          "text-halo-color": haloColor,
           "text-halo-width": 1.4,
           "text-halo-blur": 0.4,
         },
       });
-    }
-    pushSources(map, dataRef.current);
-    // README §3 EBENEN (Track / Taxiweg): a basemap switch re-runs this whole
-    // function (see the re-add sentinel above) and freshly-added layers
-    // default to visible — re-assert both current toggles so switching
-    // basemaps doesn't silently turn either layer back on.
-    const trackVis = showTrackRef.current ? "visible" : "none";
-    for (const id of TRACK_LAYERS) {
-      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", trackVis);
-    }
-    const taxiVis = showTaxiRef.current ? "visible" : "none";
-    for (const id of TAXI_LAYERS) {
-      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", taxiVis);
-    }
-    // Dasselbe fuer die Routen der Kollegen: Die Ebene wird oben neu angelegt
-    // und ist dann sichtbar. Ohne dieses Nachziehen kaemen die Linien nach
-    // einem Kartenstil- oder Hell/Dunkel-Wechsel zurueck, obwohl die
-    // Kollegen-Anzeige aus ist — Geisterspuren ohne Flugzeuge dazu.
-    const fremdVis = showVaRef.current ? "visible" : "none";
-    for (const ebene of FREMDE_ROUTEN_EBENEN) {
-      if (map.getLayer(ebene)) map.setLayoutProperty(ebene, "visibility", fremdVis);
     }
   }
 
@@ -1964,7 +1856,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       const features: GeoJSON.Feature[] = [];
       for (const fs of loaded.values()) features.push(...fs);
       const fc: GeoJSON.FeatureCollection = { type: "FeatureCollection", features };
-      groundRef.current = fc;
       setGroundLoaded(Array.from(loaded.keys()).sort());
       const src = map.getSource(SRC_GROUND) as maplibregl.GeoJSONSource | undefined;
       src?.setData(fc);
@@ -2563,18 +2454,15 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   // just re-asserts the current toggle state whenever it changes.
   const [showTrack, setShowTrack] = useState(true);
   const [showTaxi, setShowTaxi] = useState(true);
-  const showTrackRef = useRef(showTrack);
-  showTrackRef.current = showTrack;
-  const showTaxiRef = useRef(showTaxi);
-  showTaxiRef.current = showTaxi;
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    const vis = showTrack ? "visible" : "none";
     for (const id of TRACK_LAYERS) {
-      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
+      // Die dunkle Unterlage braucht die Route nur auf dem bunten Satellitenbild.
+      const an = showTrack && (id !== LYR_ROUTE_CASING || basemap === "sat");
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", an ? "visible" : "none");
     }
-  }, [showTrack, mapReady]);
+  }, [showTrack, basemap, mapReady]);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;

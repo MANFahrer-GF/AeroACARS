@@ -4,9 +4,8 @@
 // Fluege; mit aktivem Flug dessen Bilder plus die des Fluges aus dem Fokus (der Fokus
 // verdraengt den aktiven Flug nicht). Haengt sich an die Karte von `LiveMapView`; ohne Bilder
 // und ohne Fokus tut der Haken nichts. Ein Klick auf eine Marke liefert `gross` mit den Bildern
-// DESSELBEN Flugs, das `LiveMapView` als Grossansicht zeigt. Die Projektion wird bei jedem
-// `style.load` neu gesetzt, weil `setStyle` (Basiskarte/Theme) sie zuruecksetzt; die Wahl
-// "Weltkugel" bleibt in localStorage (`aaLivemapKugel`).
+// DESSELBEN Flugs, das `LiveMapView` als Grossansicht zeigt. Die Projektion wird gesetzt, sobald
+// der Stil steht; die Wahl "Weltkugel" bleibt in localStorage (`aaLivemapKugel`).
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useTranslation } from "react-i18next";
 import maplibregl from "maplibre-gl";
@@ -113,7 +112,7 @@ export function useBildKarte(mapRef: MutableRefObject<maplibregl.Map | null>, fo
     const setzen = () => {
       try { map.setProjection({ type: kugel ? "globe" : "mercator" }); } catch { /* Fassung ohne Projektionen oder Stil noch nicht da */ }
     };
-    // setStyle (Basiskarte/Theme) setzt die Projektion zurueck: bei jedem Stil-Laden neu setzen.
+    // Vor dem ersten style.load wirft setProjection: dann gilt dieser Aufruf.
     map.on("style.load", setzen);
     setzen();
     return () => { map.off("style.load", setzen); };
