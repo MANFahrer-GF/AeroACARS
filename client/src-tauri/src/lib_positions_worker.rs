@@ -365,15 +365,21 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                 }
                 // Ueberholt (Flug inzwischen fortgesetzt): keine Wirkung auf
                 // den neuen Worker — Block zurueck, er erfaehrt 404/401 selbst.
-                Ok(Err(ApiError::NotFound | ApiError::Unauthenticated | ApiError::Forbidden))
-                    if flight.generation.load(Ordering::SeqCst) != meine_generation =>
+                Ok(Err(ref e))
+                    if (pirep_serverseitig_beendet(e)
+                        || matches!(e, ApiError::Unauthenticated | ApiError::Forbidden))
+                        && flight.generation.load(Ordering::SeqCst) != meine_generation =>
                 {
                     requeue_batch(&flight, batch);
                     return;
                 }
-                Ok(Err(ApiError::NotFound)) => {
-                    // PIREP serverseitig geloescht — terminiert sauber.
-                    handle_remote_cancellation(&app, &flight, "phpvms-worker POST");
+                Ok(Err(ref e)) if pirep_serverseitig_beendet(e) => {
+                    // PIREP serverseitig geloescht oder storniert — terminiert sauber.
+                    // Schon gestoppt heisst: Der Pilot bricht gerade selbst ab,
+                    // dann ist es keine Meldung „vom Server gecancelt“ wert.
+                    if !flight.stop.load(Ordering::Relaxed) {
+                        handle_remote_cancellation(&app, &flight, "phpvms-worker POST");
+                    }
                     flight.phpvms_worker_spawned.store(false, Ordering::SeqCst);
                     return;
                 }
