@@ -117,6 +117,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
   const mapRef = useRef<maplibregl.Map | null>(null);
   const acMarkerRef = useRef<maplibregl.Marker | null>(null);
   const pinMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const pinStandRef = useRef<{ karte: maplibregl.Map; schluessel: string } | null>(null); // wofuer die Pins zuletzt gebaut wurden
   const acCatRef = useRef<string | null>(null); // zuletzt gerendertes Eigen-Flieger-Icon (ICAO)
   // v0.15.8: „beim bewussten Einschalten von Follow EINMAL den phasen-passenden
   // Zoom setzen" — danach bleibt der manuelle Zoom des Nutzers erhalten (laufendes
@@ -543,17 +544,21 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       acMarkerRef.current = null;
     }
 
-    // Dep/Arr-Pins
-    pinMarkersRef.current.forEach((m) => m.remove());
-    pinMarkersRef.current = [];
-    const mk = (coord: [number, number], label: string, kind: "dep" | "arr") => {
-      const el = document.createElement("div");
-      el.className = `aa-pin aa-pin--${kind}`;
-      el.textContent = label;
-      pinMarkersRef.current.push(new maplibregl.Marker({ element: el, anchor: "bottom" }).setLngLat(coord).addTo(map));
-    };
-    if (effDep && effDepIcao) mk(effDep, effDepIcao, "dep");
-    if (effArr && effArrIcao) mk(effArr, effArrIcao, "arr");
+    // Dep/Arr-Pins: nur neu bauen, wenn sich Platz oder Kennung geaendert haben, nicht bei jedem Takt.
+    const pinSchluessel = JSON.stringify([effDep, effDepIcao, effArr, effArrIcao]);
+    if (pinStandRef.current?.karte !== map || pinStandRef.current.schluessel !== pinSchluessel) {
+      pinStandRef.current = { karte: map, schluessel: pinSchluessel };
+      pinMarkersRef.current.forEach((m) => m.remove());
+      pinMarkersRef.current = [];
+      const mk = (coord: [number, number], label: string, kind: "dep" | "arr") => {
+        const el = document.createElement("div");
+        el.className = `aa-pin aa-pin--${kind}`;
+        el.textContent = label;
+        pinMarkersRef.current.push(new maplibregl.Marker({ element: el, anchor: "bottom" }).setLngLat(coord).addTo(map));
+      };
+      if (effDep && effDepIcao) mk(effDep, effDepIcao, "dep");
+      if (effArr && effArrIcao) mk(effArr, effArrIcao, "arr");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     // was_just_resumed in den Deps: sobald die Resume-Warte-Phase endet, läuft
     // der Redraw erneut und zentriert (bei Follow) auf die frische Sim-Position.
