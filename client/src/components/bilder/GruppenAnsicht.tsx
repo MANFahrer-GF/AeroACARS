@@ -13,13 +13,15 @@ import { Kachel, SerienKachel } from "./Kacheln";
 import type { Kachel as KachelDaten } from "./logik/serien";
 
 export function GruppenAnsicht({
-  gruppen, sendestand, auswahl, offenId, aktivePirep, jetzt, onWahl, onSerieWahl, onOeffnen, onGross, onErneut, onZuordnen, herkunft,
+  gruppen, sendestand, auswahl, offenId, aktivePirep, istZu, onKlappen, jetzt, onWahl, onSerieWahl, onOeffnen, onGross, onErneut, onZuordnen, herkunft,
 }: {
   gruppen: Gruppe[];
   sendestand: Sendestand;
   auswahl: ReadonlySet<string>;
   offenId: string | null;
   aktivePirep: string | null;
+  istZu: (schluessel: string) => boolean;
+  onKlappen: (schluessel: string) => void;
   jetzt: number;
   onWahl: (id: string) => void;
   onSerieWahl: (ids: string[]) => void;
@@ -77,11 +79,19 @@ export function GruppenAnsicht({
         const titel = ohne
           ? t("bilder.gruppe.ohne_flug", { datum })
           : d.art === "heute" ? t("bilder.gruppe.heute", { datum }) : d.art === "gestern" ? t("bilder.gruppe.gestern", { datum }) : datum;
-        const gesendet = g.kacheln.flatMap((k) => (k.art === "bild" ? [k.bild] : k.bilder)).filter(wurdeGesendet).length;
+        const bilder = g.kacheln.flatMap((k) => (k.art === "bild" ? [k.bild] : k.bilder));
+        const gesendet = bilder.filter(wurdeGesendet).length;
         const h = ohne ? herkunft(g) : null;
+        const zu = istZu(g.schluessel);
+        // Haken bleiben beim Einklappen gesetzt und zaehlen beim Senden mit: darum am Kopf sichtbar.
+        const verdecktGewaehlt = zu ? bilder.filter((b) => auswahl.has(b.id)).length : 0;
+        const klappName = t(zu ? "bilder.gruppe.aufklappen" : "bilder.gruppe.einklappen");
         return (
           <article className="bt-gruppe" key={g.schluessel || "ohne"} aria-label={titel}>
-            <div className="bt-gruppe__kopf">
+            <div className="bt-gruppe__kopf" onClick={() => onKlappen(g.schluessel)}>
+              <button type="button" className="bt-gruppe__klappe" aria-expanded={!zu} aria-label={klappName} title={klappName} onClick={(ev) => { ev.stopPropagation(); onKlappen(g.schluessel); }}>
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6l6 -6" /></svg>
+              </button>
               <span className="bt-gruppe__datum">{titel}</span>
               {g.rufzeichen && <span className="bt-acars" style={{ color: "var(--text)" }}>{g.rufzeichen}</span>}
               {(g.abflug || g.ziel) && <span>{streckeText(g)}</span>}
@@ -92,9 +102,10 @@ export function GruppenAnsicht({
               <span title={t("bilder.kopf.platz", { platz: bytesText(g.belegt_bytes, sprache) })}>{bytesText(g.belegt_bytes, sprache)}</span>
               {g.schluessel !== "" && g.schluessel === aktivePirep && <span className="bt-chip bt-chip--ok">{t("bilder.gruppe.laeuft")}</span>}
               {gesendet > 0 && <span className="bt-chip">{t("bilder.gruppe.gesendet_n", { count: gesendet })}</span>}
-              {ohne && <button type="button" className="bt-gruppe__zuordnen" onClick={() => onZuordnen(g)}>{t("bilder.gruppe.zuordnen")}</button>}
+              {verdecktGewaehlt > 0 && <span className="bt-chip bt-chip--ok">{t("bilder.leiste.ausgewaehlt", { count: verdecktGewaehlt })}</span>}
+              {ohne && <button type="button" className="bt-gruppe__zuordnen" onClick={(ev) => { ev.stopPropagation(); onZuordnen(g); }}>{t("bilder.gruppe.zuordnen")}</button>}
             </div>
-            <div className="bt-kacheln">{g.kacheln.map(kachel)}</div>
+            {!zu && <div className="bt-kacheln">{g.kacheln.map(kachel)}</div>}
           </article>
         );
       })}

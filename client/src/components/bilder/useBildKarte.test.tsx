@@ -29,7 +29,7 @@ function karte() {
   const handler: Record<string, Array<() => void>> = {};
   return { aufrufe, handler, m: { setProjection: (p: unknown) => aufrufe.push(["projektion", p]), flyTo: (o: unknown) => aufrufe.push(["fly", o]), getZoom: () => 4, isStyleLoaded: () => true, once: vi.fn(), on: (ev: string, cb: () => void) => { (handler[ev] ??= []).push(cb); }, off: (ev: string, cb: () => void) => { handler[ev] = (handler[ev] ?? []).filter((x) => x !== cb); }, getContainer: () => document.body, fitBounds: (b: unknown, o: unknown) => aufrufe.push(["einpassen", b, o]) } };
 }
-beforeEach(() => { try { localStorage.removeItem("aaLivemapKugel"); } catch { /* egal */ } });
+beforeEach(() => { try { localStorage.removeItem("aaLivemapKugel"); localStorage.removeItem("aaLivemapBilder"); } catch { /* egal */ } });
 
 describe("useBildKarte", () => {
   it("Umschalter setzt die Projektion globe und wieder mercator", () => {
@@ -64,7 +64,7 @@ describe("useBildKarte", () => {
     v.rerender({ s: true });
     expect(einpassen(verdeckt)).toHaveLength(1);
   });
-  it("Marken bei aktivem Flug nur fuer dessen Bilder mit Position; Fokus fliegt zur Stelle", () => {
+  it("Marken auch im Flug fuer alle Fluege mit Position (Thomas 09.11.); Fokus fliegt zur Stelle", () => {
     h.eintraege = [
       eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } }),
       eintrag({ id: "b", meta: { pirep_id: "P2", breite: 11, laenge: 21 } }),
@@ -73,9 +73,31 @@ describe("useBildKarte", () => {
     marker.length = 0;
     const k = karte();
     const { result } = renderHook(() => useBildKarte({ current: k.m as never }, { lat: 10, lon: 20, id: "a", pirep: "P1", n: 1 }, "P1"));
-    expect(result.current.marken).toBe(1);
-    expect(marker.map((x) => x.lngLat)).toEqual([[20, 10]]);
+    expect(result.current.marken).toBe(2);
+    expect(marker.map((x) => x.lngLat)).toEqual(expect.arrayContaining([[20, 10], [21, 11]]));
     expect(k.aufrufe.some((a) => (a as unknown[])[0] === "fly")).toBe(true);
+  });
+  it("neuer Flug noch ohne Bild: die aelteren Punkte und damit der Schalter bleiben", () => {
+    h.eintraege = [eintrag({ id: "gestern", meta: { pirep_id: "P1", breite: 10, laenge: 20 } })];
+    marker.length = 0;
+    const k = karte();
+    const { result } = renderHook(() => useBildKarte({ current: k.m as never }, null, "NEU"));
+    expect(result.current.marken).toBe(1);
+    expect(marker).toHaveLength(1);
+    expect(k.aufrufe.filter((a) => (a as unknown[])[0] === "einpassen")).toHaveLength(0);
+  });
+  it("Schalter blendet aus und die Wahl bleibt nach einem Neustart", () => {
+    h.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } })];
+    marker.length = 0;
+    const k = karte();
+    const eins = renderHook(() => useBildKarte({ current: k.m as never }, null, "P1"));
+    act(() => eins.result.current.setBilderAn(false));
+    expect(marker.every((x) => x.entfernt)).toBe(true);
+    eins.unmount();
+    marker.length = 0;
+    const zwei = renderHook(() => useBildKarte({ current: k.m as never }, null, "P1"));
+    expect(zwei.result.current.bilderAn).toBe(false);
+    expect(marker).toHaveLength(0);
   });
   it("Klick auf eine Marke liefert das Bild und alle Bilder des Flugs in Zeitfolge, ohne die Karte zu erreichen", () => {
     h.eintraege = [
@@ -129,7 +151,7 @@ describe("useBildKarte", () => {
     await vi.waitFor(() => expect(h.vorschau).toHaveBeenCalledTimes(1));
     expect((h.vorschau.mock.calls[0][0] as { id: string }).id).toBe("b");
     expect([...document.querySelectorAll(".marken-vorschau__zeile")].map((z) => z.textContent)).toEqual([
-      "GSG412 · EDDF–LSZH", `14:21Z · ${(11200).toLocaleString("de")} ft · ${h.t("bilder.detail.phase.descent")}`, "A320-251N",
+      "GSG412 · EDDF–LSZH", `08.11.2026 · 14:21Z · ${(11200).toLocaleString("de")} ft · ${h.t("bilder.detail.phase.descent")}`, "A320-251N",
     ]);
     unmount();
     expect(document.querySelector(".marken-vorschau")).toBeNull();
@@ -212,18 +234,6 @@ describe("useBildKarte", () => {
     marker.length = 0;
     const k = karte();
     const { result } = renderHook(() => useBildKarte({ current: k.m as never }, null, null));
-    expect(result.current.marken).toBe(2);
-    expect(marker.map((x) => x.lngLat)).toEqual([[20, 10], [21, 11]]);
-  });
-  it("mit aktivem Flug kommen die Bilder aus dem Fokus-Flug dazu; der Fokus verdraengt den aktiven Flug nicht", () => {
-    h.eintraege = [
-      eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } }),
-      eintrag({ id: "b", meta: { pirep_id: "P2", breite: 11, laenge: 21 } }),
-      eintrag({ id: "c", meta: { pirep_id: "P3", breite: 12, laenge: 22 } }),
-    ];
-    marker.length = 0;
-    const k = karte();
-    const { result } = renderHook(() => useBildKarte({ current: k.m as never }, { lat: 11, lon: 21, id: "b", pirep: "P2", n: 1 }, "P1"));
     expect(result.current.marken).toBe(2);
     expect(marker.map((x) => x.lngLat)).toEqual([[20, 10], [21, 11]]);
   });

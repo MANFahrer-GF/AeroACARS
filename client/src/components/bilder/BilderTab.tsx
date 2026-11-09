@@ -15,7 +15,7 @@ import { bilderStore, useBilder } from "./bilderStore";
 import { bildUrlVergessen } from "./useBildUrl";
 import { bereinigen, offenNachHaken, serieUmschalten, umschalten } from "./logik/auswahl";
 import { GRENZEN } from "./logik/grenzen";
-import { KEIN_FILTER, anzeigbar, bytesText, filtern, flugOptionenBauen, flugSchluessel, gesendeteAelterAls, gruppieren, seitenweise, type Filter, type Gruppe } from "./logik/gruppen";
+import { KEIN_FILTER, anzeigbar, bytesText, filterGesetzt, filtern, flugOptionenBauen, flugSchluessel, gesendeteAelterAls, gruppeZu, gruppieren, seitenweise, type Filter, type Gruppe } from "./logik/gruppen";
 import { reichtKontingent } from "./logik/kontingent";
 import { kurzZeit, simulatorName } from "./logik/metaFormat";
 import type { FlugAuswahl } from "./logik/store";
@@ -43,6 +43,10 @@ export interface BilderTabProps {
 const BILD_ENDUNGEN = /\.(jpe?g|png)$/i;
 /** Ab dieser Breite steht das Detail als feste Spalte, darunter als Blatt ueber der Liste (bilder.css). */
 const breiteSpalte = () => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 1181px)").matches;
+
+// Die Wahl von Hand gilt bis zum naechsten Flugwechsel; hier, weil der Tab beim Reiterwechsel abgebaut wird.
+type KlappStand = { flug: string | null; vonHand: ReadonlyMap<string, boolean> };
+let klappStand: KlappStand = { flug: null, vonHand: new Map() };
 
 export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOeffnen }: BilderTabProps) {
   const simulator: "xplane" | "msfs" | null = simKind?.startsWith("xplane") ? "xplane" : simKind?.startsWith("msfs") ? "msfs" : null;
@@ -77,7 +81,16 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
   const gefiltert = useMemo(() => filtern(liste?.eintraege ?? [], filter), [liste, filter]);
   const gruppen = useMemo(() => gruppieren(gefiltert, GRENZEN), [gefiltert]);
   const alleGruppen = useMemo(() => gruppieren(alle, GRENZEN), [alle]);
-  const sichtbar = useMemo(() => seitenweise(gruppen, seite, GRENZEN.seite), [gruppen, seite]);
+  const aktivePirep = aktiverFlug?.pirep_id ?? null;
+  const [klapp, setKlapp] = useState(klappStand);
+  const vonHand = useMemo<ReadonlyMap<string, boolean>>(() => (klapp.flug === aktivePirep ? klapp.vonHand : new Map()), [klapp, aktivePirep]);
+  const gesetzt = filterGesetzt(filter);
+  const istZu = useCallback((s: string) => gruppeZu(s, aktivePirep, gesetzt, vonHand), [aktivePirep, gesetzt, vonHand]);
+  const klappen = (s: string) => {
+    klappStand = { flug: aktivePirep, vonHand: new Map(vonHand).set(s, !istZu(s)) };
+    setKlapp(klappStand);
+  };
+  const sichtbar = useMemo(() => seitenweise(gruppen, seite, GRENZEN.seite, istZu), [gruppen, seite, istZu]);
   useEffect(() => { if (seite !== sichtbar.seite) setSeite(sichtbar.seite); }, [seite, sichtbar.seite]);
   useEffect(() => { setAuswahl((a) => bereinigen(a, alle.map((e) => e.id))); }, [alle]);
   useEffect(() => {
@@ -95,14 +108,16 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
 
   const [anfangGeoeffnet, setAnfangGeoeffnet] = useState(false);
   useEffect(() => {
-    // Beim ersten Laden das neueste Bild des laufenden Flugs (sonst das neueste) zeigen: die Detailspalte ist sonst leer
+    // Beim ersten Laden das neueste Bild des laufenden Flugs zeigen, ohne Flug das neueste: die Detailspalte ist sonst leer.
+    // Laeuft ein Flug noch ohne Bild, bleibt sie leer, denn jedes aeltere Bild laege in einem eingeklappten Flug.
     if (anfangGeoeffnet || alle.length === 0) return;
     setAnfangGeoeffnet(true);
     // In schmalen Fenstern liegt die Detailspalte als Blatt ueber der Liste: nicht ungefragt aufschlagen
     if (!breiteSpalte()) return;
     const neueste = [...alle].sort((a, b) => (bildZeitIso(b) ?? "").localeCompare(bildZeitIso(a) ?? ""));
     const imFlug = aktiverFlug ? neueste.find((e) => flugSchluessel(e) === aktiverFlug.pirep_id) : undefined;
-    setOffenId((imFlug ?? neueste[0]).id);
+    const ziel = aktiverFlug ? imFlug : neueste[0];
+    if (ziel) setOffenId(ziel.id);
   }, [alle, anfangGeoeffnet, aktiverFlug]);
   const offen = alle.find((e) => e.id === offenId) ?? null;
   useEffect(() => { if (offenId && !offen && liste) setOffenId(null); }, [offenId, offen, liste]);
@@ -368,7 +383,9 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
               sendestand={z.sendestand}
               auswahl={auswahl}
               offenId={offenId}
-              aktivePirep={aktiverFlug?.pirep_id ?? null}
+              aktivePirep={aktivePirep}
+              istZu={istZu}
+              onKlappen={klappen}
               jetzt={Date.now()}
               onWahl={toggle}
               onSerieWahl={serieWahl}

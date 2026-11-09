@@ -139,16 +139,32 @@ export interface Seite {
   kacheln: number;
 }
 
-/** Seitenweise ueber Kacheln (eine Serie zaehlt als eine); Gruppen werden pro Seite neu geschnitten. */
-export function seitenweise(gruppen: Gruppe[], seite: number, proSeite: number): Seite {
-  const flach = gruppen.flatMap((g) => g.kacheln.map((k) => ({ g, k })));
+export const filterGesetzt = (f: Filter): boolean =>
+  f.suche.trim() !== "" || f.favoriten || f.gesendet !== "alle" || f.flug !== null;
+
+/**
+ * Ist die Gruppe eingeklappt? Die Wahl von Hand gilt immer. Sonst sind im Flug die anderen Fluege zu
+ * (Thomas 09.11.2026), „Ohne Flug“ nicht, und beim Suchen oder Filtern bleibt alles offen, damit
+ * ein Treffer nicht hinter einem Kopf verschwindet.
+ */
+export function gruppeZu(schluessel: string, aktivePirep: string | null, gefiltert: boolean, vonHand: ReadonlyMap<string, boolean>): boolean {
+  return vonHand.get(schluessel) ?? (aktivePirep !== null && !gefiltert && schluessel !== "" && schluessel !== aktivePirep);
+}
+
+/**
+ * Seitenweise ueber Kacheln (eine Serie zaehlt als eine); Gruppen werden pro Seite neu geschnitten.
+ * Eine eingeklappte Gruppe zaehlt als ein Platz und behaelt alle Kacheln (Kopfzahlen, Zuordnen).
+ */
+export function seitenweise(gruppen: Gruppe[], seite: number, proSeite: number, zu: (schluessel: string) => boolean = () => false): Seite {
+  const flach = gruppen.flatMap((g): Array<{ g: Gruppe; k: Kachel | null }> => (zu(g.schluessel) ? [{ g, k: null }] : g.kacheln.map((k) => ({ g, k }))));
   const seiten = Math.max(1, Math.ceil(flach.length / proSeite));
   const s = Math.min(Math.max(0, seite), seiten - 1);
   const ausschnitt = flach.slice(s * proSeite, (s + 1) * proSeite);
   const ergebnis: Gruppe[] = [];
   for (const { g, k } of ausschnitt) {
     const letzte = ergebnis[ergebnis.length - 1];
-    if (letzte && letzte.schluessel === g.schluessel) letzte.kacheln.push(k);
+    if (k === null) ergebnis.push(g);
+    else if (letzte && letzte.schluessel === g.schluessel) letzte.kacheln.push(k);
     else ergebnis.push({ ...g, kacheln: [k] });
   }
   return { gruppen: ergebnis, seite: s, seiten, kacheln: flach.length };
