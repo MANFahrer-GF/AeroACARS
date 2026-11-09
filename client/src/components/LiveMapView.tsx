@@ -2393,6 +2393,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     return `${arrival.toISOString().slice(11, 16)}z`;
   }
 
+  // Steht vor dem VA-Effekt, der `bildKarte` beim Einpassen braucht; muss nach dem Anlegen der Karte bleiben.
+  const bildKarte = useBildKarte(mapRef, bildFokus, activeFlight?.pirep_id ?? null, sichtbar);
+
   // ---- VA-Marker rendern (liegen mit auf der einen Karte) ----
   useEffect(() => {
     const map = mapRef.current;
@@ -2512,8 +2515,9 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
       }
     }
     // Nur auf die VA-Flieger einpassen, wenn KEIN eigener Flug die Kamera führt
-    // (sonst würde es dich vom eigenen Flug wegziehen). Und nur einmal.
-    if (pts.length >= 1 && !vaFittedRef.current && !activeFlight) {
+    // (sonst würde es dich vom eigenen Flug wegziehen). Und nur einmal. Eigene
+    // Bildpunkte gehen vor: useBildKarte passt ohne Flug auf sie ein.
+    if (pts.length >= 1 && !vaFittedRef.current && !activeFlight && !(bildKarte.bilderAn && bildKarte.marken > 0)) {
       vaFittedRef.current = true;
       // Kleinster Bogen: Kollegen beiderseits der Datumsgrenze ergeben sonst
       // einen Ausschnitt ueber fast die ganze Welt.
@@ -2619,8 +2623,6 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     : activeFlight.connection_state === "blocked" || activeFlight.connection_state === "failing"
       ? "danger"
       : "ok";
-
-  const bildKarte = useBildKarte(mapRef, bildFokus, activeFlight?.pirep_id ?? null, sichtbar);
 
   // Das rechte Panel beginnt immer unter der Schalterleiste, auch wenn sie umbricht.
   const schalterleisteRef = useRef<HTMLDivElement | null>(null);

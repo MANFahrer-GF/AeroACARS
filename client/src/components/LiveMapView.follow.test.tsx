@@ -36,6 +36,8 @@ beforeAll(async () => {
 // Mock-Factory ihn referenzieren darf — sie wird an den Modulanfang gehoistet).
 const h = vi.hoisted(() => ({
   mapHandlers: {} as Record<string, Array<(e?: unknown) => void>>,
+  einpassen: [] as Array<{ padding?: unknown }>,
+  va: [] as unknown[],
   easeTo: [] as Array<{ center?: [number, number]; zoom?: number }>,
   jumpTo: [] as Array<{ center?: [number, number]; zoom?: number }>,
 }));
@@ -90,7 +92,7 @@ vi.mock("maplibre-gl", () => {
     getZoom() { return this.zoom; }
     isStyleLoaded() { return true; }
     setStyle() { return this; }
-    fitBounds() { return this; }
+    fitBounds(_b: unknown, o: { padding?: unknown }) { h.einpassen.push(o); return this; }
     addSource() { return this; }
     // 12.08.2026 (VATSIM-Overlay): das Piloten-Symbol registriert ein
     // Kartenbild. Der Nachbau kennt die Bild-API, wie die echte Karte.
@@ -133,7 +135,7 @@ vi.mock("../lib/ipc", () => ({
   isTauri: false,
   invoke: vi.fn(async (cmd: string) => {
     if (cmd === "flight_get_route_fixes") return [];
-    if (cmd === "va_live_flights") return { data: [] };
+    if (cmd === "va_live_flights") return { data: h.va };
     if (cmd === "airport_get") return { lat: null, lon: null };
     if (cmd === "airport_ground_index") return [];
     if (cmd === "airport_ground_get") return null;
@@ -189,6 +191,8 @@ function fireLoad() {
 
 beforeEach(() => {
   h.mapHandlers = {};
+  h.einpassen.length = 0;
+  h.va = [];
   h.easeTo.length = 0;
   h.jumpTo.length = 0;
   document.documentElement.dataset.theme = "dark";
@@ -231,6 +235,23 @@ describe("LiveMapView Schalter Bilder", () => {
     expect(document.querySelector(".aa-livemap-idle")).toBeNull();
     fireEvent.click(knopf);
     expect(document.querySelector(".aa-livemap-idle")).not.toBeNull();
+  });
+
+  it("Kollegen in der Luft ziehen die Karte nicht von den eigenen Bildpunkten weg", async () => {
+    h.va = [{ id: "v1", position: { lat: 50, lon: 8 } }];
+    bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P9", breite: 35, laenge: 139 } })];
+    render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+    fireLoad();
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(h.einpassen.map((o) => o.padding)).toEqual([{ top: 120, bottom: 60, left: 60, right: 60 }]);
+  });
+
+  it("ohne Bildpunkte wird weiter auf die Kollegen eingepasst", async () => {
+    h.va = [{ id: "v1", position: { lat: 50, lon: 8 } }];
+    render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+    fireLoad();
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(h.einpassen.map((o) => o.padding)).toEqual([60]);
   });
 
   it("steht anfangs an, behaelt das Wort und schaltet aus und wieder ein", () => {
