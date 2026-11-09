@@ -7816,7 +7816,7 @@ input:disabled {
   grid-column: 2;
   grid-row: 3;
   width: 44px;
-  height: 84px;
+  height: 100px; /* Zoom plus zugeklappte Namensnennung: 112 px Block abzueglich 12 px Rand */
   pointer-events: none;
 }
 

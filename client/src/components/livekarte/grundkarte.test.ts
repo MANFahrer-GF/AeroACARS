@@ -52,10 +52,16 @@ const an = (k: ReturnType<typeof karte>, praefix: string) => [...k.sichtbar].fil
 
 describe("Grundkarte", () => {
   it("der Startstil braucht kein Netz und zeigt nichts ausser der Flaeche", () => {
-    const s = startStil("https://x/{fontstack}/{range}.pbf");
+    const s = startStil("https://x/{fontstack}/{range}.pbf", "dunkel");
     expect(s.glyphs).toBe("https://x/{fontstack}/{range}.pbf");
     expect(s.layers.at(-1)!.id).toBe(EBENE_ANKER);
     expect(s.layers.filter((l) => l.layout?.visibility !== "none").map((l) => l.type)).toEqual(["background"]);
+  });
+
+  it("die Startflaeche folgt dem Theme, sonst blitzt im hellen Theme eine dunkle Flaeche auf", () => {
+    const flaeche = (wahl: "dunkel" | "hell") =>
+      (startStil("g", wahl).layers[0] as { paint: { "background-color": string } }).paint["background-color"];
+    expect(flaeche("hell")).not.toBe(flaeche("dunkel"));
   });
 
   it("legt alle Grundkarten-Ebenen unter den Anker, auch beim Ersetzen", () => {

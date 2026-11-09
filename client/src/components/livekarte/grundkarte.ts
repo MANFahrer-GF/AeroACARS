@@ -25,7 +25,7 @@ const WIEDERHOLEN_MS = 15_000;
 const FLAECHE: Record<Grundkarte, string> = { dunkel: "#0b121b", hell: "#eef1f4", satellit: "#05070a" };
 
 /** Der Stil, mit dem die Karte entsteht. Er braucht kein Netz, darum ist sie sofort bedienbar. */
-export function startStil(glyphen: string): StyleSpecification {
+export function startStil(glyphen: string, flaeche: "dunkel" | "hell"): StyleSpecification {
   const aus = { visibility: "none" } as const;
   return {
     version: 8,
@@ -47,7 +47,7 @@ export function startStil(glyphen: string): StyleSpecification {
       },
     },
     layers: [
-      { id: EBENE_FLAECHE, type: "background", paint: { "background-color": FLAECHE.dunkel } },
+      { id: EBENE_FLAECHE, type: "background", paint: { "background-color": FLAECHE[flaeche] } },
       { id: "esri-imagery", type: "raster", source: "esri-imagery", layout: aus },
       { id: "esri-reference", type: "raster", source: "esri-reference", layout: aus },
       { id: EBENE_ANKER, type: "background", layout: aus },

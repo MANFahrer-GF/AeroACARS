@@ -334,7 +334,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: startStil(grundlage.glyphen),
+      style: startStil(grundlage.glyphen, readTheme() === "dark" ? "dunkel" : "hell"),
       center: [6, 48],
       zoom: 4,
       attributionControl: { compact: true },
