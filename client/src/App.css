@@ -7897,9 +7897,8 @@ input:disabled {
   border-radius: var(--r-md);
   cursor: pointer;
 }
-/* Variante B: das Wort erscheint nur im aktiven Zustand, damit man bei
-   unabhaengigen Ein/Aus-Schaltern nicht raten muss. Der Abstand haengt am
-   Wort, nicht am Knopf — sonst bliebe im Aus-Zustand eine Luecke stehen. */
+/* Das Wort steht in beiden Zustaenden (feste Breite, kein Springen der Leiste);
+   der Zustand zeigt sich allein ueber die Faerbung (--active) und aria-pressed. */
 .aa-livemap-toggle__wort {
   margin-left: 6px;
 }

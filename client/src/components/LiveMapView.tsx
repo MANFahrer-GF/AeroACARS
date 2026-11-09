@@ -2777,12 +2777,11 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
 
             <div className="aa-livemap-controls__group">
               <div className="aa-livemap-controls__row">
-                {/* Variante B: Symbol immer, Text nur wenn AN.
-                    Diese vier sind unabhaengige Ein/Aus-Schalter, anders
-                    als die Paare darueber — bei reinen Symbolen haenge der
-                    Zustand allein an der Faerbung. Der Preis ist, dass die
-                    Leiste beim Umschalten um die Wortbreite zuckt; das ist
-                    bewusst so entschieden. */}
+                {/* Symbol UND Wort immer, in beiden Zustaenden. Diese vier sind
+                    unabhaengige Ein/Aus-Schalter; der Zustand haengt allein an
+                    der Faerbung (--active) und aria-pressed. Das Wort nur im
+                    An-Zustand zu zeigen liess die Leiste beim Umschalten in der
+                    Breite springen ("werden immer groesser"), darum nicht. */}
                 <button
                   type="button"
                   className={`aa-livemap-toggle ${showTrack ? "aa-livemap-toggle--active" : ""}`}
@@ -2792,7 +2791,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   onClick={() => setShowTrack((v) => !v)}
                 >
                   <Sym pfad={PFAD.track} />
-                  {showTrack && <span className="aa-livemap-toggle__wort">{t("livemap.layer_track")}</span>}
+                  <span className="aa-livemap-toggle__wort">{t("livemap.layer_track")}</span>
                 </button>
                 <button
                   type="button"
@@ -2811,7 +2810,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   aria-label={t("livemap.layer_taxi")}
                 >
                   <Sym pfad={PFAD.taxi} />
-                  {showTaxi && <span className="aa-livemap-toggle__wort">{t("livemap.layer_taxi")}</span>}
+                  <span className="aa-livemap-toggle__wort">{t("livemap.layer_taxi")}</span>
                 </button>
                 {bildKarte.marken > 0 && (
                   <button
@@ -2823,7 +2822,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                     onClick={() => bildKarte.setBilderAn((v) => !v)}
                   >
                     <Sym pfad={PFAD.bilder} />
-                    {bildKarte.bilderAn && <span className="aa-livemap-toggle__wort">{t("livemap.layer_bilder")}</span>}
+                    <span className="aa-livemap-toggle__wort">{t("livemap.layer_bilder")}</span>
                   </button>
                 )}
                 <button
@@ -2835,7 +2834,7 @@ export function LiveMapView({ activeFlight, simSnapshot, simKind, onSwitchToBrie
                   title={t("livemap.layer_va")}
                 >
                   <Sym pfad={PFAD.va} />
-                  {showVa && <span className="aa-livemap-toggle__wort">{t("livemap.layer_va")}</span>}
+                  <span className="aa-livemap-toggle__wort">{t("livemap.layer_va")}</span>
                 </button>
                 {/* Netz-Umschalter statt zweier Schalter: so KANN nicht
                     beides zugleich an sein. Zwei Netze uebereinander

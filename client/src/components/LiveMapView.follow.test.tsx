@@ -207,7 +207,28 @@ describe("LiveMapView Schalter Bilder", () => {
     expect(screen.queryByRole("button", { name: "Bilder" })).toBeNull();
   });
 
-  it("steht anfangs an, zeigt dann das Wort und schaltet aus und wieder ein", () => {
+  it("Schalter der Leiste zeigen das Wort in beiden Zustaenden (Breite springt nicht)", () => {
+    bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 41, laenge: 28 } })];
+    render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
+    fireLoad();
+    for (const name of ["Bilder", "Track", "Taxiweg", "VA-Verkehr"]) {
+      const knopf = screen.queryByRole("button", { name }) as HTMLElement | null;
+      if (!knopf) continue;
+      for (let i = 0; i < 2; i++) {
+        expect(knopf.querySelector(".aa-livemap-toggle__wort"), `${name} pressed=${knopf.getAttribute("aria-pressed")}`).not.toBeNull();
+        fireEvent.click(knopf);
+      }
+    }
+  });
+
+  it("steht ohne laufenden Flug mit Bildpunkten aller Fluege trotzdem da", () => {
+    bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P9", breite: 41, laenge: 28 } })];
+    render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+    fireLoad();
+    expect(screen.getByRole("button", { name: "Bilder" })).toBeTruthy();
+  });
+
+  it("steht anfangs an, behaelt das Wort und schaltet aus und wieder ein", () => {
     bilderTest.eintraege = [eintrag({ id: "a", meta: { pirep_id: "P1", breite: 41, laenge: 28 } })];
     render(<LiveMapView activeFlight={flight as never} simSnapshot={snap(41.2, 28.7) as never} />);
     fireLoad();
@@ -216,7 +237,7 @@ describe("LiveMapView Schalter Bilder", () => {
     expect(knopf.textContent?.trim()).toBe("Bilder");
     fireEvent.click(knopf);
     expect(knopf.getAttribute("aria-pressed")).toBe("false");
-    expect(knopf.textContent?.trim()).toBe("");
+    expect(knopf.textContent?.trim()).toBe("Bilder");
     fireEvent.click(knopf);
     expect(knopf.getAttribute("aria-pressed")).toBe("true");
   });

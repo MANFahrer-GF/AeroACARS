@@ -1,6 +1,6 @@
 // Weltkugel-Umschalter und Fokus der Live-Karte (P-11.36).
 import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const marker: Array<{ lngLat?: number[]; entfernt: boolean; el?: HTMLElement }> = [];
 vi.mock("maplibre-gl", () => ({
@@ -26,8 +26,10 @@ import { useBildKarte } from "./useBildKarte";
 
 function karte() {
   const aufrufe: unknown[] = [];
-  return { aufrufe, m: { setProjection: (p: unknown) => aufrufe.push(["projektion", p]), flyTo: (o: unknown) => aufrufe.push(["fly", o]), getZoom: () => 4, isStyleLoaded: () => true, once: vi.fn(), on: vi.fn(), off: vi.fn(), getContainer: () => document.body } };
+  const handler: Record<string, Array<() => void>> = {};
+  return { aufrufe, handler, m: { setProjection: (p: unknown) => aufrufe.push(["projektion", p]), flyTo: (o: unknown) => aufrufe.push(["fly", o]), getZoom: () => 4, isStyleLoaded: () => true, once: vi.fn(), on: (ev: string, cb: () => void) => { (handler[ev] ??= []).push(cb); }, off: (ev: string, cb: () => void) => { handler[ev] = (handler[ev] ?? []).filter((x) => x !== cb); }, getContainer: () => document.body } };
 }
+beforeEach(() => { try { localStorage.removeItem("aaLivemapKugel"); } catch { /* egal */ } });
 
 describe("useBildKarte", () => {
   it("Umschalter setzt die Projektion globe und wieder mercator", () => {
@@ -39,7 +41,7 @@ describe("useBildKarte", () => {
     act(() => result.current.setKugel(false));
     expect(k.aufrufe.at(-1)).toEqual(["projektion", { type: "mercator" }]);
   });
-  it("Marken nur fuer Bilder desselben Flugs mit Position; Fokus fliegt zur Stelle", () => {
+  it("Marken bei aktivem Flug nur fuer dessen Bilder mit Position; Fokus fliegt zur Stelle", () => {
     h.eintraege = [
       eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } }),
       eintrag({ id: "b", meta: { pirep_id: "P2", breite: 11, laenge: 21 } }),
@@ -47,7 +49,7 @@ describe("useBildKarte", () => {
     ];
     marker.length = 0;
     const k = karte();
-    const { result } = renderHook(() => useBildKarte({ current: k.m as never }, { lat: 10, lon: 20, id: "a", pirep: "P1", n: 1 }, null));
+    const { result } = renderHook(() => useBildKarte({ current: k.m as never }, { lat: 10, lon: 20, id: "a", pirep: "P1", n: 1 }, "P1"));
     expect(result.current.marken).toBe(1);
     expect(marker.map((x) => x.lngLat)).toEqual([[20, 10]]);
     expect(k.aufrufe.some((a) => (a as unknown[])[0] === "fly")).toBe(true);
@@ -140,15 +142,73 @@ describe("useBildKarte", () => {
     rerender();
     expect(result.current.bilderAn).toBe(true);
   });
-  it("laedt die Liste einmal, wenn ein Flug laeuft und noch keine da ist; ohne Flug nicht", () => {
+  it("laedt die Liste einmal, sobald sie fehlt, auch ohne Flug", () => {
     h.ohneListe = true;
     h.laden.mockClear();
     const k = karte();
     renderHook(() => useBildKarte({ current: k.m as never }, null, null));
-    expect(h.laden).not.toHaveBeenCalled();
-    const { rerender } = renderHook(() => useBildKarte({ current: k.m as never }, null, "P1"));
-    rerender();
     expect(h.laden).toHaveBeenCalledTimes(1);
     h.ohneListe = false;
+  });
+  it("ohne aktiven Flug stehen die Bilder aller Fluege mit Position auf der Karte", () => {
+    h.eintraege = [
+      eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } }),
+      eintrag({ id: "b", meta: { pirep_id: "P2", breite: 11, laenge: 21 } }),
+      eintrag({ id: "c", meta: { pirep_id: "P2", breite: null, laenge: null } }),
+    ];
+    marker.length = 0;
+    const k = karte();
+    const { result } = renderHook(() => useBildKarte({ current: k.m as never }, null, null));
+    expect(result.current.marken).toBe(2);
+    expect(marker.map((x) => x.lngLat)).toEqual([[20, 10], [21, 11]]);
+  });
+  it("mit aktivem Flug kommen die Bilder aus dem Fokus-Flug dazu; der Fokus verdraengt den aktiven Flug nicht", () => {
+    h.eintraege = [
+      eintrag({ id: "a", meta: { pirep_id: "P1", breite: 10, laenge: 20 } }),
+      eintrag({ id: "b", meta: { pirep_id: "P2", breite: 11, laenge: 21 } }),
+      eintrag({ id: "c", meta: { pirep_id: "P3", breite: 12, laenge: 22 } }),
+    ];
+    marker.length = 0;
+    const k = karte();
+    const { result } = renderHook(() => useBildKarte({ current: k.m as never }, { lat: 11, lon: 21, id: "b", pirep: "P2", n: 1 }, "P1"));
+    expect(result.current.marken).toBe(2);
+    expect(marker.map((x) => x.lngLat)).toEqual([[20, 10], [21, 11]]);
+  });
+  it("Klick auf eine Marke oeffnet die Grossansicht nur mit den Bildern desselben Flugs", () => {
+    h.eintraege = [
+      eintrag({ id: "a1", meta: { pirep_id: "P1", zeit_utc: "2026-11-07T10:00:00Z", breite: 10, laenge: 20 } }),
+      eintrag({ id: "a2", meta: { pirep_id: "P1", zeit_utc: "2026-11-07T11:00:00Z", breite: 10, laenge: 21 } }),
+      eintrag({ id: "b1", meta: { pirep_id: "P2", zeit_utc: "2026-11-07T12:00:00Z", breite: 11, laenge: 22 } }),
+    ];
+    marker.length = 0;
+    const k = karte();
+    const { result } = renderHook(() => useBildKarte({ current: k.m as never }, null, null));
+    act(() => marker[2].el!.click());
+    expect(result.current.gross?.bilder.map((b) => b.id)).toEqual(["b1"]);
+    act(() => marker[0].el!.click());
+    expect(result.current.gross?.bilder.map((b) => b.id)).toEqual(["a1", "a2"]);
+  });
+  it("Weltkugel: die Projektion wird bei jedem style.load neu gesetzt (setStyle setzt sie zurueck), der Listener wird abgebaut", () => {
+    const k = karte();
+    const { result, unmount } = renderHook(() => useBildKarte({ current: k.m as never }, null, null));
+    act(() => result.current.setKugel(true));
+    k.aufrufe.length = 0;
+    expect(k.handler["style.load"]).toHaveLength(1);
+    k.handler["style.load"].forEach((cb) => cb());
+    expect(k.aufrufe.at(-1)).toEqual(["projektion", { type: "globe" }]);
+    unmount();
+    expect(k.handler["style.load"]).toHaveLength(0);
+  });
+  it("Weltkugel: die Wahl bleibt in localStorage und gilt nach einem Neustart", () => {
+    const k = karte();
+    const { result, unmount } = renderHook(() => useBildKarte({ current: k.m as never }, null, null));
+    expect(result.current.kugel).toBe(false);
+    act(() => result.current.setKugel(true));
+    expect(localStorage.getItem("aaLivemapKugel")).toBe("1");
+    unmount();
+    const k2 = karte();
+    const { result: neu } = renderHook(() => useBildKarte({ current: k2.m as never }, null, null));
+    expect(neu.current.kugel).toBe(true);
+    expect(k2.aufrufe.at(-1)).toEqual(["projektion", { type: "globe" }]);
   });
 });
