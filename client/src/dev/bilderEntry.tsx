@@ -37,7 +37,7 @@ function KarteVorschau() {
   const [sichtbar, setSichtbar] = useState(true);
   const [bildFokus, setBildFokus] = useState<BildFokus | null>(null);
   (window as unknown as { __karteSetzen: unknown }).__karteSetzen = { setSichtbar, setBildFokus };
-  return <LiveMapView activeFlight={imFlug ? ({ pirep_id: "P412", dpt_airport: "EDDF", arr_airport: "LSZH" } as unknown as ActiveFlightInfo) : null} simSnapshot={q.has("karte") && imFlug ? SIM : null} simKind="xplane12" onSwitchToBriefing={() => undefined} sichtbar={sichtbar} bildFokus={bildFokus} />;
+  return <LiveMapView activeFlight={imFlug ? ({ pirep_id: "P412", dpt_airport: "EDDF", arr_airport: "LSZH", distance_nm: 120 } as unknown as ActiveFlightInfo) : null} simSnapshot={q.has("karte") && imFlug ? SIM : null} simKind="xplane12" onSwitchToBriefing={() => undefined} sichtbar={sichtbar} bildFokus={bildFokus} />;
 }
 
 createRoot(document.getElementById("root")!).render(

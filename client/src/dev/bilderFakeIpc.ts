@@ -226,7 +226,10 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
     case "flight_get_route_fixes": if (q.has("karte") && w.__routeLeer) return [] as T; if (q.has("karte")) return [{ ident: "EDDF", lat: 50.03, lon: 8.56, kind: "airport" }, { ident: "TOC", lat: 49.8, lon: 8.7, kind: "wpt" }, { ident: "KRH", lat: 49.2, lon: 8.6, kind: "wpt" }, { ident: "TOD", lat: 48.2, lon: 8.5, kind: "wpt" }, { ident: "LSZH", lat: 47.46, lon: 8.55, kind: "airport" }] as T; break;
     case "airport_ground_index": if (q.has("karte")) return [{ icao: "EDDF", lat: 50.03, lon: 8.56 }, { icao: "XDAT", lat: -16.7, lon: -179.95 }] as T; break;
     case "airport_ground_get": if (q.has("karte")) { const p = a.icao === "XDAT" ? [-179.95, -16.7] : [8.56, 50.03]; return { icao: a.icao, geojson: JSON.stringify(bodendaten(p[0], p[1])) } as T; } break;
-    case "live_inhalt": if (q.has("karte") && String(a.pfad).startsWith("/api/vatglasses")) return sektoren() as T; break;
+    case "live_inhalt": if (q.has("karte") && String(a.pfad).startsWith("/api/vatglasses")) return {
+      ...sektoren(),
+      ...(String(a.pfad).includes("netz=ivao") ? { piloten: [{ callsign: "IVA77", latitude: 49, longitude: 8, altitude: 36000, groundspeed: 450, heading: 90, flight_plan: null }] } : {}),
+    } as T; break;
   }
   switch (cmd) {
     default: return (q.get("livekarte") === "1" ? [] : undefined) as T; // die echte Live-Karte erwartet Listen
