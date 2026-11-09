@@ -605,6 +605,23 @@ describe("VA-Verkehr: Abnahme D1, D2, D4, D5", () => {
     expect(html).toContain('ETA</span><span class="aa-vapop__v">10:09z');
   });
 
+  it.each([
+    ["en", "ALT"],
+    ["it", "QUOTA"],
+  ])("G8: die Infokarte des Kollegen beschriftet die Hoehe in der Sprache %s", async (sprache, hoehe) => {
+    await i18next.changeLanguage(sprache);
+    try {
+      await karteMitKollege([P1, P2]);
+      await act(async () => { kollegenMarker()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await fluss();
+      const html = h.popups[0].html.at(-1)!;
+      expect(html).toContain(`${hoehe}</span><span class="aa-vapop__v">`);
+      expect(html).not.toContain("HÖHE");
+    } finally {
+      await i18next.changeLanguage("de");
+    }
+  });
+
   it("D2: die offene Infokarte folgt dem Kollegen beim Neuaufbau und schliesst, wenn er weg ist", async () => {
     const takt = vi.spyOn(globalThis, "setInterval");
     await karteMitKollege([P1, P2]);

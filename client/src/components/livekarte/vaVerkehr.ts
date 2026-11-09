@@ -1,6 +1,7 @@
 // VA-Verkehr auf der Karte: Marker der Kollegen, Infokarte und ihre Routen.
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "i18next";
 import maplibregl from "maplibre-gl";
 import { invoke } from "../../lib/ipc";
 import type { ActiveFlightInfo } from "../../types";
@@ -80,9 +81,9 @@ function vaPopupHtml(f: VaFlight, eta = "—"): string {
     (phaseTxt ? `<span class="aa-vapop__phase" style="--p:${pcol}">${escHtml(phaseTxt)}</span>` : "") +
     `</div>` +
     `<div class="aa-vapop__grid">` +
-    cell("HÖHE", flLabel(pos.altitude_msl ?? pos.altitude)) +
-    cell("GS", gs, " kt") +
-    cell("ETA", eta) +
+    cell(i18n.t("livemap.field_alt"), flLabel(pos.altitude_msl ?? pos.altitude)) +
+    cell(i18n.t("livemap.field_gs"), gs, " kt") +
+    cell(i18n.t("livemap.field_eta"), eta) +
     `</div>` +
     (ac ? `<div class="aa-vapop__sub">${escHtml(ac)}</div>` : "")
   );

@@ -38,6 +38,7 @@ const h = vi.hoisted(() => ({
   bilder: [] as Array<{ id: string; pixelRatio?: number }>,
   feed: {} as Record<string, unknown>,
   sektoren: {} as Record<string, unknown>,
+  ivaoAntwort: null as Promise<unknown> | null,
 }));
 
 vi.mock("maplibre-gl", () => {
@@ -125,7 +126,7 @@ vi.mock("../../lib/ipc", () => ({
   isTauri: false,
   invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     h.rufe.push({ cmd, args });
-    if (cmd === "live_inhalt") return h.sektoren;
+    if (cmd === "live_inhalt") return h.ivaoAntwort && String(args?.pfad).includes("netz=ivao") ? h.ivaoAntwort : h.sektoren;
     if (cmd === "va_live_flights") return { data: [] };
     if (cmd === "flight_get_route_fixes") return [];
     if (cmd === "flight_get_track") return [];
@@ -171,6 +172,7 @@ beforeEach(() => {
   h.quellen.clear();
   h.daten.clear();
   h.datenLog = [];
+  h.ivaoAntwort = null;
   h.filter = [];
   h.popups = [];
   h.rufe = [];
@@ -222,8 +224,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function ansicht(simSnapshot: typeof snap | null = snap) {
-  return <LiveMapView activeFlight={flight as never} simSnapshot={simSnapshot as never} simKind={undefined} onSwitchToBriefing={() => {}} />;
+function ansicht(simSnapshot: typeof snap | null = snap, sichtbar = true) {
+  return <LiveMapView activeFlight={flight as never} simSnapshot={simSnapshot as never} simKind={undefined} onSwitchToBriefing={() => {}} sichtbar={sichtbar} />;
 }
 async function karte(simSnapshot: typeof snap | null = snap) {
   const r = render(ansicht(simSnapshot));
@@ -284,23 +286,50 @@ describe("Online-Netz: Aus / VATSIM / IVAO (E1)", () => {
     expect(zustaende.map((z) => Object.keys(z).find((k) => z[k] === "true"))).toEqual(["VATSIM", "IVAO", "VATSIM", "Aus", "IVAO"]);
   });
 
-  it("wechselt von VATSIM auf IVAO ohne Umweg ueber Aus: neuer Abruf mit netz=ivao, nichts wird dazwischen geleert", async () => {
-    h.sektoren = {
-      ...(h.sektoren as object),
-      piloten: [{ callsign: "IVA77", latitude: 50, longitude: 8, altitude: 36000, groundspeed: 450, heading: 90, flight_plan: null }],
-    };
+  it("wechselt von VATSIM auf IVAO ohne Umweg ueber Aus: die Daten des alten Netzes verschwinden sofort, nicht erst mit der neuen Antwort", async () => {
+    let antworten: (wert: unknown) => void = () => {};
+    h.ivaoAntwort = new Promise((ok) => { antworten = ok; });
     await karte();
     fireEvent.click(knopf("VATSIM"));
-    await waitFor(() => expect(quelle("vatsim-pilots")?.features.length).toBe(1));
-    expect(sektorAbrufe()).toEqual(["/api/vatglasses?fl=alle"]);
-    const marke = h.datenLog.length;
+    await waitFor(() => expect(quelle("vatsim-sectors")?.features.length).toBeGreaterThan(0));
+    await waitFor(() => expect(quelle("vatsim-pilots")?.features.length).toBeGreaterThan(0));
+    klick({ "vatsim-sectors-fill": { ruf: "EDGG_CTR", gesprochen: "Langen", frequenz: "125.500", farbe: "#f43f5e" } });
+    expect(offenePopups()).toHaveLength(1);
 
     fireEvent.click(knopf("IVAO"));
     await waitFor(() => expect(sektorAbrufe()).toEqual(["/api/vatglasses?fl=alle", "/api/vatglasses?fl=alle&netz=ivao"]));
+    // Die Antwort steht noch aus: Unter „IVAO“ darf nichts von VATSIM mehr liegen ...
+    for (const id of ["vatsim-pilots", "vatsim-atc-airports", "vatsim-sectors", "vatsim-sectors-umriss", "vatsim-sector-labels"]) {
+      expect(quelle(id)?.features, id).toEqual([]);
+    }
+    expect(offenePopups(), "Klickfenster des alten Netzes").toEqual([]);
+    // ... und die Bedienung war nie auf Aus.
+    expect(gedrueckt().IVAO).toBe("true");
+    expect(gedrueckt().Aus).toBe("false");
+
+    await act(async () => {
+      antworten({
+        ...h.sektoren,
+        flaechen: fc([flaeche("LFPG_CTR", "#00ff00", [[2, 48], [3, 48], [3, 49], [2, 48]])]),
+        piloten: [{ callsign: "IVA77", latitude: 50, longitude: 8, altitude: 36000, groundspeed: 450, heading: 90, flight_plan: null }],
+      });
+    });
+    await waitFor(() => expect(quelle("vatsim-pilots")?.features.map((f) => (f.properties as Merkmale).callsign)).toEqual(["IVA77"]));
+  });
+
+  it("leert die Quellen nicht, wenn dasselbe Netz neu holt (Reiter weg und zurueck)", async () => {
+    const r = await karte();
+    fireEvent.click(knopf("VATSIM"));
+    await waitFor(() => expect(quelle("vatsim-pilots")?.features.length).toBeGreaterThan(0));
+    await waitFor(() => expect(sektorAbrufe()).toHaveLength(1));
+    const marke = h.datenLog.length;
+
+    r.rerender(ansicht(snap, false));
+    r.rerender(ansicht(snap, true));
+    await waitFor(() => expect(sektorAbrufe()).toHaveLength(2));
     await waitFor(() => expect(h.datenLog.length).toBeGreaterThan(marke));
-    // Kein Zwischenstand "Aus": keine Quelle wurde seit dem Wechsel auf leer gesetzt.
-    expect(h.datenLog.slice(marke).filter((e) => e.id === "vatsim-pilots" || e.id === "vatsim-sectors").every((e) => e.features > 0)).toBe(true);
-    expect(quelle("vatsim-pilots")?.features.length).toBe(1);
+    expect(h.datenLog.slice(marke).filter((e) => e.features === 0 && e.id === "vatsim-pilots")).toEqual([]);
+    expect(quelle("vatsim-pilots")?.features.length).toBeGreaterThan(0);
   });
 
   it("raeumt beim Wechsel auf Aus alle fuenf Quellen leer", async () => {

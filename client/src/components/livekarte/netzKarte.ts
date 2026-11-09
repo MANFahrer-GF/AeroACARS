@@ -223,6 +223,7 @@ export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapsh
   const [netz, setNetz] = useState<Netz>("aus");
   const showVatsim = netz !== "aus";
   const vatsimPopupRef = useRef<maplibregl.Popup | null>(null);
+  const gezeigtesNetzRef = useRef<Netz>("aus");
   // Welche Flugflaeche die Sektoren zeigen. "auto" folgt dem eigenen Flug —
   // die Karte beantwortet dann durchgehend "wer ist fuer MICH zustaendig".
   // Ohne Flug gilt der Regler (Start FL200: dort spielt der Streckenflug).
@@ -253,12 +254,18 @@ export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapsh
       (map.getSource("vatsim-sector-labels") as maplibregl.GeoJSONSource | undefined)?.setData(labels);
     };
 
-    if (!showVatsim) {
+    // Beim Wechsel des Netzes verschwindet das alte sofort, nicht erst mit
+    // der Antwort des neuen: Sonst stuende unter "IVAO" bis zu 15 s die
+    // VATSIM-Lage samt ihrem Klickfenster, und bei einem Fehler noch laenger.
+    // Ein Neuabruf desselben Netzes (Reiter zurueck, Anmeldung) leert nicht.
+    const gewechselt = gezeigtesNetzRef.current !== netz;
+    gezeigtesNetzRef.current = netz;
+    if (!showVatsim || gewechselt) {
       vatsimPopupRef.current?.remove();
       vatsimPopupRef.current = null;
       setzen(emptyFC(), emptyFC(), emptyFC(), emptyFC());
-      return;
     }
+    if (!showVatsim) return;
 
     let beendet = false;
     let abbruch = new AbortController();
