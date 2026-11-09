@@ -30,8 +30,9 @@ export function FlugPanel({ flug, phase, werte, ereignisse }: {
     try { localStorage.setItem(SPEICHER, zu ? "1" : "0"); } catch { /* best-effort */ }
   }, [zu]);
 
+  // `distance_nm` ist die bereits GEFLOGENE Strecke, `restNm` die noch zu fliegende: Anteil = geflogen / (geflogen + Rest).
   const fortschritt = flug.distance_nm && werte.restNm != null
-    ? Math.min(100, Math.max(0, ((flug.distance_nm - werte.restNm) / flug.distance_nm) * 100))
+    ? Math.min(100, Math.max(0, (flug.distance_nm / (flug.distance_nm + Math.max(0, werte.restNm))) * 100))
     : 0;
   // Geplantes Muster aus phpVMS, nicht das gerade im Simulator geladene.
   const muster = [flug.aircraft_name || flug.aircraft_icao, flug.planned_registration].filter(Boolean).join(" · ");
