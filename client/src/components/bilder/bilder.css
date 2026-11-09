@@ -392,9 +392,6 @@ button.bt-chip:hover { color: var(--text); }
 }
 
 /* Umschalter Karte/Weltkugel im Kopf der Live-Karte */
-.bt-karte__umschalter--kopf { position: static; border-color: var(--line); margin-right: var(--sp-3); }
-.bt-karte__umschalter--kopf button { background: var(--surface); color: var(--text-dim); }
-.bt-karte__umschalter--kopf button[aria-pressed="true"] { background: var(--acc-quiet); color: var(--text); }
 
 /* Kopf einzeilig, solange es die Breite hergibt (Entwurf: eine Zeile bei 1440 px) */
 @media (min-width: 1400px) {
