@@ -285,6 +285,10 @@ describe("Online-Netz: Aus / VATSIM / IVAO (E1)", () => {
   });
 
   it("wechselt von VATSIM auf IVAO ohne Umweg ueber Aus: neuer Abruf mit netz=ivao, nichts wird dazwischen geleert", async () => {
+    h.sektoren = {
+      ...(h.sektoren as object),
+      piloten: [{ callsign: "IVA77", latitude: 50, longitude: 8, altitude: 36000, groundspeed: 450, heading: 90, flight_plan: null }],
+    };
     await karte();
     fireEvent.click(knopf("VATSIM"));
     await waitFor(() => expect(quelle("vatsim-pilots")?.features.length).toBe(1));
@@ -524,6 +528,31 @@ describe("Fremde Piloten (E5)", () => {
     const f = quelle("vatsim-pilots")!.features[0];
     expect(f.properties).toMatchObject({ callsign: "DLH123", hdg: 270, dep: "EDDF", arr: "EGLL", actype: "A320" });
     expect((f.geometry as { coordinates: number[] }).coordinates).toEqual([8, 50]);
+  });
+
+  it("nimmt bei IVAO die Piloten aus der Serverantwort und holt keinen VATSIM-Feed", async () => {
+    h.sektoren = {
+      ...(h.sektoren as object),
+      piloten: [{
+        callsign: "IVA77", latitude: -33.9, longitude: 18.6, altitude: 36132, groundspeed: 462, heading: 234,
+        flight_plan: { departure: "VTBS", arrival: "FACT", aircraft_short: "A359" },
+      }],
+    };
+    await karte();
+    fireEvent.click(knopf("IVAO"));
+    await waitFor(() => expect(quelle("vatsim-pilots")?.features.length).toBe(1));
+    const f = quelle("vatsim-pilots")!.features[0];
+    expect(f.properties).toMatchObject({ callsign: "IVA77", hdg: 234, dep: "VTBS", arr: "FACT", actype: "A359" });
+    expect((f.geometry as { coordinates: number[] }).coordinates).toEqual([18.6, -33.9]);
+    expect(h.vatsimAbrufe).toBe(0);
+  });
+
+  it("zeigt bei IVAO keine VATSIM-Piloten, auch wenn der Server noch keine Piloten mitschickt", async () => {
+    await karte();
+    fireEvent.click(knopf("VATSIM"));
+    await waitFor(() => expect(quelle("vatsim-pilots")?.features.length).toBe(1));
+    fireEvent.click(knopf("IVAO"));
+    await waitFor(() => expect(quelle("vatsim-pilots")?.features.length).toBe(0));
   });
 });
 

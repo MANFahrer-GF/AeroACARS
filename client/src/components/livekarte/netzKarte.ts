@@ -268,7 +268,9 @@ export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapsh
       const tStart = performance.now();
       try {
         // VATSpy braucht der Client nicht mehr — der Server wertet es aus.
-        const daten = await fetchVatsimData(abbruch.signal);
+        // Bei IVAO kommen die Piloten mit der Serverantwort; der VATSIM-Feed
+        // zeigte dort sonst Piloten des falschen Netzes.
+        const daten = netz === "ivao" ? null : await fetchVatsimData(abbruch.signal);
         if (beendet) return;
         // Sektoren nach HOEHE: im Flug die eigene Flugflaeche, sonst der
         // Regler. Genau dafuer sind die VATGlasses-Daten da — die flachen
@@ -285,7 +287,7 @@ export function useNetzKarte({ mapRef, mapReady, sichtbar, zugangTakt, simSnapsh
         );
         if (beendet) return;
         setzen(
-          buildPilotFeatures(daten.pilots),
+          buildPilotFeatures(daten ? daten.pilots : sektoren.piloten),
           // Platz-Marker kommen seit dem Umbau vom Server — dieselbe
           // Quelle wie die Live-Karte. Vorher rechnete der Client sie
           // selbst und lag daneben: Marker uebereinander, "LGT" statt
