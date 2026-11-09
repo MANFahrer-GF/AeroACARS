@@ -79,9 +79,12 @@ export function GruppenAnsicht({
         const titel = ohne
           ? t("bilder.gruppe.ohne_flug", { datum })
           : d.art === "heute" ? t("bilder.gruppe.heute", { datum }) : d.art === "gestern" ? t("bilder.gruppe.gestern", { datum }) : datum;
-        const gesendet = g.kacheln.flatMap((k) => (k.art === "bild" ? [k.bild] : k.bilder)).filter(wurdeGesendet).length;
+        const bilder = g.kacheln.flatMap((k) => (k.art === "bild" ? [k.bild] : k.bilder));
+        const gesendet = bilder.filter(wurdeGesendet).length;
         const h = ohne ? herkunft(g) : null;
         const zu = istZu(g.schluessel);
+        // Haken bleiben beim Einklappen gesetzt und zaehlen beim Senden mit: darum am Kopf sichtbar.
+        const verdecktGewaehlt = zu ? bilder.filter((b) => auswahl.has(b.id)).length : 0;
         const klappName = t(zu ? "bilder.gruppe.aufklappen" : "bilder.gruppe.einklappen");
         return (
           <article className="bt-gruppe" key={g.schluessel || "ohne"} aria-label={titel}>
@@ -99,6 +102,7 @@ export function GruppenAnsicht({
               <span title={t("bilder.kopf.platz", { platz: bytesText(g.belegt_bytes, sprache) })}>{bytesText(g.belegt_bytes, sprache)}</span>
               {g.schluessel !== "" && g.schluessel === aktivePirep && <span className="bt-chip bt-chip--ok">{t("bilder.gruppe.laeuft")}</span>}
               {gesendet > 0 && <span className="bt-chip">{t("bilder.gruppe.gesendet_n", { count: gesendet })}</span>}
+              {verdecktGewaehlt > 0 && <span className="bt-chip bt-chip--ok">{t("bilder.leiste.ausgewaehlt", { count: verdecktGewaehlt })}</span>}
               {ohne && <button type="button" className="bt-gruppe__zuordnen" onClick={(ev) => { ev.stopPropagation(); onZuordnen(g); }}>{t("bilder.gruppe.zuordnen")}</button>}
             </div>
             {!zu && <div className="bt-kacheln">{g.kacheln.map(kachel)}</div>}

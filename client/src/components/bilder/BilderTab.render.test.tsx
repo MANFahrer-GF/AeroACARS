@@ -76,6 +76,56 @@ describe("Bilder-Tab", () => {
     expect(screen.getByText(/3 Bilder · 1 Flug ·/)).toBeInTheDocument();
   });
 
+  describe("Einklappen im Flug", () => {
+    const zeile = (id: string, pirep_id: string | null, tag: number) =>
+      eintrag({ id, meta: { zeit_utc: `2026-11-0${tag}T10:00:00.000Z`, pirep_id, hoehe_ft: 1000 }, bytes: 1_000_000 });
+    const flugProps = (pirep_id: string) => ({ pilotId: "17", pilotName: "Thomas K.", aktiverFlug: { pirep_id, callsign: "GSG412", dpt: "EDDF", arr: "LSZH" }, simKind: "xplane12", onKarteOeffnen: vi.fn() });
+    const kopf = (n: number) => document.querySelectorAll<HTMLElement>(".bt-gruppe")[n];
+    const offen = (n: number) => kopf(n).querySelector(".bt-gruppe__klappe")!.getAttribute("aria-expanded") === "true";
+
+    it("alte Fluege sind zu, Kopf und Knopf klappen je einmal, Ohne Flug bleibt offen, Flugwechsel setzt zurueck", async () => {
+      h.zeilen = [zeile("heute", "KLAPP1", 9), zeile("gestern", "KLAPP2", 8), zeile("lose", null, 7)];
+      const { rerender } = render(<BilderTab {...flugProps("KLAPP1")} />);
+      await screen.findByText("läuft gerade");
+      expect([offen(0), offen(1), offen(2)]).toEqual([true, false, true]);
+      expect(kopf(1).querySelector(".bt-kacheln")).toBeNull();
+
+      fireEvent.click(kopf(1).querySelector(".bt-gruppe__datum")!);
+      expect(offen(1)).toBe(true);
+      expect(kopf(1).querySelector(".bt-kacheln")).not.toBeNull();
+      fireEvent.click(kopf(1).querySelector(".bt-gruppe__klappe")!);
+      expect(offen(1)).toBe(false);
+
+      fireEvent.click(within(kopf(2)).getByText("Flug zuordnen"));
+      expect(offen(2)).toBe(true);
+
+      fireEvent.click(kopf(1).querySelector(".bt-gruppe__klappe")!);
+      expect(offen(1)).toBe(true);
+      rerender(<BilderTab {...flugProps("KLAPP3")} />);
+      await waitFor(() => expect([offen(0), offen(1)]).toEqual([false, false]));
+    });
+
+    it("Haken in einem eingeklappten Flug bleiben sichtbar", async () => {
+      h.zeilen = [zeile("heute", "KLAPP4", 9), zeile("gestern", "KLAPP5", 8)];
+      render(<BilderTab {...flugProps("KLAPP4")} />);
+      await screen.findByText("läuft gerade");
+      fireEvent.click(kopf(1).querySelector(".bt-gruppe__klappe")!);
+      fireEvent.click(within(kopf(1)).getAllByRole("checkbox")[0]);
+      fireEvent.click(kopf(1).querySelector(".bt-gruppe__klappe")!);
+      expect(within(kopf(1)).getByText("1 ausgewählt")).toBeInTheDocument();
+    });
+
+    it("neuer Flug ohne Bild oeffnet kein altes Bild im Detail; ohne Flug schon", async () => {
+      h.zeilen = [zeile("gestern", "KLAPP6", 8)];
+      const mitFlug = render(<BilderTab {...flugProps("KLAPP7")} />);
+      await waitFor(() => expect(document.querySelector(".bt-gruppe")).not.toBeNull());
+      expect(screen.queryByRole("button", { name: /An Discord senden/ })).toBeNull();
+      mitFlug.unmount();
+      zeigen(false);
+      expect(await screen.findByRole("button", { name: /An Discord senden/ })).toBeInTheDocument();
+    });
+  });
+
   it("Auswahl-Checkbox ist vom Oeffnen getrennt (Gegenprobe: Oeffnen waehlt nicht aus)", async () => {
     vorbereiten();
     zeigen();

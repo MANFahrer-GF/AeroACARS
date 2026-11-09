@@ -108,14 +108,16 @@ export function BilderTab({ pilotId, pilotName, aktiverFlug, simKind, onKarteOef
 
   const [anfangGeoeffnet, setAnfangGeoeffnet] = useState(false);
   useEffect(() => {
-    // Beim ersten Laden das neueste Bild des laufenden Flugs (sonst das neueste) zeigen: die Detailspalte ist sonst leer
+    // Beim ersten Laden das neueste Bild des laufenden Flugs zeigen, ohne Flug das neueste: die Detailspalte ist sonst leer.
+    // Laeuft ein Flug noch ohne Bild, bleibt sie leer, denn jedes aeltere Bild laege in einem eingeklappten Flug.
     if (anfangGeoeffnet || alle.length === 0) return;
     setAnfangGeoeffnet(true);
     // In schmalen Fenstern liegt die Detailspalte als Blatt ueber der Liste: nicht ungefragt aufschlagen
     if (!breiteSpalte()) return;
     const neueste = [...alle].sort((a, b) => (bildZeitIso(b) ?? "").localeCompare(bildZeitIso(a) ?? ""));
     const imFlug = aktiverFlug ? neueste.find((e) => flugSchluessel(e) === aktiverFlug.pirep_id) : undefined;
-    setOffenId((imFlug ?? neueste[0]).id);
+    const ziel = aktiverFlug ? imFlug : neueste[0];
+    if (ziel) setOffenId(ziel.id);
   }, [alle, anfangGeoeffnet, aktiverFlug]);
   const offen = alle.find((e) => e.id === offenId) ?? null;
   useEffect(() => { if (offenId && !offen && liste) setOffenId(null); }, [offenId, offen, liste]);
