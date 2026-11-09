@@ -384,3 +384,19 @@ describe("LiveMapView Follow-Kamera", () => {
     expect(c[1]).toBeCloseTo(41.2, 1);
   });
 });
+
+describe("LiveMapView Leer-Kasten (F5)", () => {
+  it("verdeckt keine Kollegen: er bleibt weg, solange welche fliegen, und kommt ohne sie zurueck", async () => {
+    h.va = [{ id: "v1", position: { lat: 50, lon: 8 } }];
+    render(<LiveMapView activeFlight={null} simSnapshot={null} />);
+    fireLoad();
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(document.querySelector(".aa-livemap-idle"), "Kollegen in der Luft").toBeNull();
+    // Gegenstueck: ohne sichtbare Kollegen (Anzeige aus) steht er da, danach ist er wieder weg.
+    fireEvent.click(screen.getByRole("button", { name: "VA-Verkehr" }));
+    expect(document.querySelector(".aa-livemap-idle"), "VA-Verkehr aus").not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "VA-Verkehr" }));
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(document.querySelector(".aa-livemap-idle"), "VA-Verkehr wieder an").toBeNull();
+  });
+});
