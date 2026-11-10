@@ -272,6 +272,9 @@ libc = "0.2"
 sim-msfs.workspace = true
 # v2.0.19: Vorrang für den Aufsetz-Messfaden (src/flug_aktivitaet.rs)
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+# v2.1.27: InstallLocation von AeroACARS 3 lesen (src/bruecke_v3.rs). Kein
+# reg.exe, dessen OEM-Ausgabe zerlegt Umlaute im Pfad.
+winreg = "0.55"
 
 # Kabinenansagen (Beta): Ausgabegeraet waehlbar (src/kabinenansagen.rs,
 # mod ausgabe). Nur Windows und macOS: unter Linux braeuchte cpal libasound,

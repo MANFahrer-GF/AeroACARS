@@ -45,14 +45,38 @@ fn v3_programm_in(wurzeln: &[std::path::PathBuf]) -> Option<std::path::PathBuf> 
     wurzeln.iter().map(|w| w.join(V3_ORDNER).join(V3_PROGRAMM)).find(|p| p.is_file())
 }
 
+/// Wer im Installer einen eigenen Ordner gewählt hat, ist nur über den
+/// `InstallLocation`-Wert des Uninstall-Schlüssels zu finden. NSIS schreibt
+/// ihn in Anführungszeichen. Ein veralteter Wert (Programm fehlt) zählt nicht.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn v3_programm_aus_install_location(wert: &str) -> Option<std::path::PathBuf> {
+    let ordner = wert.trim().trim_matches('"').trim();
+    if ordner.is_empty() {
+        return None;
+    }
+    Some(std::path::Path::new(ordner).join(V3_PROGRAMM)).filter(|p| p.is_file())
+}
+
 #[cfg(target_os = "windows")]
 fn installiertes_v3() -> Option<std::path::PathBuf> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+
+    let schluessel = format!(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{V3_ORDNER}");
+    let aus_registry = [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE].into_iter().find_map(|wurzel| {
+        let wert: String = RegKey::predef(wurzel)
+            .open_subkey(&schluessel)
+            .ok()?
+            .get_value("InstallLocation")
+            .ok()?;
+        v3_programm_aus_install_location(&wert)
+    });
     let wurzeln: Vec<std::path::PathBuf> = ["LOCALAPPDATA", "ProgramFiles"]
         .iter()
         .filter_map(std::env::var_os)
         .map(std::path::PathBuf::from)
         .collect();
-    v3_programm_in(&wurzeln)
+    aus_registry.or_else(|| v3_programm_in(&wurzeln))
 }
 
 /// Auf macOS tauscht die Brücke das Bundle, 2.x ist danach weg.
@@ -265,6 +289,22 @@ mod tests {
         let programm = voll.join(V3_ORDNER).join(V3_PROGRAMM);
         std::fs::write(&programm, b"x").unwrap();
         assert_eq!(v3_programm_in(&[leer, voll]), Some(programm));
+    }
+
+    #[test]
+    fn install_location_mit_und_ohne_anfuehrungszeichen() {
+        let eigener = ordner("eigener ordner");
+        std::fs::create_dir_all(&eigener).unwrap();
+        let mit = format!("\"{}\"", eigener.display());
+        let ohne = eigener.display().to_string();
+        assert_eq!(v3_programm_aus_install_location(&mit), None, "Programm fehlt noch");
+
+        let programm = eigener.join(V3_PROGRAMM);
+        std::fs::write(&programm, b"x").unwrap();
+        assert_eq!(v3_programm_aus_install_location(&mit), Some(programm.clone()));
+        assert_eq!(v3_programm_aus_install_location(&ohne), Some(programm));
+        assert_eq!(v3_programm_aus_install_location(""), None);
+        assert_eq!(v3_programm_aus_install_location("\"\""), None);
     }
 
     #[test]

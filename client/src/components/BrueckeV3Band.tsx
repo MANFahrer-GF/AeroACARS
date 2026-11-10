@@ -139,6 +139,14 @@ export function useBrueckeV3(activePhase: FlightPhase | null): BrueckeV3 {
       }
     }
     invoke("bruecke_v3_installieren").catch((e) => {
+      // Der Prozess lebt noch, der Fehlschlag ist also gemeldet: Die Marke
+      // gilt nur für den stummen Abbruch, sonst gäbe der nächste Start einen
+      // Ausweg, obwohl dort gar nichts schiefging.
+      try {
+        localStorage.removeItem(VERSUCH_KEY);
+      } catch {
+        /* Dann bleibt höchstens ein Ausweg beim nächsten Start. */
+      }
       const text = formatIpcError(e);
       const grund = /^gesperrt:(flug|warteschlange)$/.exec(text)?.[1];
       if (grund) setInfo((alt) => (alt ? { ...alt, sperre: grund as BrueckeV3Info["sperre"] } : alt));

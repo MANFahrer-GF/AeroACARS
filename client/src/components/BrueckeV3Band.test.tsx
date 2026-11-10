@@ -276,6 +276,21 @@ describe("BrueckeV3Riegel", () => {
     expect(screen.getByText("Vorerst mit AeroACARS 2 weiter")).toBeTruthy();
   });
 
+  it("ein gemeldeter Fehlschlag gibt beim nächsten Start keinen Ausweg", async () => {
+    invoke.mockResolvedValueOnce(V3).mockRejectedValueOnce("kein Netz");
+    const { unmount } = await riegel();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button"));
+    });
+    expect(screen.getByText("Vorerst mit AeroACARS 2 weiter")).toBeTruthy();
+    expect(localStorage.getItem("aeroacars.bruecke_v3.versuch")).toBeNull();
+    unmount();
+    invoke.mockResolvedValue(V3);
+    await riegel();
+    expect(gesperrt()).toBe(true);
+    expect(screen.queryByText("Vorerst mit AeroACARS 2 weiter")).toBeNull();
+  });
+
   it("öffnet ein schon installiertes 3, ohne Ausweg nach dem gelungenen Installer", async () => {
     localStorage.setItem("aeroacars.bruecke_v3.versuch", "laden:3.0.0");
     invoke.mockResolvedValue({ ...V3, installiert: true });
