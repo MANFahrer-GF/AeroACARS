@@ -180,7 +180,7 @@ describe("Schlüssel an jeder Anfrage", () => {
  * allein bliebe dabei grün.
  */
 describe("Verdrahtung der Karten", () => {
-  const KARTEN = ["LiveMapView.tsx", "LogbookView.tsx"];
+  const KARTEN = ["LiveMapView.tsx", "LogbuchFlug.tsx"];
 
   for (const datei of KARTEN) {
     it(`${datei} hängt den Umschreiber an`, async () => {

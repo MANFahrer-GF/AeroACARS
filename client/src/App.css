@@ -8519,7 +8519,7 @@ button.aa-livemap-events__row:hover {
 }
 
 /* ===================== Logbuch (LogbookView) ===================== */
-.aa-lb { max-width: 1180px; margin: 0 auto; width: 100%; }
+.aa-lb { max-width: 1500px; margin: 0 auto; width: 100%; container-type: inline-size; }
 .aa-lb-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
 .aa-lb-title { font-family: var(--font-mono); font-size: 20px; font-weight: 800; letter-spacing: 0.02em; }
 .aa-lb-sub { color: var(--text-muted); font-size: 12px; }
@@ -8527,7 +8527,7 @@ button.aa-livemap-events__row:hover {
 .aa-lb-error { padding: 12px 14px; color: var(--danger); }
 .aa-lb-btn { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 12px; cursor: pointer; font-size: 13px; }
 .aa-lb-btn:hover { background: var(--surface-2); }
-.aa-lb-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
+.aa-lb-stats { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
 .aa-lb-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px 14px; }
 .aa-lb-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
 .aa-lb-bigv { font-family: var(--font-acars); font-size: 22px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
@@ -8616,16 +8616,12 @@ button.aa-livemap-events__row:hover {
 .aa-lb-pagebtns button { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px 10px; cursor: pointer; font-size: 12px; }
 .aa-lb-pagebtns button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* Detail */
-.aa-lb-det-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; }
 .aa-lb-cs { font-family: var(--font-mono); font-size: 18px; font-weight: 800; }
 .aa-lb-det-stats { margin-left: auto; display: flex; gap: 18px; }
 .aa-lb-v { font-family: var(--font-acars); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.aa-lb-det-row { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 14px; margin-bottom: 14px; }
 .aa-lb-map { height: 440px; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; position: relative; }
 .aa-lb-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px 14px; }
 .aa-lb-panel h3 { margin: 0 0 10px; font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-muted); }
-.aa-lb-logpanel { height: 440px; display: flex; flex-direction: column; }
-.aa-lb-log { flex: 1; overflow-y: auto; }
 .aa-lb-logrow { display: grid; grid-template-columns: minmax(48px, max-content) minmax(0, 1fr); gap: 10px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent); }
 .aa-lb-logrow:last-child { border-bottom: none; }
 .aa-lb-logrow .aa-lb-t { font-variant-numeric: tabular-nums; color: var(--text-muted); font-size: 12px; }
@@ -8633,43 +8629,58 @@ button.aa-livemap-events__row:hover {
 /* Lange Meldungen umbrechen statt über den Rand zu laufen (28.09.2026). */
 .aa-lb-logrow .aa-lb-m { overflow-wrap: anywhere; }
 .aa-lb-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 7px; vertical-align: middle; }
-/* ---- Nachflug-Profil: gestapelte Bahnen, gemeinsame Zeitachse ----
-   Ersetzt das alte Ein-Diagramm-Profil. Begründung in FlightProfile.tsx:
-   MSL/AGL/Gelände in einer 40k-Skala fielen bei flachem Gelände zusammen. */
-.aa-fp { display: flex; flex-direction: column; gap: 2px; }
-.aa-fp-band { display: flex; flex-direction: column; gap: 2px; }
-.aa-fp-band header {
-  display: flex; align-items: baseline; gap: 6px;
-  font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--text-muted); font-weight: 600;
-  padding: 6px 0 0 34px;
+/* ---- Geöffneter Flug (Design 10.11.2026) ---- */
+.aa-lb-flug { flex: 1; min-height: 560px; display: flex; flex-direction: column; gap: 10px; width: 100%; container-type: inline-size; }
+.aa-lb-flug-kopf { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 14px; }
+.aa-lb-flug-wer .aa-lb-route { margin-left: 10px; font-size: 14px; }
+.aa-lb-flug-unter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.aa-lb-btn--rand { border-color: var(--accent); color: var(--accent); font-weight: 600; min-height: 36px; }
+.aa-lb-btn--rand:disabled { border-color: var(--border); color: var(--text-muted); cursor: not-allowed; }
+.aa-lb-btn--voll { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; min-height: 36px; }
+.aa-lb-btn--voll:hover:not(:disabled) { background: var(--accent); color: #fff; filter: brightness(1.1); }
+.aa-lb-flug-reiterzeile { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.aa-lb-flug-reiter { display: flex; gap: 4px; flex-wrap: wrap; }
+.aa-lb-flug-reiter button { min-height: 36px; padding: 0 18px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+.aa-lb-flug-reiter button:hover { background: var(--surface-2); }
+.aa-lb-flug-reiter button.ist-aktiv { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.aa-lb-flug-reiter button.ist-aktiv:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.aa-lb-flug-feld { position: relative; flex: 1; min-height: 0; }
+.aa-lb-flug-karte, .aa-lb-flug-blatt { position: absolute; inset: 0; min-height: 0; }
+.aa-lb-flug-karte { display: flex; flex-direction: column; background: #0b121b; border-radius: var(--r-md); overflow: hidden; }
+.aa-lb-flug-blatt { overflow-y: auto; }
+.aa-lb-flug-karte.ist-weg, .aa-lb-flug-blatt.ist-weg { visibility: hidden; pointer-events: none; }
+.aa-lb-flug-karte .fk { height: 100%; box-sizing: border-box; }
+.aa-lb-flug-karte .fk-titel { display: none; }
+.aa-lb-linie { display: flex; flex-direction: column; height: 100%; background: var(--surface); }
+.aa-lb-linie-hinweis { margin: 0; padding: 10px 14px; color: var(--text); font-weight: 600; border-bottom: 1px solid var(--border); }
+.aa-lb-linie .aa-lb-map { flex: 1; height: auto; min-height: 0; border: 0; border-radius: 0; }
+.aa-lb-flug-blatt .aa-lb-log { overflow: visible; }
+/* Band „laufender Flug“ */
+.aa-lb-live { display: flex; flex-direction: column; gap: 10px; background: var(--surface); border: 1px solid var(--accent); border-radius: var(--r-md); padding: 10px 14px; margin-bottom: 12px; }
+.aa-lb-live-zeile { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; }
+.aa-lb-live-titel { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.aa-lb-live-stand { margin-left: auto; font-size: 13px; }
+/* Tabellenspalten */
+.aa-lb-cs3 { font-weight: 700; white-space: nowrap; }
+.aa-lb-bb { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.aa-lb-bb-balken { width: 62px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; display: block; }
+.aa-lb-bb-balken > span { display: block; height: 100%; }
+.aa-lb-bb-balken .ist-gut { background: var(--success); }
+.aa-lb-bb-balken .ist-teil { background: var(--warning); }
+.aa-lb-karte-ja { color: var(--success); font-weight: 600; }
+@container (max-width: 1100px) { .aa-lb-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@container (max-width: 860px) {
+  .aa-lb-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .aa-lb-card table, .aa-lb-card tbody { display: block; }
+  .aa-lb-card thead { display: none; }
+  .aa-lb-card tbody tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; padding: 10px 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+  .aa-lb-card tbody td { padding: 0; border: 0; }
+  .aa-lb-card td.num { text-align: left; }
+  .aa-lb-card td[data-feld]::before { content: attr(data-feld) " "; display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+  .aa-lb-chev { display: none; }
 }
-.aa-fp-unit { text-transform: none; letter-spacing: 0; opacity: 0.75; font-weight: 500; }
-.aa-fp-legend { display: inline-flex; align-items: center; gap: 2px; text-transform: none; letter-spacing: 0; }
-.aa-fp-legend i { display: inline-block; width: 9px; height: 2px; border-radius: 1px; margin: 0 3px 0 8px; vertical-align: middle; }
-/* Messwerte am Fadenkreuz: rechtsbündig, damit sie beim Wandern nicht springen. */
-.aa-fp-read {
-  margin-left: auto; display: inline-flex; gap: 10px;
-  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-  text-transform: none; letter-spacing: 0; color: var(--text);
-}
-.aa-fp-read em { font-style: normal; color: var(--text-muted); font-weight: 500; }
-.aa-fp-plot { position: relative; padding-left: 34px; }
-.aa-fp-plot svg { position: absolute; inset: 0 0 0 34px; width: calc(100% - 34px); height: 100%; }
-.aa-fp-ylabs { position: absolute; inset: 0; width: 34px; pointer-events: none; }
-.aa-fp-ylabs span {
-  position: absolute; right: 4px; transform: translateY(-50%);
-  font-size: 9px; color: var(--text-muted); font-variant-numeric: tabular-nums;
-}
-.aa-fp-xaxis {
-  position: relative; display: flex; justify-content: space-between;
-  margin-left: 34px; padding-top: 4px;
-  font-size: 9px; color: var(--text-muted); font-variant-numeric: tabular-nums;
-}
-.aa-fp-xnow {
-  position: absolute; transform: translateX(-50%);
-  color: var(--text); font-weight: 600;
-  background: var(--surface); padding: 0 4px; border-radius: 3px;
+@container (max-width: 760px) {
+  .aa-lb-det-stats { margin-left: 0; width: 100%; flex-wrap: wrap; }
 }
 
 /* ===== LAN remote control (v0.16.0, #LAN-Remote) ===== */

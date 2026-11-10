@@ -426,7 +426,6 @@
     "chat": "Chat",
     "telemetrie": "Telemetria",
     "notizblock": "Blocco note",
-    "bordbuch": "Diario di bordo",
     "bilder": "Immagini"
   },
   "nav": {
@@ -1859,7 +1858,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Un volo senza piano di volo dal sito GSG non ha passeggeri né carico. Ora AeroACARS lo segnala. Con la nuova versione di AeroACARS inserisci tu il carico alla partenza VFR, e l'auto-start in attesa ti avvisa nella banda del simulatore e con una notifica. Un breve test dell'interruttore del beacon non attiva più gli annunci a terra: il beacon conta solo quando resta acceso per 15 secondi e l'aereo è caricato, al più tardi vale il pushback. Con la nuova versione di AeroACARS anche la musica d'imbarco termina solo allora. Nell'elenco delle prenotazioni, “Prenota un volo” porta ora direttamente a operativo voli, voli live, volo libero e SkyAdventures sul sito. Con la nuova versione di AeroACARS, “Crew Story” su una prenotazione apre una piccola finestra per la storia del volo. La mappa live ora mostra i punti immagine di tutti i voli, anche durante un volo. Mentre un volo è in corso, i voli precedenti sono compressi nella scheda Immagini; un clic sull'intestazione li espande. Passando il mouse su un punto immagine nelle mappe ora appare una piccola anteprima dell'immagine con volo, ora, quota e fase. I punti immagine sulla mappa live e sulla mappa del volo ora si possono nascondere con l'interruttore «Immagini». Ora le immagini si possono vedere ingrandite: con la lente sulla miniatura, con un clic sull'immagine a destra e con i punti sulle mappe. La mappa del volo mostra ora le immagini del volo come punti. Ora le immagini si possono inviare anche dal tablet tramite il bridge LAN. Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato. Le immagini in modalità finestra mostrano ora solo l'immagine del simulatore, senza barra del titolo e bordo. La mappa live è stata ricostruita dall'interno: passando tra chiaro, scuro e satellite, rotta, traccia, traffico e rete restano semplicemente al loro posto. La barra della mappa ha pulsanti fissi in pochi gruppi, il pannello informazioni volo si può chiudere e nulla si sovrappone più, anche nelle finestre piccole. I punti immagine sono sulla mappa appena si apre, anche senza un volo in corso, e il globo resta quando si cambia mappa e dopo il riavvio."
+    "neu_text": "Logbook e diario di bordo sono ora una sola scheda: aprendo un volo nel logbook trovi in un unico posto la mappa completa con riproduzione, il diario di bordo con checklist e profilo di volo e il registro. Le voci del diario compaiono sulla mappa, “Sulla mappa” porta al momento e “Vedi atterraggio” apre l’atterraggio di quel volo. La scheda separata del diario di bordo non c’è più. Un volo senza piano di volo dal sito GSG non ha passeggeri né carico. Ora AeroACARS lo segnala. Con la nuova versione di AeroACARS inserisci tu il carico alla partenza VFR, e l'auto-start in attesa ti avvisa nella banda del simulatore e con una notifica. Un breve test dell'interruttore del beacon non attiva più gli annunci a terra: il beacon conta solo quando resta acceso per 15 secondi e l'aereo è caricato, al più tardi vale il pushback. Con la nuova versione di AeroACARS anche la musica d'imbarco termina solo allora. Nell'elenco delle prenotazioni, “Prenota un volo” porta ora direttamente a operativo voli, voli live, volo libero e SkyAdventures sul sito. Con la nuova versione di AeroACARS, “Crew Story” su una prenotazione apre una piccola finestra per la storia del volo. La mappa live ora mostra i punti immagine di tutti i voli, anche durante un volo. Mentre un volo è in corso, i voli precedenti sono compressi nella scheda Immagini; un clic sull'intestazione li espande. Passando il mouse su un punto immagine nelle mappe ora appare una piccola anteprima dell'immagine con volo, ora, quota e fase. I punti immagine sulla mappa live e sulla mappa del volo ora si possono nascondere con l'interruttore «Immagini». Ora le immagini si possono vedere ingrandite: con la lente sulla miniatura, con un clic sull'immagine a destra e con i punti sulle mappe. La mappa del volo mostra ora le immagini del volo come punti. Ora le immagini si possono inviare anche dal tablet tramite il bridge LAN. Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato. Le immagini in modalità finestra mostrano ora solo l'immagine del simulatore, senza barra del titolo e bordo. La mappa live è stata ricostruita dall'interno: passando tra chiaro, scuro e satellite, rotta, traccia, traffico e rete restano semplicemente al loro posto. La barra della mappa ha pulsanti fissi in pochi gruppi, il pannello informazioni volo si può chiudere e nulla si sovrappone più, anche nelle finestre piccole. I punti immagine sono sulla mappa appena si apre, anche senza un volo in corso, e il globo resta quando si cambia mappa e dopo il riavvio."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -2146,17 +2145,9 @@
       "revoke_done": "Dispositivi disconnessi ✓"
     }
   },
-  "flight_profile": {
-    "title_alt": "Altitudine MSL",
-    "title_agl": "Altitudine AGL",
-    "title_speed": "Velocità",
-    "title_vs": "Velocità verticale",
-    "title_fuel": "Carburante a bordo",
-    "no_altitude_data": "Nessun dato di altitudine."
-  },
   "logbook_view": {
     "section_title": "Logbook",
-    "section_subtitle": "i tuoi voli — in tempo reale da phpVMS",
+    "section_subtitle": "I tuoi voli, mappa, diario di bordo e registro in un unico posto",
     "stat_flights": "Voli",
     "stat_hours": "Ore",
     "stat_distance": "Distanza",
@@ -2187,7 +2178,6 @@
     "pager_page": "Pagina {{page}} / {{pages}}",
     "detail_back": "← Logbook",
     "detail_log_title": "Registro di volo",
-    "detail_profile_title": "Profilo di volo",
     "status_accepted": "accettato",
     "status_pending": "in attesa",
     "status_rejected": "rifiutato",
@@ -2198,7 +2188,22 @@
     "upload_art_eingabe": "Dati di atterraggio",
     "upload_art_protokoll": "Registro di volo",
     "upload_konflikt_marke": "Conflitto di caricamento",
-    "upload_konflikt": "Conflitto: il server live ha già dati diversi per questo atterraggio. Questa versione resta salvata e non viene inviata di nuovo — segnalalo al team GSG."
+    "upload_konflikt": "Conflitto: il server live ha già dati diversi per questo atterraggio. Questa versione resta salvata e non viene inviata di nuovo — segnalalo al team GSG.",
+    "table_flight": "Volo",
+    "table_map": "Mappa",
+    "kein_bordbuch": "nessun diario",
+    "karte_ja": "Sì",
+    "karte_linie": "Solo linea",
+    "reiter_aria": "Vista del volo",
+    "reiter_karte": "Mappa",
+    "reiter_protokoll": "Registro",
+    "vollbild": "Schermo intero",
+    "landung_ansehen": "Vedi atterraggio",
+    "keine_landung": "Per questo volo non esiste una registrazione dell’atterraggio.",
+    "keine_aufzeichnung": "Per questo volo non è disponibile alcuna registrazione",
+    "live_stand": "Diario di bordo finora {{ok}} di {{von}} completati",
+    "live_auf": "Vedi dal vivo",
+    "live_zu": "Chiudi dal vivo"
   },
   "error_reporting": {
     "section_title": "Telemetria errori (anonima)",
@@ -4268,7 +4273,9 @@
       "leer": "Dopo qualche volo qui vedrai quali gesti sono già diventati abitudine.",
       "in_folge": "{{count}} di fila",
       "rekord": "Novità: {{was}} {{count}} di fila, la tua serie più lunga finora.",
-      "zieht_an": "{{was}} sta migliorando: fatto in {{von5}} degli ultimi 5 voli."
+      "zieht_an": "{{was}} sta migliorando: fatto in {{von5}} degli ultimi 5 voli.",
+      "alle": "Mostra tutto",
+      "weniger": "Mostra meno"
     },
     "einst": {
       "titel": "Diario di bordo",
@@ -4323,7 +4330,13 @@
       "nicht_messbar": "Le voci che il tuo aereo non comunica ad AeroACARS appaiono nel diario come “non misurabile” con il motivo. Non contano né a favore né contro di te.",
       "rolltempo_grenzen": "Limite della velocità di rullaggio:"
     },
-    "wert_atc": "SU ATC"
+    "wert_atc": "SU ATC",
+    "kein_eintrag": "Per questo volo non esiste un diario di bordo.",
+    "auf_karte": "Sulla mappa",
+    "auf_karte_text": "Diario di bordo: {{was}}",
+    "auf_karte_erklaerung": "Voci del tuo diario di bordo, con ora e quota del momento.",
+    "nach_atc_markieren": "Segna come da ATC",
+    "profil_erklaerung": "Ogni punto mostra quando e a quale quota è stato completato."
   },
   "vermessen": {
     "titel": "Misura aereo",

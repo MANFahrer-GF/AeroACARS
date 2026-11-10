@@ -52,8 +52,6 @@ const loadLogbookView = () =>
   import("./components/LogbookView").then((m) => ({ default: m.LogbookView }));
 const loadLandingPanel = () =>
   import("./components/LandingPanel").then((m) => ({ default: m.LandingPanel }));
-const loadBordbuchView = () =>
-  import("./components/bordbuch/BordbuchView").then((m) => ({ default: m.BordbuchView }));
 const loadReleaseNotesModal = () =>
   import("./components/ReleaseNotesModal").then((m) => ({ default: m.ReleaseNotesModal }));
 const loadCpdlcPanel = () =>
@@ -63,7 +61,6 @@ const loadCpdlcPanel = () =>
 const LAZY_VIEWS = [
   loadCpdlcPanel,        // klein, oft gebraucht → zuerst
   loadLandingPanel,
-  loadBordbuchView,
   loadLogbookView,
   loadLiveMapView,       // der 1,7-MB-Brocken zuletzt
   loadReleaseNotesModal,
@@ -100,7 +97,6 @@ const LiveMapView = lazy(loadLiveMapView);
 const BilderTab = lazy(() => import("./components/bilder/BilderTab").then((m) => ({ default: m.BilderTab })));
 const LogbookView = lazy(loadLogbookView);
 const LandingPanel = lazy(loadLandingPanel);
-const BordbuchView = lazy(loadBordbuchView);
 const ReleaseNotesModal = lazy(loadReleaseNotesModal);
 const CpdlcPanel = lazy(loadCpdlcPanel);
 import { UpdateButton } from "./components/UpdateButton";
@@ -341,6 +337,9 @@ function App() {
     string | null
   >(null);
   const [tab, setTab] = useState<Tab>("flug");
+  // Sprung aus dem Logbuch: welcher Flug im Tab Landung gleich offen sein soll
+  const [landungFokus, setLandungFokus] = useState<string | null>(null);
+  const landungFokusFertig = useCallback(() => setLandungFokus(null), []);
   // Fähigkeit `bilder-1` (P-11.33): ohne sie gibt es weder Reiter noch Übernahme. Das Paket
   // nennt sie bewusst nicht in `requires`, ältere Programme bleiben so auf der neuen Generation.
   const [bilderAn, setBilderAn] = useState(false);
@@ -1238,19 +1237,22 @@ function App() {
 
       {status.kind === "loggedIn" && tab === "logbook" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
-          <LogbookView />
+          <LogbookView
+            laufenderFlug={activeFlight ? {
+              kennung: `${activeFlight.airline_icao} ${activeFlight.flight_number}`.trim(),
+              dep: activeFlight.dpt_airport,
+              arr: activeFlight.arr_airport,
+              phase: t(`active_flight.phase.${activeFlight.phase}`, { defaultValue: "" }),
+              flugzeug: [activeFlight.aircraft_icao, activeFlight.planned_registration].filter(Boolean).join(" · "),
+            } : null}
+            onLandungAnsehen={(id) => { setLandungFokus(id); setTab("landing"); }}
+          />
         </Suspense>
       )}
 
       {status.kind === "loggedIn" && tab === "landing" && (
         <Suspense fallback={<div className="lazy-fallback">…</div>}>
-          <LandingPanel />
-        </Suspense>
-      )}
-
-      {status.kind === "loggedIn" && tab === "bordbuch" && (
-        <Suspense fallback={<div className="lazy-fallback">…</div>}>
-          <BordbuchView />
+          <LandingPanel fokusPirepId={landungFokus} onFokusVerbraucht={landungFokusFertig} />
         </Suspense>
       )}
 

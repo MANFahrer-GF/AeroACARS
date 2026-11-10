@@ -2,24 +2,18 @@
 // logbook_pireps / logbook_stats / logbook_pirep), nichts lokal gespeichert.
 // Liste (Stats + Tabelle, keine Filter) → Klick → Detail mit geflogenem Track,
 // 3-Linien-Höhenprofil (MSL/AGL/Gelände) und Fluglogbuch.
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { invoke } from "../lib/ipc";
-import { FlightProfile } from "./FlightProfile";
-import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
-import { ohneDatumsgrenzenSprung } from "../lib/datumsgrenze";
-import { PruefstatusKasten, PruefstatusMarke, usePirepPruefstatus } from "./PirepPruefstatus";
-import { UploadKasten, UploadMarke, useUploadsAusstehend } from "./UploadAusstehend";
+import { invoke, listen } from "../lib/ipc";
+import { bilanz, type Eintrag } from "../lib/bordbuch";
+import { PruefstatusMarke, usePirepPruefstatus } from "./PirepPruefstatus";
+import { UploadMarke, useUploadsAusstehend } from "./UploadAusstehend";
 import { BordbuchRoutine } from "./bordbuch/BordbuchRoutine";
-// Flugkarte (Etappe 3): erst beim Öffnen laden — deck.gl soll den Start nicht bremsen
-const FlugkarteFenster = lazy(() => import("../flugkarte/FlugkarteFenster"));
+import { BordbuchLiveBand, type LaufenderFlug } from "./bordbuch/BordbuchLiveBand";
+import { LogbuchFlug } from "./LogbuchFlug";
+import { badge, dur, fmtDate, type Detail, type Item } from "./logbuchForm";
 
-// Die Stil-Adressen kommen vom Server, damit ein Schluesselwechsel bei
-// CARTO kein Release kostet — siehe `BasemapContext`. Die eingebauten
-// Werte greifen, solange der Server nichts gesagt hat.
 const PAGE = 25;
 
 interface Stats {
@@ -27,45 +21,6 @@ interface Stats {
   avg_landing_fpm?: number; rank?: string; rank_image?: string;
   flights_this_month?: number; hours_this_year?: number;
 }
-interface Item {
-  id: string; date?: string; dep_icao?: string; arr_icao?: string; callsign?: string;
-  aircraft_icao?: string; aircraft_reg?: string; status?: string;
-  duration_min?: number; distance_nm?: number; landing_rate_fpm?: number;
-}
-interface RoutePt {
-  lat: number; lon: number;
-  /** Zeit seit Flugbeginn in ms. */
-  t?: number;
-  alt_ft?: number;
-  /** Hoehe ueber Grund. Fehlte in der alten Stratos-API komplett. */
-  agl_ft?: number;
-  /** Gelaendehoehe, serverseitig als MSL-AGL gerechnet. `null` wenn eine
-   *  der beiden Hoehen fehlt — dann darf NICHT 0 gezeichnet werden, das
-   *  waere Meereshoehe unter einem Flugzeug ueber den Alpen. */
-  gnd_ft?: number | null;
-  ias_kt?: number | null;
-  vs_fpm?: number | null;
-  fuel?: number | null;
-  ff?: number | null;
-}
-interface Detail extends Item {
-  route?: RoutePt[];
-  log?: { t: number; level?: string; message: string }[];
-}
-
-const pad = (n: number) => String(n).padStart(2, "0");
-const dur = (m?: number) => (m == null ? "—" : m >= 60 ? `${Math.floor(m / 60)}h ${pad(m % 60)}m` : `0h ${pad(m)}m`);
-const elapsed = (ms: number) => { const t = Math.round(ms / 60000); return `${pad(Math.floor(t / 60))}:${pad(t % 60)}`; };
-/** v0.19.x FIX: was a hand-rolled German-only month-abbreviation array
- *  (JAN..DEZ), shown regardless of locale. `toLocaleDateString` gives the
- *  same "12 AUG 2026"-style layout while actually respecting `locale`. */
-const fmtDate = (iso: string | undefined, locale: string) => {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  const day = pad(d.getDate());
-  const month = d.toLocaleDateString(locale, { month: "short" }).toUpperCase().replace(/\.$/, "");
-  return `${day} ${month} ${d.getFullYear()}`;
-};
 /** Der Pilot braucht keinen Stacktrace, aber wir dürfen die Ursache auch
  *  nicht verschlucken — Klartext vorn, technisches Detail dahinter. */
 const errText = (e: unknown, t: TFunction): string => {
@@ -111,22 +66,13 @@ export async function invokeWithRetry<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-const statusSlug = (s?: string) => (s === "accepted" || s === "pending" || s === "rejected" ? s : "pending");
-/** v0.19.x FIX: the badge text used to be the raw English status slug
- *  itself ("accepted"/"pending"/"rejected"), shown verbatim regardless
- *  of locale — the CSS class keeps the English slug (styling hook), only
- *  the visible label is now localized. */
-const badge = (s: string | undefined, t: TFunction) =>
-  `<span class="aa-lb-badge aa-lb-b-${statusSlug(s)}">${esc(t(`logbook_view.status_${statusSlug(s)}`))}</span>`;
-const esc = (s: unknown) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
+interface Props {
+  laufenderFlug?: LaufenderFlug | null;
+  /** Springt in den Tab Landung, direkt auf diesen Flug */
+  onLandungAnsehen?: (pirepId: string) => void;
+}
 
-export function LogbookView() {
-  const grundlage = useKartengrundlage();
-  // Die Karte wird einmalig gebaut; der Schlüssel kommt erst danach vom
-  // Server. Über diesen Verweis liest `kartenAnfrage` bei jeder Kachel
-  // den aktuellen Stand — siehe dort.
-  const grundlageRef = useRef(grundlage);
-  grundlageRef.current = grundlage;
+export function LogbookView({ laufenderFlug = null, onLandungAnsehen }: Props) {
   const { t, i18n } = useTranslation();
   const [stats, setStats] = useState<Stats | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -141,7 +87,7 @@ export function LogbookView() {
   // nochmal. Mit der ID kann genau die angeklickte Zeile antworten.
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [karteOffen, setKarteOffen] = useState(false);
+  const [bordbuecher, setBordbuecher] = useState<Eintrag[]>([]);
   // Manual "Erneut versuchen" — bumped on click, included in the fetch
   // effect's deps below so a click re-runs it even when `page` didn't
   // change (all automatic retries in invokeWithRetry already exhausted).
@@ -152,12 +98,23 @@ export function LogbookView() {
   const pruefstatus = usePirepPruefstatus(items.map((f) => f.id));
   // P-7.24: noch nicht bei live angekommene Eingaben und Flugprotokolle.
   const uploads = useUploadsAusstehend();
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const mapElRef = useRef<HTMLDivElement | null>(null);
+  const bordbuchJe = useMemo(() => new Map(bordbuecher.map((e) => [e.pirep_id, e])), [bordbuecher]);
 
   // Stats einmal laden
   useEffect(() => {
     invoke<Stats>("logbook_stats").then(setStats).catch(() => {});
+  }, []);
+
+  // Bordbuch je Flug (für die Spalte): lokal, also ohne Warten auf den Server
+  useEffect(() => {
+    const laden = () => { invoke<Eintrag[]>("bordbuch_liste").then(setBordbuecher).catch(() => {}); };
+    laden();
+    let aktiv = true;
+    let weg: (() => void) | undefined;
+    void listen("bordbuch_geaendert", laden)
+      .then((u) => { if (aktiv) weg = u; else u(); })
+      .catch(() => undefined);
+    return () => { aktiv = false; weg?.(); };
   }, []);
 
   // Seite laden
@@ -192,94 +149,22 @@ export function LogbookView() {
     }
   }
 
-  // Detail-Karte + Profil zeichnen
-  useEffect(() => {
-    if (!detail || !mapElRef.current) return;
-    const route = (detail.route ?? []).filter((p) => typeof p.lat === "number" && typeof p.lon === "number");
-    const dark = document.documentElement.dataset.theme === "dark";
-    const map = new maplibregl.Map({
-      container: mapElRef.current,
-      style: dark ? grundlage.dunkel : grundlage.hell,
-      center: route.length ? [route[Math.floor(route.length / 2)].lon, route[Math.floor(route.length / 2)].lat] : [6, 48],
-      zoom: 5,
-      attributionControl: { compact: true },
-      // Der Schlüssel gehört an JEDE Anfrage, nicht nur an die
-      // Stil-Adresse — die style.json verweist selbst weiter auf
-      // TileJSON, Kacheln, Schriften und Sprites. Siehe `kartenAnfrage`.
-      transformRequest: kartenAnfrage(() => grundlageRef.current.schluessel),
-    });
-    mapRef.current = map;
-    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#0a84ff";
-    map.on("load", () => {
-      // Erst filtern, dann zaehlen: fallen kaputte Punkte raus, darf die
-      // Karte nicht mit einem leeren Track weitermachen (Cloud-QS 25.09.2026).
-      const coords = ohneDatumsgrenzenSprung(route.map((p) => [p.lon, p.lat] as [number, number]));
-      if (coords.length >= 2) {
-        map.addSource("trk", { type: "geojson", data: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } } });
-        map.addLayer({ id: "trk", type: "line", source: "trk", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": accent, "line-width": 3 } });
-        const pin = (c: [number, number], col: string) => { const el = document.createElement("div"); el.style.cssText = `width:12px;height:12px;border-radius:50%;background:${col};border:2px solid #fff;box-shadow:0 0 3px rgba(0,0,0,.5)`; new maplibregl.Marker({ element: el }).setLngLat(c).addTo(map); };
-        pin(coords[0], "#30d158");
-        pin(coords[coords.length - 1], "#ff453a");
-        const b = coords.reduce((acc, c) => acc.extend(c), new maplibregl.LngLatBounds(coords[0], coords[0]));
-        map.fitBounds(b, { padding: 50, duration: 0 });
-      }
-    });
-    return () => { map.remove(); mapRef.current = null; };
-  }, [detail]);
-
   if (detail) {
-    const route = detail.route ?? [];
     return (
-      <section className="aa-lb">
-        <div className="aa-lb-det-head">
-          <button type="button" className="aa-lb-btn" onClick={() => { setKarteOffen(false); setDetail(null); }}>{t("logbook_view.detail_back")}</button>
-          <span className="aa-lb-cs">{detail.callsign}</span>
-          <span className="aa-lb-route">{detail.dep_icao}<span className="aa-lb-arr">→</span>{detail.arr_icao}</span>
-          <span className="aa-lb-muted">{detail.aircraft_icao} · {detail.aircraft_reg}</span>
-          <span dangerouslySetInnerHTML={{ __html: badge(detail.status, t) }} />
-          <PruefstatusMarke status={pruefstatus[detail.id]} />
-          <button type="button" className="aa-lb-btn" onClick={() => setKarteOffen(true)}>🗺 {t("flugkarte.fenster.titel")}</button>
-          <div className="aa-lb-det-stats">
-            <div><div className="aa-lb-k">{t("logbook_view.table_duration")}</div><div className="aa-lb-v">{dur(detail.duration_min)}</div></div>
-            <div><div className="aa-lb-k">{t("logbook_view.table_distance")}</div><div className="aa-lb-v">{detail.distance_nm} nm</div></div>
-            <div><div className="aa-lb-k">{t("logbook_view.table_landing")}</div><div className="aa-lb-v">{detail.landing_rate_fpm} fpm</div></div>
-          </div>
-        </div>
-        <PruefstatusKasten status={pruefstatus[detail.id]} />
-        <UploadKasten eintraege={uploads[detail.id]} />
-        <div className="aa-lb-det-row">
-          <div className="aa-lb-map" ref={mapElRef} />
-          <div className="aa-lb-panel aa-lb-logpanel">
-            <h3>{t("logbook_view.detail_log_title")}</h3>
-            <div className="aa-lb-log" dangerouslySetInnerHTML={{
-              __html: (detail.log ?? []).map((l) => {
-                const phase = l.message.startsWith("Phase:");
-                // v0.19-Stage-E: "phase" (ohne Praefix) kollidierte mit der
-                // GLOBALEN .phase-Klasse (App.tsx Lade-/Session-Check-Screen)
-                // — Grenzflaeche/Hintergrund/Padding/flex-column von dort
-                // ueberlagerten die Grid-Zeile hier, sichtbar als kaputte
-                // Kaesten im Fluglogbuch. Eigener, praefixierter Modifier.
-                return `<div class="aa-lb-logrow ${phase ? "aa-lb-logrow--phase" : ""}"><span class="aa-lb-t">${elapsed(l.t)}</span><span class="aa-lb-m">${phase ? '<span class="aa-lb-dot"></span>' : ""}${esc(l.message)}</span></div>`;
-              }).join(""),
-            }} />
-          </div>
-        </div>
-        <div className="aa-lb-panel">
-          <h3>{t("logbook_view.detail_profile_title")}</h3>
-          <FlightProfile route={route} />
-        </div>
-        {karteOffen && (
-          <Suspense fallback={null}>
-            <FlugkarteFenster pirepId={detail.id} onClose={() => setKarteOffen(false)} />
-          </Suspense>
-        )}
-      </section>
+      <LogbuchFlug
+        detail={detail}
+        pruefstatus={pruefstatus[detail.id]}
+        uploads={uploads[detail.id]}
+        onZurueck={() => setDetail(null)}
+        onLandungAnsehen={onLandungAnsehen}
+      />
     );
   }
 
   return (
     <section className="aa-lb">
       <div className="aa-lb-head"><div className="aa-lb-title">{t("logbook_view.section_title")}</div><div className="aa-lb-sub">{t("logbook_view.section_subtitle")}</div></div>
+      <BordbuchLiveBand flug={laufenderFlug} />
       <div className="aa-lb-stats">
         <div className="aa-lb-stat"><div className="aa-lb-k">{t("logbook_view.stat_flights")}</div><div className="aa-lb-bigv">{stats?.total_flights ?? "—"}</div></div>
         <div className="aa-lb-stat"><div className="aa-lb-k">{t("logbook_view.stat_hours")}</div><div className="aa-lb-bigv">{stats?.hours_flown != null ? Math.round(stats.hours_flown) : "—"}<small> {t("logbook_view.unit_hours")}</small></div></div>
@@ -309,11 +194,13 @@ export function LogbookView() {
           <thead>
             <tr>
               <th>{t("logbook_view.table_date")}</th>
+              <th>{t("logbook_view.table_flight")}</th>
               <th>{t("logbook_view.table_route")}</th>
               <th>{t("logbook_view.table_type")}</th>
               <th className="num">{t("logbook_view.table_duration")}</th>
-              <th className="num">{t("logbook_view.table_distance")}</th>
               <th className="num">{t("logbook_view.table_landing")}</th>
+              <th>{t("bordbuch.titel")}</th>
+              <th>{t("logbook_view.table_map")}</th>
               <th>{t("logbook_view.table_status")}</th>
               <th></th>
             </tr>
@@ -326,11 +213,13 @@ export function LogbookView() {
                 onClick={() => openDetail(f.id)}
               >
                 <td className="aa-lb-muted">{fmtDate(f.date, i18n.language)}</td>
-                <td><span className="aa-lb-rt">{f.dep_icao}<span className="aa-lb-arr">→</span>{f.arr_icao}</span><div className="aa-lb-cs2">{f.callsign}</div></td>
+                <td className="aa-lb-cs3">{f.callsign}</td>
+                <td><span className="aa-lb-rt">{f.dep_icao}<span className="aa-lb-arr">→</span>{f.arr_icao}</span></td>
                 <td>{f.aircraft_icao} <span className="aa-lb-muted">· {f.aircraft_reg}</span></td>
-                <td className="num">{dur(f.duration_min)}</td>
-                <td className="num">{f.distance_nm} nm</td>
-                <td className="num">{f.landing_rate_fpm} fpm</td>
+                <td className="num" data-feld={t("logbook_view.table_duration")}>{dur(f.duration_min)}<div className="aa-lb-cs2">{f.distance_nm} nm</div></td>
+                <td className="num" data-feld={t("logbook_view.table_landing")}>{f.landing_rate_fpm} fpm</td>
+                <td data-feld={t("bordbuch.titel")}><BordbuchZelle e={bordbuchJe.get(f.id)} t={t} /></td>
+                <td data-feld={t("logbook_view.table_map")}><KartenZelle da={pruefstatus[f.id]?.flug_log_vorhanden} t={t} /></td>
                 <td>
                   <span dangerouslySetInnerHTML={{ __html: badge(f.status, t) }} />
                   <PruefstatusMarke status={pruefstatus[f.id]} />
@@ -362,4 +251,25 @@ export function LogbookView() {
       </div>
     </section>
   );
+}
+
+function BordbuchZelle({ e, t }: { e: Eintrag | undefined; t: TFunction }) {
+  if (!e) return <span className="aa-lb-muted">{t("logbook_view.kein_bordbuch")}</span>;
+  if (e.aus_grund) return <span className="aa-lb-muted">{t(`bordbuch.aus_kurz.${e.aus_grund}`)}</span>;
+  const b = bilanz(e.punkte, e.eingeschaltet);
+  if (b.von === 0) return <span className="aa-lb-muted">—</span>;
+  return (
+    <span className="aa-lb-bb">
+      <span className="aa-lb-bb-balken" aria-hidden><span className={b.ok === b.von || b.ok / b.von >= 0.85 ? "ist-gut" : "ist-teil"} style={{ width: `${Math.round((b.ok / b.von) * 100)}%` }} /></span>
+      <span>{t("bordbuch.bilanz_kurz", { ok: b.ok, von: b.von })}</span>
+    </span>
+  );
+}
+
+/** Ob es die Flugaufzeichnung gibt, sagt der Prüfstatus-Abruf (`flug_log_vorhanden`) — ohne die Akte zu laden. */
+function KartenZelle({ da, t }: { da: boolean | null | undefined; t: TFunction }) {
+  if (da == null) return <span className="aa-lb-muted">—</span>;
+  return da
+    ? <span className="aa-lb-karte-ja">{t("logbook_view.karte_ja")}</span>
+    : <span className="aa-lb-muted">{t("logbook_view.karte_linie")}</span>;
 }

@@ -426,7 +426,6 @@
     "chat": "Chat",
     "telemetrie": "Telemetrie",
     "notizblock": "Notizblock",
-    "bordbuch": "Bordbuch",
     "bilder": "Bilder"
   },
   "nav": {
@@ -1859,7 +1858,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Ein Flug ohne Flugplan von der GSG-Seite hat keine Passagiere und keine Fracht. Darauf weist AeroACARS jetzt hin. Mit der neuen AeroACARS-Version trägst du beim VFR-Start die Beladung selbst ein, und der wartende Auto-Start warnt dich im Sim-Band und per Mitteilung. Die Boden-Ansagen vor dem Start kommen nicht mehr durch einen kurzen Schaltertest am Beacon: Das Beacon zählt erst, wenn es 15 Sekunden an bleibt und das Flugzeug beladen ist, spätestens zählt der Pushback. Mit der neuen AeroACARS-Version endet auch die Boarding-Musik erst dann. In der Buchungsliste führt „Flug buchen“ jetzt direkt zu Flugplan, Live-Flügen, Freiflug und SkyAdventures auf der Webseite. Mit der neuen AeroACARS-Version öffnet „Crew Story“ an der Buchung ein kleines Fenster für die Story zum Flug. Auf der Live-Karte stehen die Bildpunkte aller Flüge jetzt auch während eines Flugs. Läuft ein Flug, sind frühere Flüge im Bilder-Tab eingeklappt; ein Klick auf die Kopfzeile klappt sie auf. Fährt man mit der Maus über einen Bildpunkt auf den Karten, erscheint jetzt eine kleine Vorschau des Bildes mit Flug, Uhrzeit, Höhe und Phase. Die Bildpunkte lassen sich auf der Live-Karte und in der Flugkarte jetzt über den Schalter „Bilder“ ausblenden. Bilder lassen sich jetzt groß ansehen: über die Lupe auf der Kachel, einen Klick auf das Bild rechts und über die Punkte auf den Karten. In der Flugkarte stehen die Bilder des Flugs jetzt als Punkte. Bilder lassen sich jetzt auch vom Tablet über die LAN-Brücke senden. Mit der neuen AeroACARS-Version: Fotos beim Aussteigen gehören noch zum Flug. Bis 30 Minuten nach der Abgabe landen Bilder automatisch beim abgegebenen Flug, solange das Flugzeug am Abstellplatz steht. Bilder im Fenstermodus zeigen jetzt nur noch das Simulatorbild, ohne Titelleiste und Rand. Die Live-Karte ist von innen neu aufgebaut: Beim Wechsel zwischen Hell, Dunkel und Satellit bleiben Route, Spur, Verkehr und Netzanzeige einfach stehen. Die Kartenleiste hat feste Knöpfe in wenigen Gruppen, das Fluginfo-Panel lässt sich einklappen, und auch in kleinen Fenstern überdeckt sich nichts mehr. Die Bildpunkte stehen gleich beim Öffnen auf der Karte, auch ohne laufenden Flug, und die Weltkugel bleibt beim Wechsel der Karte und nach dem Neustart erhalten."
+    "neu_text": "Logbuch und Bordbuch sind jetzt ein Tab: Öffnest du einen Flug im Logbuch, siehst du die volle Flugkarte mit Wiedergabe, das Bordbuch mit Checkliste und Flugprofil und das Protokoll an einem Ort. Punkte aus dem Bordbuch stehen auf der Karte, „Auf Karte“ springt zum Moment, und „Landung ansehen“ öffnet die Landung des Flugs. Der Tab Bordbuch entfällt. Ein Flug ohne Flugplan von der GSG-Seite hat keine Passagiere und keine Fracht. Darauf weist AeroACARS jetzt hin. Mit der neuen AeroACARS-Version trägst du beim VFR-Start die Beladung selbst ein, und der wartende Auto-Start warnt dich im Sim-Band und per Mitteilung. Die Boden-Ansagen vor dem Start kommen nicht mehr durch einen kurzen Schaltertest am Beacon: Das Beacon zählt erst, wenn es 15 Sekunden an bleibt und das Flugzeug beladen ist, spätestens zählt der Pushback. Mit der neuen AeroACARS-Version endet auch die Boarding-Musik erst dann. In der Buchungsliste führt „Flug buchen“ jetzt direkt zu Flugplan, Live-Flügen, Freiflug und SkyAdventures auf der Webseite. Mit der neuen AeroACARS-Version öffnet „Crew Story“ an der Buchung ein kleines Fenster für die Story zum Flug. Auf der Live-Karte stehen die Bildpunkte aller Flüge jetzt auch während eines Flugs. Läuft ein Flug, sind frühere Flüge im Bilder-Tab eingeklappt; ein Klick auf die Kopfzeile klappt sie auf. Fährt man mit der Maus über einen Bildpunkt auf den Karten, erscheint jetzt eine kleine Vorschau des Bildes mit Flug, Uhrzeit, Höhe und Phase. Die Bildpunkte lassen sich auf der Live-Karte und in der Flugkarte jetzt über den Schalter „Bilder“ ausblenden. Bilder lassen sich jetzt groß ansehen: über die Lupe auf der Kachel, einen Klick auf das Bild rechts und über die Punkte auf den Karten. In der Flugkarte stehen die Bilder des Flugs jetzt als Punkte. Bilder lassen sich jetzt auch vom Tablet über die LAN-Brücke senden. Mit der neuen AeroACARS-Version: Fotos beim Aussteigen gehören noch zum Flug. Bis 30 Minuten nach der Abgabe landen Bilder automatisch beim abgegebenen Flug, solange das Flugzeug am Abstellplatz steht. Bilder im Fenstermodus zeigen jetzt nur noch das Simulatorbild, ohne Titelleiste und Rand. Die Live-Karte ist von innen neu aufgebaut: Beim Wechsel zwischen Hell, Dunkel und Satellit bleiben Route, Spur, Verkehr und Netzanzeige einfach stehen. Die Kartenleiste hat feste Knöpfe in wenigen Gruppen, das Fluginfo-Panel lässt sich einklappen, und auch in kleinen Fenstern überdeckt sich nichts mehr. Die Bildpunkte stehen gleich beim Öffnen auf der Karte, auch ohne laufenden Flug, und die Weltkugel bleibt beim Wechsel der Karte und nach dem Neustart erhalten."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
@@ -2160,17 +2159,9 @@
     "toggle_hint": "Standard: an. Zum Eingrenzen von Problemen abschaltbar — ohne Server zeigt das HUD im Sim dauerhaft „Keine Verbindung“, alles andere in AeroACARS läuft normal weiter.",
     "restart_hint": "Wirkt nach dem nächsten Start von AeroACARS."
   },
-  "flight_profile": {
-    "title_alt": "Höhe über Meer",
-    "title_agl": "Höhe über Grund",
-    "title_speed": "Geschwindigkeit",
-    "title_vs": "Steig- und Sinkrate",
-    "title_fuel": "Treibstoff an Bord",
-    "no_altitude_data": "Keine Höhendaten."
-  },
   "logbook_view": {
     "section_title": "Logbuch",
-    "section_subtitle": "deine geflogenen Flüge — live aus phpVMS",
+    "section_subtitle": "Deine Flüge, Karte, Bordbuch und Protokoll an einem Ort",
     "stat_flights": "Flüge",
     "stat_hours": "Stunden",
     "stat_distance": "Distanz",
@@ -2201,7 +2192,6 @@
     "pager_page": "Seite {{page}} / {{pages}}",
     "detail_back": "← Logbuch",
     "detail_log_title": "Fluglogbuch",
-    "detail_profile_title": "Flugprofil",
     "status_accepted": "akzeptiert",
     "status_pending": "ausstehend",
     "status_rejected": "abgelehnt",
@@ -2212,7 +2202,22 @@
     "upload_art_eingabe": "Landungsdaten",
     "upload_art_protokoll": "Flugprotokoll",
     "upload_konflikt_marke": "Upload-Konflikt",
-    "upload_konflikt": "Konflikt: Der Live-Server hat für diese Landung schon andere Daten. Die Fassung bleibt gespeichert und wird nicht erneut gesendet — bitte beim GSG-Team melden."
+    "upload_konflikt": "Konflikt: Der Live-Server hat für diese Landung schon andere Daten. Die Fassung bleibt gespeichert und wird nicht erneut gesendet — bitte beim GSG-Team melden.",
+    "table_flight": "Flug",
+    "table_map": "Karte",
+    "kein_bordbuch": "kein Bordbuch",
+    "karte_ja": "Ja",
+    "karte_linie": "Nur Linie",
+    "reiter_aria": "Ansicht des Flugs",
+    "reiter_karte": "Karte",
+    "reiter_protokoll": "Protokoll",
+    "vollbild": "Vollbild",
+    "landung_ansehen": "Landung ansehen",
+    "keine_landung": "Zu diesem Flug gibt es keine Landungsaufzeichnung.",
+    "keine_aufzeichnung": "Für diesen Flug liegt keine Aufzeichnung vor",
+    "live_stand": "Bordbuch bisher {{ok}} von {{von}} erledigt",
+    "live_auf": "Live ansehen",
+    "live_zu": "Live zuklappen"
   },
   "error_reporting": {
     "section_title": "Fehler-Telemetrie (anonym)",
@@ -4268,7 +4273,9 @@
       "leer": "Nach ein paar Flügen siehst du hier, welche Handgriffe schon sitzen.",
       "in_folge": "{{count}} in Folge",
       "rekord": "Neu: {{was}} {{count}} in Folge, längste Serie bisher.",
-      "zieht_an": "{{was}} zieht an: bei {{von5}} der letzten 5 Flüge dabei."
+      "zieht_an": "{{was}} zieht an: bei {{von5}} der letzten 5 Flüge dabei.",
+      "alle": "Alle zeigen",
+      "weniger": "Weniger zeigen"
     },
     "einst": {
       "titel": "Bordbuch",
@@ -4323,7 +4330,13 @@
       "nicht_messbar": "Punkte, die dein Flugzeug nicht an AeroACARS meldet, stehen im Bordbuch als „nicht messbar“ mit Grund. Sie zählen weder mit noch gegen dich.",
       "rolltempo_grenzen": "Grenze für das Rolltempo:"
     },
-    "wert_atc": "NACH ATC"
+    "wert_atc": "NACH ATC",
+    "kein_eintrag": "Für diesen Flug gibt es kein Bordbuch.",
+    "auf_karte": "Auf Karte",
+    "auf_karte_text": "Bordbuch: {{was}}",
+    "auf_karte_erklaerung": "Punkte aus deinem Bordbuch, mit Uhrzeit und Höhe des Moments.",
+    "nach_atc_markieren": "Nach ATC markieren",
+    "profil_erklaerung": "Jeder Punkt zeigt, wann und in welcher Höhe er erledigt wurde."
   },
   "vermessen": {
     "titel": "Flugzeug vermessen",

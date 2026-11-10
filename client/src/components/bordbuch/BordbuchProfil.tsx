@@ -13,13 +13,14 @@ interface Props {
   dep?: string | null;
   arr?: string | null;
   rolltempoGrenzeKt?: number;
+  /** Höhe der Zeichnung; im Logbuch steht mehr Platz zur Verfügung als im Band */
+  hoehe?: number;
 }
 
 const B = 640;
-const H = 170;
 const RAND = { l: 8, r: 8, o: 22, u: 26 };
 
-export function BordbuchProfil({ punkte, eingeschaltet, profil, dep, arr, rolltempoGrenzeKt }: Props) {
+export function BordbuchProfil({ punkte, eingeschaltet, profil, dep, arr, rolltempoGrenzeKt, hoehe: H = 170 }: Props) {
   const { t } = useTranslation();
   const [gewaehlt, setGewaehlt] = useState<Regel | null>(null);
 
