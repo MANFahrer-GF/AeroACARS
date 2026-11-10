@@ -9,9 +9,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import FlugkarteFlaeche from "./FlugkarteFlaeche";
+import type { FlugkarteOptionen } from "./flugkarte";
 import "./fenster.css";
 
-export default function FlugkarteFenster({ pirepId, onClose }: { pirepId: string; onClose: () => void }) {
+interface Props {
+  pirepId: string;
+  /** Vom Logbuch: dieselben Bordbuch-Punkte wie auf der eingebetteten Karte */
+  zusatz?: Pick<FlugkarteOptionen, "zusatzEreignisse" | "zusatzKategorien">;
+  onClose: () => void;
+}
+
+export default function FlugkarteFenster({ pirepId, zusatz, onClose }: Props) {
   const fenster = useRef<HTMLDivElement>(null);
   const zuKnopf = useRef<HTMLButtonElement>(null);
   const { t } = useTranslation();
@@ -43,7 +51,7 @@ export default function FlugkarteFenster({ pirepId, onClose }: { pirepId: string
   return (
     <div className="flugkarte-fenster" ref={fenster} role="dialog" aria-modal="true" aria-label={t("flugkarte.fenster.titel")}>
       <button ref={zuKnopf} className="flugkarte-zu" onClick={onClose} aria-label={t("flugkarte.fenster.zu")} title={`PIREP ${pirepId}`}>✕</button>
-      <FlugkarteFlaeche pirepId={pirepId} bildZiel={bildZiel} />
+      <FlugkarteFlaeche pirepId={pirepId} bildZiel={bildZiel} zusatz={zusatz} />
     </div>
   );
 }

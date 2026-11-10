@@ -22,7 +22,7 @@ const MERKER: &str = ".von_2x_uebernommen";
 /// Was nicht kopiert wird (Name auf oberster Ebene), mit Grund im Modulkopf.
 const AUSGENOMMEN: &[&str] = &[
     "pending_pireps",
-    "nachtrag",
+    "bahn_nachtraege",
     "flight_logs",
     "pending_uploads",
     "landing_inputs",
@@ -104,7 +104,7 @@ mod tests {
         std::fs::write(q.join("landings.json"), "[]").unwrap();
         std::fs::create_dir_all(q.join("bordbuch/2026")).unwrap();
         std::fs::write(q.join("bordbuch/2026/a.json"), "{}").unwrap();
-        for weg in ["pending_pireps", "nachtrag", "flight_logs", "pending_uploads", "landing_inputs", "logs"] {
+        for weg in ["pending_pireps", "bahn_nachtraege", "flight_logs", "pending_uploads", "landing_inputs", "logs"] {
             std::fs::create_dir_all(q.join(weg)).unwrap();
             std::fs::write(q.join(weg).join("x"), "1").unwrap();
         }
@@ -114,7 +114,7 @@ mod tests {
         assert_eq!(kopiert, ["bordbuch", "landings.json", "secrets.json"]);
         assert_eq!(std::fs::read_to_string(z.join("secrets.json")).unwrap(), "geheim");
         assert!(z.join("bordbuch/2026/a.json").exists());
-        for weg in ["pending_pireps", "nachtrag", "flight_logs", "pending_uploads", "landing_inputs", "logs", "active_flight.json"] {
+        for weg in ["pending_pireps", "bahn_nachtraege", "flight_logs", "pending_uploads", "landing_inputs", "logs", "active_flight.json"] {
             assert!(!z.join(weg).exists(), "{weg} darf nicht mit");
         }
         // 2.x unveraendert (Rueckweg)

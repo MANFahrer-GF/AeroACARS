@@ -56,9 +56,14 @@ export function LogbuchFlug({ detail, pruefstatus, uploads, onZurueck, onLandung
     return () => { aktiv = false; };
   }, [detail.id]);
 
+  const kartenPunkte = (e: Eintrag | null | undefined) => JSON.stringify(bordbuchEreignisse(e, t)?.zusatzEreignisse ?? []);
+
   const markieren = async (regel: Regel, nachAtc: boolean) => {
     const neu = await invoke<Eintrag | null>("bordbuch_markieren", { pirepId: detail.id, regel, nachAtc });
-    if (neu) setEintrag(neu);
+    if (!neu) return;
+    // Geänderte Punkte bauen die Karte neu auf (key unten): bis sie steht, gibt es keine Steuerung.
+    if (kartenPunkte(neu) !== kartenPunkte(eintrag)) karte.current = null;
+    setEintrag(neu);
   };
 
   const aufKarte = (regel: Regel) => {
@@ -157,6 +162,7 @@ export function LogbuchFlug({ detail, pruefstatus, uploads, onZurueck, onLandung
           ) : (eintrag !== undefined && !vollbild && (
             <Suspense fallback={<div className="flugkarte-hinweis">{t("flugkarte.fenster.laedt")}</div>}>
               <FlugkarteFlaeche
+                key={kartenPunkte(eintrag)}
                 pirepId={detail.id}
                 zusatz={bordbuchEreignisse(eintrag, t)}
                 onOhneAkte={setOhneAkte}
@@ -180,7 +186,7 @@ export function LogbuchFlug({ detail, pruefstatus, uploads, onZurueck, onLandung
       </div>
       {vollbild && (
         <Suspense fallback={null}>
-          <FlugkarteFenster pirepId={detail.id} onClose={() => setVollbild(false)} />
+          <FlugkarteFenster pirepId={detail.id} zusatz={bordbuchEreignisse(eintrag, t)} onClose={() => setVollbild(false)} />
         </Suspense>
       )}
     </section>

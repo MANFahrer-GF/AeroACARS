@@ -50,6 +50,8 @@ const h = vi.hoisted(() => ({
   flaeche: null as null | FlaecheProps,
   gesprungen: [] as string[],
   ohneAkte: false,
+  aufbauten: 0,
+  vollbildZusatz: undefined as FlaecheProps["zusatz"],
 }));
 
 vi.mock("../lib/ipc", () => ({
@@ -76,13 +78,16 @@ vi.mock("maplibre-gl", () => {
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
 vi.mock("./PirepPruefstatus", () => ({ PruefstatusKasten: () => null, PruefstatusMarke: () => null, pruefArt: () => "unbekannt" }));
 vi.mock("./UploadAusstehend", () => ({ UploadKasten: () => null }));
-vi.mock("../flugkarte/FlugkarteFenster", () => ({ default: () => <div data-testid="vollbild" /> }));
+vi.mock("../flugkarte/FlugkarteFenster", () => ({
+  default: (p: FlaecheProps) => { h.vollbildZusatz = p.zusatz; return <div data-testid="vollbild" />; },
+}));
 vi.mock("../flugkarte/FlugkarteFlaeche", async () => {
   const { useEffect } = await import("react");
   return {
     default: (p: FlaecheProps) => {
       h.flaeche = p;
       useEffect(() => {
+        h.aufbauten++;
         if (h.ohneAkte) p.onOhneAkte?.({ art: "fehlt" });
         else p.onBereit?.({ zeigeEreignis: (s) => { h.gesprungen.push(s); return true; } });
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -101,7 +106,7 @@ function zeigen(onLandung?: (id: string) => void) {
 }
 
 beforeEach(() => {
-  h.calls = []; h.eintrag = structuredClone(EINTRAG); h.landung = {}; h.flaeche = null; h.gesprungen = []; h.ohneAkte = false;
+  h.calls = []; h.eintrag = structuredClone(EINTRAG); h.landung = {}; h.flaeche = null; h.gesprungen = []; h.ohneAkte = false; h.aufbauten = 0; h.vollbildZusatz = undefined;
 });
 afterEach(() => cleanup());
 
@@ -152,6 +157,32 @@ describe("Geöffneter Flug im Logbuch", () => {
     fireEvent.click(screen.getByText("Nach ATC-Anweisung"));
     await waitFor(() => expect(reiter(/^Bordbuch 4 von 4$/)).toBeTruthy());
     expect(h.calls.find((c) => c.cmd === "bordbuch_markieren")?.args).toEqual({ pirepId: "DLH1156", regel: "strobes_start", nachAtc: true });
+  });
+
+  it("‚Nach ATC-Anweisung' baut die Karte mit dem neuen Text neu auf, „Auf Karte“ geht an die neue Karte", async () => {
+    zeigen();
+    await waitFor(() => expect(h.aufbauten).toBe(1));
+    const vorher = h.flaeche!.zusatz!.zusatzEreignisse!.find((e) => e.schluessel === "strobes_start")!.txt;
+    expect(vorher).toMatch(/nicht gesehen/);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Bordbuch/ }));
+    await screen.findByText(/3 von 4 Punkten erledigt/);
+    fireEvent.click(screen.getByText("STROBES"));
+    fireEvent.click(screen.getByText("Nach ATC-Anweisung"));
+    await waitFor(() => expect(h.aufbauten).toBe(2));
+    const nachher = h.flaeche!.zusatz!.zusatzEreignisse!.find((e) => e.schluessel === "strobes_start")!.txt;
+    expect(nachher).not.toMatch(/nicht gesehen/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Auf Karte" })[0]);
+    expect(h.gesprungen).toEqual(["beacon_anlassen"]);
+  });
+
+  it("Vollbild zeigt dieselben Bordbuch-Punkte wie die eingebettete Karte", async () => {
+    zeigen();
+    await screen.findByTestId("flaeche");
+    const eingebettet = h.flaeche!.zusatz;
+    fireEvent.click(screen.getByRole("button", { name: "Vollbild" }));
+    await screen.findByTestId("vollbild");
+    expect(h.vollbildZusatz?.zusatzEreignisse).toEqual(eingebettet?.zusatzEreignisse);
+    expect(h.vollbildZusatz?.zusatzEreignisse?.length).toBe(4);
   });
 
   it("erledigte Punkte lassen sich nicht antippen", async () => {
