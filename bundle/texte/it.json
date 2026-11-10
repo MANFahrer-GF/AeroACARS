@@ -3026,6 +3026,9 @@
       "beladung_help": "Lascia vuoto per nessun passeggero e nessun carico.",
       "beladung_max": "max. {{max}}",
       "beladung_pax": "pax",
+      "beladung_laedt": "Caricamento delle opzioni di carico …",
+      "beladung_fehler": "Non è stato possibile caricare le opzioni di carico. Puoi partire comunque, il volo sarà senza passeggeri né carico.",
+      "beladung_erneut": "Riprova",
       "optional": "opzionale"
     }
   },

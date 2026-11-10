@@ -195,6 +195,8 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
   const [zfwKg, setZfwKg] = useState<string>(persisted.zfwKg ?? "");
   const [klassen, setKlassen] = useState<BeladungsKlasse[]>([]);
   const [beladungWerte, setBeladungWerte] = useState<Record<number, string>>({});
+  const [klassenStatus, setKlassenStatus] = useState<"laedt" | "fertig" | "fehler">("fertig");
+  const [klassenVersuch, setKlassenVersuch] = useState(0);
 
   // Persistiere alle Form-Felder bei jeder Änderung in localStorage —
   // synchron, damit auch ein sofortiges Unmount (Resize-Crash) den
@@ -233,20 +235,27 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
   useEffect(() => {
     setKlassen([]);
     setBeladungWerte({});
-    if (selectedId === undefined) return;
+    if (selectedId === undefined) {
+      setKlassenStatus("fertig");
+      return;
+    }
+    setKlassenStatus("laedt");
     let aktuell = true;
     invoke<BeladungsKlasse[]>("vfr_beladungsklassen", { aircraftId: selectedId })
       .then((liste) => {
-        if (aktuell) setKlassen(liste);
+        if (!aktuell) return;
+        setKlassen(liste ?? []);
+        setKlassenStatus("fertig");
       })
       .catch((err: unknown) => {
-        // Ohne Klassen startet der Flug wie bisher, nur ohne Beladungsfelder.
+        // Der Flug bleibt startbar, nur ohne Beladung; das steht im Fenster.
         console.warn("vfr_beladungsklassen", err);
+        if (aktuell) setKlassenStatus("fehler");
       });
     return () => {
       aktuell = false;
     };
-  }, [selectedId]);
+  }, [selectedId, klassenVersuch]);
 
   function proceedToPlan() {
     if (!selected) return;
@@ -608,6 +617,22 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
                 <small>{t("manual_flight.form.zfw_help_optional")}</small>
               </label>
 
+              {klassenStatus === "laedt" && (
+                <small>{t("manual_flight.form.beladung_laedt")}</small>
+              )}
+              {klassenStatus === "fehler" && (
+                <div className="manual-modal__warning">
+                  <div className="manual-modal__warning-text">{t("manual_flight.form.beladung_fehler")}</div>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => setKlassenVersuch((n) => n + 1)}
+                    disabled={stage === "submitting"}
+                  >
+                    {t("manual_flight.form.beladung_erneut")}
+                  </button>
+                </div>
+              )}
               {klassen.length > 0 && (
                 <>
                   <strong>{t("manual_flight.form.beladung_titel")}</strong>
@@ -676,7 +701,9 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
                 const formInvalid =
                   !Number.isFinite(bf) || bf <= 0 ||
                   !Number.isFinite(ft) || ft <= 0 ||
-                  zfwInvalid;
+                  zfwInvalid ||
+                  // Begrenzt durch den HTTP-Timeout: Der Start wartet nur, bis die Felder da sind.
+                  klassenStatus === "laedt";
                 const isSubmitting = stage === "submitting";
                 if (warning) {
                   return (

@@ -1703,8 +1703,26 @@ pub struct VfrBeladung {
     pub anzahl: i32,
 }
 
-fn vfr_fares(beladung: &[VfrBeladung]) -> Vec<(i64, i32)> {
-    beladung.iter().map(|b| (b.fare_id, b.anzahl.max(0))).collect()
+/// Tarifzeilen fuer den PIREP. Mit bekannten Klassen gilt deren Obergrenze und
+/// fremde Tarife fallen weg; ohne (Server kurz nicht erreichbar) bleibt, was das
+/// Startfenster schon begrenzt hat, denn ein Flug wird deshalb nie abgelehnt.
+fn vfr_fares(
+    beladung: &[VfrBeladung],
+    klassen: Option<&[api_client::BeladungsKlasse]>,
+) -> Vec<(i64, i32)> {
+    beladung
+        .iter()
+        .filter_map(|b| {
+            let anzahl = b.anzahl.max(0);
+            match klassen {
+                None => Some((b.fare_id, anzahl)),
+                Some(liste) => liste
+                    .iter()
+                    .find(|k| k.id == b.fare_id)
+                    .map(|k| (b.fare_id, anzahl.min(k.kapazitaet))),
+            }
+        })
+        .collect()
 }
 
 /// Beladungsklassen des im VFR-Fenster gewaehlten Flugzeugs.
@@ -2023,7 +2041,16 @@ async fn flight_start_manual(
     let airline = bid.flight.airline.as_ref();
 
     // VFR/Manual-Mode: kein OFP, die Beladung traegt der Pilot im Startfenster ein.
-    let fares = vfr_fares(&plan.beladung);
+    let klassen = if plan.beladung.is_empty() {
+        None
+    } else {
+        client
+            .get_beladungsklassen(aircraft_id)
+            .await
+            .map_err(|e| tracing::warn!(error = %e, "VFR-Beladung nicht gegen die Subfleet geprueft"))
+            .ok()
+    };
+    let fares = vfr_fares(&plan.beladung, klassen.as_deref());
 
     let flight = Arc::new(ActiveFlight {
         pirep_id: pirep.id.clone(),

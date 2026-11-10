@@ -183,3 +183,67 @@ describe("ManualFlightModal — aircraft-state label and tooltip follow the acti
     );
   });
 });
+
+describe("ManualFlightModal — Beladungsklassen beim VFR-Start", () => {
+  const KLASSEN = [
+    { id: 6, code: "Y", name: "Economy", typ: 0, kapazitaet: 4 },
+    { id: 7, code: "CGO", name: "Cargo", typ: 1, kapazitaet: 150 },
+  ];
+  let klassenAntwort: () => Promise<unknown>;
+
+  beforeEach(() => {
+    localStorage.clear();
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === "fleet_list_at_airport") return Promise.resolve(FLEET);
+      if (cmd === "vfr_beladungsklassen") return klassenAntwort();
+      return Promise.resolve({});
+    });
+  });
+
+  async function bisZumPlan() {
+    const user = userEvent.setup();
+    render(<ManualFlightModal bid={makeBid()} simHint={null} onClose={() => {}} onFlightStarted={() => {}} />);
+    await waitFor(() => expect(screen.getByText("D-AAAA")).toBeInTheDocument());
+    await user.click(screen.getByText("D-AAAA"));
+    await user.click(screen.getByRole("button", { name: i18next.t("manual_flight.next") }));
+    await user.type(screen.getByPlaceholderText(i18next.t("manual_flight.form.block_fuel_placeholder")), "250");
+    await user.type(screen.getByPlaceholderText(i18next.t("manual_flight.form.flight_time_placeholder")), "45");
+    return user;
+  }
+  const startKnopf = () => screen.getByRole("button", { name: i18next.t("manual_flight.submit") });
+
+  it("wartet mit dem Start, bis die Klassen da sind, und schickt dann Tarifzeilen", async () => {
+    let liefern: (k: unknown) => void = () => {};
+    klassenAntwort = () => new Promise((r) => (liefern = r));
+    const user = await bisZumPlan();
+
+    expect(startKnopf()).toBeDisabled();
+    expect(screen.getByText(i18next.t("manual_flight.form.beladung_laedt"))).toBeInTheDocument();
+
+    liefern(KLASSEN);
+    await waitFor(() => expect(startKnopf()).toBeEnabled());
+    await user.click(startKnopf());
+
+    await waitFor(() => expect(invokeMock.mock.calls.some((c) => c[0] === "flight_start_manual")).toBe(true));
+    const aufruf = invokeMock.mock.calls.find((c) => c[0] === "flight_start_manual");
+    expect(aufruf?.[1].plan.beladung).toEqual([
+      { fare_id: 6, anzahl: 0 },
+      { fare_id: 7, anzahl: 0 },
+    ]);
+  });
+
+  it("sperrt den Flug nicht, wenn die Klassen nicht laden, und kann es erneut versuchen", async () => {
+    klassenAntwort = () => Promise.reject(new Error("offline"));
+    const user = await bisZumPlan();
+
+    await waitFor(() => expect(screen.getByText(i18next.t("manual_flight.form.beladung_fehler"))).toBeInTheDocument());
+    expect(startKnopf()).toBeEnabled();
+
+    klassenAntwort = () => Promise.resolve(KLASSEN);
+    await user.click(screen.getByRole("button", { name: i18next.t("manual_flight.form.beladung_erneut") }));
+
+    await waitFor(() => expect(screen.getByText("Economy", { exact: false })).toBeInTheDocument());
+    expect(screen.queryByText(i18next.t("manual_flight.form.beladung_fehler"))).not.toBeInTheDocument();
+  });
+});

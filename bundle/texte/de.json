@@ -3040,6 +3040,9 @@
       "beladung_help": "Leer lassen heißt: ohne Passagiere und Fracht.",
       "beladung_max": "max. {{max}}",
       "beladung_pax": "Pax",
+      "beladung_laedt": "Beladung wird geladen …",
+      "beladung_fehler": "Die Beladung konnte nicht geladen werden. Du kannst trotzdem starten, der Flug läuft dann ohne Passagiere und Fracht.",
+      "beladung_erneut": "Erneut laden",
       "optional": "optional"
     }
   },

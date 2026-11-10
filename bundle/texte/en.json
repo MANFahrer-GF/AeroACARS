@@ -3040,6 +3040,9 @@
       "beladung_help": "Leave empty for no passengers and no cargo.",
       "beladung_max": "max. {{max}}",
       "beladung_pax": "pax",
+      "beladung_laedt": "Loading load options …",
+      "beladung_fehler": "The load options could not be loaded. You can still start, the flight will then have no passengers and no cargo.",
+      "beladung_erneut": "Try again",
       "optional": "optional"
     }
   },

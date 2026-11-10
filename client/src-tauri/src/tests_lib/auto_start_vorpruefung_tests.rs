@@ -413,7 +413,29 @@
                 "beladung":[{"fare_id":6,"anzahl":3},{"fare_id":7,"anzahl":0},{"fare_id":9,"anzahl":-4}]}"#,
         )
         .unwrap();
-        assert_eq!(vfr_fares(&plan.beladung), vec![(6, 3), (7, 0), (9, 0)]);
+        assert_eq!(vfr_fares(&plan.beladung, None), vec![(6, 3), (7, 0), (9, 0)]);
+    }
+
+    /// Auch ueber die LAN-Bruecke gilt die Grenze der Subfleet, und fremde
+    /// Tarife kommen nicht in den PIREP.
+    #[test]
+    fn vfr_beladung_haelt_die_grenzen_des_flugzeugs_ein() {
+        let klasse = |id, kapazitaet| api_client::BeladungsKlasse {
+            id,
+            code: String::new(),
+            name: String::new(),
+            typ: 0,
+            kapazitaet,
+        };
+        let eingabe = [
+            VfrBeladung { fare_id: 6, anzahl: 9 },
+            VfrBeladung { fare_id: 7, anzahl: 40 },
+            VfrBeladung { fare_id: 99, anzahl: 5 },
+        ];
+        assert_eq!(
+            vfr_fares(&eingabe, Some(&[klasse(6, 4), klasse(7, 150)])),
+            vec![(6, 4), (7, 40)]
+        );
     }
 
     /// Aeltere Oberflaechen (Generation vor dem Client) schicken das Feld nicht.
@@ -423,7 +445,7 @@
             r#"{"aircraft_id":1,"planned_block_fuel_kg":120,"planned_flight_time_min":55}"#,
         )
         .unwrap();
-        assert!(vfr_fares(&plan.beladung).is_empty());
+        assert!(vfr_fares(&plan.beladung, None).is_empty());
     }
 
     /// Banner und Protokoll getrennt: gleicher Grund → Protokoll erst nach
