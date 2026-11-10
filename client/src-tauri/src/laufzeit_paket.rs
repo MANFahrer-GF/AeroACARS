@@ -2048,6 +2048,7 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     /// Zeitpunkt des Aufrufs (nach dem Laden), nicht einen frueheren Wert.
     /// Ohne Flug: Neustart erlaubt; Flugdatei taucht auf: verweigert.
     #[test]
+    #[cfg(not(windows))] // tauri-Testhilfe nur ohne Windows (Cargo.toml dev-dependencies)
     fn neustart_prueft_den_flug_erst_unmittelbar_davor() {
         use tauri::Manager;
         let app = tauri::test::mock_app();
