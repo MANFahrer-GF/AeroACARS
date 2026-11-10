@@ -728,6 +728,8 @@ fn step_flight_at(
     stats.last_known_at = Some(now);
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
+    // 3.0.1 (DLH 41): Sprit, der in der Luft dazukommt, mitzaehlen.
+    nachtanken_luft_takt(&mut stats, snap.fuel_total_kg, snap.on_ground, now);
     // Aufsetzzeit: die der FSM, sonst die des Aufsetz-Samplers (Busch- und
     // Hubschrauberlandungen, bei denen die FSM noch nicht in Landing ist).
     // Fuer Zeitbasis UND Verbrauchsrate — sonst bekam eine Cessna, deren
@@ -3107,6 +3109,10 @@ fn step_flight_at(
 #[cfg(test)]
 #[path = "tests_lib/weiterflug_vom_boden_tests.rs"]
 mod weiterflug_vom_boden_tests;
+
+#[cfg(test)]
+#[path = "tests_lib/nachtanken_luft_tests.rs"]
+mod nachtanken_luft_tests;
 
 #[cfg(test)]
 #[path = "tests_lib/arrived_fallback_dwell_tests.rs"]

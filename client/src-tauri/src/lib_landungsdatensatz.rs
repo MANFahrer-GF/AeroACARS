@@ -816,10 +816,7 @@ where
 
     // Compute fuel-efficiency once so the Landing tab doesn't have to
     // redo the formula. Same shape as build_pirep_fields.
-    let actual_burn = match (stats.takeoff_fuel_kg, stats.landing_fuel_kg) {
-        (Some(toff), Some(land)) if toff > land && toff > 0.0 && land >= 0.0 => Some(toff - land),
-        _ => None,
-    };
+    let actual_burn = actual_burn_for_record(stats);
     let (fuel_diff_kg, fuel_pct) = match (stats.planned_burn_kg, actual_burn) {
         (Some(plan), Some(actual)) if plan > 0.0 => {
             let d = actual - plan;
@@ -1033,6 +1030,8 @@ where
         planned_ldw_kg: stats.planned_ldw_kg,
         planned_zfw_kg: stats.planned_zfw_kg,
         actual_trip_burn_kg: actual_burn,
+        nachgetankt_luft_kg: Some(nachgetankt_luft(stats)).filter(|v| *v > 0.0),
+        tank_vor_nachtanken_kg: stats.nachtanken_luft.tank_davor_kg,
         fuel_efficiency_kg_diff: fuel_diff_kg,
         fuel_efficiency_pct: fuel_pct,
         // Eingefroren in `sprit_auswertung_einmal` — hier nur gelesen.
@@ -1040,7 +1039,8 @@ where
         takeoff_weight_kg: stats.takeoff_weight_kg,
         takeoff_fuel_kg: stats.takeoff_fuel_kg,
         landing_fuel_kg: stats.landing_fuel_kg,
-        block_fuel_kg: stats.block_fuel_kg,
+        // 3.0.1: der Block, wie ihn phpVMS bekommt (`blocksprit_mit_nachtanken`).
+        block_fuel_kg: blocksprit_mit_nachtanken(stats),
 
         runway_match,
         touchdown_profile,

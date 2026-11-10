@@ -73,13 +73,26 @@ fn fuel_used_effective_kg(
     fob_kg: f32,
     pre_takeoff: bool,
     prev_fob_kg: Option<f32>,
+    nachgetankt_luft_kg: f32,
 ) -> f32 {
+    // 3.0.1 (DLH 41): Aendert sich in diesem Takt die in der Luft
+    // nachgetankte Menge (`NachtankenLuft::takt`), geht die Basis um genau
+    // diesen Betrag mit. Der Verbrauch bleibt so derselbe wie im PIREP
+    // (Block + nachgetankt − Tank), statt auf null zu fallen (Tank zurueck
+    // am Blockwert) oder neu anzusetzen (Tank darueber).
+    if nachgetankt_luft_kg != 0.0 && nachgetankt_luft_kg.is_finite() && !pre_takeoff {
+        if let Some(initial) = initial_fob_kg.as_mut() {
+            *initial += nachgetankt_luft_kg;
+        }
+    }
     if fob_kg > 0.0 {
         match *initial_fob_kg {
             // Flugstart (bzw. erster Tick mit Fuel) → Baseline latchen.
             None => *initial_fob_kg = Some(fob_kg),
             // Refuel: FOB deutlich über Baseline → auf neues Max re-latchen.
-            Some(initial) if fob_kg > initial + crate::grenzwerte::grenzwerte().sprit.fuel_used_refuel_relatch_kg.wert => {
+            // Nur vor dem Abheben: In der Luft hebt das Nachtanken die
+            // Basis oben an, ein Neuansetzen wuerfe den Verbrauch weg.
+            Some(initial) if pre_takeoff && fob_kg > initial + crate::grenzwerte::grenzwerte().sprit.fuel_used_refuel_relatch_kg.wert => {
                 *initial_fob_kg = Some(fob_kg);
             }
             // v0.16.10 QS (M1): Gate-Defuel — instantaner Tick-Abfall

@@ -149,6 +149,10 @@ struct PersistedFlightStats {
     block_fuel_kg: Option<f32>,
     #[serde(default)]
     last_fuel_kg: Option<f32>,
+    /// 3.0.1: Nachtanken in der Luft — siehe `FlightStats`. Persistiert,
+    /// damit ein Fortsetzen nach Neustart Menge und Hinweisstand behaelt.
+    #[serde(default)]
+    nachtanken_luft: NachtankenLuft,
     /// v0.16.10: FOB-Baseline für den Fuel-Used-Fallback (PMDG liefert
     /// FUEL TOTAL QUANTITY USED nicht — Live-Befund GLO4587). Persistiert
     /// damit Resume die Baseline behält; `#[serde(default)]` hält alte
@@ -817,6 +821,7 @@ impl PersistedFlightStats {
             landing_fuel_puffer: stats.landing_fuel_puffer,
             block_fuel_kg: stats.block_fuel_kg,
             last_fuel_kg: stats.last_fuel_kg,
+            nachtanken_luft: stats.nachtanken_luft,
             initial_fob_kg: stats.initial_fob_kg,
             last_lat: stats.last_lat,
             last_lon: stats.last_lon,
@@ -1081,6 +1086,7 @@ impl PersistedFlightStats {
         stats.landing_fuel_puffer = self.landing_fuel_puffer;
         stats.block_fuel_kg = self.block_fuel_kg;
         stats.last_fuel_kg = self.last_fuel_kg;
+        stats.nachtanken_luft = self.nachtanken_luft;
         stats.initial_fob_kg = self.initial_fob_kg;
         stats.last_lat = self.last_lat;
         stats.last_lon = self.last_lon;

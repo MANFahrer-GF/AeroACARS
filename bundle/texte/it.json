@@ -1825,7 +1825,8 @@
     "zusatz": {
       "title": "Campi aggiuntivi",
       "hinweis": "Campi aggiuntivi del modulo di valutazione. Vengono salvati e mostrati senza modifiche e non contano per il punteggio."
-    }
+    },
+    "refuelled_in_flight": "Rifornito in volo"
   },
   "about": {
     "lizenz": "© {{jahr}} Thomas Kant · Software proprietario, solo per i piloti di German Sky Group. Ridistribuzione ed elusione delle restrizioni di accesso sono vietate.",
@@ -1858,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Le nuove generazioni arrivano ora anche durante un volo: AeroACARS le scarica in background come un aggiornamento del client e le mostra. Il volo in corso resta alla sua versione, la nuova generazione vale dal prossimo volo. Serve AeroACARS 3.0.1."
+    "neu_text": "Le nuove generazioni arrivano ora anche durante un volo: AeroACARS le scarica in background come un aggiornamento del client e le mostra. Il volo in corso resta alla sua versione, la nuova generazione vale dal prossimo volo. Serve AeroACARS 3.0.1. Il rifornimento in volo ora viene conteggiato: se durante il volo si aggiunge carburante, AeroACARS somma la quantità al consumo, la mostra nella tabella carburante dell'atterraggio e la segnala nel registro attività. La direzione voli vede l'evento nella revisione."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

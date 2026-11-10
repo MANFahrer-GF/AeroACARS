@@ -1825,7 +1825,8 @@
     "zusatz": {
       "title": "Additional fields",
       "hinweis": "Additional fields from the scoring module. They are stored and shown unchanged and do not count towards the score."
-    }
+    },
+    "refuelled_in_flight": "Refuelled in flight"
   },
   "about": {
     "lizenz": "© {{jahr}} Thomas Kant · Proprietary, for German Sky Group pilots only. Redistribution and circumventing the access restriction are prohibited.",
@@ -1858,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "New generations now also arrive during a flight: AeroACARS downloads them in the background like a client update and shows them. The running flight keeps its version, the new generation applies from the next flight. This needs AeroACARS 3.0.1."
+    "neu_text": "New generations now also arrive during a flight: AeroACARS downloads them in the background like a client update and shows them. The running flight keeps its version, the new generation applies from the next flight. This needs AeroACARS 3.0.1. Refuelling in flight is now counted: if fuel is added during the flight, AeroACARS adds the amount to the fuel used, shows it in the fuel table of the landing and reports it in the activity log. Flight operations see the event in the review."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

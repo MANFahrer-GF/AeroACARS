@@ -743,16 +743,13 @@ async fn flight_end(
         // sub-kg precision anyway, and a half-kg loss is invisible
         // to pilots — what's NOT invisible is `9733.45 kg` looking
         // like a unit-mix-up bug. Same logic for fuel_used.
-        let fuel_used = match (stats.block_fuel_kg, stats.last_fuel_kg) {
-            (Some(b), Some(c)) if b > c => Some(((b - c) as f64).round() * KG_TO_LB),
-            _ => None,
-        };
+        // 3.0.1: mit in der Luft Nachgetanktem (`blocksprit_mit_nachtanken`).
+        let fuel_used = verbrauch_ab_block_kg(&stats).map(|kg| (kg as f64).round() * KG_TO_LB);
         // Block fuel sent natively so phpVMS computes "Verbleibender
         // Treibstoff" correctly (= block_fuel - fuel_used). Without
         // this the dashboard shows "-fuel_used kg" because the
         // missing block_fuel defaults to 0. Same unit as fuel_used.
-        let block_fuel = stats
-            .block_fuel_kg
+        let block_fuel = blocksprit_mit_nachtanken(&stats)
             .filter(|kg| *kg > 0.0)
             .map(|kg| (kg as f64).round() * KG_TO_LB);
         // Cruise level = peak MSL altitude observed. phpVMS column

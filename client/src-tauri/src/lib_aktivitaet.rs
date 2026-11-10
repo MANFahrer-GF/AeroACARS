@@ -62,6 +62,7 @@ fn log_fuel_weight_at_phase(
         landing_fuel,
         landing_weight,
         last_fuel,
+        fuel_used_ab_block,
         blocks_on_reached,
     ) = {
         let stats = flight.stats.lock().expect("flight stats");
@@ -72,6 +73,8 @@ fn log_fuel_weight_at_phase(
             stats.landing_fuel_kg,
             stats.landing_weight_kg,
             stats.last_fuel_kg,
+            // 3.0.1: mit in der Luft Nachgetanktem.
+            verbrauch_ab_block_kg(&stats),
             stats.blocks_on_reached,
         )
     };
@@ -134,10 +137,7 @@ fn log_fuel_weight_at_phase(
             // current fuel. Only show when both are valid and
             // block > current — otherwise the math is meaningless
             // (e.g. defuel during taxi, fuel SimVar missing).
-            let fuel_used = match (block_fuel, last_fuel) {
-                (Some(b), Some(c)) if b > 0.0 && b > c => Some(b - c),
-                _ => None,
-            };
+            let fuel_used = fuel_used_ab_block;
             (
                 "Fuel & Weight @ Block-on".to_string(),
                 Some(format!(

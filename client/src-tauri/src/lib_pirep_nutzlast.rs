@@ -1176,11 +1176,15 @@ fn build_pirep_payload(
         // `_kg`-Feld (Recorder/Web sah ~2,2× zu viel „kg").
         fuel_used_kg: body.fuel_used.map(|lb| (lb / KG_TO_LB) as f32),
         planned_burn_kg: stats.planned_burn_kg,
-        block_fuel_kg: stats.block_fuel_kg,
+        // 3.0.1: derselbe Block wie in phpVMS — `block − fuel_used` bleibt
+        // auch hier der Resttank (`blocksprit_mit_nachtanken`).
+        block_fuel_kg: blocksprit_mit_nachtanken(&stats),
         takeoff_fuel_kg: stats.takeoff_fuel_kg,
         landing_fuel_kg: stats.landing_fuel_kg,
         // v0.7.6 P1-1: Trip-Burn als SSoT fuer OFP-Vergleich.
         actual_trip_burn_kg: actual_burn,
+        nachgetankt_luft_kg: Some(nachgetankt_luft(&stats)).filter(|v| *v > 0.0),
+        tank_vor_nachtanken_kg: stats.nachtanken_luft.tank_davor_kg,
         takeoff_weight_kg: stats.takeoff_weight_kg.map(|w| w as f32),
         landing_weight_kg: stats.landing_weight_kg.map(|w| w as f32),
         planned_tow_kg: stats.planned_tow_kg,

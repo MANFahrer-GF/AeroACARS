@@ -179,19 +179,13 @@ async fn flight_end_manual(
         // `stats.block_fuel_kg` trägt hier schon den Manual-Override
         // (oben gesetzt falls `block_fuel_kg`-Param > 0).
         let fuel_used = {
-            let from_remaining = match (stats.block_fuel_kg, remaining_fuel_kg) {
-                (Some(block), Some(rem)) if rem >= 0.0 && block > rem => Some((block - rem) as f64),
-                _ => None,
-            };
-            from_remaining
-                .or_else(|| match (stats.block_fuel_kg, stats.last_fuel_kg) {
-                    (Some(b), Some(c)) if b > c => Some((b - c) as f64),
-                    _ => None,
-                })
-                .map(|kg| kg.round() * KG_TO_LB)
+            // 3.0.1: beide Wege mit in der Luft Nachgetanktem
+            // (`blocksprit_mit_nachtanken`).
+            verbrauch_ab_block_bis_kg(&stats, remaining_fuel_kg)
+                .or_else(|| verbrauch_ab_block_kg(&stats))
+                .map(|kg| (kg as f64).round() * KG_TO_LB)
         };
-        let block_fuel = stats
-            .block_fuel_kg
+        let block_fuel = blocksprit_mit_nachtanken(&stats)
             .filter(|kg| *kg > 0.0)
             .map(|kg| (kg as f64).round() * KG_TO_LB);
         let level = cruise_level_ft.filter(|ft| *ft > 0).or_else(|| {

@@ -399,6 +399,15 @@ export function LadeblattAbschnitt({ record }: { record: LandingRecord }) {
                   ? record.planned_block_fuel_kg - record.planned_burn_kg
                   : null,
             },
+            // 3.0.1 (DLH 41): nur, wenn in der Luft Sprit dazukam. Der
+            // Trip Burn darunter rechnet die Menge mit.
+            ...(record.nachgetankt_luft_kg != null && record.nachgetankt_luft_kg > 0
+              ? [{
+                  label: t("landing.refuelled_in_flight", { defaultValue: "In der Luft nachgetankt" }),
+                  ist: record.nachgetankt_luft_kg,
+                  soll: null,
+                }]
+              : []),
             {
               label: t("landing.trip_burn"),
               ist: record.actual_trip_burn_kg,

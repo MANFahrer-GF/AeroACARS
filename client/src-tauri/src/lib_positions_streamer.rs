@@ -843,6 +843,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // Umfeld). Der PIREP-`fuel_used`-Payload selbst rechnet
             // unabhängig davon weiter block_fuel_kg − last_fuel_kg (Peak-
             // FOB-Delta, war nie von der toten SimVar abhängig).
+            // Eine Uhrzeit fuer die Nachtank-Vorschau hier und den Takt unten.
+            let takt_jetzt = Utc::now();
             {
                 let mut stats = flight.stats.lock().expect("flight stats");
                 // v0.16.10 QS (M1): pre_takeoff + Vor-Tick-FOB für den
@@ -856,12 +858,22 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // FOB des VOR-Ticks.
                 let pre_takeoff = stats.takeoff_at.is_none();
                 let prev_fob_kg = stats.last_fuel_kg;
+                // Dieselbe Erkennung, die der Takt gleich fortschreibt — hier
+                // auf einer Kopie und mit derselben Uhrzeit (`takt_jetzt`),
+                // damit der Verbrauchswert zur gemeldeten Menge passt.
+                let nachgetankt_luft_kg = nachtanken_luft_vorschau(
+                    &stats,
+                    snap.fuel_total_kg,
+                    snap.on_ground,
+                    takt_jetzt,
+                );
                 snap.fuel_used_kg = fuel_used_effective_kg(
                     &mut stats.initial_fob_kg,
                     snap.fuel_used_kg,
                     snap.fuel_total_kg,
                     pre_takeoff,
                     prev_fob_kg,
+                    nachgetankt_luft_kg,
                 );
             }
 
@@ -1154,8 +1166,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             }
 
             takt_uhr.abschnitt("bahn_nachholen");
-            let takt = phasen_takt(&flight, &snap, Utc::now());
+            let takt = phasen_takt(&flight, &snap, takt_jetzt);
             let phase_change = takt.wechsel;
+            // 3.0.1 (DLH 41): Nachtanken in der Luft. Aendert sich die Menge
+            // oder wird der Hinweis faellig, wird SOFORT gespeichert und erst
+            // danach gemeldet — nach einem Absturz ist die Menge noch da, und
+            // der Hinweis kommt kein zweites Mal. Kein Softwarefehler, also
+            // ohne GlitchTip; geschrieben wird nach dem Freigeben der Flugdaten.
+            let (nachtanken_sichern, nachtanken_hinweis) = {
+                let mut stats = flight.stats.lock().expect("flight stats");
+                let hinweis = stats.nachtanken_luft.hinweis_faellig();
+                (std::mem::take(&mut stats.nachtanken_luft.geaendert), hinweis)
+            };
+            if nachtanken_sichern {
+                save_active_flight(&app, &flight);
+            }
+            if let Some(h) = nachtanken_hinweis {
+                let (zeile, detail) = nachtanken_luft_hinweis_text(&h);
+                log_activity_mit_meldung(&app, ActivityLevel::Warn, zeile, Some(detail), false);
+            }
             takt_uhr.abschnitt("step_flight");
             // Kabinenansagen (Beta): hier und nicht in `phasen_takt`, das
             // laeuft auch im Korpus-Replay.
@@ -2072,7 +2101,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // Eingefroren in `sprit_auswertung_einmal` — hier nur gelesen.
                                 sprit: stats.sprit_auswertung.clone(),
                                 fuel_efficiency_pct: trip_burn_efficiency_pct(
-                                    stats.takeoff_fuel_kg,
+                                    startsprit_mit_nachtanken(&stats),
                                     stats.landing_fuel_kg,
                                     stats.planned_burn_kg,
                                 ),
