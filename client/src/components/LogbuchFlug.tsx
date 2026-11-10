@@ -14,7 +14,8 @@ import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
 import { BordbuchFlug, bordbuchEreignisse } from "./bordbuch/BordbuchFlug";
 import { PruefstatusKasten, PruefstatusMarke, pruefArt, type PirepPruefstatus } from "./PirepPruefstatus";
 import { UploadKasten } from "./UploadAusstehend";
-import { badge, dur, elapsed, esc, fmtDate, type Detail, type RoutePt } from "./logbuchForm";
+import { LogbuchProtokoll } from "./LogbuchProtokoll";
+import { badge, dur, fmtDate, type Detail, type RoutePt } from "./logbuchForm";
 
 // Flugkarte: erst beim Öffnen laden — deck.gl soll den Start nicht bremsen
 const FlugkarteFlaeche = lazy(() => import("../flugkarte/FlugkarteFlaeche"));
@@ -174,20 +175,7 @@ export function LogbuchFlug({ detail, pruefstatus, uploads, onZurueck, onLandung
         </div>
         <div role="tabpanel" id="aa-lb-feld-protokoll" aria-labelledby="aa-lb-reiter-protokoll" className={`aa-lb-flug-blatt${reiter === "protokoll" ? "" : " ist-weg"}`}>
           {pruefOk && <PruefstatusKasten status={pruefstatus} />}
-          <div className="aa-lb-panel">
-            <h3>{t("logbook_view.detail_log_title")}</h3>
-            <div className="aa-lb-log" dangerouslySetInnerHTML={{
-              __html: (detail.log ?? []).map((l) => {
-                const phase = l.message.startsWith("Phase:");
-                // v0.19-Stage-E: "phase" (ohne Praefix) kollidierte mit der
-                // GLOBALEN .phase-Klasse (App.tsx Lade-/Session-Check-Screen)
-                // — Grenzflaeche/Hintergrund/Padding/flex-column von dort
-                // ueberlagerten die Grid-Zeile hier, sichtbar als kaputte
-                // Kaesten im Fluglogbuch. Eigener, praefixierter Modifier.
-                return `<div class="aa-lb-logrow ${phase ? "aa-lb-logrow--phase" : ""}"><span class="aa-lb-t">${elapsed(l.t)}</span><span class="aa-lb-m">${phase ? '<span class="aa-lb-dot"></span>' : ""}${esc(l.message)}</span></div>`;
-              }).join(""),
-            }} />
-          </div>
+          <LogbuchProtokoll detail={detail} />
         </div>
       </div>
       {vollbild && (

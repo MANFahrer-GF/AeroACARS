@@ -11,9 +11,17 @@ export interface RoutePt {
   /** Zeit seit Flugbeginn in ms. */
   t?: number;
 }
+export interface PirepFeld { name: string; slug: string; value: string }
+export interface PirepFare { code: string; name: string; count: number; type: number }
+export interface PirepBuchung { memo: string; credit_c: number; debit_c: number }
 export interface Detail extends Item {
   route?: RoutePt[];
   log?: { t: number; level?: string; message: string }[];
+  fields?: PirepFeld[];
+  fares?: PirepFare[];
+  transactions?: PirepBuchung[];
+  currency?: string;
+  units?: { weight?: string };
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
