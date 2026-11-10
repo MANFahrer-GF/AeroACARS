@@ -79,20 +79,40 @@ describe("PaketHinweis", () => {
     expect(invokeMock.mock.calls.filter((c) => c[0] === "paket_jetzt_pruefen").length).toBe(vorher + 1);
   });
 
-  it("im Flug: kein Band und keine Nachfrage", async () => {
-    antworten.paket_info = info(54);
+  // 3.0.1 (Thomas 10.11.): Bis 3.0.0 gab es im Flug weder Band noch
+  // Nachfrage. Jetzt fragt das Band auch im Flug und zeigt die neue
+  // Generation „ab dem nächsten Flug“, ohne Neustart-Knopf.
+  it("im Flug: fragt nach und zeigt das Band ohne Neustart", async () => {
+    antworten.paket_info = info(null, true);
     const r = await rendern(true);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(ERSTE_PRUEFUNG_MS + PRUEF_ABSTAND_MS);
-    });
     expect(r.container.textContent).toBe("");
-    expect(invokeMock).not.toHaveBeenCalledWith("paket_jetzt_pruefen");
+    antworten.paket_info = info(54, true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ERSTE_PRUEFUNG_MS);
+    });
+    expect(invokeMock).toHaveBeenCalledWith("paket_jetzt_pruefen");
+    expect(screen.getByText("Neues Paket bereit: Generation 54")).toBeTruthy();
+    expect(screen.getByText(deCommon.paket.neu_starten_nach_flug)).toBeTruthy();
+    expect(screen.queryByText("Jetzt neu starten")).toBeNull();
+    expect(screen.getByText("Später")).toBeTruthy();
   });
 
-  it("Kern meldet offenen Flug: kein Band", async () => {
+  it("Kern meldet offenen Flug: Band ohne Neustart, auch wenn die Oberfläche keinen Flug kennt", async () => {
     antworten.paket_info = info(54, true);
-    const r = await rendern();
-    expect(r.container.textContent).toBe("");
+    await rendern();
+    expect(screen.getByText(deCommon.paket.neu_starten_nach_flug)).toBeTruthy();
+    expect(screen.queryByText("Jetzt neu starten")).toBeNull();
+  });
+
+  it("nach dem Flug: Neustart-Knopf wieder da", async () => {
+    antworten.paket_info = info(54, true);
+    const r = await rendern(true);
+    expect(screen.queryByText("Jetzt neu starten")).toBeNull();
+    antworten.paket_info = info(54, false);
+    await act(async () => {
+      r.rerender(<PaketHinweis imFlug={false} />);
+    });
+    expect(screen.getByText("Jetzt neu starten")).toBeTruthy();
   });
 
   it("„Später“ blendet diese Generation aus, eine neuere erscheint wieder", async () => {

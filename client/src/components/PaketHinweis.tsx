@@ -1,9 +1,11 @@
 // Meldung „neue Paket-Generation bereit“ im Hauptfenster (30.10.2026,
 // Thomas: man sah ein neues Paket nur, wenn man selbst in Über/Hilfe
-// nachschaute). Fragt alle 30 Minuten bei live nach (`paket_jetzt_pruefen`,
-// der Kern holt nichts bei offenem Flug, P-3.20) und zeigt ein Band mit
-// „Jetzt neu starten“, sobald ein neuer Stand wartet (`paket_info`,
-// `naechster_start`). Im Flug kein Band — der Neustart ginge ohnehin nicht.
+// nachschaute). Fragt alle 30 Minuten bei live nach (`paket_jetzt_pruefen`)
+// und zeigt ein Band, sobald ein neuer Stand wartet (`paket_info`,
+// `naechster_start`). 3.0.1 (Thomas 10.11.: „wie das Client-Update“): auch
+// im Flug — dann ohne „Jetzt neu starten“, denn der offene Flug bleibt bei
+// seinem Stand; der neue gilt ab dem nächsten Flug. Kerne vor 3.0.1 holen
+// im Flug nichts und nennen dann auch keinen wartenden Stand.
 // „Später“ blendet es für genau diese Generation aus.
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,6 +20,7 @@ export const ERSTE_PRUEFUNG_MS = 2 * 60 * 1000;
 export function PaketHinweis({ imFlug }: { imFlug: boolean }) {
   const { t } = useTranslation();
   const [wartet, setWartet] = useState<number | null>(null);
+  const [flugOffen, setFlugOffen] = useState(false);
   const [spaeter, setSpaeter] = useState<number | null>(null);
   const [startet, setStartet] = useState(false);
   const [fehler, setFehler] = useState(false);
@@ -25,7 +28,8 @@ export function PaketHinweis({ imFlug }: { imFlug: boolean }) {
   const lesen = useCallback(async () => {
     try {
       const i = await invoke<PaketInfo>("paket_info");
-      setWartet(i.naechster_start && !i.flug_offen ? i.naechster_start.generation : null);
+      setWartet(i.naechster_start ? i.naechster_start.generation : null);
+      setFlugOffen(i.flug_offen === true);
     } catch {
       /* älterer Kern oder LAN-Tablet: kein Band */
     }
@@ -34,7 +38,7 @@ export function PaketHinweis({ imFlug }: { imFlug: boolean }) {
   useEffect(() => {
     let weg = false;
     const pruefen = async () => {
-      if (weg || imFlug) return;
+      if (weg) return;
       try {
         await invoke("paket_jetzt_pruefen");
       } catch {
@@ -52,7 +56,9 @@ export function PaketHinweis({ imFlug }: { imFlug: boolean }) {
     };
   }, [imFlug, lesen]);
 
-  if (imFlug || wartet === null || wartet === spaeter) return null;
+  if (wartet === null || wartet === spaeter) return null;
+  // Im Flug (laut Kern oder laut Oberfläche) kein Neustart-Knopf.
+  const flug = imFlug || flugOffen;
 
   const neuStarten = async () => {
     setStartet(true);
@@ -72,12 +78,16 @@ export function PaketHinweis({ imFlug }: { imFlug: boolean }) {
       </div>
       <div className="update-banner__text">
         <div className="update-banner__title">{t("paket.hinweis_titel", { n: wartet })}</div>
-        <div className="update-banner__subtitle">{fehler ? t("paket.neustart_fehler") : t("paket.hinweis_text")}</div>
+        <div className="update-banner__subtitle">
+          {fehler ? t("paket.neustart_fehler") : flug ? t("paket.neu_starten_nach_flug") : t("paket.hinweis_text")}
+        </div>
       </div>
       <div className="update-banner__actions">
-        <button type="button" className="button button--primary" onClick={() => void neuStarten()} disabled={startet}>
-          {startet ? "…" : t("paket.neu_starten")}
-        </button>
+        {!flug && (
+          <button type="button" className="button button--primary" onClick={() => void neuStarten()} disabled={startet}>
+            {startet ? "…" : t("paket.neu_starten")}
+          </button>
+        )}
         <button type="button" className="button button--ghost" onClick={() => setSpaeter(wartet)} disabled={startet}>
           {t("paket.hinweis_spaeter")}
         </button>

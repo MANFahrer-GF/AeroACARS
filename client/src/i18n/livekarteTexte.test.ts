@@ -179,50 +179,15 @@ describe("Drei Sprachen: Schluessel der Karte (G8)", () => {
 });
 
 // ── G9 ───────────────────────────────────────────────────────────────────────
-/** Was der Umbau der Live-Karte ausmacht, je Sprache in den Worten des Textes. Jedes Stichwort steht fuer
- *  einen Teil des Umfangs: Grundkarte wechseln ohne Verlust, Leiste, Panel, Fenstergroessen, Bildpunkte, Weltkugel. */
-const UMBAU: Record<"de" | "en" | "it", Array<[string, RegExp]>> = {
-  de: [
-    ["Live-Karte", /Live-Karte/],
-    ["Wechsel Hell/Dunkel/Satellit", /Hell, Dunkel und Satellit/],
-    ["Route, Spur, Verkehr, Netz bleiben", /Route, Spur, Verkehr und Netzanzeige.*stehen/],
-    ["Kartenleiste mit festen Knoepfen", /Kartenleiste.*feste Knöpfe/],
-    ["Fluginfo-Panel einklappbar", /Fluginfo-Panel.*einklappen/],
-    ["kleine Fenster", /kleinen Fenstern.*überdeckt sich nichts/],
-    ["Bildpunkte beim Oeffnen", /Bildpunkte.*beim Öffnen/],
-    ["Weltkugel bleibt", /Weltkugel bleibt.*Neustart/],
-  ],
-  en: [
-    ["live map", /live map/i],
-    ["light, dark and satellite", /light, dark and satellite/],
-    ["route, track, traffic, network stay", /route, track, traffic and network display.*stay/],
-    ["map bar with fixed buttons", /map bar.*fixed buttons/],
-    ["flight info panel collapsible", /flight info panel.*collapsed/],
-    ["small windows", /small windows/],
-    ["picture points on opening", /Picture points.*as soon as it opens/],
-    ["globe stays", /globe stays.*restart/],
-  ],
-  it: [
-    ["mappa live", /mappa live/],
-    ["chiaro, scuro e satellite", /chiaro, scuro e satellite/],
-    ["rotta, traccia, traffico, rete restano", /rotta, traccia, traffico e rete restano/],
-    ["barra della mappa con pulsanti fissi", /barra della mappa.*pulsanti fissi/],
-    ["pannello informazioni volo chiudibile", /pannello informazioni volo.*chiudere/],
-    ["finestre piccole", /finestre piccole/],
-    ["punti immagine all'apertura", /punti immagine.*appena si apre/],
-    ["globo resta", /globo resta.*riavvio/],
-  ],
-};
-
-describe("Hinweistext zum Umbau (G9)", () => {
-  for (const sprache of SPRACHEN) {
-    it(`beschreibt in ${sprache} den ganzen Umbau der Live-Karte`, () => {
-      const text = wert(TEXTE[sprache], "paket.neu_text")!;
-      expect(text.length).toBeGreaterThan(200);
-      const fehlt = UMBAU[sprache].filter(([, muster]) => !muster.test(text)).map(([name]) => name);
-      expect(fehlt, `im ${sprache}-Text fehlt: ${fehlt.join("; ")}`).toEqual([]);
-    });
-  }
+// Der Hinweistext zum Umbau der Live-Karte ging mit den Generationen bis 91
+// vollstaendig an die Piloten (Pruefung der Stichworte bis 3.0.0). Ab 3.0.1
+// beschreibt `paket.neu_text` die naechste Generation; `hinweis.py` verlangt
+// einen neuen Text, der alte darf darum nicht festgeschrieben bleiben. Es
+// bleibt die Pruefung, dass die drei Sprachen beieinander bleiben.
+describe("Hinweistext (G9)", () => {
+  it("steht in allen drei Sprachen", () => {
+    for (const s of SPRACHEN) expect(wert(TEXTE[s], "paket.neu_text")!.length).toBeGreaterThan(100);
+  });
 
   it("haelt die drei Sprachen im Umfang beieinander, nichts nur in einer", () => {
     const laengen = SPRACHEN.map((s) => wert(TEXTE[s], "paket.neu_text")!.length);
