@@ -1100,11 +1100,24 @@ fn neustart_erlaubt(flug_offen: bool, wartet: bool) -> Result<(), &'static str> 
 pub(crate) async fn paket_neu_starten(app: tauri::AppHandle) -> Result<(), crate::UiError> {
     let daten = APP_DATEN.get().cloned().ok_or_else(|| crate::UiError::new("kein_neues_paket", "Paket noch nicht gestartet"))?;
     let geltend = stand().id.clone();
-    let offen = flug_offen(&daten);
-    let wartet = tokio::task::spawn_blocking(move || naechster_start(&daten, &geltend).is_some()).await.unwrap_or(false);
-    neustart_erlaubt(offen, wartet).map_err(|c| crate::UiError::new(c, "Neustart nicht moeglich"))?;
+    let d = daten.clone();
+    let wartet = tokio::task::spawn_blocking(move || naechster_start(&d, &geltend).is_some()).await.unwrap_or(false);
+    // Erst NACH dem (laengeren) Laden auf einen Flug pruefen, ohne `await`
+    // bis zum Neustart (Codex 10.11.: begann der Flug waehrend des Ladens,
+    // wurde sonst trotzdem neu gestartet).
+    neustart_pruefen(&app, &daten, wartet).map_err(|c| crate::UiError::new(c, "Neustart nicht moeglich"))?;
     tracing::info!("Laufzeit-Paket: Neustart fuer den neuen Stand");
     app.restart()
+}
+
+/// Offener Flug JETZT: seine Datei oder ein laufender Flug, der noch nicht
+/// gespeichert ist (`AppState::active_flight`).
+fn neustart_pruefen<R: tauri::Runtime>(app: &tauri::AppHandle<R>, daten: &Path, wartet: bool) -> Result<(), &'static str> {
+    use tauri::Manager;
+    let im_speicher = app
+        .try_state::<crate::AppState>()
+        .is_some_and(|s| s.active_flight.lock().map_or(true, |f| f.is_some()));
+    neustart_erlaubt(flug_offen(daten) || im_speicher, wartet)
 }
 
 /// Das Pilot-Token ist jetzt da (`live_zugang::token_setzen`). Der Start-
@@ -2029,6 +2042,24 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert_eq!(START_FRIST_GESAMT.as_secs(), 60);
         assert_eq!(START_FRIST_ANFRAGE.as_secs(), 15);
         assert!(START_FRIST_VERBINDUNG < START_FRIST_ANFRAGE);
+    }
+
+    /// Codex 10.11.: Die Flugpruefung des Neustarts liest den Zustand zum
+    /// Zeitpunkt des Aufrufs (nach dem Laden), nicht einen frueheren Wert.
+    /// Ohne Flug: Neustart erlaubt; Flugdatei taucht auf: verweigert.
+    #[test]
+    fn neustart_prueft_den_flug_erst_unmittelbar_davor() {
+        use tauri::Manager;
+        let app = tauri::test::mock_app();
+        app.manage(crate::AppState::default());
+        let d = std::env::temp_dir().join(format!("aeroacars-neustart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(neustart_pruefen(app.handle(), &d, true), Ok(()));
+        assert_eq!(neustart_pruefen(app.handle(), &d, false), Err("kein_neues_paket"));
+        std::fs::write(d.join(crate::ACTIVE_FLIGHT_FILE), "{}").unwrap();
+        assert_eq!(neustart_pruefen(app.handle(), &d, true), Err("flug_offen"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// „Jetzt neu starten“ nur ohne Flug und nur mit wartendem Stand
