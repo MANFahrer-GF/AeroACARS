@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "../lib/ipc";
+import { beladungFuerPlan, type BeladungsKlasse, type VfrBeladung } from "./vfrBeladung";
 import { useTranslation } from "react-i18next";
 import type { Bid, ActiveFlightInfo, UiError } from "../types";
 import { resolveFlightIdent } from "../lib/callsign";
@@ -44,6 +45,7 @@ interface ManualFlightPlan {
   planned_zfw_kg?: number;
   planned_burn_kg?: number;
   acknowledge_aircraft_mismatch?: boolean;
+  beladung?: VfrBeladung[];
 }
 
 interface SimContextHint {
@@ -191,6 +193,8 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
   const [route, setRoute] = useState<string>(persisted.route ?? "");
   const [altAirport, setAltAirport] = useState<string>(persisted.altAirport ?? "");
   const [zfwKg, setZfwKg] = useState<string>(persisted.zfwKg ?? "");
+  const [klassen, setKlassen] = useState<BeladungsKlasse[]>([]);
+  const [beladungWerte, setBeladungWerte] = useState<Record<number, string>>({});
 
   // Persistiere alle Form-Felder bei jeder Änderung in localStorage —
   // synchron, damit auch ein sofortiges Unmount (Resize-Crash) den
@@ -224,6 +228,25 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
       /* noop */
     }
   };
+
+  const selectedId = selected?.id;
+  useEffect(() => {
+    setKlassen([]);
+    setBeladungWerte({});
+    if (selectedId === undefined) return;
+    let aktuell = true;
+    invoke<BeladungsKlasse[]>("vfr_beladungsklassen", { aircraftId: selectedId })
+      .then((liste) => {
+        if (aktuell) setKlassen(liste);
+      })
+      .catch((err: unknown) => {
+        // Ohne Klassen startet der Flug wie bisher, nur ohne Beladungsfelder.
+        console.warn("vfr_beladungsklassen", err);
+      });
+    return () => {
+      aktuell = false;
+    };
+  }, [selectedId]);
 
   function proceedToPlan() {
     if (!selected) return;
@@ -271,6 +294,7 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
     if (route.trim().length > 0) plan.planned_route = route.trim();
     if (altAirport.trim().length > 0) plan.alt_airport_id = altAirport.trim().toUpperCase();
     if (acknowledgeAircraftMismatch) plan.acknowledge_aircraft_mismatch = true;
+    if (klassen.length > 0) plan.beladung = beladungFuerPlan(klassen, beladungWerte);
 
     setStage("submitting");
     setError(null);
@@ -583,6 +607,38 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
                 </div>
                 <small>{t("manual_flight.form.zfw_help_optional")}</small>
               </label>
+
+              {klassen.length > 0 && (
+                <>
+                  <strong>{t("manual_flight.form.beladung_titel")}</strong>
+                  <small style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{t("manual_flight.form.beladung_help")}</small>
+                  {klassen.map((k) => (
+                    <label key={k.id}>
+                      <span>
+                        {k.name}{" "}
+                        <span style={{ color: "var(--muted, #888)", fontWeight: 400 }}>
+                          ({t("manual_flight.form.beladung_max", { max: k.kapazitaet })})
+                        </span>
+                      </span>
+                      <div className="manual-modal__input-with-unit">
+                        <input
+                          type="number"
+                          min="0"
+                          max={k.kapazitaet}
+                          step="1"
+                          value={beladungWerte[k.id] ?? ""}
+                          onChange={(e) =>
+                            setBeladungWerte((alt) => ({ ...alt, [k.id]: e.target.value }))
+                          }
+                          placeholder="0"
+                          disabled={stage === "submitting"}
+                        />
+                        <span>{k.typ === 1 ? "kg" : t("manual_flight.form.beladung_pax")}</span>
+                      </div>
+                    </label>
+                  ))}
+                </>
+              )}
             </div>
 
             {error && <div className="manual-modal__error">{error}</div>}

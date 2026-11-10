@@ -628,6 +628,17 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        "vfr_beladungsklassen" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                aircraft_id: i64,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::vfr_beladungsklassen(st!(), a.aircraft_id).await),
+                Err(e) => Err(e),
+            }
+        }
         "logbook_pireps" => {
             #[derive(Deserialize)]
             struct A {

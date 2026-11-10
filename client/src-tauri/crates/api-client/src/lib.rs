@@ -770,6 +770,79 @@ pub struct Fare {
     pub fare_type: Option<i32>,
 }
 
+/// Eine buchbare Beladungsklasse eines Flugzeugs (Passagiere je Klasse oder
+/// Fracht) mit der Obergrenze der Subfleet. Fuer die Eingabe beim VFR-Start.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BeladungsKlasse {
+    pub id: i64,
+    pub code: String,
+    pub name: String,
+    /// 0 = Passagiere, 1 = Fracht.
+    pub typ: i32,
+    pub kapazitaet: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct FlugzeugMitTarifen {
+    #[serde(default)]
+    subfleet: Option<SubfleetMitTarifen>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubfleetMitTarifen {
+    #[serde(default)]
+    fares: Vec<TarifMitPivot>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TarifMitPivot {
+    id: i64,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    capacity: Option<i32>,
+    #[serde(default, rename = "type")]
+    fare_type: Option<i32>,
+    #[serde(default)]
+    pivot: Option<TarifPivot>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TarifPivot {
+    /// phpVMS liefert die Subfleet-Kapazitaet als Text ("427"), `null` heisst
+    /// „Wert des Tarifs gilt".
+    #[serde(default)]
+    capacity: Option<serde_json::Value>,
+}
+
+/// Die Kapazitaet der Subfleet schlaegt die des Tarifs (live ist die des
+/// Tarifs meist leer). Klassen ohne Plaetze und unbekannte Tarifarten fallen
+/// weg, der Pilot kann dort nichts eintragen.
+fn beladungsklassen(tarife: Vec<TarifMitPivot>) -> Vec<BeladungsKlasse> {
+    tarife
+        .into_iter()
+        .filter_map(|t| {
+            let typ = t.fare_type.filter(|typ| *typ == 0 || *typ == 1)?;
+            let aus_pivot = t.pivot.and_then(|p| p.capacity).and_then(|v| match v {
+                serde_json::Value::Number(n) => n.as_i64().map(|n| n as i32),
+                serde_json::Value::String(s) => s.trim().parse::<i32>().ok(),
+                _ => None,
+            });
+            let kapazitaet = aus_pivot.or(t.capacity).filter(|k| *k > 0)?;
+            let code = t.code.unwrap_or_default();
+            Some(BeladungsKlasse {
+                id: t.id,
+                name: t.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| code.clone()),
+                code,
+                typ,
+                kapazitaet,
+            })
+        })
+        .collect()
+}
+
 /// One fare row returned by the PaxStudio ACARS API (`/api/paxstudio/ofp/{id}/…`).
 /// Only `id` + `count` are needed to file; the endpoint also sends `code`/`type`
 /// which serde ignores here.
@@ -2514,6 +2587,16 @@ impl Client {
     /// `GET /api/fleet/aircraft/{id}` — single aircraft, used for diagnostics.
     /// We also try `/api/aircraft/{id}` as a fallback because phpVMS deployments
     /// vary on this exact path.
+    /// Beladungsklassen eines Flugzeugs aus `/api/fleet/aircraft/{id}`
+    /// (die Antwort enthaelt `subfleet.fares` samt Subfleet-Kapazitaet).
+    pub async fn get_beladungsklassen(&self, id: i64) -> Result<Vec<BeladungsKlasse>, ApiError> {
+        let flugzeug: FlugzeugMitTarifen =
+            self.get_data(&format!("/api/fleet/aircraft/{id}")).await?;
+        Ok(beladungsklassen(
+            flugzeug.subfleet.map(|s| s.fares).unwrap_or_default(),
+        ))
+    }
+
     pub async fn get_aircraft(&self, id: i64) -> Result<AircraftDetails, ApiError> {
         match self
             .get_data::<AircraftDetails>(&format!("/api/fleet/aircraft/{id}"))
@@ -3339,6 +3422,35 @@ mod tests {
             "https://german-sky-group.eu/api/paxstudio/ofp/1777622821_5F3E3B3842/claim"
         );
         assert_eq!(url.path(), "/api/paxstudio/ofp/1777622821_5F3E3B3842/claim");
+    }
+
+    #[test]
+    fn beladungsklassen_nehmen_die_subfleet_kapazitaet() {
+        // Form der echten Antwort, gemessen an A6-EDF (Subfleet 742) am 10.11.2026.
+        let json = r#"{"subfleet":{"fares":[
+            {"id":6,"code":"Y","name":"Economy Class","capacity":null,"type":0,"pivot":{"capacity":"427"}},
+            {"id":7,"code":"CGO","name":"Cargo","capacity":null,"type":1,"pivot":{"capacity":"35000"}},
+            {"id":8,"code":"X","name":"Ohne Plaetze","capacity":null,"type":0,"pivot":{"capacity":null}},
+            {"id":9,"code":"J","name":"","capacity":40,"type":0,"pivot":{"capacity":null}},
+            {"id":10,"code":"Z","name":"Unbekannt","capacity":5,"type":2,"pivot":{"capacity":"5"}}
+        ]}}"#;
+        let f: FlugzeugMitTarifen = serde_json::from_str(json).unwrap();
+        let k = beladungsklassen(f.subfleet.unwrap().fares);
+        let kurz: Vec<_> = k.iter().map(|k| (k.id, k.typ, k.kapazitaet, k.name.as_str())).collect();
+        assert_eq!(
+            kurz,
+            vec![
+                (6, 0, 427, "Economy Class"),
+                (7, 1, 35000, "Cargo"),
+                (9, 0, 40, "J"),
+            ]
+        );
+    }
+
+    #[test]
+    fn beladungsklassen_ohne_subfleet_sind_leer() {
+        let f: FlugzeugMitTarifen = serde_json::from_str(r#"{"id":1}"#).unwrap();
+        assert!(f.subfleet.is_none());
     }
 
     #[test]

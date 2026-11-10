@@ -668,11 +668,8 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
     if let Some(flug) = &b.ohne_ofp {
         return (
             "ofp_missing",
-            "Auto-Start: wartet auf SimBrief-OFP",
-            format!(
-                "Bid {flug} hat noch kein Flugzeug — phpVMS haengt es erst mit dem \
-                 SimBrief-OFP an. Sobald das OFP erstellt ist, startet der Flug von selbst."
-            ),
+            "Kein Flugplan von der GSG-Seite",
+            format!("Flug {flug} ohne Passagiere und Fracht. Auf der Flugseite erstellen."),
         );
     }
     if let Some((bid, rest, code)) = &b.pause {
@@ -1296,8 +1293,43 @@ fn auto_start_melden(
         .lock()
         .unwrap() = Some((jetzt, code.to_string()));
     if protokoll.protokollieren(code, jetzt, wiederholen_nach_s) {
-        log_activity_handle(app, ActivityLevel::Info, titel.to_string(), Some(text));
+        log_activity_handle(app, auto_start_stufe(code), titel.to_string(), Some(text));
     }
+}
+
+/// Der fehlende Flugplan kostet den Piloten die Beladung und steht deshalb als
+/// Warnung im Band; alle anderen Gruende sind Auskunft.
+fn auto_start_stufe(code: &str) -> ActivityLevel {
+    if code == "ofp_missing" {
+        ActivityLevel::Warn
+    } else {
+        ActivityLevel::Info
+    }
+}
+
+/// Die Windows-Mitteilung kommt einmal je Flug, das Band wiederholt sich
+/// ohnehin. Ein anderer Grund dazwischen meldet denselben Flug nicht neu.
+fn ofp_mitteilung_faellig(gemeldet: &mut Option<String>, flug: Option<&str>) -> bool {
+    match flug {
+        Some(f) if gemeldet.as_deref() != Some(f) => {
+            *gemeldet = Some(f.to_string());
+            true
+        }
+        _ => false,
+    }
+}
+
+fn ofp_mitteilung_zeigen(app: &AppHandle, flug: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app
+        .notification()
+        .builder()
+        .title("AeroACARS: Beladung fehlt")
+        .body(format!(
+            "Flug {flug}: Ohne Flugplan von der GSG-Seite gibt es keine Passagiere und \
+             keine Fracht. Jetzt auf der Flugseite erstellen, dann startet der Flug von selbst."
+        ))
+        .show();
 }
 
 /// Spawn the auto-start watcher task. Idempotent in practice:
@@ -1328,6 +1360,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
         // nach Flugende und nach dem Einschalten neu gemessen wird.
         let mut sim_ruhe = SimRuhe::default();
         let mut protokoll = HinweisProtokoll::default();
+        let mut ofp_gemeldet: Option<String> = None;
         loop {
             tokio::time::sleep(Duration::from_secs(crate::grenzwerte::grenzwerte().cockpit.auto_start_interval_secs.wert)).await;
             let state = app.state::<AppState>();
@@ -1863,6 +1896,14 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     continue;
                 }
                 let (reason_code, title, reason_msg) = auto_start_hinweis(&beobachtung);
+                let flug_ohne_plan = (reason_code == "ofp_missing")
+                    .then(|| beobachtung.ohne_ofp.clone())
+                    .flatten();
+                if ofp_mitteilung_faellig(&mut ofp_gemeldet, flug_ohne_plan.as_deref()) {
+                    if let Some(flug) = &flug_ohne_plan {
+                        ofp_mitteilung_zeigen(&app, flug);
+                    }
+                }
                 auto_start_melden(
                     &app,
                     &mut protokoll,

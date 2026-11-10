@@ -2826,7 +2826,7 @@
       "no_bid_match": "No bid matches your current position. Auto-start only fires at the departure airport stand.",
       "aircraft_mismatch": "The loaded aircraft doesn't match the bid. Load the correct aircraft — or add an aircraft alias if it's the same type under a different name.",
       "bid_already_started": "This bid was already auto-started this session. Restart via the manual toggle or pick another bid.",
-      "ofp_missing": "Auto-start is waiting for the SimBrief OFP: no aircraft is assigned to the bid yet. As soon as the OFP is created, the flight starts by itself.",
+      "ofp_missing": "No flight plan from the GSG site: this flight has no passengers and no cargo. As soon as you create the flight plan on the flight page, the flight starts by itself.",
       "retry_pending": "The last auto-start failed — retrying shortly. The activity log shows why. Or use 'Start flight' manually.",
       "sim_not_ready": "Auto-start is waiting until the simulator has finished loading and has been running steadily for 20 seconds (not paused, no position jumps).",
       "start_running": "Auto-start is creating the flight right now — one moment."
@@ -3036,6 +3036,10 @@
       "zfw_placeholder": "e.g. 800",
       "zfw_help": "Required. Aircraft + pilot + pax + cargo (no fuel). Needed for loadsheet score and ZFW vs sim comparison.",
       "zfw_help_optional": "Optional. Aircraft + pilot + pax + cargo (no fuel). Leave empty for VFR/manual flights without loadsheet scoring — the score is then computed without a loadsheet/mass component (no 0-penalty).",
+      "beladung_titel": "Load",
+      "beladung_help": "Leave empty for no passengers and no cargo.",
+      "beladung_max": "max. {{max}}",
+      "beladung_pax": "pax",
       "optional": "optional"
     }
   },

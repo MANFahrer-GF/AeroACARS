@@ -194,6 +194,7 @@
     "allow-vermessung-schritt-neu",
     "allow-vermessung-starten",
     "allow-vermessung-stellung",
+    "allow-vfr-beladungsklassen",
     "allow-xplane-band-get-enabled",
     "allow-xplane-band-set-enabled",
     "allow-xplane-check-install-path",
