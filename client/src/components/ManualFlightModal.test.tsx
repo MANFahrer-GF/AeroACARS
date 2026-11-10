@@ -233,6 +233,14 @@ describe("ManualFlightModal — Beladungsklassen beim VFR-Start", () => {
     ]);
   });
 
+  it("bleibt unter einem alten Client ohne den Befehl still", async () => {
+    klassenAntwort = () => Promise.reject("Command vfr_beladungsklassen not found");
+    await bisZumPlan();
+
+    await waitFor(() => expect(startKnopf()).toBeEnabled());
+    expect(screen.queryByText(i18next.t("manual_flight.form.beladung_fehler"))).not.toBeInTheDocument();
+  });
+
   it("sperrt den Flug nicht, wenn die Klassen nicht laden, und kann es erneut versuchen", async () => {
     klassenAntwort = () => Promise.reject(new Error("offline"));
     const user = await bisZumPlan();

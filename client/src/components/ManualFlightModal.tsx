@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "../lib/ipc";
-import { beladungFuerPlan, type BeladungsKlasse, type VfrBeladung } from "./vfrBeladung";
+import { beladungFuerPlan, beladungsBefehlFehlt, type BeladungsKlasse, type VfrBeladung } from "./vfrBeladung";
 import { useTranslation } from "react-i18next";
 import type { Bid, ActiveFlightInfo, UiError } from "../types";
 import { resolveFlightIdent } from "../lib/callsign";
@@ -250,7 +250,7 @@ export function ManualFlightModal({ bid, simHint, onClose, onFlightStarted }: Pr
       .catch((err: unknown) => {
         // Der Flug bleibt startbar, nur ohne Beladung; das steht im Fenster.
         console.warn("vfr_beladungsklassen", err);
-        if (aktuell) setKlassenStatus("fehler");
+        if (aktuell) setKlassenStatus(beladungsBefehlFehlt(err) ? "fertig" : "fehler");
       });
     return () => {
       aktuell = false;

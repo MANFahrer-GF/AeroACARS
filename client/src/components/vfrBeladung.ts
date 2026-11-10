@@ -27,3 +27,13 @@ export function beladungFuerPlan(
     return { fare_id: k.id, anzahl };
   });
 }
+
+/**
+ * Alter Client unter neuer Oberfläche (Paket kommt vor dem Client): Dort gibt es
+ * den Befehl noch nicht. Das ist kein Ladefehler, das Fenster bleibt wie bisher.
+ * Hülle: Fehlertext „… not found“ / „… not allowed“, LAN-Brücke: `unknown_command`.
+ */
+export function beladungsBefehlFehlt(err: unknown): boolean {
+  if (typeof err === "string") return /vfr_beladungsklassen.*not (found|allowed)/i.test(err);
+  return (err as { code?: unknown } | null)?.code === "unknown_command";
+}
