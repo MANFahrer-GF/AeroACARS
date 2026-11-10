@@ -77,6 +77,8 @@ export default function FlugkarteFlaeche({ pirepId, bildZiel, zusatz, onBereit, 
           // nur im Entwicklungsmodus: Karte fuer Browser-Tests greifbar (wie in der Webapp)
           beiKarte: import.meta.env.DEV ? (karte) => { (window as unknown as { __flugkarte: unknown }).__flugkarte = karte; } : undefined,
           ...aussen.current.zusatz,
+          // eingebettet und niedrig: die Karte bekommt den Platz, der Streifen laesst sich aufklappen
+          streifenAnfangsZu: !!aussen.current.onOhneAkte && feld.current.clientHeight < 700,
           beiBereit: (api) => aussen.current.onBereit?.(api),
         });
       })

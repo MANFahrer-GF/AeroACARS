@@ -8630,7 +8630,7 @@ button.aa-livemap-events__row:hover {
 .aa-lb-logrow .aa-lb-m { overflow-wrap: anywhere; }
 .aa-lb-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 7px; vertical-align: middle; }
 /* ---- Geöffneter Flug (Design 10.11.2026) ---- */
-.aa-lb-flug { flex: 1; min-height: 560px; display: flex; flex-direction: column; gap: 10px; width: 100%; container-type: inline-size; }
+.aa-lb-flug { flex: 1 0 auto; display: flex; flex-direction: column; gap: 10px; width: 100%; container-type: inline-size; }
 .aa-lb-flug-kopf { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 14px; }
 .aa-lb-flug-wer .aa-lb-route { margin-left: 10px; font-size: 14px; }
 .aa-lb-flug-unter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
@@ -8644,11 +8644,13 @@ button.aa-livemap-events__row:hover {
 .aa-lb-flug-reiter button:hover { background: var(--surface-2); }
 .aa-lb-flug-reiter button.ist-aktiv { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .aa-lb-flug-reiter button.ist-aktiv:hover:not(:disabled) { background: var(--accent); color: #fff; }
-.aa-lb-flug-feld { position: relative; flex: 1; min-height: 0; }
+.aa-lb-flug-feld { position: relative; flex: 1 0 500px; min-height: 500px; }
 .aa-lb-flug-karte, .aa-lb-flug-blatt { position: absolute; inset: 0; min-height: 0; }
 .aa-lb-flug-karte { display: flex; flex-direction: column; background: #0b121b; border-radius: var(--r-md); overflow: hidden; }
 .aa-lb-flug-blatt { overflow-y: auto; }
 .aa-lb-flug-karte.ist-weg, .aa-lb-flug-blatt.ist-weg { visibility: hidden; pointer-events: none; }
+/* MapLibre setzt die Quellenangabe selbst auf sichtbar — sie schien sonst über den anderen Reitern durch (Thomas 10.11.). */
+.aa-lb-flug-karte.ist-weg * { visibility: hidden !important; }
 .aa-lb-flug-karte .fk { height: 100%; box-sizing: border-box; }
 .aa-lb-flug-karte .fk-titel { display: none; }
 .aa-lb-linie { display: flex; flex-direction: column; height: 100%; background: var(--surface); }
@@ -8679,8 +8681,19 @@ button.aa-livemap-events__row:hover {
   .aa-lb-card td[data-feld]::before { content: attr(data-feld) " "; display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
   .aa-lb-chev { display: none; }
 }
-@container (max-width: 760px) {
-  .aa-lb-det-stats { margin-left: 0; width: 100%; flex-wrap: wrap; }
+@container (max-width: 1040px) {
+  .aa-lb-flug-kopf .aa-lb-btn--rand { order: 1; margin-left: auto; }
+  .aa-lb-det-stats { order: 2; margin-left: 0; width: 100%; flex-wrap: wrap; }
+}
+@container (max-width: 340px) { .aa-lb-stats { grid-template-columns: minmax(0, 1fr); } }
+/* Ab hier stapelt die Flugkarte (flugkarte.css): die Seite rollt, keine zweite Rollleiste in der Fläche. */
+@media (max-width: 1060px) {
+  .aa-lb-flug-feld { flex: 0 0 auto; }
+  .aa-lb-flug-karte:not(.ist-weg), .aa-lb-flug-blatt:not(.ist-weg) { position: relative; inset: auto; }
+  .aa-lb-flug-blatt:not(.ist-weg) { overflow: visible; }
+  .aa-lb-flug-karte:not(.ist-weg) .fk { height: auto; }
+  .aa-lb-flug-karte .flugkarte-inhalt { flex: none; overflow: visible; }
+  .aa-lb-flug-karte:not(.ist-weg) .aa-lb-linie { height: 500px; }
 }
 
 /* ===== LAN remote control (v0.16.0, #LAN-Remote) ===== */

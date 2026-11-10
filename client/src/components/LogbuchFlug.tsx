@@ -12,7 +12,7 @@ import type { FlugkarteSteuerung } from "../flugkarte/flugkarte";
 import type { OhneAkte } from "../flugkarte/FlugkarteFlaeche";
 import { kartenAnfrage, useKartengrundlage } from "./BasemapContext";
 import { BordbuchFlug, bordbuchEreignisse } from "./bordbuch/BordbuchFlug";
-import { PruefstatusKasten, PruefstatusMarke, type PirepPruefstatus } from "./PirepPruefstatus";
+import { PruefstatusKasten, PruefstatusMarke, pruefArt, type PirepPruefstatus } from "./PirepPruefstatus";
 import { UploadKasten } from "./UploadAusstehend";
 import { badge, dur, elapsed, esc, fmtDate, type Detail, type RoutePt } from "./logbuchForm";
 
@@ -77,7 +77,8 @@ export function LogbuchFlug({ detail, pruefstatus, uploads, onZurueck, onLandung
 
   const b = eintrag && !eintrag.aus_grund ? bilanz(eintrag.punkte, eintrag.eingeschaltet) : null;
   const bilanzDa = b != null && b.von > 0;
-  const zahl = (n: number | undefined, einheit: string) => (n == null ? "—" : `${n.toLocaleString(i18n.language)} ${einheit}`);
+  const pruefOk = pruefArt(pruefstatus) === "ok";
+  const zahl = (n: number | undefined, einheit: string) => (n == null ? "—" : `${n} ${einheit}`);
   const reiterText = (r: Reiter) =>
     r === "karte" ? t("logbook_view.reiter_karte")
     : r === "protokoll" ? t("logbook_view.reiter_protokoll")
@@ -115,7 +116,8 @@ export function LogbuchFlug({ detail, pruefstatus, uploads, onZurueck, onLandung
           {t("logbook_view.landung_ansehen")}
         </button>
       </header>
-      <PruefstatusKasten status={pruefstatus} />
+      {/* „In Ordnung“ braucht keinen Platz über der Karte; alles andere muss sofort auffallen. */}
+      {!pruefOk && <PruefstatusKasten status={pruefstatus} />}
       <UploadKasten eintraege={uploads} />
       <div className="aa-lb-flug-reiterzeile">
         <div role="tablist" aria-label={t("logbook_view.reiter_aria")} className="aa-lb-flug-reiter">
@@ -171,6 +173,7 @@ export function LogbuchFlug({ detail, pruefstatus, uploads, onZurueck, onLandung
             : <BordbuchFlug eintrag={eintrag} onMarkieren={markieren} onAufKarte={ohneAkte ? undefined : aufKarte} />}
         </div>
         <div role="tabpanel" id="aa-lb-feld-protokoll" aria-labelledby="aa-lb-reiter-protokoll" className={`aa-lb-flug-blatt${reiter === "protokoll" ? "" : " ist-weg"}`}>
+          {pruefOk && <PruefstatusKasten status={pruefstatus} />}
           <div className="aa-lb-panel">
             <h3>{t("logbook_view.detail_log_title")}</h3>
             <div className="aa-lb-log" dangerouslySetInnerHTML={{

@@ -74,7 +74,7 @@ vi.mock("maplibre-gl", () => {
   return { default: { Map: FakeMap, Marker: class {}, LngLatBounds: class {} } };
 });
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
-vi.mock("./PirepPruefstatus", () => ({ PruefstatusKasten: () => null, PruefstatusMarke: () => null }));
+vi.mock("./PirepPruefstatus", () => ({ PruefstatusKasten: () => null, PruefstatusMarke: () => null, pruefArt: () => "unbekannt" }));
 vi.mock("./UploadAusstehend", () => ({ UploadKasten: () => null }));
 vi.mock("../flugkarte/FlugkarteFenster", () => ({ default: () => <div data-testid="vollbild" /> }));
 vi.mock("../flugkarte/FlugkarteFlaeche", async () => {

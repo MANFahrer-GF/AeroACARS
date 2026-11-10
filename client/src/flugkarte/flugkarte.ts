@@ -46,6 +46,8 @@ export interface FlugkarteOptionen {
   zusatzEreignisse?: Array<{ t: string; k: string; txt: string; schluessel: string }>;
   /** Kategorien dazu, mit fertigen Texten (die Webapp kennt sie nicht, deshalb nicht in flugkarte.kat) */
   zusatzKategorien?: Record<string, Kategorie & { c: string; n: string; how: string }>;
+  /** Datenstreifen beim ersten Oeffnen zu (niedrige eingebettete Karte); eine gemerkte Wahl geht vor */
+  streifenAnfangsZu?: boolean;
   /** Karte steht: Zugriff von aussen, z. B. „Auf Karte“ im Bordbuch */
   beiBereit?: (api: FlugkarteSteuerung) => void;
 }
@@ -1178,9 +1180,9 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   filterKnopf.onclick = () => { filterOffen = !filterOffen; filterZeigen(); try { localStorage.setItem(filterSchluessel, filterOffen ? "1" : "0"); } catch { /* ohne Speicher */ } };
 
   // Ereignisleiste und Datenstreifen wegklappbar — die Karte bekommt den Platz; Wahl wird gemerkt
-  const umschalter = (knopf: HTMLElement, klasse: string, schluessel: string, attr: "aria-pressed" | "aria-expanded") => {
-    let an = true;
-    try { an = localStorage.getItem(schluessel) !== "0"; } catch { /* ohne Speicher */ }
+  const umschalter = (knopf: HTMLElement, klasse: string, schluessel: string, attr: "aria-pressed" | "aria-expanded", anfangsAn = true) => {
+    let an = anfangsAn;
+    try { const g = localStorage.getItem(schluessel); if (g != null) an = g !== "0"; } catch { /* ohne Speicher */ }
     const zeigen = () => {
       root.classList.toggle(klasse, !an); knopf.setAttribute(attr, String(an));
       const pfeil = knopf.querySelector("span"); if (pfeil) pfeil.textContent = an ? "▾" : "▴";
@@ -1191,7 +1193,7 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   root.querySelector(".fk-seite")!.id = kennung + "-seite"; $("seiteKnopf").setAttribute("aria-controls", kennung + "-seite");
   cv.id = kennung + "-streifen"; $("streifenKnopf").setAttribute("aria-controls", cv.id);
   umschalter($("seiteKnopf"), "fk-ohne-seite", "fk-seite-offen", "aria-pressed");
-  umschalter($("streifenKnopf"), "fk-ohne-streifen", "fk-streifen-offen", "aria-expanded");
+  umschalter($("streifenKnopf"), "fk-ohne-streifen", "fk-streifen-offen", "aria-expanded", !opt.streifenAnfangsZu);
 
   legend(); renderChips(); renderList(); hud();
   filterZeigen(); // erst nach renderChips messen, sonst misst es einen leeren Filterblock
