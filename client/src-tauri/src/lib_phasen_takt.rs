@@ -729,7 +729,7 @@ fn step_flight_at(
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
     // 3.0.1 (DLH 41): Sprit, der in der Luft dazukommt, mitzaehlen.
-    nachtanken_luft_takt(&mut stats, snap.fuel_total_kg, snap.on_ground, now);
+    nachtanken_luft_takt(&mut stats, snap.fuel_total_kg, nachtanken_am_boden(snap), snap.simulation_rate, now);
     // Aufsetzzeit: die der FSM, sonst die des Aufsetz-Samplers (Busch- und
     // Hubschrauberlandungen, bei denen die FSM noch nicht in Landing ist).
     // Fuer Zeitbasis UND Verbrauchsrate — sonst bekam eine Cessna, deren

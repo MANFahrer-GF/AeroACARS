@@ -844,6 +844,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // unabhängig davon weiter block_fuel_kg − last_fuel_kg (Peak-
             // FOB-Delta, war nie von der toten SimVar abhängig).
             // Eine Uhrzeit fuer die Nachtank-Vorschau hier und den Takt unten.
+            // Dazwischen liegt kein `await` (nur abgespaltene Aufgaben), die
+            // Phasen-Zeitstempel haengen also nicht nach.
             let takt_jetzt = Utc::now();
             {
                 let mut stats = flight.stats.lock().expect("flight stats");
@@ -864,7 +866,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 let nachgetankt_luft_kg = nachtanken_luft_vorschau(
                     &stats,
                     snap.fuel_total_kg,
-                    snap.on_ground,
+                    nachtanken_am_boden(&snap),
+                    snap.simulation_rate,
                     takt_jetzt,
                 );
                 snap.fuel_used_kg = fuel_used_effective_kg(

@@ -71,7 +71,7 @@
     fn fuettern(n: &mut NachtankenLuft, t: &mut DateTime<Utc>, werte: &[f32]) {
         for kg in werte {
             *t += chrono::Duration::seconds(3);
-            n.takt(*kg, *t);
+            n.takt(*kg, 1.0, *t);
         }
     }
 
@@ -252,11 +252,11 @@
     fn verbrauch_ist_kein_einbruch() {
         // Zwei Minuten ohne Takt, 600 kg weniger.
         let (mut n, t) = zaehler(10_000.0);
-        n.takt(9_400.0, t + chrono::Duration::seconds(120));
+        n.takt(9_400.0, 1.0, t + chrono::Duration::seconds(120));
         assert_eq!(n.saldo_kg, 0.0);
         // Dieselbe Abnahme in drei Sekunden verbrennt kein Triebwerk.
         let (mut n, t) = zaehler(10_000.0);
-        n.takt(9_400.0, t + chrono::Duration::seconds(3));
+        n.takt(9_400.0, 1.0, t + chrono::Duration::seconds(3));
         assert_eq!(n.saldo_kg, -600.0);
         // Treppe: 30 s lang derselbe Wert, dann 100 kg weniger in einem Takt.
         let (mut n, mut t) = zaehler(10_000.0);
@@ -267,7 +267,7 @@
         assert_eq!(n.saldo_kg, 0.0);
         // Erster Takt ohne Vergleichsstand: keine Aussage.
         let mut n = NachtankenLuft::default();
-        assert_eq!(n.takt(5_000.0, zeit("2026-11-10T19:00:00Z")), 0.0);
+        assert_eq!(n.takt(5_000.0, 1.0, zeit("2026-11-10T19:00:00Z")), 0.0);
         assert_eq!(n.stand_kg, Some(5_000.0));
     }
 
@@ -378,7 +378,7 @@
         let mut t = zeit("2026-11-10T19:00:00Z");
         let mut takt = |st: &mut FlightStats, kg: f32, am_boden: bool| {
             t += chrono::Duration::seconds(3);
-            nachtanken_luft_takt(st, kg, am_boden, t);
+            nachtanken_luft_takt(st, kg, am_boden, 1.0, t);
         };
         takt(&mut st, 2_010.0, false);
         // Aufsetzen: Landesprit steht, es wird nicht gezaehlt.
@@ -386,13 +386,182 @@
         takt(&mut st, 2_000.0, true);
         // Wieder in der Luft, Tank gestiegen, Landesprit steht noch.
         takt(&mut st, 6_000.0, false);
-        assert_eq!(st.nachtanken_luft.stand_kg, Some(2_010.0), "der Vergleichsstand bleibt stehen");
+        assert_eq!(st.nachtanken_luft.stand_kg, Some(2_000.0), "der Vergleichsstand bleibt in der Luft stehen");
         // Der Durchstart raeumt den Landesprit ab — jetzt faellt der Anstieg auf.
         st.landing_fuel_kg = None;
         for kg in [5_990.0, 5_980.0, 5_970.0, 5_960.0, 5_950.0] {
             takt(&mut st, kg, false);
         }
-        assert_eq!(nachgetankt_luft(&st), 3_980.0);
+        assert_eq!(nachgetankt_luft(&st), 3_990.0);
+    }
+
+    /// Advisor-Fund (blockierend): Am Boden getankter Sprit ist nach dem
+    /// naechsten Start kein Nachtanken in der Luft. GAF 278 („Vom Boden
+    /// weiterfliegen"): im Sinkflug mit 5 000 kg abgestuerzt, am Boden mit
+    /// 11 700 kg neu geladen, von dort gestartet.
+    #[test]
+    fn am_boden_getankt_ist_nach_dem_start_kein_nachtanken() {
+        use super::weiterflug_vom_boden_tests as w;
+        let flight = w::sinkflug();
+        let mut t = zeit("2026-10-24T14:00:00Z");
+        let mut schritt = |snap: &SimSnapshot| {
+            t += chrono::Duration::seconds(3);
+            step_flight_at(&flight, snap, t);
+            t
+        };
+        let mut im_sinkflug = in_der_luft(5_000.0);
+        schritt(&im_sinkflug);
+        im_sinkflug.fuel_total_kg = 4_995.0;
+        let jetzt = schritt(&im_sinkflug);
+        {
+            let mut st = flight.stats.lock().unwrap();
+            assert_eq!(st.nachtanken_luft.stand_kg, Some(4_995.0));
+            bodenneustart_vorbereiten(&mut st, jetzt);
+        }
+        let mut am_boden = w::kalt_am_boden();
+        am_boden.fuel_total_kg = 11_700.0;
+        schritt(&am_boden);
+        schritt(&am_boden);
+        let mut ab = w::abheben();
+        for _ in 0..8 {
+            schritt(&ab);
+            ab.fuel_total_kg -= 5.0;
+            ab.altitude_agl_ft += 100.0;
+        }
+        let st = flight.stats.lock().unwrap();
+        assert_eq!(nachgetankt_luft(&st), 0.0);
+        assert_eq!(st.nachtanken_luft.offen_kg, 0.0);
+        let mut n = st.nachtanken_luft;
+        assert_eq!(n.hinweis_faellig(), None);
+    }
+
+    /// Zwischenlandung: aufgesetzt, am Boden getankt, wieder abgehoben. Der
+    /// Stand folgt am Boden dem Tank; nach dem Start zaehlt nichts.
+    #[test]
+    fn tanken_am_boden_und_wiederabheben_zaehlt_nicht() {
+        let mut st = FlightStats::default();
+        st.takeoff_at = Some(zeit("2026-11-10T18:00:00Z"));
+        let mut t = zeit("2026-11-10T19:00:00Z");
+        let mut takt = |st: &mut FlightStats, kg: f32, am_boden: bool| {
+            t += chrono::Duration::seconds(3);
+            nachtanken_luft_takt(st, kg, am_boden, 1.0, t);
+        };
+        takt(&mut st, 2_010.0, false);
+        st.landing_fuel_kg = Some(2_000.0);
+        takt(&mut st, 2_000.0, true);
+        takt(&mut st, 9_000.0, true);
+        takt(&mut st, 9_000.0, true);
+        // Abgehoben, der Landesprit steht noch, dann raeumt der Start ihn ab.
+        takt(&mut st, 8_990.0, false);
+        st.landing_fuel_kg = None;
+        for kg in [8_980.0, 8_970.0, 8_960.0, 8_950.0, 8_940.0] {
+            takt(&mut st, kg, false);
+        }
+        assert_eq!(nachgetankt_luft(&st), 0.0);
+        assert_eq!(st.nachtanken_luft.saldo_kg, 0.0);
+    }
+
+    /// Feldmessung 10.11.2026 (gsg/4 lJPy…): Sim am Gate neu geladen, der
+    /// erste Takt meldet „nicht am Boden" bei 11 ft und 0 kt, Tank 5 822 →
+    /// 11 800 kg. Das ist Tanken am Boden.
+    #[test]
+    fn neu_geladen_am_gate_mit_schwebendem_takt_zaehlt_nicht() {
+        let flight = dlh41();
+        {
+            let mut st = flight.stats.lock().unwrap();
+            st.nachtanken_luft.stand_kg = Some(5_822.0);
+            st.last_fuel_kg = Some(5_822.0);
+        }
+        let mut t = zeit("2026-11-10T19:36:00Z");
+        let mut schwebt = SimSnapshot {
+            on_ground: false,
+            altitude_agl_ft: 11.0,
+            groundspeed_kt: 0.0,
+            fuel_total_kg: 11_800.0,
+            ..SimSnapshot::default()
+        };
+        assert!(nachtanken_am_boden(&schwebt));
+        step_flight_at(&flight, &schwebt, t);
+        schwebt.on_ground = true;
+        for _ in 0..8 {
+            t += chrono::Duration::seconds(3);
+            step_flight_at(&flight, &schwebt, t);
+        }
+        let st = flight.stats.lock().unwrap();
+        assert_eq!(nachgetankt_luft(&st), 0.0);
+        assert_eq!(st.nachtanken_luft.offen_kg, 0.0);
+        assert_eq!(st.nachtanken_luft.stand_kg, Some(11_800.0));
+        // Gegenprobe: In der Luft ist dieselbe Lage keine Bodenlage.
+        assert!(!nachtanken_am_boden(&in_der_luft(11_800.0)));
+        let tief_und_schnell = SimSnapshot { altitude_agl_ft: 20.0, groundspeed_kt: 140.0, ..in_der_luft(1.0) };
+        assert!(!nachtanken_am_boden(&tief_und_schnell));
+    }
+
+    /// Feldmessung 10.11.2026 (gsg/30 E4x7…): Im Startlauf fiel die Anzeige
+    /// um 144 kg und kam eine Sekunde spaeter zurueck. Kein Tanken.
+    #[test]
+    fn abfall_der_gleich_zurueckkommt_ist_kein_tanken() {
+        let (mut n, t) = zaehler(47_805.0);
+        let s = |sek: i64| t + chrono::Duration::seconds(sek);
+        n.takt(47_662.0, 1.0, s(23));
+        n.takt(47_808.0, 1.0, s(24));
+        let mut kg = 47_808.0;
+        for i in 0..10 {
+            kg -= 27.0;
+            n.takt(kg, 1.0, s(27 + 3 * i));
+        }
+        assert_eq!(n.menge_kg(), 0.0);
+        assert_eq!(n.saldo_kg, 0.0);
+        assert_eq!(n.offen_kg, 0.0);
+        // Gegenprobe: Ein deutlich groesserer Anstieg nach demselben Abfall
+        // ist Tanken und zaehlt ganz …
+        let (mut n, t) = zaehler(47_805.0);
+        let s = |sek: i64| t + chrono::Duration::seconds(sek);
+        n.takt(47_662.0, 1.0, s(23));
+        n.takt(52_662.0, 1.0, s(24));
+        n.takt(52_660.0, 1.0, s(36));
+        assert_eq!(n.menge_kg(), 5_000.0);
+        // … und dieselbe Rueckkehr nach mehr als 30 s auch.
+        let (mut n, t) = zaehler(47_805.0);
+        let s = |sek: i64| t + chrono::Duration::seconds(sek);
+        n.takt(47_662.0, 1.0, s(23));
+        n.takt(47_808.0, 1.0, s(60));
+        n.takt(47_806.0, 1.0, s(72));
+        assert_eq!(n.menge_kg(), 146.0);
+    }
+
+    /// Advisor-Fund: Im Zeitraffer ist normaler Verbrauch kein Einbruch.
+    /// 16-fach, 2,5 kg/s Sim-Verbrauch = 120 kg je Drei-Sekunden-Takt; ein
+    /// spaeteres Nachtanken zaehlt danach ganz.
+    #[test]
+    fn zeitraffer_verbrauch_ist_kein_einbruch() {
+        let (mut n, mut t) = zaehler(30_000.0);
+        let mut kg = 30_000.0;
+        for _ in 0..50 {
+            kg -= 120.0;
+            t += chrono::Duration::seconds(3);
+            n.takt(kg, 16.0, t);
+        }
+        assert_eq!(n.saldo_kg, 0.0, "Zeitraffer-Verbrauch darf nicht als Einbruch gebucht werden");
+        // Gegenprobe: derselbe Verlauf in Echtzeit waere ein Einbruch.
+        let (mut e, mut te) = zaehler(30_000.0);
+        te += chrono::Duration::seconds(3);
+        e.takt(29_880.0, 1.0, te);
+        assert_eq!(e.saldo_kg, -120.0);
+        // Zurueck auf 1-fach und 5 000 kg nachgetankt: zaehlt ganz.
+        let davor = kg;
+        for i in 0..6 {
+            t += chrono::Duration::seconds(3);
+            n.takt(davor + 5_000.0 - 7.0 * i as f32, 1.0, t);
+        }
+        assert_eq!(n.menge_kg(), 5_000.0);
+        // Der Takt, in dem die Rate von 16 auf 1 faellt, gilt noch als 16-fach.
+        let (mut w, mut tw) = zaehler(30_000.0);
+        tw += chrono::Duration::seconds(3);
+        w.takt(29_990.0, 16.0, tw);
+        tw += chrono::Duration::seconds(3);
+        w.takt(29_870.0, 1.0, tw);
+        assert_eq!(w.saldo_kg, 0.0);
     }
 
     /// Ein Anstieg kurz vor dem Aufsetzen wird am Boden noch bestaetigt.
@@ -401,20 +570,20 @@
         let mut st = FlightStats::default();
         st.takeoff_at = Some(zeit("2026-11-10T18:00:00Z"));
         let mut t = zeit("2026-11-10T19:00:00Z");
-        nachtanken_luft_takt(&mut st, 2_000.0, false, t);
+        nachtanken_luft_takt(&mut st, 2_000.0, false, 1.0, t);
         t += chrono::Duration::seconds(3);
-        nachtanken_luft_takt(&mut st, 7_000.0, false, t);
+        nachtanken_luft_takt(&mut st, 7_000.0, false, 1.0, t);
         st.landing_fuel_kg = Some(6_995.0);
         for kg in [6_990.0, 6_985.0, 6_980.0, 6_975.0] {
             t += chrono::Duration::seconds(3);
-            nachtanken_luft_takt(&mut st, kg, true, t);
+            nachtanken_luft_takt(&mut st, kg, true, 1.0, t);
         }
         assert_eq!(nachgetankt_luft(&st), 5_000.0);
         // Am Boden kommt danach nichts mehr dazu.
         t += chrono::Duration::seconds(60);
-        nachtanken_luft_takt(&mut st, 20_000.0, true, t);
+        nachtanken_luft_takt(&mut st, 20_000.0, true, 1.0, t);
         t += chrono::Duration::seconds(60);
-        nachtanken_luft_takt(&mut st, 20_000.0, true, t);
+        nachtanken_luft_takt(&mut st, 20_000.0, true, 1.0, t);
         assert_eq!(nachgetankt_luft(&st), 5_000.0);
     }
 
@@ -433,7 +602,7 @@
             t += chrono::Duration::seconds(3);
             let vorschau = {
                 let st = flight.stats.lock().unwrap();
-                nachtanken_luft_vorschau(&st, kg, false, t)
+                nachtanken_luft_vorschau(&st, kg, false, 1.0, t)
             };
             verlauf.push(fu(&mut initial, 0.0, kg, false, vor, vorschau));
             step_flight_at(&flight, &in_der_luft(kg), t);
@@ -471,7 +640,7 @@
         let (mut n, mut t) = zaehler(1_390.0);
         let mut takt = |n: &mut NachtankenLuft, kg: f32| {
             t += chrono::Duration::seconds(3);
-            n.takt(kg, t);
+            n.takt(kg, 1.0, t);
             n.hinweis_faellig()
         };
         assert_eq!(takt(&mut n, 8_000.0), None, "steigt noch");
