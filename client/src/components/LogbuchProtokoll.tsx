@@ -3,7 +3,7 @@
 // Felder und Finanzen nicht; dann bleibt nur, was da ist.
 import { useTranslation } from "react-i18next";
 import { elapsed, esc, type Detail } from "./logbuchForm";
-import { finanzen, gruppieren } from "./protokollDaten";
+import { buchungstext, finanzen, gruppieren } from "./protokollDaten";
 
 export function LogbuchProtokoll({ detail }: { detail: Detail }) {
   const { t, i18n } = useTranslation();
@@ -76,7 +76,7 @@ export function LogbuchProtokoll({ detail }: { detail: Detail }) {
               </div>
               {fin.einnahmen.map((b, i) => (
                 <div className="aa-lb-prot-zeile aa-lb-prot-ein" key={`${b.memo}-${i}`}>
-                  <span>{b.memo}</span>
+                  <span>{buchungstext(b.memo)}</span>
                   <span className="aa-lb-prot-wert ist-plus">{geld(b.credit_c)}</span>
                   <span className="aa-lb-prot-wert aa-lb-prot-still">{b.debit_c ? geld(b.debit_c) : ""}</span>
                 </div>
@@ -87,8 +87,8 @@ export function LogbuchProtokoll({ detail }: { detail: Detail }) {
             <>
               <div className="aa-lb-prot-gtitel">{t("logbook_view.protokoll_kosten")}</div>
               {fin.kosten.map((b, i) => (
-                <div className="aa-lb-prot-zeile" key={`${b.memo}-${i}`}>
-                  <span>{b.memo}</span>
+                <div className="aa-lb-prot-zeile aa-lb-prot-kosten" key={`${b.memo}-${i}`}>
+                  <span>{buchungstext(b.memo)}</span>
                   <span className="aa-lb-prot-wert">{geld(b.debit_c)}</span>
                 </div>
               ))}

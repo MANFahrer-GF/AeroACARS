@@ -4,7 +4,7 @@ import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../../../bundle/texte/de.json";
 import { LogbuchProtokoll } from "./LogbuchProtokoll";
-import { finanzen, gruppieren } from "./protokollDaten";
+import { buchungstext, finanzen, gruppieren } from "./protokollDaten";
 import type { Detail, PirepBuchung, PirepFeld } from "./logbuchForm";
 
 beforeAll(async () => {
@@ -66,6 +66,17 @@ describe("finanzen", () => {
     expect(f.kosten.map((x) => x.memo)).toEqual(["gross", "klein"]);
     expect(f.einnahmen.map((x) => x.memo)).toEqual(["e2", "e1"]);
   });
+});
+
+describe("buchungstext", () => {
+  it.each([
+    ["Expense: Fuel (72,873 kg)", "Fuel (72,873 kg)"],
+    ["Expense: Pilot Pay Payout (fixed): 1128.75", "Pilot Pay Payout"],
+    ["Cargo (CGO) × 37.900t [I/G/CF]", "Cargo × 37.900t"],
+    ["Economy Class (Y) × 10 [I/G]", "Economy Class × 10"],
+    ["Baggage Fees (10)", "Baggage Fees (10)"],
+    ["Catering (10 PAX)", "Catering (10 PAX)"],
+  ])("%s", (ein, aus) => expect(buchungstext(ein)).toBe(aus));
 });
 
 const basis: Detail = { id: "p1", log: [{ t: 0, message: "Phase: Boarding" }, { t: 60000, message: "<b>Touchdown</b>" }] };

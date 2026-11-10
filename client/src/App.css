@@ -8673,6 +8673,7 @@ button.aa-livemap-events__row:hover {
 .aa-lb-prot-zeile.aa-lb-prot-ein > .aa-lb-prot-wert { white-space: nowrap; }
 .aa-lb-prot-gtitel.aa-lb-prot-ein > span:not(:first-child) { text-align: right; }
 .aa-lb-prot-zeile.aa-lb-prot-ein > span:first-child { max-width: none; }
+.aa-lb-prot-zeile.aa-lb-prot-kosten > span:first-child { max-width: 74%; }
 .aa-lb-prot-summen { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; margin-bottom: 8px; }
 .aa-lb-prot-summe { font-family: var(--font-mono); font-size: 14px; font-weight: 700; padding-top: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .aa-lb-prot-ergebnis { font-family: var(--font-mono); font-size: 17px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }

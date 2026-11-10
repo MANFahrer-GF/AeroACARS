@@ -34,6 +34,15 @@ export function gruppieren(felder: PirepFeld[] | undefined): FeldGruppe[] {
   });
 }
 
+/** Die Buchungstexte tragen Anhängsel des Servers, die Piloten nichts sagen:
+ *  „Expense: Fuel“, „Cargo (CGO) × 37.900t [I/G/CF]“, „Pilot Pay (fixed): 1128.75“. */
+export const buchungstext = (memo: string) =>
+  memo
+    .replace(/^Expense:\s*/, "")
+    .replace(/\s*\[[^\]]*\]$/, "")
+    .replace(/\s*\([^)]*\)\s*(?=×)/, " ")
+    .replace(/\s*\(fixed\):.*$/, "");
+
 export interface Finanzen {
   einnahmen: PirepBuchung[];
   kosten: PirepBuchung[];
