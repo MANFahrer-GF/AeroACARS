@@ -104,7 +104,7 @@ const ReleaseNotesModal = lazy(loadReleaseNotesModal);
 const CpdlcPanel = lazy(loadCpdlcPanel);
 import { UpdateButton } from "./components/UpdateButton";
 import { UpdateBanner } from "./components/UpdateBanner";
-import { BrueckeV3Band, BrueckeV3Knopf, useBrueckeV3 } from "./components/BrueckeV3Band";
+import { BrueckeV3Band, BrueckeV3Knopf, BrueckeV3Riegel, useBrueckeV3 } from "./components/BrueckeV3Band";
 import { UpdateGate } from "./components/UpdateGate";
 import { ErrorReportingFirstRunBanner } from "./components/ErrorReportingFirstRunBanner";
 import { IntegrityBanner } from "./components/IntegrityBanner";
@@ -963,6 +963,12 @@ function App() {
           Flugphase — die Gründe stehen in UpdateGate.tsx. */}
       <UpdateGate
         checker={updateChecker}
+        activePhase={activeFlight?.phase ?? null}
+        wiederaufnahmeStehtAus={wiederaufnahmeStehtAus}
+      />
+      {/* v2.1.27 — Pflicht-Umstieg auf AeroACARS 3 (BrueckeV3Band.tsx). */}
+      <BrueckeV3Riegel
+        bruecke={bruecke}
         activePhase={activeFlight?.phase ?? null}
         wiederaufnahmeStehtAus={wiederaufnahmeStehtAus}
       />

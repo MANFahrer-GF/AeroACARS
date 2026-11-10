@@ -26,10 +26,40 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
-/// Der Beta-Kanal von 3.x wechselt mit dem fertigen 3.0 mit
-/// (`scripts/beta-veroeffentlichen.sh` auf v3: KANAL / KANAL_FINAL).
+/// v2.1.27 — der stabile Kanal, nicht mehr der Beta-Kanal: In den schreibt
+/// `scripts/beta-veroeffentlichen.sh` (v3) auch künftige Betas, die letzte
+/// 2.x zwänge Nachzügler sonst auf eine Beta. Den stabilen Kanal füllt nur
+/// `--final`; solange er fehlt, liefert die Abfrage `None` und nichts sperrt.
 const KANAL_V3: &str =
-    "https://github.com/MANFahrer-GF/AeroACARS/releases/download/aeroacars3-beta-kanal/latest.json";
+    "https://github.com/MANFahrer-GF/AeroACARS/releases/download/aeroacars3-kanal/latest.json";
+
+/// Windows-Installation von 3 laut NSIS-Vorlage: `<Wurzel>\<Produktname>\<Programm>.exe`.
+const V3_ORDNER: &str = "AeroACARS 3";
+const V3_PROGRAMM: &str = "aeroacars-app.exe";
+
+/// 2.x bleibt auf Windows neben 3 installiert, über die alte Verknüpfung
+/// startet es also weiter. Liegt 3 schon da, wird es geöffnet statt noch
+/// einmal geladen.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn v3_programm_in(wurzeln: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    wurzeln.iter().map(|w| w.join(V3_ORDNER).join(V3_PROGRAMM)).find(|p| p.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn installiertes_v3() -> Option<std::path::PathBuf> {
+    let wurzeln: Vec<std::path::PathBuf> = ["LOCALAPPDATA", "ProgramFiles"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .map(std::path::PathBuf::from)
+        .collect();
+    v3_programm_in(&wurzeln)
+}
+
+/// Auf macOS tauscht die Brücke das Bundle, 2.x ist danach weg.
+#[cfg(not(target_os = "windows"))]
+fn installiertes_v3() -> Option<std::path::PathBuf> {
+    None
+}
 
 async fn update_v3(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
     let url = KANAL_V3.parse().map_err(|e| format!("{e}"))?;
@@ -75,11 +105,24 @@ fn sperre_app(app: &AppHandle) -> Option<&'static str> {
     sperre(daten.as_deref(), konfig.as_deref())
 }
 
+/// Beim ersten Start legt 3 den Merker `.von_2x_uebernommen` in seinen
+/// Datenordner neben dem von 2.x (`datenuebernahme.rs` auf v3). Damit lässt
+/// sich ein gelungenes Öffnen von einem unterscheiden, das 3 nie gestartet hat.
+fn v3_lief_schon(daten_2x: Option<&Path>) -> bool {
+    daten_2x
+        .and_then(Path::parent)
+        .is_some_and(|wurzel| wurzel.join("com.aeroacars.app3").join(".von_2x_uebernommen").exists())
+}
+
 #[derive(Serialize)]
 pub struct BrueckeV3 {
     version: String,
     /// "flug" | "warteschlange", solange der Umstieg Daten verlieren würde.
     sperre: Option<&'static str>,
+    /// 3 liegt schon auf diesem Rechner (nur Windows): öffnen statt laden.
+    installiert: bool,
+    /// 3 ist installiert und schon einmal gestartet: Öffnen trägt also.
+    lief_schon: bool,
 }
 
 /// Version von AeroACARS 3, wenn eine für dieses System bereitliegt.
@@ -87,7 +130,15 @@ pub struct BrueckeV3 {
 #[tauri::command]
 pub async fn bruecke_v3_pruefen(app: AppHandle) -> Option<BrueckeV3> {
     match update_v3(&app).await {
-        Ok(u) => u.map(|u| BrueckeV3 { version: u.version, sperre: sperre_app(&app) }),
+        Ok(u) => u.map(|u| {
+            let installiert = installiertes_v3().is_some();
+            BrueckeV3 {
+                version: u.version,
+                sperre: sperre_app(&app),
+                installiert,
+                lief_schon: installiert && v3_lief_schon(app.path().app_data_dir().ok().as_deref()),
+            }
+        }),
         Err(e) => {
             tracing::info!(fehler = %e, "Brücke v3: keine Version für dieses System");
             None
@@ -101,6 +152,11 @@ pub async fn bruecke_v3_installieren(app: AppHandle) -> Result<(), String> {
     if let Some(grund) = sperre_app(&app) {
         return Err(format!("gesperrt:{grund}"));
     }
+    if let Some(programm) = installiertes_v3() {
+        oeffnen(&app, &programm)?;
+        app.exit(0);
+        return Ok(());
+    }
     let update = update_v3(&app)
         .await?
         .ok_or_else(|| "Keine Version von AeroACARS 3 gefunden.".to_string())?;
@@ -112,6 +168,21 @@ pub async fn bruecke_v3_installieren(app: AppHandle) -> Result<(), String> {
     starten(&app, &update, &bytes)?;
     app.exit(0);
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn oeffnen(app: &AppHandle, programm: &Path) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(programm.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())?;
+    tracing::info!(programm = %programm.display(), "Brücke v3: vorhandene Installation geöffnet");
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn oeffnen(_app: &AppHandle, _programm: &Path) -> Result<(), String> {
+    Err("AeroACARS 3 lässt sich nur unter Windows direkt öffnen.".into())
 }
 
 #[cfg(target_os = "windows")]
@@ -181,6 +252,37 @@ mod tests {
     fn bundle_aus_exe_ohne_app_ist_none() {
         // Dev-Build aus target/: dort gibt es kein Bundle zu öffnen.
         assert_eq!(bundle_aus_exe(Path::new("/x/target/debug/deps/aeroacars")), None);
+    }
+
+    #[test]
+    fn v3_programm_wird_in_allen_wurzeln_gesucht() {
+        let leer = ordner("wurzel-leer");
+        let voll = ordner("wurzel-voll");
+        assert_eq!(v3_programm_in(&[leer.clone(), voll.clone()]), None);
+        // Nur der Ordner ohne Programm (abgebrochene Installation) zählt nicht.
+        std::fs::create_dir_all(voll.join(V3_ORDNER)).unwrap();
+        assert_eq!(v3_programm_in(&[leer.clone(), voll.clone()]), None);
+        let programm = voll.join(V3_ORDNER).join(V3_PROGRAMM);
+        std::fs::write(&programm, b"x").unwrap();
+        assert_eq!(v3_programm_in(&[leer, voll]), Some(programm));
+    }
+
+    #[test]
+    fn v3_lief_schon_liest_den_merker_neben_dem_2x_ordner() {
+        let wurzel = ordner("merker");
+        let daten_2x = wurzel.join("com.aeroacars.app");
+        assert!(!v3_lief_schon(Some(&daten_2x)));
+        let daten_3 = wurzel.join("com.aeroacars.app3");
+        std::fs::create_dir_all(&daten_3).unwrap();
+        assert!(!v3_lief_schon(Some(&daten_2x)), "Ordner ohne Merker zählt nicht");
+        std::fs::write(daten_3.join(".von_2x_uebernommen"), "").unwrap();
+        assert!(v3_lief_schon(Some(&daten_2x)));
+        assert!(!v3_lief_schon(None));
+    }
+
+    #[test]
+    fn die_letzte_2x_folgt_dem_stabilen_kanal() {
+        assert!(KANAL_V3.contains("/aeroacars3-kanal/"), "{KANAL_V3}");
     }
 
     fn ordner(name: &str) -> std::path::PathBuf {

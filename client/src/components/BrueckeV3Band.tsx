@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { FlightPhase } from "../types";
 import { formatIpcError, invoke, isTauri } from "../lib/ipc";
@@ -26,6 +26,10 @@ import { ACTIVE_FLIGHT_PHASES } from "./UpdateBanner";
 interface BrueckeV3Info {
   version: string;
   sperre: "flug" | "warteschlange" | null;
+  /** 3 liegt schon auf diesem Rechner (nur Windows): öffnen statt laden. */
+  installiert?: boolean;
+  /** 3 ist installiert und schon einmal gestartet: Öffnen trägt also. */
+  lief_schon?: boolean;
 }
 
 export interface BrueckeV3 {
@@ -33,17 +37,68 @@ export interface BrueckeV3 {
   laeuft: boolean;
   fehler: string | null;
   umsteigen: () => void;
+  /** Die erste Antwort kam im Startfenster und ohne Sperre. Trägt `BrueckeV3Riegel`. */
+  pflichtBeimStart: boolean;
+  /** Versuch aus einem früheren Start, siehe `VERSUCH_KEY`. */
+  frueherVersuch: string | null;
 }
 
 /** Neu abfragen (nur ohne Flug): jede Minute bei Sperre, alle zehn Minuten ohne Antwort. */
 const TAKT_GESPERRT_MS = 60 * 1000;
 const TAKT_OHNE_ANTWORT_MS = 10 * 60 * 1000;
 
+/**
+ * Wie beim `UpdateGate` sperrt der Riegel nur am Anfang, nie mitten in der
+ * Sitzung. Zwölf statt zehn Minuten, damit die Wiederholung nach einem Start
+ * ohne Netz (`TAKT_OHNE_ANTWORT_MS`) noch hineinfällt.
+ */
+const STARTFENSTER_MS = 12 * 60 * 1000;
+
+/**
+ * Letzter Umstiegsversuch dieses Rechners: `laden:<version>` oder
+ * `oeffnen:<version>`. Windows beendet 2.x direkt nach dem Start des
+ * Installers, ein abgebrochener Installer meldet deshalb nie einen Fehler.
+ * Erkennbar wird er erst beim nächsten Start: 3 fehlt, obwohl geladen wurde.
+ */
+const VERSUCH_KEY = "aeroacars.bruecke_v3.versuch";
+
+function lesen(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lässt sich nichts speichern, kann der Riegel weder einen Fehlschlag über
+ * den Neustart retten noch einen Ausweg merken. Dann sperrt er nicht, das
+ * Band bleibt: Ein Riegel ohne Ausgang ist schlimmer als keiner.
+ */
+function speicherGeht(): boolean {
+  try {
+    localStorage.setItem(`${VERSUCH_KEY}.probe`, "1");
+    localStorage.removeItem(`${VERSUCH_KEY}.probe`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function versuchKennung(info: BrueckeV3Info): string {
+  return `${info.installiert ? "oeffnen" : "laden"}:${info.version}`;
+}
+
 export function useBrueckeV3(activePhase: FlightPhase | null): BrueckeV3 {
   const [info, setInfo] = useState<BrueckeV3Info | null>(null);
   const [laeuft, setLaeuft] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
   const [abfrage, setAbfrage] = useState(0);
+  const [pflichtBeimStart, setPflichtBeimStart] = useState(false);
+  // Nur beim Start gelesen: Der Klick dieser Sitzung ist noch kein Fehlschlag.
+  const [frueherVersuch] = useState(() => lesen(VERSUCH_KEY));
+  const startZeit = useRef(Date.now());
+  const ersteAntwort = useRef(false);
 
   useEffect(() => {
     if (!isTauri) return;
@@ -51,7 +106,12 @@ export function useBrueckeV3(activePhase: FlightPhase | null): BrueckeV3 {
     invoke<BrueckeV3Info | null>("bruecke_v3_pruefen")
       .then((v) => {
         // Eine leere Antwort (Netzfehler) wirft eine schon bekannte Version nicht weg.
-        if (aktiv && v) setInfo(v);
+        if (!aktiv || !v) return;
+        if (!ersteAntwort.current) {
+          ersteAntwort.current = true;
+          if (v.sperre == null && Date.now() - startZeit.current < STARTFENSTER_MS) setPflichtBeimStart(true);
+        }
+        setInfo(v);
       })
       .catch(() => undefined);
     return () => {
@@ -71,6 +131,13 @@ export function useBrueckeV3(activePhase: FlightPhase | null): BrueckeV3 {
   const umsteigen = useCallback(() => {
     setLaeuft(true);
     setFehler(null);
+    if (info) {
+      try {
+        localStorage.setItem(VERSUCH_KEY, versuchKennung(info));
+      } catch {
+        /* Ohne Speicher fehlt nur der Ausweg beim nächsten Start. */
+      }
+    }
     invoke("bruecke_v3_installieren").catch((e) => {
       const text = formatIpcError(e);
       const grund = /^gesperrt:(flug|warteschlange)$/.exec(text)?.[1];
@@ -78,9 +145,94 @@ export function useBrueckeV3(activePhase: FlightPhase | null): BrueckeV3 {
       else setFehler(text);
       setLaeuft(false);
     });
-  }, []);
+  }, [info]);
 
-  return { info, laeuft, fehler, umsteigen };
+  return { info, laeuft, fehler, umsteigen, pflichtBeimStart, frueherVersuch };
+}
+
+/** Derselbe Betriebsschalter wie beim `UpdateGate`, von Hand gesetzt. */
+const NOTAUS_KEY = "aeroacars.update.gate_off";
+/** Ausweg nach einem Fehlschlag, an die Version von 3 gebunden wie beim `UpdateGate`. */
+const AUSWEG_KEY = "aeroacars.bruecke_v3.skip_version";
+
+/**
+ * v2.1.27 — Pflicht-Umstieg (Thomas 10.11.2026): Beim Start ist die
+ * Oberfläche gesperrt, bis auf AeroACARS 3 umgestiegen wurde. Kein „Später“.
+ *
+ * Er sperrt nicht ohne Antwort aus dem Kanal (kein Netz, kein stabiles 3.x),
+ * nicht bei offenem Flug oder wartenden PIREPs (`sperre`), nicht in einer
+ * Flugphase und nicht, solange die Wiederaufnahme ungeklärt ist. Bei `sperre`
+ * bleibt das Band und erklärt; gesperrt wird dann erst beim nächsten Start,
+ * damit der Riegel nicht direkt nach dem Abschicken eines PIREPs zufällt.
+ */
+export function BrueckeV3Riegel({
+  bruecke,
+  activePhase,
+  wiederaufnahmeStehtAus,
+}: {
+  bruecke: BrueckeV3;
+  activePhase: FlightPhase | null;
+  wiederaufnahmeStehtAus?: boolean;
+}) {
+  const { t } = useTranslation();
+  const { info, laeuft, fehler, umsteigen, pflichtBeimStart, frueherVersuch } = bruecke;
+  const knopfRef = useRef<HTMLButtonElement>(null);
+  const [weiterMit2, setWeiterMit2] = useState(false);
+
+  const sichtbar =
+    pflichtBeimStart &&
+    !weiterMit2 &&
+    speicherGeht() &&
+    info != null &&
+    info.sperre == null &&
+    lesen(NOTAUS_KEY) !== "1" &&
+    lesen(AUSWEG_KEY) !== info.version &&
+    !(activePhase != null && ACTIVE_FLIGHT_PHASES.has(activePhase)) &&
+    wiederaufnahmeStehtAus === false;
+
+  useEffect(() => {
+    if (sichtbar) knopfRef.current?.focus();
+  }, [sichtbar]);
+
+  if (!sichtbar || !info) return null;
+  // Nach einem gelungenen Öffnen gibt es keinen Ausweg, sonst wäre er ein „Später“.
+  const ausweg = fehler != null || (frueherVersuch === versuchKennung(info) && !info.lief_schon);
+
+  return (
+    <div className="update-gate" role="alertdialog" aria-modal="true">
+      <div className="update-gate__card">
+        <div className="update-gate__icon" aria-hidden="true">
+          ⬆
+        </div>
+        <h2 className="update-gate__title">{t("bruecke_v3.riegel_titel", { version: info.version })}</h2>
+        <p className="update-gate__lead">{t(info.installiert ? "bruecke_v3.riegel_text_installiert" : "bruecke_v3.riegel_text")}</p>
+        {laeuft && <p className="update-gate__progress">{t("bruecke_v3.laeuft")}</p>}
+        {fehler && <p className="update-gate__progress">{t("bruecke_v3.fehler", { fehler })}</p>}
+        <button ref={knopfRef} type="button" className="update-gate__install" onClick={umsteigen} disabled={laeuft}>
+          {laeuft ? "…" : t(info.installiert ? "bruecke_v3.oeffnen" : "bruecke_v3.umsteigen")}
+        </button>
+        {ausweg && (
+          <div className="update-gate__fallback">
+            <p>{t("bruecke_v3.riegel_fehlgeschlagen")}</p>
+            <button
+              type="button"
+              className="update-gate__continue"
+              onClick={() => {
+                try {
+                  localStorage.setItem(AUSWEG_KEY, info.version);
+                } catch {
+                  /* Ohne Speicher kommt der Riegel beim nächsten Start wieder. */
+                }
+                setWeiterMit2(true);
+              }}
+            >
+              {t("bruecke_v3.riegel_weiter")}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function BrueckeV3Band({ bruecke, activePhase }: { bruecke: BrueckeV3; activePhase: FlightPhase | null }) {
@@ -104,7 +256,7 @@ export function BrueckeV3Band({ bruecke, activePhase }: { bruecke: BrueckeV3; ac
       </div>
       <div className="update-banner__actions">
         <button type="button" className="button button--primary" onClick={umsteigen} disabled={laeuft || info.sperre != null}>
-          {laeuft ? "…" : t("bruecke_v3.umsteigen")}
+          {laeuft ? "…" : t(info.installiert ? "bruecke_v3.oeffnen" : "bruecke_v3.umsteigen")}
         </button>
       </div>
     </div>

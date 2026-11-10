@@ -1900,7 +1900,13 @@
     "sperre_warteschlange": "Es warten noch Flüge auf das Senden. Sobald sie übertragen sind, kannst du umsteigen.",
     "umsteigen": "Jetzt umsteigen",
     "laeuft": "AeroACARS 3 wird geladen …",
-    "fehler": "Umstieg fehlgeschlagen: {{fehler}}"
+    "fehler": "Umstieg fehlgeschlagen: {{fehler}}",
+    "oeffnen": "AeroACARS 3 öffnen",
+    "riegel_titel": "Umstieg auf AeroACARS 3 erforderlich (v{{version}})",
+    "riegel_text": "AeroACARS 2 wird nicht mehr weiterentwickelt. Steig jetzt um: AeroACARS lädt AeroACARS 3, schließt sich und startet die neue Version (etwa eine Minute; unter Windows erst über den Installer). Anmeldung, Einstellungen, Bordbuch und Landungen übernimmt AeroACARS 3 beim ersten Start.",
+    "riegel_text_installiert": "AeroACARS 3 ist auf diesem PC schon installiert. Bitte öffne künftig nur noch AeroACARS 3. AeroACARS 2 kannst du in den Windows-Einstellungen entfernen.",
+    "riegel_fehlgeschlagen": "Der Umstieg hat nicht geklappt. Häufigste Ursachen: fehlende Rechte, ein Virenscanner oder ein gesperrtes Netz. Du kannst vorerst mit AeroACARS 2 weiterarbeiten, der Knopf „AeroACARS 3“ bleibt in der Seitenleiste.",
+    "riegel_weiter": "Vorerst mit AeroACARS 2 weiter"
   },
   "recording": {
     "status": {

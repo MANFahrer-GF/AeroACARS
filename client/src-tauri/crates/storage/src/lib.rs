@@ -1999,7 +1999,9 @@ mod landing_store_tests {
         assert!(store.stand().expect("leer").ends_with("-leer"));
         store.upsert(rec("A", &ts(100), &ts(100))).expect("schreiben");
         let eins = store.stand().expect("stand");
-        assert_eq!(store.stand().expect("stand"), eins, "ohne Schreiben gleich");
+        // Der Schreibzaehler gilt je Prozess, parallele Tests zaehlen mit.
+        let ohne_zaehler = |s: &str| s.split_once('-').map(|(_, rest)| rest.to_string());
+        assert_eq!(ohne_zaehler(&store.stand().expect("stand")), ohne_zaehler(&eins), "ohne Schreiben gleich");
         store.upsert(rec("B", &ts(200), &ts(200))).expect("schreiben");
         assert_ne!(store.stand().expect("stand"), eins, "neue Landung");
         let zwei = store.stand().expect("stand");

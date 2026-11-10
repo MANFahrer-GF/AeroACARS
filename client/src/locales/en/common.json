@@ -1900,7 +1900,13 @@
     "sperre_warteschlange": "Some flights are still waiting to be sent. As soon as they are transmitted, you can switch.",
     "umsteigen": "Switch now",
     "laeuft": "Downloading AeroACARS 3 …",
-    "fehler": "Switch failed: {{fehler}}"
+    "fehler": "Switch failed: {{fehler}}",
+    "oeffnen": "Open AeroACARS 3",
+    "riegel_titel": "Switch to AeroACARS 3 required (v{{version}})",
+    "riegel_text": "AeroACARS 2 is no longer being developed. Switch now: AeroACARS downloads AeroACARS 3, closes itself and starts the new version (about one minute; on Windows via the installer first). AeroACARS 3 takes over your login, settings, logbook and landings on its first start.",
+    "riegel_text_installiert": "AeroACARS 3 is already installed on this PC. From now on, please only open AeroACARS 3. You can remove AeroACARS 2 in the Windows settings.",
+    "riegel_fehlgeschlagen": "The switch did not work. Most common causes: missing permissions, a virus scanner or a blocked network. You can keep working with AeroACARS 2 for now, the “AeroACARS 3” button stays in the sidebar.",
+    "riegel_weiter": "Continue with AeroACARS 2 for now"
   },
   "recording": {
     "status": {

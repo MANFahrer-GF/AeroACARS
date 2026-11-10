@@ -1900,7 +1900,13 @@
     "sperre_warteschlange": "Alcuni voli attendono ancora l'invio. Appena sono stati trasmessi, puoi passare ad AeroACARS 3.",
     "umsteigen": "Passa ora",
     "laeuft": "Download di AeroACARS 3 …",
-    "fehler": "Passaggio non riuscito: {{fehler}}"
+    "fehler": "Passaggio non riuscito: {{fehler}}",
+    "oeffnen": "Apri AeroACARS 3",
+    "riegel_titel": "Passaggio ad AeroACARS 3 obbligatorio (v{{version}})",
+    "riegel_text": "AeroACARS 2 non viene più sviluppato. Passa ora: AeroACARS scarica AeroACARS 3, si chiude e avvia la nuova versione (circa un minuto; su Windows prima tramite il programma di installazione). AeroACARS 3 riprende accesso, impostazioni, logbook e atterraggi al primo avvio.",
+    "riegel_text_installiert": "AeroACARS 3 è già installato su questo PC. D’ora in poi apri solo AeroACARS 3. Puoi rimuovere AeroACARS 2 dalle impostazioni di Windows.",
+    "riegel_fehlgeschlagen": "Il passaggio non è riuscito. Cause più comuni: permessi mancanti, un antivirus o una rete bloccata. Per ora puoi continuare con AeroACARS 2, il pulsante “AeroACARS 3” resta nella barra laterale.",
+    "riegel_weiter": "Continua per ora con AeroACARS 2"
   },
   "recording": {
     "status": {
