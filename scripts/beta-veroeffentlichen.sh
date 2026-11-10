@@ -66,6 +66,27 @@ pruefe_latest_2x() {
   echo "GitHub-latest bleibt $latest (2.x)."
 }
 
+# Der finale Bau kommt aus release.yml, nicht aus beta-kanal-bauen.sh. Eine
+# kaputte latest.json traefe alle Betas und die 2.x-Bruecke zugleich, deshalb
+# vor dem Veroeffentlichen dieselbe Pruefung wie im Beta-Zweig.
+pruefe_final_latest() {
+  local tag=$1 json=$2 assets name p
+  for p in windows-x86_64 darwin-aarch64; do
+    jq -e --arg p "$p" '.platforms[$p].url and .platforms[$p].signature' "$json" >/dev/null \
+      || fehler "latest.json von $tag ohne Plattform $p"
+  done
+  assets=$(gh release view "$tag" -R "$REPO" --json assets -q '.assets[].name')
+  mkdir -p "$TMP/sig"
+  while IFS=$'\t' read -r url sig; do
+    name=${url##*/}
+    grep -qxF "$name" <<<"$assets" || fehler "latest.json zeigt auf $name, das im Release fehlt"
+    grep -qxF "$name.sig" <<<"$assets" || fehler "Signaturdatei $name.sig fehlt im Release"
+    gh release download "$tag" -R "$REPO" -p "$name.sig" -D "$TMP/sig" --clobber
+    [[ "$sig" == "$(tr -d '\r\n ' < "$TMP/sig/$name.sig")" ]] || fehler "Signatur zu $name passt nicht"
+  done < <(jq -r '.platforms[] | [.url, .signature] | @tsv' "$json")
+  echo "latest.json von $tag geprueft: Plattformen, Dateien, Signaturen."
+}
+
 if [[ $1 == "--final" ]]; then
   TAG=${2:?Tag fehlt, z. B. v3.0.0}
   [[ "$TAG" =~ ^v3\.[0-9]+\.[0-9]+$ ]] || fehler "$TAG ist kein finales 3.x-Tag (vX.Y.Z mit X=3)"
@@ -76,6 +97,7 @@ if [[ $1 == "--final" ]]; then
   while read -r url; do
     [[ "$url" == "https://github.com/${REPO}/releases/download/${TAG}/"* ]] || fehler "fremde URL in latest.json: $url"
   done < <(jq -r '.platforms[].url' "$TMP/latest.json")
+  pruefe_final_latest "$TAG" "$TMP/latest.json"
   pruefe_latest_2x
   # Veroeffentlichen als normales Release, ausdruecklich nicht "latest".
   gh release edit "$TAG" -R "$REPO" --draft=false --prerelease=false --latest=false
