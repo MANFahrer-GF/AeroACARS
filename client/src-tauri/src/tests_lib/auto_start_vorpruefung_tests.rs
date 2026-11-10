@@ -57,8 +57,8 @@
             ..Default::default()
         });
         assert_eq!(code, "ofp_missing");
-        assert!(titel.contains("SimBrief-OFP"));
-        assert!(text.contains("Bid 219"), "{text}");
+        assert!(titel.contains("Flugplan"));
+        assert!(text.contains("Flug 219"), "{text}");
     }
 
     /// Frueher: „Bid ? wurde diese Session schon mal auto-gestartet" —
@@ -370,6 +370,82 @@
             auto_start_bid_vorpruefung(&b, Some(1), true, None),
             BidVorpruefung::TypPruefen { flugzeug_id: 1046 }
         );
+    }
+
+    /// Der Hinweis muss ungekuerzt im Sim-Band stehen, sonst fehlt dem
+    /// Piloten am Gate genau der Satz, was zu tun ist (Band: Titel - Text).
+    #[test]
+    fn hinweis_ohne_flugplan_passt_ungekuerzt_ins_band() {
+        let (code, titel, text) = auto_start_hinweis(&AutoStartBeobachtung {
+            ohne_ofp: Some("9999".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(code, "ofp_missing");
+        let zeile = format!("{titel} - {text}");
+        assert!(zeile.contains("Passagiere und Fracht"), "{zeile}");
+        assert_eq!(
+            sim_xplane::hud_band::kuerze(&sim_xplane::hud_band::nur_ascii(&zeile)),
+            zeile,
+            "Band schneidet oder verfaelscht den Hinweis"
+        );
+    }
+
+    #[test]
+    fn nur_der_fehlende_flugplan_ist_eine_warnung() {
+        assert!(matches!(auto_start_stufe("ofp_missing"), ActivityLevel::Warn));
+        assert!(matches!(auto_start_stufe("retry_pending"), ActivityLevel::Info));
+    }
+
+    #[test]
+    fn mitteilung_kommt_einmal_je_flug() {
+        let mut g = None;
+        assert!(ofp_mitteilung_faellig(&mut g, Some("419")));
+        assert!(!ofp_mitteilung_faellig(&mut g, Some("419")));
+        assert!(!ofp_mitteilung_faellig(&mut g, None), "kein Flug, keine Mitteilung");
+        assert!(!ofp_mitteilung_faellig(&mut g, Some("419")), "Zwischengrund meldet nicht neu");
+        assert!(ofp_mitteilung_faellig(&mut g, Some("767")));
+    }
+
+    #[test]
+    fn vfr_beladung_wird_zu_tarifzeilen_und_kennt_keine_minuswerte() {
+        let plan: ManualFlightPlan = serde_json::from_str(
+            r#"{"aircraft_id":1,"planned_block_fuel_kg":120,"planned_flight_time_min":55,
+                "beladung":[{"fare_id":6,"anzahl":3},{"fare_id":7,"anzahl":0},{"fare_id":9,"anzahl":-4}]}"#,
+        )
+        .unwrap();
+        assert_eq!(vfr_fares(&plan.beladung, None), vec![(6, 3), (7, 0), (9, 0)]);
+    }
+
+    /// Auch ueber die LAN-Bruecke gilt die Grenze der Subfleet, und fremde
+    /// Tarife kommen nicht in den PIREP.
+    #[test]
+    fn vfr_beladung_haelt_die_grenzen_des_flugzeugs_ein() {
+        let klasse = |id, kapazitaet| api_client::BeladungsKlasse {
+            id,
+            code: String::new(),
+            name: String::new(),
+            typ: 0,
+            kapazitaet,
+        };
+        let eingabe = [
+            VfrBeladung { fare_id: 6, anzahl: 9 },
+            VfrBeladung { fare_id: 7, anzahl: 40 },
+            VfrBeladung { fare_id: 99, anzahl: 5 },
+        ];
+        assert_eq!(
+            vfr_fares(&eingabe, Some(&[klasse(6, 4), klasse(7, 150)])),
+            vec![(6, 4), (7, 40)]
+        );
+    }
+
+    /// Aeltere Oberflaechen (Generation vor dem Client) schicken das Feld nicht.
+    #[test]
+    fn vfr_plan_ohne_beladung_bleibt_gueltig() {
+        let plan: ManualFlightPlan = serde_json::from_str(
+            r#"{"aircraft_id":1,"planned_block_fuel_kg":120,"planned_flight_time_min":55}"#,
+        )
+        .unwrap();
+        assert!(vfr_fares(&plan.beladung, None).is_empty());
     }
 
     /// Banner und Protokoll getrennt: gleicher Grund → Protokoll erst nach

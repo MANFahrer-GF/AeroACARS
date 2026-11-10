@@ -33,4 +33,8 @@ describe("Reiter Bilder", () => {
   it("der Reiter ist von aussen (StreamDeck-Seite) erreichbar, wird aber ebenso zurueckgesetzt", () => {
     expect(reiterAusSeite("bilder")).toBe("bilder");
   });
+
+  it("alter Reiter Bordbuch landet im Logbuch statt auf einer leeren Seite", () => {
+    expect(reiterAusSeite("bordbuch")).toBe("logbook");
+  });
 });

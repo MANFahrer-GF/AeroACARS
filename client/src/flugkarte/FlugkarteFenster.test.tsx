@@ -64,6 +64,14 @@ describe("FlugkarteFenster (AeroACARS)", () => {
     expect(opt.t("flugkarte.gibt.es.nicht")).toBeNull();
   });
 
+  it("reicht die Bordbuch-Punkte an den Baustein weiter", async () => {
+    tauriInvoke.mockResolvedValue(JSON.stringify({ version: 3, kopf: { start: "2026-10-27T18:27:06Z" }, track: [], events: [] }));
+    const punkte = [{ t: "2026-10-27T18:30:00Z", k: "bordbuch", txt: "Beacon", schluessel: "beacon_anlassen" }];
+    render(<FlugkarteFenster pirepId="A" zusatz={{ zusatzEreignisse: punkte }} onClose={() => {}} />);
+    await waitFor(() => expect(anzeigen).toHaveBeenCalledTimes(1));
+    expect((anzeigen.mock.calls[0][2] as { zusatzEreignisse: unknown }).zusatzEreignisse).toEqual(punkte);
+  });
+
   describe("Bilder", () => {
     const akte = JSON.stringify({ version: 3, kopf: { start: "2026-10-27T18:27:06Z" }, track: [], events: [] });
     const mitBildern = (eintraege: unknown[]) => tauriInvoke.mockImplementation(async (cmd: string) => {

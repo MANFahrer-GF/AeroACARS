@@ -58,6 +58,7 @@ export function BordbuchRoutineAnzeige({
   eingeschaltet: Schalter[];
 }) {
   const { t } = useTranslation();
+  const [offen, setOffen] = useState(false);
   const zeilen = useMemo(
     () => (eintraege ? routine(eintraege, eingeschaltet, ANZAHL) : []),
     [eintraege, eingeschaltet],
@@ -77,11 +78,27 @@ export function BordbuchRoutineAnzeige({
     );
   }
 
+  // Im Logbuch als schmales Band (Design 10.11.): längste Serien vorn, das Raster auf Klick
+  const staerkste = [...zeilen].filter((z) => z.serie >= 2).sort((a, b) => b.serie - a.serie).slice(0, 3);
+  if (!offen) {
+    return (
+      <div className="bb-routine bb-routine--band">
+        <span className="bb-routine-titel">{t("bordbuch.routine.titel", { count: spalten })}</span>
+        {staerkste.map((z) => (
+          <span key={z.schalter}>{t(`bordbuch.schalter.${z.schalter}`)} <strong>{t("bordbuch.routine.in_folge", { count: z.serie })}</strong></span>
+        ))}
+        <span className="bb-routine-privat">{t("bordbuch.routine.privat")}</span>
+        <button type="button" className="aa-lb-btn" aria-expanded={false} onClick={() => setOffen(true)}>{t("bordbuch.routine.alle")}</button>
+      </div>
+    );
+  }
+
   return (
     <div className="bb-routine">
       <div className="bb-routine-kopf">
         <span className="bb-routine-titel">{t("bordbuch.routine.titel", { count: spalten })}</span>
         <span className="bb-routine-privat">{t("bordbuch.routine.privat")}</span>
+        <button type="button" className="aa-lb-btn" aria-expanded={true} onClick={() => setOffen(false)}>{t("bordbuch.routine.weniger")}</button>
       </div>
       <div className="bb-routine-raster" style={{ gridTemplateColumns: `minmax(90px, 140px) repeat(${spalten}, minmax(14px, 1fr)) minmax(70px, auto)` }}>
         {zeilen.map((z) => (

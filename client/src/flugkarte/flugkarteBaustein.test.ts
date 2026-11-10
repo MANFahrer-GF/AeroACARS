@@ -109,6 +109,43 @@ describe("flugkarteAnzeigen", () => {
     expect(d.querySelector<HTMLButtonElement>('[data-fit="arr"]')!.disabled).toBe(false);
   });
 
+  it("Zusatzereignisse: zeitlich einsortiert, eigene Kategorie, Sprung ueber den Schluessel, ausserhalb der Spur am Rand", () => {
+    const d = flaeche();
+    let api: { zeigeEreignis: (s: string) => boolean } | undefined;
+    flugkarteAnzeigen(d, akte(), {
+      ...OPT,
+      zusatzEreignisse: [
+        { t: "2026-10-26T11:05:00Z", k: "bb", txt: "Bordbuch: Strobes", schluessel: "strobes" },
+        { t: "2026-10-26T12:30:00Z", k: "bb", txt: "Bordbuch: spaet", schluessel: "spaet" },
+      ],
+      zusatzKategorien: { bb: { col: "#86efac", an: true, c: "B", n: "Bordbuch", how: "x" } },
+      beiBereit: (a) => { api = a; },
+    });
+    const knoepfe = Array.from(d.querySelectorAll<HTMLElement>(".fk-liste button[data-n]")).map((b) => b.textContent ?? "");
+    const pos = (t: string) => knoepfe.findIndex((k) => k.includes(t));
+    expect(pos("Bordbuch: Strobes")).toBeGreaterThan(-1);
+    expect(pos("Bordbuch: Strobes"), "vor dem Autopilot-Ereignis um 11:10").toBeLessThan(pos("<img"));
+    expect(knoepfe[pos("Bordbuch: spaet")].slice(0, 8), "Zeit bleibt die echte").toBe("12:30:00");
+    expect(d.querySelector('.fk-chip[data-k="bb"]')?.textContent).toContain("Bordbuch");
+    expect(api!.zeigeEreignis("gibtsnicht")).toBe(false);
+    expect(api!.zeigeEreignis("strobes")).toBe(true);
+    expect(d.querySelector(".fk-pop")?.textContent).toContain("Bordbuch: Strobes");
+  });
+
+  it("Sprung schaltet eine weggefilterte Kategorie wieder ein", () => {
+    const d = flaeche();
+    let api: { zeigeEreignis: (s: string) => boolean } | undefined;
+    flugkarteAnzeigen(d, akte(), {
+      ...OPT,
+      zusatzEreignisse: [{ t: "2026-10-26T11:05:00Z", k: "bb", txt: "B1", schluessel: "s" }],
+      zusatzKategorien: { bb: { col: "#86efac", an: false, c: "B", n: "Bordbuch", how: "x" } },
+      beiBereit: (a) => { api = a; },
+    });
+    expect(d.querySelector('.fk-chip[data-k="bb"]')?.getAttribute("aria-pressed")).toBe("false");
+    api!.zeigeEreignis("s");
+    expect(d.querySelector('.fk-chip[data-k="bb"]')?.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("leere Akte: Hinweis statt Absturz", () => {
     const d = flaeche();
     flugkarteAnzeigen(d, akte({ track: [], events: [] }), OPT);

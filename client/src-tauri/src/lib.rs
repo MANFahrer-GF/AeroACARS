@@ -1193,6 +1193,7 @@ pub fn run() {
             flight_start,
             flight_start_manual,
             fleet_list_at_airport,
+            vfr_beladungsklassen,
             flight_end,
             flight_end_manual,
             flight_cancel,

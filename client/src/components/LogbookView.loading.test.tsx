@@ -61,8 +61,11 @@ vi.mock("../lib/ipc", () => ({
     // Ausstehende Uploads (P-7.24) — ebenfalls ohne Belang.
     if (cmd === "uploads_ausstehend") return Promise.resolve([]);
     // Der Detailabruf bleibt offen, bis der Test ihn auflöst.
+    if (cmd === "bordbuch_live") return Promise.resolve(null);
+    if (cmd === "bordbuch_eintrag" || cmd === "landing_get") return Promise.resolve(null);
     return new Promise((resolve) => h.pending.push(resolve));
   },
+  listen: () => Promise.resolve(() => {}),
 }));
 
 vi.mock("maplibre-gl", () => {
@@ -86,7 +89,6 @@ vi.mock("maplibre-gl", () => {
   };
 });
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
-vi.mock("./FlightProfile", () => ({ FlightProfile: () => null }));
 
 import { LogbookView } from "./LogbookView";
 

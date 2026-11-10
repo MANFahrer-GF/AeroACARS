@@ -42,6 +42,19 @@ export interface FlugkarteOptionen {
   beiBild?: (id: string) => void;
   /** Kleines Bild beim Ueberfahren eines Bildpunkts */
   bildVorschau?: VorschauVon;
+  /** Nur im AeroACARS-Logbuch: weitere Ereignisse (Bordbuch) in Karte und Liste; ueber `schluessel` findet sie `zeigeEreignis`. Die Webapp gibt keine mit */
+  zusatzEreignisse?: Array<{ t: string; k: string; txt: string; schluessel: string }>;
+  /** Kategorien dazu, mit fertigen Texten (die Webapp kennt sie nicht, deshalb nicht in flugkarte.kat) */
+  zusatzKategorien?: Record<string, Kategorie & { c: string; n: string; how: string }>;
+  /** Datenstreifen beim ersten Oeffnen zu (niedrige eingebettete Karte); eine gemerkte Wahl geht vor */
+  streifenAnfangsZu?: boolean;
+  /** Karte steht: Zugriff von aussen, z. B. „Auf Karte“ im Bordbuch */
+  beiBereit?: (api: FlugkarteSteuerung) => void;
+}
+
+export interface FlugkarteSteuerung {
+  /** Springt zum Ereignis mit diesem `schluessel`; false, wenn es das auf dieser Karte nicht gibt */
+  zeigeEreignis: (schluessel: string) => boolean;
 }
 
 const BILD_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
@@ -187,11 +200,15 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   const CATS: Record<string, Kategorie & { on: boolean; c: string; n: string; how: string }> = Object.fromEntries(Object.entries(KATEGORIEN).map(([k, c]) =>
     [k, { ...c, on: c.an, c: TX(`kat.${k}.c`), n: TX(`kat.${k}.n`), how: TX(`kat.${k}.how`) }]));
   if (KLAPPEN_PROZENT) CATS.flaps.how = TX("kat.flaps.how_stellung");
+  for (const [k, c] of Object.entries(opt.zusatzKategorien ?? {})) CATS[k] = { ...c, on: c.an };
 
   // altFt: Hoehe ueber dem Meer (Anzeige); h: Hoehe ueber Grund (3D-Lage)
   type Ev = { n: number; s: number; i: number; lat: number; lon: number; altFt: number; h: number; txt: string; k: string; t: string; ph?: string; [k: string]: any };
-  const E: Ev[] = akte.events.filter((e) => CATS[e.k]).map((e, n) => {
-    const s = fixDay(isoS(e.t));
+  // Zusatzereignisse einsortieren; was vor dem Beginn oder nach dem Ende der Spur liegt, sitzt am Spurrand
+  const zusatz = (opt.zusatzEreignisse ?? []).map((e) => e as unknown as Flugakte["events"][number]);
+  const roh = zusatz.length ? [...akte.events, ...zusatz].sort((a, b) => fixDay(isoS(a.t)) - fixDay(isoS(b.t))) : akte.events;
+  const E: Ev[] = roh.filter((e) => CATS[e.k]).map((e, n) => {
+    const s = e.schluessel ? Math.min(Math.max(fixDay(isoS(e.t)), t0), S[S.length - 1]) : fixDay(isoS(e.t));
     const i = Math.min(e.i ?? idxAt(s), T.length - 1);
     const r = T[i];
     const altFt = e.k === "td" ? alt(r) - agl(r) : alt(r);
@@ -1163,9 +1180,9 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   filterKnopf.onclick = () => { filterOffen = !filterOffen; filterZeigen(); try { localStorage.setItem(filterSchluessel, filterOffen ? "1" : "0"); } catch { /* ohne Speicher */ } };
 
   // Ereignisleiste und Datenstreifen wegklappbar — die Karte bekommt den Platz; Wahl wird gemerkt
-  const umschalter = (knopf: HTMLElement, klasse: string, schluessel: string, attr: "aria-pressed" | "aria-expanded") => {
-    let an = true;
-    try { an = localStorage.getItem(schluessel) !== "0"; } catch { /* ohne Speicher */ }
+  const umschalter = (knopf: HTMLElement, klasse: string, schluessel: string, attr: "aria-pressed" | "aria-expanded", anfangsAn = true) => {
+    let an = anfangsAn;
+    try { const g = localStorage.getItem(schluessel); if (g != null) an = g !== "0"; } catch { /* ohne Speicher */ }
     const zeigen = () => {
       root.classList.toggle(klasse, !an); knopf.setAttribute(attr, String(an));
       const pfeil = knopf.querySelector("span"); if (pfeil) pfeil.textContent = an ? "▾" : "▴";
@@ -1176,10 +1193,19 @@ export function flugkarteAnzeigen(root: HTMLElement, akte: Flugakte, opt: Flugka
   root.querySelector(".fk-seite")!.id = kennung + "-seite"; $("seiteKnopf").setAttribute("aria-controls", kennung + "-seite");
   cv.id = kennung + "-streifen"; $("streifenKnopf").setAttribute("aria-controls", cv.id);
   umschalter($("seiteKnopf"), "fk-ohne-seite", "fk-seite-offen", "aria-pressed");
-  umschalter($("streifenKnopf"), "fk-ohne-streifen", "fk-streifen-offen", "aria-expanded");
+  umschalter($("streifenKnopf"), "fk-ohne-streifen", "fk-streifen-offen", "aria-expanded", !opt.streifenAnfangsZu);
 
   legend(); renderChips(); renderList(); hud();
   filterZeigen(); // erst nach renderChips messen, sonst misst es einen leeren Filterblock
+  opt.beiBereit?.({
+    zeigeEreignis: (schluessel) => {
+      const e = E.find((x) => x.schluessel === schluessel);
+      if (!e) return false;
+      if (!CATS[e.k].on) { CATS[e.k].on = true; renderChips(); renderList(); }
+      select(e.n, true);
+      return true;
+    },
+  });
   // Groesse des Kartenfelds beobachten, nicht nur das Fenster: das Feld aendert sich auch ohne Fenster-Resize
   // andere Groesse: neu einpassen, solange der Nutzer nicht selbst verschoben/gezoomt hat — sonst lag
   // der Flug nach dem Vergroessern/Verkleinern des Fensters unter der Datenanzeige

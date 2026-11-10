@@ -190,6 +190,7 @@ describe("Logbuch", () => {
       if (cmd === "logbook_pireps")
         return Promise.resolve({ total: 1, items: [{ id: "278xq2bgoYV5qZjL", dep_icao: "EDDF", arr_icao: "EETN", status: "PENDING" }] });
       if (cmd === "pirep_pruefstatus") return Promise.resolve([IN_PRUEFUNG]);
+      if (cmd === "bordbuch_liste") return Promise.resolve([]);
       return Promise.resolve(undefined);
     });
     const r = render(<LogbookView />);

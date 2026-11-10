@@ -25,9 +25,11 @@ interface Props {
   /** Grenze fürs Rolltempo dieses Flugs — ohne sie stand nur „max 22 kt"
    *  da, und Thomas las die gefahrene Spitze als erlaubtes Tempo. */
   rolltempoGrenzeKt?: number;
+  /** Springt zum Punkt auf der Flugkarte; fehlt ohne Karte und im laufenden Flug. */
+  onAufKarte?: (regel: Regel) => void;
 }
 
-export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkieren, rolltempoGrenzeKt }: Props) {
+export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkieren, rolltempoGrenzeKt, onAufKarte }: Props) {
   const { t } = useTranslation();
   const [offen, setOffen] = useState<Regel | null>(null);
   const [laeuft, setLaeuft] = useState(false);
@@ -67,6 +69,7 @@ export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkiere
                 const istOffen = offen === p.regel;
                 return (
                   <li key={p.regel} className={`bb-cl-punkt bb-st-${p.status}${p.art === "bestaetigung" ? " bb-bestaetigung" : ""}`}>
+                    <div className="bb-cl-rahmen">
                     <button
                       type="button"
                       className="bb-cl-zeile"
@@ -83,7 +86,16 @@ export function BordbuchCheckliste({ punkte, eingeschaltet, flugzeug, onMarkiere
                         <span className="bb-cl-zeit">{zulu(p.zeit)}</span>
                       )}
                       <span className="bb-cl-wert">{wertText(p, t)}</span>
+                      {tippbar && p.status === "diesmal_ohne" && !istOffen && (
+                        <span className="bb-cl-link">{t("bordbuch.nach_atc_markieren")}</span>
+                      )}
                     </button>
+                    {onAufKarte && p.zeit && (p.status === "erledigt" || p.status === "nach_atc") && (
+                      <button type="button" className="bb-cl-link bb-cl-aufkarte" onClick={() => onAufKarte(p.regel)}>
+                        {t("bordbuch.auf_karte")}
+                      </button>
+                    )}
+                    </div>
                     {(p.status === "erledigt" || p.status === "nach_atc") && zusatzText(p, rolltempoGrenzeKt, t) && (
                       <div className="bb-cl-zusatz">{zusatzText(p, rolltempoGrenzeKt, t)}</div>
                     )}

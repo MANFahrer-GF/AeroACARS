@@ -332,6 +332,8 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// ACARS-Postausgang, `lebenszeichen_wartezeit`. Tests `meldung_endet_nur_bei_stornierung_oder_404`, `lebenszeichen_wartezeit_*`.
 /// — plus Crew-Story-Fenster 09.11. (`modul-api-1`): `mod modul_api;` und der Befehl `modul_api::modul_api`, sonst nichts an `lib.rs`.
 /// Tests `modul_api::tests::*`, `paket-endpunkte` (`modul_api_*`), `tests/befehlsliste.rs::modul_api_ist_fachlich`.
+/// — plus Beladung beim VFR-Start 10.11.: Befehl `vfr_beladungsklassen` in der Befehlsliste,
+/// sonst nichts an `lib.rs`. Tests `vfr_beladung_*`, `vfr_plan_ohne_beladung_bleibt_gueltig`, `tests/befehlsliste.rs`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -342,4 +344,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "c4414b65d132fccbcb5211f922e59ccc0e5664f7a7813a0219f5f57ec66b1b17";
+const HASH_VOR_DER_ZERLEGUNG: &str = "aa1f874e6c3fa3fd53e180e41e0a515e961aa449565c2c49fdb111de596ba251";

@@ -1,4 +1,4 @@
-// v0.19.x FIX: LogbookView.tsx and FlightProfile.tsx bypassed i18n
+// v0.19.x FIX: LogbookView.tsx bypassed i18n
 // entirely — every label, table header, error message, status badge and
 // even the month abbreviations in date formatting were hardcoded German
 // string literals, shown verbatim to English/Italian pilots regardless
@@ -12,11 +12,11 @@ import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../../../bundle/texte/de.json";
 import enCommon from "../../../bundle/texte/en.json";
-import { FlightProfile } from "./FlightProfile";
 
 const invokeMock = vi.fn();
 vi.mock("../lib/ipc", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
+  listen: () => Promise.resolve(() => {}),
 }));
 vi.mock("maplibre-gl", () => ({
   default: { Map: class {}, Marker: class {}, LngLatBounds: class {}, NavigationControl: class {} },
@@ -48,30 +48,12 @@ async function flush() {
   });
 }
 
-describe("FlightProfile — band titles follow the active locale", () => {
-  it("shows German titles under de, different English titles under en", async () => {
-    const route = [
-      { t: 0, alt_ft: 1000 },
-      { t: 1000, alt_ft: 2000 },
-    ];
-
-    await i18next.changeLanguage("de");
-    const de = render(<FlightProfile route={route} />);
-    expect(de.getByText("Höhe über Meer")).toBeInTheDocument();
-    de.unmount();
-
-    await i18next.changeLanguage("en");
-    const en = render(<FlightProfile route={route} />);
-    expect(en.getByText("Altitude MSL")).toBeInTheDocument();
-    expect(en.queryByText("Höhe über Meer")).not.toBeInTheDocument();
-  });
-});
-
 describe("LogbookView — list chrome follows the active locale", () => {
   it("shows German labels under de, different English labels under en", async () => {
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === "logbook_stats") return Promise.resolve({ total_flights: 3 });
       if (cmd === "logbook_pireps") return Promise.resolve({ total: 0, items: [] });
+      if (cmd === "bordbuch_liste") return Promise.resolve([]);
       return Promise.resolve(undefined);
     });
 
@@ -100,6 +82,7 @@ describe("LogbookView — list chrome follows the active locale", () => {
           items: [{ id: "X1", status: "accepted", callsign: "GSG1" }],
         });
       }
+      if (cmd === "bordbuch_liste") return Promise.resolve([]);
       return Promise.resolve(undefined);
     });
 

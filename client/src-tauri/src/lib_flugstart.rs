@@ -1689,6 +1689,50 @@ pub struct ManualFlightPlan {
     /// schickt das Frontend die gleiche Anfrage mit acknowledge=true.
     #[serde(default)]
     pub acknowledge_aircraft_mismatch: bool,
+    /// Beladung, die der Pilot im VFR-Fenster eingetragen hat. Leer gelassene
+    /// Felder kommen als 0: Das ist seine bewusste Angabe, und der PIREP traegt
+    /// dann Tarifzeilen. Leer bleibt die Liste nur, wenn das Flugzeug keine
+    /// Klassen hat.
+    #[serde(default)]
+    pub beladung: Vec<VfrBeladung>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VfrBeladung {
+    pub fare_id: i64,
+    pub anzahl: i32,
+}
+
+/// Tarifzeilen fuer den PIREP. Mit bekannten Klassen gilt deren Obergrenze und
+/// fremde Tarife fallen weg; ohne (Server kurz nicht erreichbar) bleibt, was das
+/// Startfenster schon begrenzt hat, denn ein Flug wird deshalb nie abgelehnt.
+fn vfr_fares(
+    beladung: &[VfrBeladung],
+    klassen: Option<&[api_client::BeladungsKlasse]>,
+) -> Vec<(i64, i32)> {
+    beladung
+        .iter()
+        .filter_map(|b| {
+            let anzahl = b.anzahl.max(0);
+            match klassen {
+                None => Some((b.fare_id, anzahl)),
+                Some(liste) => liste
+                    .iter()
+                    .find(|k| k.id == b.fare_id)
+                    .map(|k| (b.fare_id, anzahl.min(k.kapazitaet))),
+            }
+        })
+        .collect()
+}
+
+/// Beladungsklassen des im VFR-Fenster gewaehlten Flugzeugs.
+#[tauri::command]
+async fn vfr_beladungsklassen(
+    state: tauri::State<'_, AppState>,
+    aircraft_id: i64,
+) -> Result<Vec<api_client::BeladungsKlasse>, UiError> {
+    let client = current_client(&state)?;
+    Ok(client.get_beladungsklassen(aircraft_id).await?)
 }
 
 /// VFR/Manual-Flight-Start. Parallele Funktion zu flight_start aber
@@ -1996,9 +2040,17 @@ async fn flight_start_manual(
         .to_string();
     let airline = bid.flight.airline.as_ref();
 
-    // VFR/Manual-Mode: keine SimBrief-Fares verfuegbar. Empty-list ist
-    // OK fuer phpVMS-PIREP-File (= keine Pax/Cargo-Loads).
-    let fares: Vec<(i64, i32)> = Vec::new();
+    // VFR/Manual-Mode: kein OFP, die Beladung traegt der Pilot im Startfenster ein.
+    let klassen = if plan.beladung.is_empty() {
+        None
+    } else {
+        client
+            .get_beladungsklassen(aircraft_id)
+            .await
+            .map_err(|e| tracing::warn!(error = %e, "VFR-Beladung nicht gegen die Subfleet geprueft"))
+            .ok()
+    };
+    let fares = vfr_fares(&plan.beladung, klassen.as_deref());
 
     let flight = Arc::new(ActiveFlight {
         pirep_id: pirep.id.clone(),

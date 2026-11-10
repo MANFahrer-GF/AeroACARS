@@ -426,7 +426,6 @@
     "chat": "Chat",
     "telemetrie": "Telemetry",
     "notizblock": "Notepad",
-    "bordbuch": "SOP Check",
     "bilder": "Pictures"
   },
   "nav": {
@@ -1859,7 +1858,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "A quick beacon switch test no longer triggers the ground announcements: the beacon only counts once it stays on for 15 seconds and the aircraft is loaded, at the latest the pushback counts. With the new AeroACARS version the boarding music also ends only then. In the bookings list, “Book a flight” now takes you straight to the schedule, live flights, free flight and SkyAdventures on the website. With the new AeroACARS version, “Crew Story” on a booking opens a small window for the story of that flight. The live map now shows the picture points of all flights, even during a flight. While a flight is running, earlier flights are collapsed in the Pictures tab; a click on the header expands them. Moving the mouse over a picture point on the maps now shows a small preview of the picture with flight, time, altitude and phase. The picture points on the live map and the flight map can now be hidden with the “Pictures” switch. Pictures can now be viewed large: with the magnifier on the tile, a click on the picture on the right, and the points on the maps. The flight map now shows the pictures of the flight as points. Pictures can now also be sent from a tablet over the LAN bridge. With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked. Pictures in windowed mode now show only the simulator image, without title bar and border. The live map has been rebuilt from the inside: when switching between light, dark and satellite, route, track, traffic and network display simply stay in place. The map bar has fixed buttons in a few groups, the flight info panel can be collapsed, and nothing overlaps any more, even in small windows. Picture points are on the map as soon as it opens, even without a running flight, and the globe stays when the map is changed and after a restart."
+    "neu_text": "AeroACARS 3 leaves beta: version 3.0.0 replaces AeroACARS 2 and arrives automatically through the update notice. A flight's Journal tab now also shows all PIREP fields grouped by topic and the finances. Logbook and flight log are now one tab: open a flight in the logbook to see the full flight map with replay, the flight log with checklist and flight profile, and the journal in one place. Flight log items appear on the map, “On map” jumps to the moment, and “View landing” opens that flight’s landing. The separate flight log tab is gone. A flight without a flight plan from the GSG site has no passengers and no cargo. AeroACARS now tells you so. With the new AeroACARS version you enter the load yourself when starting a VFR flight, and a waiting auto-start warns you in the sim band and with a notification. A quick beacon switch test no longer triggers the ground announcements: the beacon only counts once it stays on for 15 seconds and the aircraft is loaded, at the latest the pushback counts. With the new AeroACARS version the boarding music also ends only then. In the bookings list, “Book a flight” now takes you straight to the schedule, live flights, free flight and SkyAdventures on the website. With the new AeroACARS version, “Crew Story” on a booking opens a small window for the story of that flight. The live map now shows the picture points of all flights, even during a flight. While a flight is running, earlier flights are collapsed in the Pictures tab; a click on the header expands them. Moving the mouse over a picture point on the maps now shows a small preview of the picture with flight, time, altitude and phase. The picture points on the live map and the flight map can now be hidden with the “Pictures” switch. Pictures can now be viewed large: with the magnifier on the tile, a click on the picture on the right, and the points on the maps. The flight map now shows the pictures of the flight as points. Pictures can now also be sent from a tablet over the LAN bridge. With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked. Pictures in windowed mode now show only the simulator image, without title bar and border. The live map has been rebuilt from the inside: when switching between light, dark and satellite, route, track, traffic and network display simply stay in place. The map bar has fixed buttons in a few groups, the flight info panel can be collapsed, and nothing overlaps any more, even in small windows. Picture points are on the map as soon as it opens, even without a running flight, and the globe stays when the map is changed and after a restart."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -2160,17 +2159,9 @@
     "toggle_hint": "Default: on. Can be disabled to isolate problems — without the server the in-sim HUD shows “no connection” permanently, everything else in AeroACARS keeps working.",
     "restart_hint": "Takes effect the next time AeroACARS starts."
   },
-  "flight_profile": {
-    "title_alt": "Altitude MSL",
-    "title_agl": "Altitude AGL",
-    "title_speed": "Speed",
-    "title_vs": "Vertical Speed",
-    "title_fuel": "Fuel on board",
-    "no_altitude_data": "No altitude data."
-  },
   "logbook_view": {
     "section_title": "Logbook",
-    "section_subtitle": "your flown flights — live from phpVMS",
+    "section_subtitle": "Your flights, map, flight log and journal in one place",
     "stat_flights": "Flights",
     "stat_hours": "Hours",
     "stat_distance": "Distance",
@@ -2201,7 +2192,6 @@
     "pager_page": "Page {{page}} / {{pages}}",
     "detail_back": "← Logbook",
     "detail_log_title": "Flight log",
-    "detail_profile_title": "Flight profile",
     "status_accepted": "accepted",
     "status_pending": "pending",
     "status_rejected": "rejected",
@@ -2212,7 +2202,41 @@
     "upload_art_eingabe": "Landing data",
     "upload_art_protokoll": "Flight log",
     "upload_konflikt_marke": "Upload conflict",
-    "upload_konflikt": "Conflict: the live server already holds different data for this landing. This version stays saved and is not sent again — please report it to the GSG team."
+    "upload_konflikt": "Conflict: the live server already holds different data for this landing. This version stays saved and is not sent again — please report it to the GSG team.",
+    "table_flight": "Flight",
+    "table_map": "Map",
+    "kein_bordbuch": "no flight log",
+    "karte_ja": "Yes",
+    "karte_linie": "Line only",
+    "reiter_aria": "Flight view",
+    "reiter_karte": "Map",
+    "reiter_protokoll": "Journal",
+    "protokoll_felder": "PIREP fields",
+    "protokoll_felder_zahl_one": "{{count}} field, grouped by topic",
+    "protokoll_felder_zahl_other": "{{count}} fields, grouped by topic",
+    "protokoll_gruppe_zeiten": "Times",
+    "protokoll_gruppe_route": "Route and network",
+    "protokoll_gruppe_gewichte": "Weights",
+    "protokoll_gruppe_sprit": "Fuel",
+    "protokoll_gruppe_landung": "Landing and approach",
+    "protokoll_gruppe_wetter": "Weather",
+    "protokoll_gruppe_technik": "Technical",
+    "protokoll_gruppe_weitere": "Other",
+    "protokoll_finanzen": "Finances",
+    "protokoll_gewinn": "Profit",
+    "protokoll_verlust": "Loss",
+    "protokoll_einnahmen": "Revenue",
+    "protokoll_kosten": "Costs",
+    "protokoll_betrag": "Amount",
+    "protokoll_beladung": "Load",
+    "protokoll_leer": "No journal data is available for this flight.",
+    "vollbild": "Full screen",
+    "landung_ansehen": "View landing",
+    "keine_landung": "There is no landing record for this flight.",
+    "keine_aufzeichnung": "No recording is available for this flight",
+    "live_stand": "Flight log so far {{ok}} of {{von}} done",
+    "live_auf": "View live",
+    "live_zu": "Collapse live"
   },
   "error_reporting": {
     "section_title": "Error telemetry (anonymous)",
@@ -2826,7 +2850,7 @@
       "no_bid_match": "No bid matches your current position. Auto-start only fires at the departure airport stand.",
       "aircraft_mismatch": "The loaded aircraft doesn't match the bid. Load the correct aircraft — or add an aircraft alias if it's the same type under a different name.",
       "bid_already_started": "This bid was already auto-started this session. Restart via the manual toggle or pick another bid.",
-      "ofp_missing": "Auto-start is waiting for the SimBrief OFP: no aircraft is assigned to the bid yet. As soon as the OFP is created, the flight starts by itself.",
+      "ofp_missing": "No flight plan from the GSG site: this flight has no passengers and no cargo. As soon as you create the flight plan on the flight page, the flight starts by itself.",
       "retry_pending": "The last auto-start failed — retrying shortly. The activity log shows why. Or use 'Start flight' manually.",
       "sim_not_ready": "Auto-start is waiting until the simulator has finished loading and has been running steadily for 20 seconds (not paused, no position jumps).",
       "start_running": "Auto-start is creating the flight right now — one moment."
@@ -3036,6 +3060,13 @@
       "zfw_placeholder": "e.g. 800",
       "zfw_help": "Required. Aircraft + pilot + pax + cargo (no fuel). Needed for loadsheet score and ZFW vs sim comparison.",
       "zfw_help_optional": "Optional. Aircraft + pilot + pax + cargo (no fuel). Leave empty for VFR/manual flights without loadsheet scoring — the score is then computed without a loadsheet/mass component (no 0-penalty).",
+      "beladung_titel": "Load",
+      "beladung_help": "Leave empty for no passengers and no cargo.",
+      "beladung_max": "max. {{max}}",
+      "beladung_pax": "pax",
+      "beladung_laedt": "Loading load options …",
+      "beladung_fehler": "The load options could not be loaded. You can still start, the flight will then have no passengers and no cargo.",
+      "beladung_erneut": "Try again",
       "optional": "optional"
     }
   },
@@ -4261,7 +4292,9 @@
       "leer": "After a few flights you will see here which habits have already stuck.",
       "in_folge": "{{count}} in a row",
       "rekord": "New: {{was}} {{count}} in a row, your longest streak so far.",
-      "zieht_an": "{{was}} is picking up: done on {{von5}} of the last 5 flights."
+      "zieht_an": "{{was}} is picking up: done on {{von5}} of the last 5 flights.",
+      "alle": "Show all",
+      "weniger": "Show less"
     },
     "einst": {
       "titel": "SOP Check",
@@ -4316,7 +4349,13 @@
       "nicht_messbar": "Items your aircraft does not report to AeroACARS appear in the SOP Check as “not measurable” with a reason. They count neither for nor against you.",
       "rolltempo_grenzen": "Taxi speed limit:"
     },
-    "wert_atc": "PER ATC"
+    "wert_atc": "PER ATC",
+    "kein_eintrag": "There is no flight log for this flight.",
+    "auf_karte": "On map",
+    "auf_karte_text": "Flight log: {{was}}",
+    "auf_karte_erklaerung": "Items from your flight log, with the time and altitude of the moment.",
+    "nach_atc_markieren": "Mark as per ATC",
+    "profil_erklaerung": "Each point shows when and at what altitude it was done."
   },
   "vermessen": {
     "titel": "Measure aircraft",

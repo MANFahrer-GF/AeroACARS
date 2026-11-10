@@ -1111,12 +1111,14 @@ function useOverviewStats(records: LandingRecord[]) {
 
 const OVERVIEW_PAGE_SIZE = 15;
 
-export function LandingPanel() {
+export function LandingPanel({ fokusPirepId = null, onFokusVerbraucht }: { fokusPirepId?: string | null; onFokusVerbraucht?: () => void } = {}) {
   const { t } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [records, setRecords] = useState<LandingRecord[]>([]);
   const [preview, setPreview] = useState<LandingRecord | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Sprung aus dem Logbuch („Landung ansehen“): gleich dieser Flug, einmalig
+  const [selectedId, setSelectedId] = useState<string | null>(fokusPirepId);
+  useEffect(() => { if (fokusPirepId) onFokusVerbraucht?.(); }, [fokusPirepId, onFokusVerbraucht]);
   const [loading, setLoading] = useState(true);
   const [sortAsc, setSortAsc] = useState(false);
   const [visibleCount, setVisibleCount] = useState(OVERVIEW_PAGE_SIZE);
