@@ -260,6 +260,61 @@ pub(crate) fn bewerten(landung: &LandingScoringInput) -> Option<(Ausgabe, Status
     }
 }
 
+/// Rechenzeitgrenze der Aufsetz-Messung (Export `messe`): 10 x Median wie
+/// bei der Bewertung (P-4.32). Gemessen 11.11.2026 ueber 2 088 Aufsetzfenster
+/// von live (`bewertung-host` `messe_korpus_wie_nativ`): Median 19 922 959,
+/// Maximum 68 998 552. Eigene Grenze, weil die Messung das ganze Fenster
+/// liest (bis ~700 Proben, je Abfang-Punkt eine Ausgleichsgerade).
+pub(crate) const MESS_FUEL_GRENZE: u64 = 199_229_590;
+
+/// DLH9901 (11.11.2026): Aufsetz-Messung im Modul des Flugs (dieselbe Wahl
+/// wie bei der Note, [`bewerten_fuer`]): nachgeholter Stand, sonst das
+/// Paketmodul, sonst dieselbe Funktion nativ. Ein Paket ohne den Export
+/// `messe` (aelter als diese Fassung) ist kein Fehler, sondern der
+/// vorgesehene Rueckfall. `pirep_id` `None` = ohne Pin (Tests, Korpus).
+/// Liefert die Messung und wer sie gerechnet hat (`paket`, `nachgeholt`,
+/// `nativ`).
+pub(crate) fn messen(
+    pirep_id: Option<&str>,
+    anfrage: &serde_json::Value,
+) -> (landing_scoring::aufsetz_messung::Messung, &'static str) {
+    use landing_scoring::aufsetz_messung::{messen as nativ, Anfrage, Messung};
+    let mit = |host: &Host| -> Option<Messung> {
+        if !host.hat_export("messe") {
+            return None;
+        }
+        match host.messe(&anfrage.to_string(), MESS_FUEL_GRENZE) {
+            Ok((aus, _)) => match serde_json::from_str::<Messung>(&aus) {
+                Ok(m) => Some(m),
+                Err(_) => {
+                    tracing::error!(ausgabe = %aus.chars().take(200).collect::<String>(), "Aufsetz-Messung im Modul ungueltig, rechne nativ");
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::error!(error = %e, "Aufsetz-Messung im Modul gescheitert, rechne nativ");
+                None
+            }
+        }
+    };
+    use crate::laufzeit_paket::PinStand;
+    let modul = match pirep_id.map(pin_stand) {
+        Some(PinStand::Nachgeholt(m)) => nachgeholter_host(m).and_then(|h| mit(&h)).map(|m| (m, "nachgeholt")),
+        // Ohne gepinnten Stand rechnet auch die Note mit der eingebauten
+        // Fassung; die Messung dazu ist die native (gleiche Quelle).
+        Some(PinStand::Fehlt) => None,
+        Some(PinStand::Gilt) | None => paket_host().and_then(mit).map(|m| (m, "paket")),
+    };
+    if let Some(m) = modul {
+        return m;
+    }
+    let messung = serde_json::from_value::<Anfrage>(anfrage.clone())
+        .ok()
+        .and_then(|a| nativ(&a))
+        .expect("Anfrage aus dem Kern ist immer gueltig und hat Proben");
+    (messung, "nativ")
+}
+
 /// v3 (P-4.21): Soll-Band des Anflugs aus dem Modul (Export `sollband`) des
 /// Flugs `pirep_id` — dieselbe Wahl wie bei der Note ([`bewerten_fuer`]):
 /// nachgeholter Stand, sonst Paketmodul, sonst eingebautes. Faktor und

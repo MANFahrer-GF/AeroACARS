@@ -530,6 +530,7 @@ name = "bewertung-host"
 version = "3.0.1"
 dependencies = [
  "chrono",
+ "flate2",
  "landing-scoring",
  "serde_json",
  "sha2",
@@ -2761,6 +2762,7 @@ dependencies = [
 name = "landing-scoring"
 version = "3.0.1"
 dependencies = [
+ "flate2",
  "serde",
  "serde_json",
 ]

@@ -810,6 +810,32 @@
         assert!(roh < -550.0, "ungefilterte Kurve bleibt erhalten, ist {roh}");
     }
 
+    /// DLH 9901 mit dem ECHTEN Aufsetzfenster aus dem Flugprotokoll (684
+    /// Proben, alle Kanaele). Gespeichert wurden −661 fpm (Hoehenkurve) und
+    /// ein Abfang-Ende von −632; das Instrument zeigte −204, die G-Kraft 1,21.
+    /// Gemessen wird ueber das Paketmodul (Export `messe`, Fassung 2).
+    #[test]
+    fn dlh9901_echtes_fenster_liest_das_instrument() {
+        use std::io::Read;
+        let pfad = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dlh9901_touchdown_window.json.gz");
+        let mut text = String::new();
+        flate2::read::GzDecoder::new(std::fs::File::open(pfad).unwrap()).read_to_string(&mut text).unwrap();
+        let f: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let samples: Vec<TouchdownWindowSample> = serde_json::from_value(f["samples"].clone()).unwrap();
+        assert_eq!(samples.len(), 684);
+        let edge = chrono::DateTime::parse_from_rfc3339(f["edge_at"].as_str().unwrap()).unwrap().with_timezone(&Utc);
+        let a = compute_landing_analysis(&samples, edge, Simulator::Msfs2024, None);
+        assert_eq!(a["messung_quelle"], "paket", "gemessen im Paketmodul");
+        assert_eq!(a["messung_fassung"], 2);
+        assert_eq!(a["vs_at_edge_quelle"], "simvar_fallback");
+        let vs = a["vs_at_edge_fpm"].as_f64().unwrap();
+        assert!((-206.0..=-203.0).contains(&vs), "Instrument am Aufsetzpunkt, nicht {vs}");
+        assert!(a["vs_geometrie_ungefiltert_fpm"].as_f64().unwrap() < -600.0, "Unfall-Erkennung behaelt den harten Kandidaten");
+        assert_eq!(a["flare_vs_source"], "simvar_agl_unreliable");
+        let ende = a["vs_at_flare_end_fpm"].as_f64().unwrap();
+        assert!((-210.0..=-185.0).contains(&ende), "Abfang-Ende {ende}");
+    }
+
     /// Doppelte Zeitstempel sind ein Aufzeichnungs-Artefakt, kein
     /// Stillstand. X-Plane liefert vereinzelt jeden Messpunkt mehrfach mit
     /// derselben Uhrzeit — eine Zaehlung gleicher Werte haette das als

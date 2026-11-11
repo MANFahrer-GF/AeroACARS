@@ -1579,7 +1579,8 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 }
                 stats.sampler_diagnose = Some(diagnose_lesen(&diagnose).als_json());
 
-                let analysis = compute_landing_analysis(
+                let analysis = compute_landing_analysis_fuer(
+                    Some(&flight.pirep_id),
                     &samples,
                     edge_at,
                     snap.simulator,

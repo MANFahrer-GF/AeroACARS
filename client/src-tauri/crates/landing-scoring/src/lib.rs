@@ -20,6 +20,7 @@ pub mod abfangen;
 pub mod anflug_forensik;
 pub mod anflug_urteil;
 pub mod anflug_wind;
+pub mod aufsetz_messung;
 pub mod belag;
 /// „Zeiten gegen Flugplan" — Plan (SimBrief) und Ist, nur Anzeige.
 pub mod flugzeiten;
