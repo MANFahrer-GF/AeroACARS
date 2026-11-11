@@ -271,6 +271,7 @@ jobs:
         timeout-minutes: 3
         run: |
           echo 'APT::Install-Recommends "false";' | sudo tee /etc/apt/apt.conf.d/99-no-recommends
+          bash .github/scripts/apt-spiegel.sh
           sudo apt-get update
 
       # Pakete aus dem Actions-Cache statt vom Ubuntu-Mirror: azure.archive.
