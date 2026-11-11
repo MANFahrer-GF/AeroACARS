@@ -163,11 +163,21 @@ jobs:
             echo "signiert=nein" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          sudo apt-get install -y -qq minisign
+          # minisign fest aus dem GitHub-Release statt per apt: am 11.11.2026 scheiterte
+          # `apt-get install` zweimal, weil der Runner security.ubuntu.com nicht aufloesen
+          # konnte (Lauf 43039706668). Pruefsumme festgelegt; die Signatur des Archivs mit
+          # dem Schluessel von jedisct1 (RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3)
+          # wurde beim Festlegen geprueft.
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/minisign.tar.gz" \
+            https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          echo "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  $RUNNER_TEMP/minisign.tar.gz" | sha256sum -c -
+          tar xzf "$RUNNER_TEMP/minisign.tar.gz" -C "$RUNNER_TEMP" minisign-linux/x86_64/minisign
+          MS="$RUNNER_TEMP/minisign-linux/x86_64/minisign"
+          "$MS" -v
           umask 077
           # Schluessel ohne Passwort (minisign -G -W), sonst wartet -S auf Eingabe.
           printf '%s\n' "$SCHLUESSEL" > "$RUNNER_TEMP/paket.key"
-          minisign -S -s "$RUNNER_TEMP/paket.key" -m paket/manifest.json -t "AeroACARS Laufzeit-Paket g${{ steps.gen.outputs.generation }}" < /dev/null
+          "$MS" -S -s "$RUNNER_TEMP/paket.key" -m paket/manifest.json -t "AeroACARS Laufzeit-Paket g${{ steps.gen.outputs.generation }}" < /dev/null
           rm -f "$RUNNER_TEMP/paket.key"
           echo "signiert=ja" >> "$GITHUB_OUTPUT"
       - name: Freigabeweg waehlen (P-3.12, P-9.43)
