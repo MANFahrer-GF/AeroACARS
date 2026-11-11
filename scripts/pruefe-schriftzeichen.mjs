@@ -162,7 +162,13 @@ const BACKEND = {
   aufrufe: [
     "log_activity",
     "log_activity_handle",
-    "log_activity_and_record",
+    // Seit 11.11.2026 (Pilotenhinweise in drei Sprachen) laufen die
+    // meisten Zeilen ueber die `_t`-Geschwister; ihr deutscher Text bleibt
+    // Rueckfall und ACARS-Log. `log_activity_and_record` hat keinen
+    // Aufruf mehr, nur noch die `_t`-Fassung.
+    "log_activity_t",
+    "log_activity_handle_t",
+    "log_activity_and_record_t",
     // Der vierte Weg: Zeilen, die erst gepuffert und spaeter ins
     // Protokoll gespiegelt werden (lib.rs, `log_activity_handle(line…)`),
     // und gleichlautend als ACARS-Log an phpVMS gehen. Vorher ungeprueft
@@ -173,6 +179,7 @@ const BACKEND = {
     // Ohne diese Eintraege waeren mit der Umstellung von
     // `detect_telemetry_changes` 52 Meldungen still ungeprueft geblieben.
     "aufgeschoben.handle",
+    "aufgeschoben.handle_t",
     "aufgeschoben.ohne_meldung",
   ],
 };
