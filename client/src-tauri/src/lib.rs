@@ -1654,6 +1654,10 @@ mod msfs_touchdown_delag_replay_golden;
 #[path = "tests_lib/msfs_agl_flare_tests.rs"]
 mod msfs_agl_flare_tests;
 
+#[cfg(test)]
+#[path = "tests_lib/korpus_messung.rs"]
+mod korpus_messung;
+
 // ─── v0.16.23 Route-Only-Refresh Tests ─────────────────────────────────
 //
 // Schutz fuer den "korrekte Flugplan-Route auf der Karte"-Fix. Die HARTEN

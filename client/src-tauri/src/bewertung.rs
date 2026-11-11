@@ -187,7 +187,21 @@ pub(crate) fn pin_fehlt(pirep_id: &str) -> bool {
 /// Note ist `vorlaeufig` („vorlaeufig, Fassung n“). Wurde er nachgeholt,
 /// rechnet sein eigenes Modul (`endgueltig`); scheitert das, wie [`bewerten`]
 /// mit `vorlaeufig`.
+///
+/// Pruefer-Fund 2 (12.11.2026): Lief die Aufsetz-Messung, waehrend der Stand
+/// fehlte (`ohne_pin`), rechnet die Note nach dem Nachholen zwar mit dem
+/// Stand neu (P-3.31), bleibt aber `vorlaeufig` — Messung und Note muessen
+/// aus demselben Stand kommen. Nachmessen hiesse, die ganze Aufsetz-Kette
+/// (Kaskade, Unfall-Erkennung, Abfangen, Protokoll) neu aufzurollen.
 pub(crate) fn bewerten_fuer(pirep_id: &str, landung: &LandingScoringInput) -> Option<(Ausgabe, Status)> {
+    let b = bewerten_mit_stand(pirep_id, landung);
+    if messung_ohne_pin(pirep_id) {
+        return b.map(|(a, _)| (a, Status::Vorlaeufig));
+    }
+    b
+}
+
+fn bewerten_mit_stand(pirep_id: &str, landung: &LandingScoringInput) -> Option<(Ausgabe, Status)> {
     use crate::laufzeit_paket::PinStand;
     let vorlaeufig = |b: Option<(Ausgabe, Status)>| b.map(|(a, _)| (a, Status::Vorlaeufig));
     match pin_stand(pirep_id) {
@@ -258,6 +272,149 @@ pub(crate) fn bewerten(landung: &LandingScoringInput) -> Option<(Ausgabe, Status
         }
         None => None,
     }
+}
+
+/// Rechenzeitgrenze der Aufsetz-Messung, Begruendung am Original
+/// (`bewertung_host::MESS_FUEL_GRENZE`).
+pub(crate) use bewertung_host::MESS_FUEL_GRENZE;
+
+/// Anfrage an die Aufsetz-Messung: typisiert fuer den nativen Rueckfall
+/// (ohne Weg ueber JSON), als JSON mit allen Kanaelen jeder Probe fuer das
+/// Modul (eine spaetere Fassung darf weitere Kanaele lesen).
+pub(crate) struct MessAnfrage {
+    pub typisiert: landing_scoring::aufsetz_messung::Anfrage,
+    pub json: String,
+}
+
+#[cfg(test)]
+thread_local! {
+    static MESS_FUEL_ERSATZ: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Nur Tests: andere Fuel-Grenze der Messung, bis die Wache faellt.
+#[cfg(test)]
+pub(crate) fn mess_fuel_erzwingen(fuel: u64) -> impl Drop {
+    struct W;
+    impl Drop for W {
+        fn drop(&mut self) {
+            MESS_FUEL_ERSATZ.with(|c| c.set(None));
+        }
+    }
+    MESS_FUEL_ERSATZ.with(|c| c.set(Some(fuel)));
+    W
+}
+
+fn mess_fuel() -> u64 {
+    #[cfg(test)]
+    if let Some(f) = MESS_FUEL_ERSATZ.with(std::cell::Cell::get) {
+        return f;
+    }
+    MESS_FUEL_GRENZE
+}
+
+/// Fluege, deren letzte Aufsetz-Messung ohne ihren Stand lief (P-3.31,
+/// Stand fehlte). Global wie der Pin selbst (`laufzeit_paket::PIN`, ein Flug
+/// je Lauf); ueber einen Neustart traegt ihn `messung_ohne_pin` der
+/// Flugdaten (`lib_auto_start`).
+static OHNE_PIN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Merkt (oder loescht), dass die Messung des Flugs `pirep_id` ohne seinen
+/// Stand lief.
+pub(crate) fn messung_ohne_pin_merken(pirep_id: &str, ohne: bool) {
+    let mut l = OHNE_PIN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    l.retain(|p| p != pirep_id);
+    if ohne {
+        l.push(pirep_id.to_string());
+    }
+}
+
+fn messung_ohne_pin(pirep_id: &str) -> bool {
+    OHNE_PIN.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|p| p == pirep_id)
+}
+
+#[cfg(test)]
+thread_local! {
+    static PIN_GRENZWERTE_ERZWUNGEN: std::cell::Cell<Option<&'static crate::grenzwerte::Grenzwerte>> = const { std::cell::Cell::new(None) };
+}
+
+/// Nur Tests: Grenzwerte des nachgeholten Stands, bis die Wache faellt.
+#[cfg(test)]
+pub(crate) fn pin_grenzwerte_erzwingen(g: crate::grenzwerte::Grenzwerte) -> impl Drop {
+    struct W;
+    impl Drop for W {
+        fn drop(&mut self) {
+            PIN_GRENZWERTE_ERZWUNGEN.with(|c| c.set(None));
+        }
+    }
+    PIN_GRENZWERTE_ERZWUNGEN.with(|c| c.set(Some(Box::leak(Box::new(g)))));
+    W
+}
+
+/// Die Grenzwerte des nachgeholten Stands (Pruefer-Fund 2: das Modul des
+/// Stands misst mit SEINEN Grenzwerten, nicht mit denen des aktiven).
+fn pin_grenzwerte() -> Option<&'static crate::grenzwerte::Grenzwerte> {
+    #[cfg(test)]
+    if let Some(g) = PIN_GRENZWERTE_ERZWUNGEN.with(std::cell::Cell::get) {
+        return Some(g);
+    }
+    crate::laufzeit_paket::pin_grenzwerte()
+}
+
+/// DLH9901 (11.11.2026): Aufsetz-Messung im Modul des Flugs (dieselbe Wahl
+/// wie bei der Note, [`bewerten_fuer`]): nachgeholter Stand mit seinen
+/// Grenzwerten, sonst das Paketmodul, sonst dieselbe Funktion nativ. Ein
+/// Paket ohne den Export `messe` (aelter als diese Fassung) ist kein
+/// Fehler, sondern der vorgesehene Rueckfall. `bauen` baut die Anfrage mit
+/// den Grenzwerten des rechnenden Stands. `pirep_id` `None` = ohne Pin
+/// (Tests, Korpus). Liefert die Messung und wer sie gerechnet hat
+/// (`paket`, `nachgeholt`, `nativ`, `ohne_pin` = nativ, weil der Stand des
+/// Flugs fehlte); `None` nur ohne Proben.
+pub(crate) fn messen(
+    pirep_id: Option<&str>,
+    bauen: impl Fn(&crate::grenzwerte::Grenzwerte) -> MessAnfrage,
+) -> Option<(landing_scoring::aufsetz_messung::Messung, &'static str)> {
+    use landing_scoring::aufsetz_messung::{messen as nativ, Messung};
+    let mit = |host: &Host, anfrage: &MessAnfrage| -> Option<Messung> {
+        if !host.hat_export("messe") {
+            return None;
+        }
+        match host.messe(&anfrage.json, mess_fuel()) {
+            Ok((aus, _)) => match serde_json::from_str::<Messung>(&aus) {
+                Ok(m) => Some(m),
+                Err(_) => {
+                    tracing::error!(ausgabe = %aus.chars().take(200).collect::<String>(), "Aufsetz-Messung im Modul ungueltig, rechne nativ");
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::error!(error = %e, "Aufsetz-Messung im Modul gescheitert, rechne nativ");
+                None
+            }
+        }
+    };
+    use crate::laufzeit_paket::PinStand;
+    let aktiv = crate::grenzwerte::grenzwerte();
+    let stand = pirep_id.map(pin_stand);
+    let modul = match stand {
+        Some(PinStand::Nachgeholt(m)) => nachgeholter_host(m)
+            .and_then(|h| mit(&h, &bauen(pin_grenzwerte().unwrap_or(aktiv))))
+            .map(|m| (m, "nachgeholt")),
+        // Ohne gepinnten Stand rechnet auch die Note mit der eingebauten
+        // Fassung; die Messung dazu ist die native (gleiche Quelle).
+        Some(PinStand::Fehlt) => None,
+        Some(PinStand::Gilt) | None => paket_host().and_then(|h| mit(h, &bauen(aktiv))).map(|m| (m, "paket")),
+    };
+    let ergebnis = match modul {
+        Some(m) => Some(m),
+        None => {
+            let quelle = if stand == Some(PinStand::Fehlt) { "ohne_pin" } else { "nativ" };
+            nativ(&bauen(aktiv).typisiert).map(|m| (m, quelle))
+        }
+    };
+    if let Some(p) = pirep_id {
+        messung_ohne_pin_merken(p, ergebnis.as_ref().is_some_and(|(_, q)| *q == "ohne_pin"));
+    }
+    ergebnis
 }
 
 /// v3 (P-4.21): Soll-Band des Anflugs aus dem Modul (Export `sollband`) des

@@ -2144,6 +2144,11 @@ struct FlightStats {
     /// und ohne sie fehlte nach einer Wiederaufnahme die Teilnote samt Deckel
     /// beim Einreichen. Zurückgesetzt wie `landing_analysis` (Touch-and-Go).
     abfangen_gesichert: Option<landing_scoring::abfangen::Abfangen>,
+    /// Pruefer-Fund 2 (12.11.2026): Die Aufsetz-Messung lief, waehrend der
+    /// Stand des Flugs fehlte (`messung_quelle` `ohne_pin`) — die Note bleibt
+    /// dann „vorlaeufig“ (`bewertung::bewerten_fuer`). Ueberlebt den Neustart,
+    /// zurueckgesetzt wie `landing_analysis`.
+    messung_ohne_pin: bool,
     /// QS 06.10.2026 (Runde 6): Client-Version, die die Landung gemessen
     /// hat — nur nach einem Neustart gesetzt (aus der Sicherung). Sonst
     /// misst die laufende Version (`aufzeichnende_client_version`). Mit dem

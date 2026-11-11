@@ -671,6 +671,9 @@ struct PersistedFlightStats {
     /// Warnungen", obwohl der Touchdown die echten Werte trug.
     #[serde(default)]
     abfangen_gesichert: Option<landing_scoring::abfangen::Abfangen>,
+    /// Siehe `FlightStats::messung_ohne_pin`.
+    #[serde(default)]
+    messung_ohne_pin: bool,
     #[serde(default)]
     approach_runway_changed_late: bool,
     #[serde(default)]
@@ -1010,6 +1013,7 @@ impl PersistedFlightStats {
             pause_total_duration_secs: stats.pause_total_duration_secs,
             pause_segments: stats.pause_segments.clone(),
             abfangen_gesichert: stats.abfangen_gesichert.clone(),
+            messung_ohne_pin: stats.messung_ohne_pin,
             approach_runway_changed_late: stats.approach_runway_changed_late,
             approach_stall_warning_count: stats.approach_stall_warning_count,
             approach_wind: stats.approach_wind.clone(),
@@ -1314,6 +1318,7 @@ impl PersistedFlightStats {
         stats.pause_total_duration_secs = self.pause_total_duration_secs;
         stats.pause_segments = self.pause_segments;
         stats.abfangen_gesichert = self.abfangen_gesichert;
+        stats.messung_ohne_pin = self.messung_ohne_pin;
         stats.approach_runway_changed_late = self.approach_runway_changed_late;
         stats.approach_stall_warning_count = self.approach_stall_warning_count;
         stats.approach_wind = self.approach_wind;

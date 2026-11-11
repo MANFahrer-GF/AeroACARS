@@ -342,6 +342,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Tests `nachtanken_luft_tests` (Schluessel, altes Protokoll lesbar), `aktivitaetText.test.ts`.
 /// — plus alle Pilotenhinweise in drei Sprachen 11.11.: `akt`/`_t`-Geschwister, `teil_aus_text`,
 /// `pending_acars_texte`, `auto_start_hinweis` 4-Tupel. Tests `aktivitaet_text_tests`, `aktivitaetSchluessel.test.ts`.
+/// — plus Aufsetz-Messung ins Paketmodul 11.11. (DLH9901): nur das Testmodul `korpus_messung` (`#[cfg(test)]`),
+/// sonst nichts an `lib.rs`. Tests `msfs_agl_flare_tests::*`, `landing-scoring` `aufsetz_messung::tests`.
+/// Pruefer-Funde 12.11.: `mess_anfrage` typisiert (NaN ohne Panic), Merker `messung_ohne_pin`
+/// (`FlightStats`, `lib_auto_start`, Reset in `lib_landung_abschliessen`), `vs_at_edge_quelle` aus der
+/// Messung, Wandzeit-Beleg in `lib_aufsetz_abtaster.rs`. Tests `msfs_agl_flare_tests::*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -352,4 +357,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "afee33d3cd8efd866a567c48b76f28d2438834838e15b5fa2af095c5785388b2";
+const HASH_VOR_DER_ZERLEGUNG: &str = "71209899e7adef1fa0065a7b47e4b0b97f885f375da6ee4344edb6087bf75d23";

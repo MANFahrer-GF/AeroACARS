@@ -232,15 +232,11 @@ fn scored_g_fuer_punkte(stats: &FlightStats) -> Option<f32> {
 // trusted. Below this the least-squares slope is too sensitive to a
 // single quantization step; we skip that time point.
 // Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_agl_fit_min_samples (v2.1.24: 4)
-/// AGL above this (ft) at a fit point means we are not yet in the flare/
-/// short-final geometry — the same guard the touchdown AGL estimator
-/// uses for window-start. Keeps a high pre-flare descent out of the
-/// flare-window slope set. Reuses TD_AGL_MAX_AT_WINDOW_START_FT.
+// AGL above this (ft) at a fit point means we are not yet in the flare/
+// short-final geometry — the same guard the touchdown AGL estimator
+// uses for window-start. Keeps a high pre-flare descent out of the
+// flare-window slope set. Reuses TD_AGL_MAX_AT_WINDOW_START_FT.
 // v3: aus einem Grenzwert abgeleitet, deshalb Funktion statt Konstante.
-fn msfs_flare_agl_max_ft() -> f32 {
-    crate::grenzwerte::grenzwerte().landung.td_agl_max_at_window_start_ft.wert
-}
-
 // ─── v0.16.22 hardening: phantom-flare guards ────────────────────────────
 //
 // Adversarial QS found two phantom "butter" flares the bare AGL path
@@ -325,330 +321,114 @@ fn msfs_flare_agl_max_ft() -> f32 {
 // frozen/bounce members of that band without touching real soft flares.
 // Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_detect_floor_fpm (v2.1.24: 50.0)
 
-/// Pitch-corrected AGL-geometric V/S (fpm, negative = descending) at the
-/// time point `t_ms`, via a least-squares fit of `agl_ft` over the
-/// airborne samples in `[t_ms ± MSFS_FLARE_AGL_FIT_HALF_WINDOW_MS]`.
-///
-/// `fit_hi_cap`: when `Some(cap)`, no sample at or after `cap` ms enters the
-/// fit. v0.16.22 hardening: the end point (nearest flare_hi = edge−100 ms)
-/// would otherwise reach edge+200 ms; on a touchdown-then-bounce the
-/// post-edge airborne balloon has RISING AGL, which flattens/reverses the
-/// end slope → an inflated reduction → phantom. Capping at `edge_ms` keeps
-/// the end fit on the genuine pre-touchdown descent (a firm landing's
-/// post-edge samples are on_ground and already excluded, so it is
-/// unaffected). Pass `None` for an uncapped fit.
-///
-/// Lag-free: AGL/position is not the lagged display-VSI SimVar. Returns
-/// `None` when fewer than `MSFS_FLARE_AGL_FIT_MIN_SAMPLES` qualifying
-/// samples exist, the AGL is above `MSFS_FLARE_AGL_MAX_FT` at the point,
-/// or the time spread is degenerate (all samples share one timestamp).
-/// Pure + side-effect-free → unit-testable on every platform.
+// Seit dem 11.11.2026 (DLH9901) stehen Rechnung und Riegel im Crate
+// `landing-scoring` (`aufsetz_messung`) und laufen ueber den Paket-Export
+// `messe`; die Kommentare oben begruenden die Schwellen weiter. Hier bleiben
+// die Anfrage an das Modul und duenne Test-Huellen fuer die bestehenden
+// Riegel-Tests (sie rechnen gegen dieselbe Quelle).
+
+/// Anfrage an die Aufsetz-Messung mit den Grenzwerten `g` (die des
+/// rechnenden Stands): typisiert fuer den nativen Rueckfall, als JSON mit
+/// allen Kanaelen jeder Probe plus `t_ms` (Millisekunden relativ zur Kante,
+/// wie bisher gerechnet) fuer das Modul. Ein nicht-endlicher Messwert wird
+/// im JSON `null` und im Modul wieder NaN (Pruefer-Fund 1).
+fn mess_anfrage(
+    samples: &[TouchdownWindowSample],
+    edge_ms: i64,
+    simulator: Simulator,
+    g: &crate::grenzwerte::Grenzwerte,
+) -> crate::bewertung::MessAnfrage {
+    use landing_scoring::aufsetz_messung::{Anfrage, Parameter, Probe};
+    let l = &g.landung;
+    let parameter = Parameter {
+        fenster_ms: g.aufsetzen.luecken_fenster_vor_ms.wert,
+        agl_min_samples: l.agl_min_samples.wert,
+        agl_min_verschiedene: l.agl_min_verschiedene.wert,
+        agl_max_stillstand_ms: l.agl_max_stillstand_ms.wert,
+        agl_min_spanne_s: l.agl_min_spanne_s.wert,
+        agl_max_plausibel_fpm: l.agl_max_plausibel_fpm.wert,
+        probe_toleranz_fpm: l.probe_toleranz_fpm.wert,
+        td_agl_max_at_window_start_ft: l.td_agl_max_at_window_start_ft.wert,
+        msfs_flare_agl_fit_half_window_ms: l.msfs_flare_agl_fit_half_window_ms.wert,
+        msfs_flare_agl_fit_min_samples: l.msfs_flare_agl_fit_min_samples.wert,
+        msfs_flare_min_distinct_agl: l.msfs_flare_min_distinct_agl.wert,
+        msfs_flare_max_median_dt_ms: l.msfs_flare_max_median_dt_ms.wert,
+        msfs_flare_min_end_fit_distinct_agl: l.msfs_flare_min_end_fit_distinct_agl.wert,
+        msfs_flare_min_end_agl_span_ft: l.msfs_flare_min_end_agl_span_ft.wert,
+        msfs_flare_balloon_tol_ft: l.msfs_flare_balloon_tol_ft.wert,
+        msfs_flare_pitch_nosedown_veto_deg: l.msfs_flare_pitch_nosedown_veto_deg.wert,
+        msfs_flare_detect_floor_fpm: l.msfs_flare_detect_floor_fpm.wert,
+    };
+    let simulator = serde_json::to_value(simulator)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "Other".into());
+    let t_ms = |s: &TouchdownWindowSample| s.at.timestamp_millis() - edge_ms;
+    let proben: Vec<serde_json::Value> = samples
+        .iter()
+        .map(|s| {
+            let mut v = serde_json::to_value(s).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(o) = v.as_object_mut() {
+                o.insert("t_ms".into(), t_ms(s).into());
+            }
+            v
+        })
+        .collect();
+    let json = serde_json::json!({ "simulator": simulator, "proben": proben, "parameter": parameter, "kante_ms": edge_ms }).to_string();
+    let typisiert = Anfrage {
+        simulator,
+        proben: samples
+            .iter()
+            .map(|s| Probe {
+                t_ms: t_ms(s),
+                vs_fpm: s.vs_fpm,
+                g_force: s.g_force,
+                on_ground: s.on_ground,
+                agl_ft: s.agl_ft,
+                msl_ft: s.msl_ft,
+                pitch_deg: s.pitch_deg,
+            })
+            .collect(),
+        parameter,
+        kante_ms: edge_ms,
+    };
+    crate::bewertung::MessAnfrage { typisiert, json }
+}
+
+/// Nur Tests: Probe mit absoluter Zeit (die Riegel rechnen nur mit
+/// Differenzen, der Nullpunkt ist gleichgueltig).
+#[cfg(test)]
+fn als_proben(samples: &[TouchdownWindowSample]) -> Vec<landing_scoring::aufsetz_messung::Probe> {
+    mess_anfrage(samples, 0, Simulator::Msfs2024, crate::grenzwerte::grenzwerte()).typisiert.proben
+}
+
+#[cfg(test)]
+fn mess_parameter() -> landing_scoring::aufsetz_messung::Parameter {
+    mess_anfrage(&[], 0, Simulator::Msfs2024, crate::grenzwerte::grenzwerte()).typisiert.parameter
+}
+
+#[cfg(test)]
 fn agl_geometric_vs_fpm_at(
     samples: &[TouchdownWindowSample],
     t_ms: i64,
     pitch_deg_at_t: f32,
     fit_hi_cap: Option<i64>,
 ) -> Option<f32> {
-    let lo = t_ms - crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
-    let hi = t_ms + crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
-    // Least-squares slope of agl_ft (y) over time-offset in ms (x,
-    // centred on t_ms so the numbers stay small). Only airborne samples
-    // near the ground — a high sample would be pre-flare descent.
-    let mut n = 0_usize;
-    let mut sx = 0.0_f64;
-    let mut sy = 0.0_f64;
-    let mut sxx = 0.0_f64;
-    let mut sxy = 0.0_f64;
-    for s in samples {
-        let ts = s.at.timestamp_millis();
-        if ts < lo || ts > hi || s.on_ground {
-            continue;
-        }
-        // Do not let the fit cross the touchdown moment (post-edge balloon
-        // would corrupt the end slope on a bounce).
-        if let Some(cap) = fit_hi_cap {
-            if ts >= cap {
-                continue;
-            }
-        }
-        if s.agl_ft > msfs_flare_agl_max_ft() || !s.agl_ft.is_finite() {
-            continue;
-        }
-        let x = (ts - t_ms) as f64; // ms, centred
-        let y = s.agl_ft as f64; // ft
-        n += 1;
-        sx += x;
-        sy += y;
-        sxx += x * x;
-        sxy += x * y;
-    }
-    if n < crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_min_samples.wert {
-        return None;
-    }
-    let nf = n as f64;
-    let denom = nf * sxx - sx * sx;
-    if denom.abs() < 1e-9 {
-        return None; // all samples at one timestamp → no slope
-    }
-    let slope_ft_per_ms = (nf * sxy - sx * sy) / denom;
-    let fpm = slope_ft_per_ms * 1000.0 * 60.0; // ft/ms → ft/min
-    if !fpm.is_finite() {
-        return None;
-    }
-    // Pitch-correct (× cos(pitch)) — mirrors the SimVar flare path so
-    // the metric stays consistent across sources. Tiny here but correct.
-    let pitch_rad = (pitch_deg_at_t as f64) * std::f64::consts::PI / 180.0;
-    Some((fpm * pitch_rad.cos()) as f32)
+    landing_scoring::aufsetz_messung::agl_geometric_vs_fpm_at(&als_proben(samples), &mess_parameter(), t_ms, pitch_deg_at_t, fit_hi_cap)
 }
 
-/// The AGL-derived flare endpoints for MSFS: the steepest (most
-/// negative) AGL-geometric V/S anywhere in `[flare_lo, flare_hi]` and
-/// the AGL-geometric V/S at the sample nearest `flare_hi` (-100 ms).
-/// Both already pitch-corrected. Returns `(peak_vs_pre, vs_at_flare_
-/// end)`; either may be `None` if no fit point qualified.
-fn compute_msfs_agl_flare_endpoints(
-    samples: &[TouchdownWindowSample],
-    flare_lo: i64,
-    flare_hi: i64,
-) -> (Option<f32>, Option<f32>) {
-    let mut peak_vs_pre: Option<f32> = None; // most negative AGL slope
-    let mut vs_at_flare_end: Option<f32> = None;
-    let mut min_dist_to_end = i64::MAX;
-    // v0.16.22 hardening: cap every endpoint fit at the touchdown edge so a
-    // post-edge bounce/balloon (rising AGL after first ground contact) never
-    // contaminates the end slope. flare_hi == edge_ms − 100, so edge_ms is
-    // flare_hi + 100; samples at/after that never enter a fit.
-    let edge_cap = flare_hi + 100;
-    for s in samples {
-        let ts = s.at.timestamp_millis();
-        if ts < flare_lo || ts > flare_hi || s.on_ground {
-            continue;
-        }
-        let vs_agl = match agl_geometric_vs_fpm_at(samples, ts, s.pitch_deg, Some(edge_cap)) {
-            Some(v) => v,
-            None => continue,
-        };
-        if peak_vs_pre.map(|p| vs_agl < p).unwrap_or(true) {
-            peak_vs_pre = Some(vs_agl);
-        }
-        let dist_to_end = (flare_hi - ts).abs();
-        if dist_to_end < min_dist_to_end {
-            min_dist_to_end = dist_to_end;
-            vs_at_flare_end = Some(vs_agl);
-        }
-    }
-    (peak_vs_pre, vs_at_flare_end)
+#[cfg(test)]
+fn compute_msfs_agl_flare_endpoints(samples: &[TouchdownWindowSample], flare_lo: i64, flare_hi: i64) -> (Option<f32>, Option<f32>) {
+    landing_scoring::aufsetz_messung::msfs_agl_flare_endpoints(&als_proben(samples), &mess_parameter(), flare_lo, flare_hi)
 }
 
-/// v0.16.22 hardening: outcome of the phantom-flare guards over the MSFS
-/// flare window. `agl_reliable` is false when Gate 1 (data quality) OR
-/// Gate 2 (bounce) tripped → the caller MUST fall back to the SimVar path
-/// so no garbage AGL endpoint is published. `unreliable_source` is true
-/// only when a DATA-QUALITY gate tripped (frozen/degraded AGL) so the
-/// provenance string can distinguish that from a plain non-MSFS fallback.
-/// `pitch_nose_down` is the Gate-3 veto signal (a strongly nose-down net
-/// pitch trend) — it does NOT block the AGL endpoints (the reduction is
-/// still computed for forensics), only `flare_detected`.
-struct MsfsFlareGates {
-    agl_reliable: bool,
-    unreliable_source: bool,
-    pitch_nose_down: bool,
-}
-
-/// Evaluate the v0.16.22 phantom-flare guards over `[flare_lo, flare_hi]`.
-/// Pure + side-effect-free → unit-testable. See the gate constants above
-/// for the data behind each threshold.
+#[cfg(test)]
 fn evaluate_msfs_flare_gates(
     samples: &[TouchdownWindowSample],
     flare_lo: i64,
     flare_hi: i64,
-) -> MsfsFlareGates {
-    // Collect the in-window samples (airborne + ground) in time order.
-    let mut in_window: Vec<&TouchdownWindowSample> = samples
-        .iter()
-        .filter(|s| {
-            let ts = s.at.timestamp_millis();
-            ts >= flare_lo && ts <= flare_hi
-        })
-        .collect();
-    in_window.sort_by_key(|s| s.at.timestamp_millis());
-
-    // ── Gate 2 (bounce, part A): any on_ground=true in the PRE-edge window
-    // means a touchdown already happened here — a post-bounce settle, not a
-    // flare. (Kept pre-edge: EVERY normal landing is on_ground just past the
-    // edge — that is the touchdown itself, not a prior bounce. Extending this
-    // to post-edge would wrongly trip on all firm landings; the post-edge
-    // bounce signal is the BALLOON below, not on_ground.)
-    let any_on_ground = in_window.iter().any(|s| s.on_ground);
-
-    // ── Gate 2 (bounce) extended balloon-scan window. v0.16.22 hardening: a
-    // touchdown-then-bounce contacts the ground AT/near the edge, then goes
-    // airborne again just past it with RISING AGL. A NORMAL landing has no
-    // airborne samples post-edge (it is on the ground), so extending only the
-    // BALLOON (non-monotone rise among airborne samples) to flare_hi + the
-    // fit half-window (= edge + 200 ms) catches the bounce balloon WITHOUT
-    // tripping firm landings. (The fit endpoints are already capped at the
-    // edge — this gate is the corroborating veto so a bounce earns no
-    // credited flare. Data-quality gates 1a/1b/1c stay on the pre-edge set.)
-    let bounce_scan_hi = flare_hi + crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
-
-    // Airborne, finite-AGL, near-ground samples in the FLARE window drive the
-    // data-quality checks (mirrors the slope fit's qualifying set).
-    let air: Vec<&TouchdownWindowSample> = in_window
-        .iter()
-        .copied()
-        .filter(|s| !s.on_ground && s.agl_ft.is_finite() && s.agl_ft <= msfs_flare_agl_max_ft())
-        .collect();
-    // Airborne set over the EXTENDED balloon-scan window (pre-edge flare
-    // window + post-edge fit reach) — used ONLY for the balloon (non-monotone
-    // rise) check so a post-edge bounce balloon is visible.
-    let mut air_bounce: Vec<&TouchdownWindowSample> = samples
-        .iter()
-        .filter(|s| {
-            let ts = s.at.timestamp_millis();
-            ts >= flare_lo
-                && ts <= bounce_scan_hi
-                && !s.on_ground
-                && s.agl_ft.is_finite()
-                && s.agl_ft <= msfs_flare_agl_max_ft()
-        })
-        .collect();
-    air_bounce.sort_by_key(|s| s.at.timestamp_millis());
-
-    // ── Gate 1a (data quality): distinct agl_ft count. Quantize to 0.01 ft
-    // so float jitter does not inflate the count (the frozen E195 repeats
-    // EXACTLY, e.g. 9.96, so quantization is conservative here).
-    let mut distinct: Vec<i64> = air
-        .iter()
-        .map(|s| (s.agl_ft as f64 * 100.0).round() as i64)
-        .collect();
-    distinct.sort_unstable();
-    distinct.dedup();
-    let n_distinct = distinct.len();
-
-    // ── Gate 1c (data quality, LOCAL): distinct agl_ft in the flare-END
-    // fit window only — catches a freeze that corrupts the end slope while
-    // the rest of the window is fine (Gate 1a's whole-window count misses
-    // a localized mid/late freeze). Same quantization as Gate 1a.
-    let end_lo = flare_hi - crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
-    let end_hi = flare_hi + crate::grenzwerte::grenzwerte().landung.msfs_flare_agl_fit_half_window_ms.wert;
-    let end_agls: Vec<f32> = air
-        .iter()
-        .filter(|s| {
-            let ts = s.at.timestamp_millis();
-            ts >= end_lo && ts <= end_hi
-        })
-        .map(|s| s.agl_ft)
-        .collect();
-    let mut end_distinct: Vec<i64> = end_agls
-        .iter()
-        .map(|a| (*a as f64 * 100.0).round() as i64)
-        .collect();
-    end_distinct.sort_unstable();
-    end_distinct.dedup();
-    // Only judge the end window if it actually has samples (an empty end
-    // window cannot be "frozen" — let the MIN_SAMPLES fit guard handle it).
-    let n_end_distinct = end_distinct.len();
-    // Gate 1c backstop: the AGL SPAN across the end-fit window. A NOISY
-    // freeze dithers across ≥MSFS_FLARE_MIN_END_FIT_DISTINCT_AGL quantized
-    // buckets (passing the distinct count) while spanning ~0 true height —
-    // the span catches that where bucket-counting cannot.
-    let end_agl_span = if end_agls.len() >= 2 {
-        let mut lo = f32::INFINITY;
-        let mut hi = f32::NEG_INFINITY;
-        for &a in &end_agls {
-            if a < lo {
-                lo = a;
-            }
-            if a > hi {
-                hi = a;
-            }
-        }
-        Some(hi - lo)
-    } else {
-        None
-    };
-
-    // ── Gate 1b (data quality): median sample Δt over the FULL in-window
-    // set (airborne + ground) — a degraded stream is degraded regardless of
-    // on_ground. Median is robust to the occasional duplicate-timestamp.
-    let mut dts: Vec<i64> = in_window
-        .windows(2)
-        .map(|w| w[1].at.timestamp_millis() - w[0].at.timestamp_millis())
-        .filter(|&d| d >= 0)
-        .collect();
-    let median_dt = if dts.is_empty() {
-        0
-    } else {
-        dts.sort_unstable();
-        dts[dts.len() / 2]
-    };
-
-    // ── Gate 2 (bounce, part B): non-monotone balloon. Walk the airborne
-    // AGL trace (over the EXTENDED bounce-scan window so a post-edge balloon
-    // is visible) tracking the running minimum; if AGL rises more than the
-    // tolerance above that minimum, the trace ballooned back up.
-    let mut balloon_ft = 0.0_f32;
-    let mut running_min = f32::INFINITY;
-    for s in &air_bounce {
-        if s.agl_ft < running_min {
-            running_min = s.agl_ft;
-        } else {
-            let rise = s.agl_ft - running_min;
-            if rise > balloon_ft {
-                balloon_ft = rise;
-            }
-        }
-    }
-
-    // Frozen end if EITHER the distinct-bucket count is too low (coarse/
-    // stepped freeze) OR the AGL span across the end window is below the
-    // physics floor (noisy multi-bucket freeze on a flat plateau). The span
-    // backstop is what catches a dither that spreads across ≥4 buckets yet
-    // covers near-zero true height (vs_at_flare_end ≈ 0 → fake reduction).
-    let end_span_flat = end_agl_span
-        .map(|sp| sp < crate::grenzwerte::grenzwerte().landung.msfs_flare_min_end_agl_span_ft.wert)
-        .unwrap_or(false);
-    let end_frozen = (n_end_distinct > 0 && n_end_distinct < crate::grenzwerte::grenzwerte().landung.msfs_flare_min_end_fit_distinct_agl.wert)
-        || end_span_flat;
-    let dq_reject = n_distinct < crate::grenzwerte::grenzwerte().landung.msfs_flare_min_distinct_agl.wert
-        || median_dt > crate::grenzwerte::grenzwerte().landung.msfs_flare_max_median_dt_ms.wert
-        || end_frozen;
-    let bounce_reject = any_on_ground || balloon_ft > crate::grenzwerte::grenzwerte().landung.msfs_flare_balloon_tol_ft.wert;
-
-    // ── Gate 3 (pitch corroboration): net window pitch trend. Compare the
-    // mean pitch over the first ~300 ms of airborne samples to the mean over
-    // the last ~300 ms. A strongly NOSE-DOWN trend vetoes detection.
-    let pitch_nose_down = if air.len() >= 2 {
-        let first_t = air.first().unwrap().at.timestamp_millis();
-        let last_t = air.last().unwrap().at.timestamp_millis();
-        let mean_pitch = |pred: &dyn Fn(i64) -> bool| -> Option<f32> {
-            let vals: Vec<f32> = air
-                .iter()
-                .filter(|s| pred(s.at.timestamp_millis()))
-                .map(|s| s.pitch_deg)
-                .collect();
-            if vals.is_empty() {
-                None
-            } else {
-                Some(vals.iter().sum::<f32>() / vals.len() as f32)
-            }
-        };
-        let p_start = mean_pitch(&|t| t <= first_t + 300);
-        let p_end = mean_pitch(&|t| t >= last_t - 300);
-        match (p_start, p_end) {
-            (Some(a), Some(b)) => (b - a) <= crate::grenzwerte::grenzwerte().landung.msfs_flare_pitch_nosedown_veto_deg.wert,
-            _ => false,
-        }
-    } else {
-        false
-    };
-
-    MsfsFlareGates {
-        agl_reliable: !(dq_reject || bounce_reject),
-        unreliable_source: dq_reject,
-        pitch_nose_down,
-    }
+) -> landing_scoring::aufsetz_messung::MsfsFlareGates {
+    landing_scoring::aufsetz_messung::msfs_flare_gates(&als_proben(samples), &mess_parameter(), flare_lo, flare_hi)
 }
 
 /// v0.5.39: Forensik-Bewertung der Landung aus dem 50-Hz-Sample-Buffer
@@ -686,7 +466,20 @@ fn evaluate_msfs_flare_gates(
 ///   - sample_count             — Anzahl Samples im Buffer
 ///   - pre_edge_sample_count    — davon vor Edge (= Pre-TD-Coverage)
 ///   - post_edge_sample_count   — davon nach Edge
+#[cfg_attr(not(test), allow(dead_code))]
 fn compute_landing_analysis(
+    samples: &[TouchdownWindowSample],
+    edge_at: DateTime<Utc>,
+    simulator: Simulator,
+    sim_referenz: Option<f32>,
+) -> serde_json::Value {
+    compute_landing_analysis_fuer(None, samples, edge_at, simulator, sim_referenz)
+}
+
+/// Wie [`compute_landing_analysis`], gemessen mit dem Modul des Flugs
+/// `pirep_id` (gepinnter oder nachgeholter Stand, wie die Note).
+fn compute_landing_analysis_fuer(
+    pirep_id: Option<&str>,
     samples: &[TouchdownWindowSample],
     edge_at: DateTime<Utc>,
     simulator: Simulator,
@@ -774,7 +567,6 @@ fn compute_landing_analysis(
     // ein und liest zu nah an Null).
     // Dieselbe Konstante begrenzt die Lückenprüfung der Bewertbarkeit.
     // Wert seit v3: bundle/grenzwerte/aufsetzen.json -> luecken_fenster_vor_ms (v2.1.24: 310)
-    let agl_fenster_ms: i64 = crate::grenzwerte::grenzwerte().aufsetzen.luecken_fenster_vor_ms.wert;
     // Weniger Messpunkte im Fenster → keine belastbare Steigung.
     // Wert seit v3: bundle/grenzwerte/landung.json -> agl_min_samples (v2.1.24: 4)
     // Manche Zusatzflugzeuge frieren die Hoehe ein. Ohne Bewegung in der
@@ -821,6 +613,8 @@ fn compute_landing_analysis(
     // Deckt sich mit `VS_FLOOR_FPM` der kanonischen Landerate.
     // Wert seit v3: bundle/grenzwerte/landung.json -> agl_max_plausibel_fpm (v2.1.24: -3000.0)
 
+    // (Die Rechnung zu diesen Schwellen steht seit 11.11.2026 im Crate,
+    // `landing_scoring::aufsetz_messung`; die Begruendungen bleiben hier.)
     // `auch_bei_stillstand` schaltet den Stillstands-Riegel ab. Der Score
     // laesst ihn an (eine eingefrorene Hoehenspur liest zu weich, siehe
     // `AGL_MAX_STILLSTAND_MS`); die Unfall-Erkennung braucht den Wert
@@ -828,111 +622,28 @@ fn compute_landing_analysis(
     // weicher Kandidat ihr nicht schaden kann. Ohne diesen zweiten Aufruf
     // verlaere sie bei eingefrorener Spur genau den Kandidaten, den der
     // Kommentar dort ausdruecklich zusagt (QS-Befund Runde 4).
-    let vs_aus_hoehenkurve_mit = |auch_bei_stillstand: bool| -> Option<f32> {
-        let lo = edge_ms - agl_fenster_ms;
-        // `!s.on_ground` ist nicht kosmetisch: der Kontakt-Frame traegt schon
-        // die beginnende Fahrwerkskompression und bei MSFS zusaetzlich einen
-        // AGL-Sprung (im Fixture a320_vrnevnl 1,49 ft in 32 ms — das 17-fache
-        // der echten Bewegung). Als Endpunkt einer Zweipunkt-Steigung hebt
-        // genau dieser eine Frame das Ergebnis um 158 fpm an. `mean_vs_window`
-        // direkt darueber und `agl_geometric_vs_fpm_at` filtern aus demselben
-        // Grund; der gescorte Wert darf nicht schwaecher geschuetzt sein als
-        // die forensische Anzeige.
-        let fenster: Vec<&TouchdownWindowSample> = samples
-            .iter()
-            .filter(|s| {
-                let ts = s.at.timestamp_millis();
-                ts >= lo && ts <= edge_ms && s.agl_ft.is_finite() && !s.on_ground
-            })
-            .collect();
-        if fenster.len() < crate::grenzwerte::grenzwerte().landung.agl_min_samples.wert {
-            return None;
-        }
-        let verschieden = fenster
-            .iter()
-            .map(|s| (s.agl_ft * 1000.0).round() as i64)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len();
-        if verschieden < crate::grenzwerte::grenzwerte().landung.agl_min_verschiedene.wert {
-            return None;
-        }
-        // Laengster Stillstand der Hoehe, in Millisekunden.
-        //
-        // Die Zeitrechnung erledigt nebenbei ein Aufzeichnungs-Artefakt:
-        // X-Plane liefert vereinzelt jeden Messpunkt zwei- bis dreifach
-        // mit identischem Zeitstempel. Ein Zaehler gleicher Werte haette
-        // das als Stillstand gelesen und ausgerechnet die dichtesten
-        // Aufzeichnungen verworfen — bei gleicher Uhrzeit ist die
-        // Stillstandsdauer aber schlicht null. Eine eigene Entdopplung
-        // waere toter Code (QS-Befund Runde 4: sie liess sich entfernen,
-        // ohne dass ein Test rot wurde).
-        let laengster_stillstand_ms = {
-            let mut best = 0i64;
-            let mut start = 0usize;
-            for i in 1..fenster.len() {
-                let gleich = ((fenster[i].agl_ft - fenster[i - 1].agl_ft).abs() * 1000.0).round()
-                    as i64
-                    == 0;
-                if gleich {
-                    best = best.max(
-                        fenster[i].at.timestamp_millis() - fenster[start].at.timestamp_millis(),
-                    );
-                } else {
-                    start = i;
-                }
-            }
-            best
-        };
-        let eingefroren = laengster_stillstand_ms > crate::grenzwerte::grenzwerte().landung.agl_max_stillstand_ms.wert;
-        if eingefroren && !auch_bei_stillstand {
-            return None;
-        }
-        let t0 = fenster.first()?.at.timestamp_millis();
-        let spanne = (fenster.last()?.at.timestamp_millis() - t0) as f64 / 1000.0;
-        if spanne < crate::grenzwerte::grenzwerte().landung.agl_min_spanne_s.wert {
-            return None;
-        }
-        // **Ausgleichsgerade, nicht Endpunkt-Differenz.** Eine Zweipunkt-
-        // Steigung haengt komplett an zwei von ~15 Messpunkten: ein einziger
-        // Quantisierungsschritt (~0,5 ft) am Rand verschiebt das Ergebnis um
-        // ~97 fpm, also mehr als eine halbe Bandbreite der Landerate-Achse.
-        // Am Korpus gegengerechnet liest die Endpunkt-Methode in 12 von 15
-        // Aufzeichnungen haerter als die Gerade, im Median 25 fpm, im
-        // Extremfall 158 fpm. Die Gerade verduennt denselben Randfehler auf
-        // etwa ein Sechstel. Der forensische Flare-Pfad rechnet seit v0.16.22
-        // aus genau diesem Grund ebenfalls mit Ausgleich.
-        let n = fenster.len() as f64;
-        let ts: Vec<f64> = fenster
-            .iter()
-            .map(|s| (s.at.timestamp_millis() - t0) as f64 / 1000.0)
-            .collect();
-        let ys: Vec<f64> = fenster.iter().map(|s| s.agl_ft as f64).collect();
-        let t_mittel = ts.iter().sum::<f64>() / n;
-        let y_mittel = ys.iter().sum::<f64>() / n;
-        let zaehler: f64 = ts
-            .iter()
-            .zip(ys.iter())
-            .map(|(t, y)| (t - t_mittel) * (y - y_mittel))
-            .sum();
-        let nenner: f64 = ts.iter().map(|t| (t - t_mittel).powi(2)).sum();
-        // Nach dem Spannen-Riegel liegt der Nenner bei mindestens rund
-        // 0,02 — diese Pruefung kann also gar nicht mehr greifen. Sie
-        // bleibt als Division-durch-null-Riegel stehen, falls jemand
-        // AGL_MIN_SPANNE_S spaeter senkt.
-        if nenner <= f64::EPSILON {
-            return None;
-        }
-        let fpm = (zaehler / nenner * 60.0) as f32;
-        // Nur ein SINKEN ist eine Landerate; ein Steigen im Fenster heisst,
-        // dass der Aufsetzpunkt nicht sauber erfasst wurde.
-        if !fpm.is_finite() || !(crate::grenzwerte::grenzwerte().landung.agl_max_plausibel_fpm.wert..0.0).contains(&fpm) {
-            return None;
-        }
-        Some(fpm)
+    // DLH9901 (11.11.2026): Hoehengerade, Riegel, Instrument, Wahl und
+    // Abfang-Endpunkte rechnet die Aufsetz-Messung des Pakets (Export
+    // `messe`), sonst dieselbe Funktion nativ (aelteres Paket ohne Export).
+    let Some((messung, messung_quelle)) =
+        crate::bewertung::messen(pirep_id, |g| mess_anfrage(samples, edge_ms, simulator, g))
+    else {
+        return json!({ "error": "empty_buffer" });
     };
-    let vs_aus_hoehenkurve = || vs_aus_hoehenkurve_mit(false);
-    // Finde das Sample-Paar (last airborne, first on_ground) das den Edge
-    // umschließt; lineare Interpolation der VS auf edge_ms.
+    let vs_geometrie = messung.vs_geometrie_fpm;
+    let vs_geometrie_ungefiltert = messung.vs_geometrie_ungefiltert_fpm;
+    let vs_aus_simvar = messung.vs_simvar_edge_fpm;
+    let vs_at_edge = messung.vs_at_edge_fpm;
+    let vs_gelaende = messung.vs_gelaende_fpm;
+    let vs_eigensinken = messung.vs_eigensinken_fpm;
+    let peak_vs_pre = messung.peak_vs_pre_flare_fpm;
+    let vs_at_flare_end = messung.vs_at_flare_end_fpm;
+    let flare_reduction = messung.flare_reduction_fpm;
+    let flare_dvs_dt = messung.flare_dvs_dt_fpm_per_sec;
+    let flare_score = messung.flare_quality_score;
+    let flare_detected = messung.flare_detected;
+    // Das Probenpaar um die Kante braucht weiter die G-Kraft am Aufsetzpunkt.
+
     let mut last_air: Option<&TouchdownWindowSample> = None;
     let mut first_ground: Option<&TouchdownWindowSample> = None;
     for s in samples {
@@ -943,29 +654,6 @@ fn compute_landing_analysis(
             break;
         }
     }
-    let vs_aus_simvar = match (last_air, first_ground) {
-        (Some(a), Some(g)) => {
-            let t_a = a.at.timestamp_millis() as f64;
-            let t_g = g.at.timestamp_millis() as f64;
-            let t_edge = edge_ms as f64;
-            if (t_g - t_a).abs() < 1e-6 {
-                Some(a.vs_fpm)
-            } else {
-                let alpha = ((t_edge - t_a) / (t_g - t_a)).clamp(0.0, 1.0);
-                Some((a.vs_fpm as f64 + (g.vs_fpm as f64 - a.vs_fpm as f64) * alpha) as f32)
-            }
-        }
-        _ => None,
-    };
-    // Höhenkurve führt; der Sim-Messwert bleibt als Rückfallebene für die
-    // 0,5 % der Landungen mit unbrauchbarer Höhenspur — und als Forensik.
-    let vs_geometrie = vs_aus_hoehenkurve();
-    // Fuer die Unfall-Erkennung: dieselbe Rechnung, aber ohne den
-    // Stillstands-Riegel. Sie nimmt den haertesten aller Messwerte —
-    // ein zusaetzlicher, moeglicherweise zu weicher Kandidat kann ihr
-    // nicht schaden, ein FEHLENDER harter dagegen schon.
-    let vs_geometrie_ungefiltert = vs_aus_hoehenkurve_mit(true);
-    let vs_at_edge = vs_geometrie.or(vs_aus_simvar);
 
     // ── v1.6.9: woraus die Sinkrate besteht ──────────────────────────
     //
@@ -986,125 +674,6 @@ fn compute_landing_analysis(
     // fuer die BODENHOEHE nicht: Ebenes Gelaende steht legitim still. Die
     // Riegel verwarfen dort die ganze Aufschluesselung — bei 10 von 60
     // Landungen (flache Plaetze), obwohl AGL und MSL einwandfrei waren.
-    let steigung_ueber_fenster = |wert: &dyn Fn(&TouchdownWindowSample) -> Option<f32>,
-                                  bewegung_pruefen: bool|
-     -> Option<f32> {
-        let lo = edge_ms - agl_fenster_ms;
-        let punkte: Vec<(f64, f64)> = samples
-            .iter()
-            .filter(|s| {
-                let ts = s.at.timestamp_millis();
-                ts >= lo && ts <= edge_ms && !s.on_ground
-            })
-            .filter_map(|s| {
-                let y = wert(s)?;
-                if !y.is_finite() {
-                    return None;
-                }
-                Some((s.at.timestamp_millis() as f64 / 1000.0, y as f64))
-            })
-            .collect();
-        if punkte.len() < crate::grenzwerte::grenzwerte().landung.agl_min_samples.wert {
-            return None;
-        }
-        let spanne = punkte.last()?.0 - punkte.first()?.0;
-        if spanne < crate::grenzwerte::grenzwerte().landung.agl_min_spanne_s.wert {
-            return None;
-        }
-        // Dieselben Riegel wie die Hoehenkurve selbst — eine eingefrorene
-        // Spur liest sich sonst als „kein Sinkflug" und schiebt die ganze
-        // Bewegung dem jeweils anderen Anteil zu. Der Vergleich mit dem
-        // Werkzeug von Arderos hat die Luecke aufgedeckt: es verlangt
-        // ausdruecklich fuenf UNTERSCHIEDLICHE Zeitstempel, meine erste
-        // Fassung zaehlte nur Messpunkte.
-        let verschiedene = punkte
-            .iter()
-            .map(|p| (p.1 * 1000.0).round() as i64)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len();
-        if bewegung_pruefen && verschiedene < crate::grenzwerte::grenzwerte().landung.agl_min_verschiedene.wert {
-            return None;
-        }
-        let mut laengster_stillstand_ms = 0_i64;
-        let mut lauf_start = punkte[0].0;
-        for paar in punkte.windows(2) {
-            if (paar[1].1 - paar[0].1).abs() < 1e-4 {
-                let dauer = ((paar[1].0 - lauf_start) * 1000.0).round() as i64;
-                laengster_stillstand_ms = laengster_stillstand_ms.max(dauer);
-            } else {
-                lauf_start = paar[1].0;
-            }
-        }
-        if bewegung_pruefen && laengster_stillstand_ms > crate::grenzwerte::grenzwerte().landung.agl_max_stillstand_ms.wert {
-            return None;
-        }
-        let n = punkte.len() as f64;
-        let mx = punkte.iter().map(|p| p.0).sum::<f64>() / n;
-        let my = punkte.iter().map(|p| p.1).sum::<f64>() / n;
-        let sxx: f64 = punkte.iter().map(|p| (p.0 - mx).powi(2)).sum();
-        if sxx < 1e-9 {
-            return None;
-        }
-        let sxy: f64 = punkte.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
-        let fpm = (sxy / sxx) * 60.0;
-        if fpm.is_finite() {
-            Some(fpm as f32)
-        } else {
-            None
-        }
-    };
-    // Nur wenn die Hoehenkurve selbst getragen hat — sonst waere die
-    // Aufschluesselung eine Erklaerung fuer eine Zahl, die gar nicht von
-    // ihr stammt.
-    //
-    // **Vorzeichen.** `vs_gelaende_fpm` ist der BEITRAG des Gelaendes zur
-    // gemessenen Zahl, nicht die Bewegung des Bodens. Steigt der Boden mit
-    // 300 fpm, macht er die gemessene Rate um 300 fpm haerter — der Beitrag
-    // ist also −300. Damit gilt immer:
-    //
-    //     gemessen = Eigensinken + Gelaendebeitrag
-    //
-    // Diese Form ist die einzige, die sich im Bericht ohne Kopfrechnen
-    // lesen laesst, und die einzige, in der eine falsche Richtung sofort
-    // auffaellt (die Summe geht dann nicht auf).
-    let (vs_gelaende, vs_eigensinken) = if let Some(gemessen) = vs_geometrie {
-        let boden_bewegung = steigung_ueber_fenster(
-            &|s: &TouchdownWindowSample| s.msl_ft.map(|m| m - s.agl_ft),
-            // Ebenes Gelaende steht legitim still (Steigung 0).
-            false,
-        );
-        let msl = steigung_ueber_fenster(&|s: &TouchdownWindowSample| s.msl_ft, true);
-        match (boden_bewegung, msl) {
-            (Some(boden), Some(eigen)) => {
-                // `+ 0.0` macht aus −0,0 (ebener Boden) eine ehrliche 0.
-                let gelaende = -boden + 0.0;
-                // Die Probe: die Aufschluesselung MUSS die gemessene Zahl
-                // ergeben. Geht sie nicht auf, stimmt an einer der drei
-                // Groessen etwas nicht (eingefrorene Spur, Gelaendesprung,
-                // Ausreisser im Bodenmodell) — dann zeigen wir lieber
-                // nichts als eine erfundene Erklaerung. Ein Werkzeug, das
-                // dieselbe Rechnung macht, saeubert stattdessen Ausreisser
-                // aus der Bodenspur; wir verwerfen, weil eine falsche
-                // Erklaerung im Landebericht schlimmer ist als keine.
-                // Wert seit v3: bundle/grenzwerte/landung.json -> probe_toleranz_fpm (v2.1.24: 20.0)
-                // Ueber 3000 fpm ist es kein Gelaende mehr, sondern ein
-                // Sprung im Hoehenbezug — dieselbe Grenze wie bei der
-                // Hoehenkurve.
-                if (gemessen - (eigen + gelaende)).abs() > crate::grenzwerte::grenzwerte().landung.probe_toleranz_fpm.wert
-                    || gelaende.abs() > crate::grenzwerte::grenzwerte().landung.agl_max_plausibel_fpm.wert.abs()
-                    || eigen.abs() > crate::grenzwerte::grenzwerte().landung.agl_max_plausibel_fpm.wert.abs()
-                {
-                    (None, None)
-                } else {
-                    (Some(gelaende), Some(eigen))
-                }
-            }
-            _ => (None, None),
-        }
-    } else {
-        (None, None)
-    };
-
     // --- Peak G post-TD (Gear-Compression sucht nach Edge) ---
     let peak_g_window = |window_ms: i64| -> Option<f32> {
         let hi = edge_ms + window_ms;
@@ -1251,208 +820,6 @@ fn compute_landing_analysis(
         }
     };
 
-    // --- Flare-Analyse ---
-    // Window: [-2000 ms, -100 ms] vor Edge. Suche steepste Sinkrate +
-    // VS-Wert kurz vor Edge.
-    let flare_lo = edge_ms - 2000;
-    let flare_hi = edge_ms - 100;
-    // SimVar pass (pitch-corrected `s.vs_fpm`). On X-Plane/Other this is
-    // the published flare metric; on MSFS it lags the airframe and is
-    // kept only as the `_raw` forensic provenance (see v0.16.22 block).
-    let mut peak_vs_pre_simvar: Option<f32> = None; // most negative
-    let mut vs_at_flare_end_simvar: Option<f32> = None; // VS am ts nahe -100ms
-    let mut min_dist_to_end = i64::MAX;
-    let mut earliest_in_window: Option<&TouchdownWindowSample> = None;
-    for s in samples {
-        let ts = s.at.timestamp_millis();
-        if ts >= flare_lo && ts <= flare_hi && !s.on_ground {
-            // Pitch-korrigierte VS verwenden — bei steilem Flare wichtig
-            let pitch_rad = (s.pitch_deg as f64) * std::f64::consts::PI / 180.0;
-            let vs_corrected = (s.vs_fpm as f64 * pitch_rad.cos()) as f32;
-            if peak_vs_pre_simvar.map(|p| vs_corrected < p).unwrap_or(true) {
-                peak_vs_pre_simvar = Some(vs_corrected);
-            }
-            let dist_to_end = (flare_hi - ts).abs();
-            if dist_to_end < min_dist_to_end {
-                min_dist_to_end = dist_to_end;
-                vs_at_flare_end_simvar = Some(vs_corrected);
-            }
-            if earliest_in_window
-                .map(|e| ts < e.at.timestamp_millis())
-                .unwrap_or(true)
-            {
-                earliest_in_window = Some(s);
-            }
-        }
-    }
-
-    // v0.16.22: MSFS flare metric on the lag-free AGL-geometric V/S.
-    // For MSFS2020/2024 fixed-wing, replace the lagged SimVar endpoints
-    // with the AGL local-linear-fit slope endpoints over the SAME
-    // window; keep the SimVar values as `_raw` provenance. X-Plane (raw
-    // local_vy) / Other keep the SimVar endpoints → byte-identical.
-    // Heli/seaplane are NOT category-gated here (compute_landing_analysis
-    // has no category); we gate on the AGL endpoints existing AND being a
-    // real reduction — a near-zero-V/S rotorcraft touchdown produces no
-    // AGL flare reduction, so the metric stays inert. Fixed-wing scope is
-    // additionally enforced by the de-lag/score paths that consume this.
-    let is_msfs = matches!(simulator, Simulator::Msfs2020 | Simulator::Msfs2024);
-    let (peak_vs_pre_agl, vs_at_flare_end_agl) = if is_msfs {
-        compute_msfs_agl_flare_endpoints(samples, flare_lo, flare_hi)
-    } else {
-        (None, None)
-    };
-    // v0.16.22 hardening: evaluate the phantom-flare guards (frozen/coarse
-    // AGL, bounce/balloon, nose-down pitch). On a data-quality or bounce
-    // reject we fall back to the SimVar path so no garbage AGL endpoint is
-    // published; the pitch veto is applied to `flare_detected` only.
-    let flare_gates = if is_msfs {
-        evaluate_msfs_flare_gates(samples, flare_lo, flare_hi)
-    } else {
-        MsfsFlareGates {
-            agl_reliable: true,
-            unreliable_source: false,
-            pitch_nose_down: false,
-        }
-    };
-    // The endpoints that actually drive reduction / score / detected.
-    // MSFS: AGL if BOTH endpoints resolved AND the guards pass, else fall
-    // back to SimVar (too few AGL samples, frozen/coarse trace, or a
-    // bounce — never worse than the pre-v0.16.22 SimVar behaviour).
-    let use_agl = is_msfs
-        && peak_vs_pre_agl.is_some()
-        && vs_at_flare_end_agl.is_some()
-        && flare_gates.agl_reliable;
-    let (peak_vs_pre, vs_at_flare_end, flare_vs_source) = if use_agl {
-        (peak_vs_pre_agl, vs_at_flare_end_agl, "msfs_agl")
-    } else if is_msfs && flare_gates.unreliable_source {
-        // A data-quality gate tripped: mark the fallback distinctly so the
-        // provenance shows WHY we did not use the AGL geometry.
-        (
-            peak_vs_pre_simvar,
-            vs_at_flare_end_simvar,
-            "simvar_agl_unreliable",
-        )
-    } else {
-        (peak_vs_pre_simvar, vs_at_flare_end_simvar, "simvar")
-    };
-
-    // Reduktion: positive Zahl = Flare hat Sinkrate verkleinert
-    let flare_reduction = match (peak_vs_pre, vs_at_flare_end) {
-        (Some(p), Some(v)) => Some(v - p),
-        _ => None,
-    };
-    // dVS/dt grob: (vs_at_flare_end - vs_at_flare_start) / window_dt.
-    // Secondary diagnostic. v0.16.22 FIX 4: route this through the SAME
-    // endpoint SOURCE as the published `flare_reduction` so the two
-    // diagnostics never disagree. On the MSFS AGL path both start and end are
-    // AGL-geometric (start = the capped AGL fit at the earliest in-window
-    // sample, end = the published AGL `vs_at_flare_end`); on the SimVar
-    // fallback (and X-Plane / Other) both stay SimVar → byte-identical to
-    // pre-v0.16.22.
-    let flare_dvs_dt = match earliest_in_window {
-        Some(start) => {
-            let dt_sec = (flare_hi - start.at.timestamp_millis()) as f64 / 1000.0;
-            if dt_sec > 0.1 {
-                // Pick the start/end pair from the SAME source as the reduction.
-                let endpoints = if use_agl {
-                    // AGL start at the earliest-window timestamp (edge-capped,
-                    // matching compute_msfs_agl_flare_endpoints) + AGL end.
-                    let start_vs = agl_geometric_vs_fpm_at(
-                        samples,
-                        start.at.timestamp_millis(),
-                        start.pitch_deg,
-                        Some(flare_hi + 100),
-                    );
-                    match (start_vs, vs_at_flare_end) {
-                        (Some(sv), Some(ev)) => Some((sv, ev)),
-                        _ => None,
-                    }
-                } else {
-                    // SimVar pass: pitch-corrected vs_fpm start + SimVar end.
-                    let pitch_rad = (start.pitch_deg as f64) * std::f64::consts::PI / 180.0;
-                    let start_vs = (start.vs_fpm as f64 * pitch_rad.cos()) as f32;
-                    vs_at_flare_end_simvar.map(|ev| (start_vs, ev))
-                };
-                endpoints.map(|(start_vs, end_vs)| ((end_vs - start_vs) as f64 / dt_sec) as f32)
-            } else {
-                None
-            }
-        }
-        None => None,
-    };
-
-    // v0.5.41: rebalanced — Endpoint-Score dominiert (was kommt am TD raus),
-    // Reduktion gibt Bonus-Punkte (= rettete eine harte Landung wenn aus
-    // hohem VS reduziert wurde). Vorherige Skala bestrafte Piloten die
-    // schon mit niedriger VS reinkamen (= eigentlich gute Approaches) zu
-    // hart, weil "Reduktion >0 fpm" pauschal nur 20 Punkte gab.
-    //
-    // Endpoint-Score (= VS unmittelbar vor TD, der eigentliche Touchdown-
-    // Indikator):
-    //   > -75 fpm:       100 (butter)
-    //   > -150 fpm:       80 (smooth)
-    //   > -300 fpm:       60 (acceptable)
-    //   > -500 fpm:       40 (firm)
-    //   sonst:            20 (hard/severe)
-    //
-    // Reduktions-Bonus (= Flare-Manöver hat eine harte Landung gerettet,
-    // der Pilot hat gepulled):
-    //   > 400 fpm:       +20
-    //   > 200 fpm:       +15
-    //   > 100 fpm:       +10
-    //   >  50 fpm:        +5
-    //   sonst:             0
-    //
-    // Endpoint + Bonus, gecappt [0..100].
-    //
-    // Beispiele:
-    //   - DLH 1404 (Peter, Fenix A320 SL): vs_end=-61, red=59 → 100+5 = 100 ✓
-    //   - Hypothetisch B738 perfect: vs_end=-100, red=600 → 80+20 = 100 ✓
-    //   - URO 913 (Aerosoft A346): vs_end=-606 (estimated), red=315 → 20+15 = 35
-    //   - Bad Pilot: vs_end=-800, red=0 → 20+0 = 20
-    let (flare_score, flare_detected) = match (flare_reduction, vs_at_flare_end) {
-        (Some(red), Some(final_vs)) => {
-            let red = red as f64;
-            let final_vs = final_vs as f64;
-            let endpoint: f64 = if final_vs > -75.0 {
-                100.0
-            } else if final_vs > -150.0 {
-                80.0
-            } else if final_vs > -300.0 {
-                60.0
-            } else if final_vs > -500.0 {
-                40.0
-            } else {
-                20.0
-            };
-            let bonus: f64 = if red > 400.0 {
-                20.0
-            } else if red > 200.0 {
-                15.0
-            } else if red > 100.0 {
-                10.0
-            } else if red > 50.0 {
-                5.0
-            } else {
-                0.0
-            };
-            let score = (endpoint + bonus).max(0.0).min(100.0) as i32;
-            // Detection floor. MSFS_FLARE_DETECT_FLOOR_FPM == 50.0, so the
-            // value here is byte-identical to the previous `red > 50.0` for
-            // X-Plane / Other. v0.16.22: on the MSFS AGL path the pitch
-            // veto (Gate 3) additionally withholds detection when the net
-            // pitch trend is strongly nose-down (a settle/shed, not a
-            // pull) — the reduction/score still publish for forensics.
-            let mut detected = red > crate::grenzwerte::grenzwerte().landung.msfs_flare_detect_floor_fpm.wert;
-            if is_msfs && use_agl && flare_gates.pitch_nose_down {
-                detected = false;
-            }
-            (Some(score), Some(detected))
-        }
-        _ => (None, None),
-    };
-
     // --- Bounce-Profile ---
     // Post-TD: zähle on_ground=False Excursionen mit AGL-Höhe.
     //
@@ -1575,7 +942,9 @@ fn compute_landing_analysis(
         // Hoehenkurve nachtraeglich noch nachrechnen laesst.
         "vs_geometrie_ungefiltert_fpm": vs_geometrie_ungefiltert,
         "vs_simvar_edge_fpm": vs_aus_simvar,
-        "vs_at_edge_quelle": if vs_geometrie.is_some() { "hoehenkurve" } else { "simvar_fallback" },
+        // Pruefer-Fund 5: die Quelle meldet das Modul (eine spaetere Fassung
+        // kann sie anders bestimmen), nicht der Kern.
+        "vs_at_edge_quelle": messung.vs_at_edge_quelle,
         "vs_smoothed_250ms_fpm": vs_250,
         "vs_smoothed_500ms_fpm": vs_500,
         "vs_smoothed_1000ms_fpm": vs_1000,
@@ -1620,24 +989,17 @@ fn compute_landing_analysis(
         "post_edge_sample_count": post_count,
     });
 
-    // v0.16.22: provenance of the MSFS AGL flare endpoints — ADDITIVE,
-    // MSFS-ONLY. `flare_vs_source` marks whether the published flare
-    // endpoints are the lag-free AGL fit ("msfs_agl") or the SimVar
-    // fallback ("simvar"); the `_raw` keys carry the lagged display-VSI
-    // values for forensics. On X-Plane / Other we add NOTHING so their
-    // analysis JSON is byte-identical to pre-v0.16.22 (no new keys).
-    if is_msfs {
-        if let Some(obj) = analysis.as_object_mut() {
-            obj.insert("flare_vs_source".into(), json!(flare_vs_source));
-            obj.insert(
-                "peak_vs_pre_flare_fpm_raw".into(),
-                json!(peak_vs_pre_simvar),
-            );
-            obj.insert(
-                "vs_at_flare_end_fpm_raw".into(),
-                json!(vs_at_flare_end_simvar),
-            );
+    // v0.16.22: Herkunft der MSFS-Abfang-Endpunkte — nur bei MSFS, bei
+    // X-Plane / Other fehlen die Schluessel wie bisher. Dazu, wer gemessen
+    // hat (Paketmodul, nachgeholter Stand oder nativ) und mit welcher Fassung.
+    if let Some(obj) = analysis.as_object_mut() {
+        if let Some(h) = &messung.msfs {
+            obj.insert("flare_vs_source".into(), json!(h.flare_vs_source));
+            obj.insert("peak_vs_pre_flare_fpm_raw".into(), json!(h.peak_vs_pre_flare_fpm_raw));
+            obj.insert("vs_at_flare_end_fpm_raw".into(), json!(h.vs_at_flare_end_fpm_raw));
         }
+        obj.insert("messung_quelle".into(), json!(messung_quelle));
+        obj.insert("messung_fassung".into(), json!(messung.messung_fassung));
     }
     analysis
 }

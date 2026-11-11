@@ -330,6 +330,9 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
     // technisch nicht automatisch aufloesbar ist.
     let dep_gate_zustellung_unklar = persisted.stats.dep_gate_withdrawal_awaiting_confirmation;
     persisted.stats.clone().apply_to(&mut restored_stats);
+    // Pruefer-Fund 2: lief die Messung vor dem Neustart ohne den Stand des
+    // Flugs, bleibt seine Note auch jetzt „vorlaeufig“.
+    crate::bewertung::messung_ohne_pin_merken(&persisted.pirep_id, restored_stats.messung_ohne_pin);
     if dep_gate_zustellung_unklar {
         log_activity_handle_t(
             app,

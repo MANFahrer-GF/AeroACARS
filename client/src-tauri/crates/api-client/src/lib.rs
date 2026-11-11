@@ -1554,6 +1554,38 @@ struct DataEnvelope<T> {
     data: T,
 }
 
+/// Paginierte phpVMS-Liste: `{ "data": [...], "meta": { "last_page": N, ... } }`.
+#[derive(Deserialize)]
+struct Seite<T> {
+    data: Vec<T>,
+    /// Nur `last_page` wird gelesen; eine andere Form (fehlt, `[]`, Text)
+    /// gilt als „keine Angabe“ und darf die Liste nicht verwerfen.
+    #[serde(default)]
+    meta: serde_json::Value,
+}
+
+impl<T> Seite<T> {
+    fn last_page(&self) -> Option<u64> {
+        self.meta.get("last_page").and_then(serde_json::Value::as_u64)
+    }
+}
+
+/// JSON-Antwort dekodieren; bei Fehler einen Ausschnitt protokollieren, weil
+/// der serde-Fehler allein das fremde JSON nicht zeigt.
+fn decode_body<T: DeserializeOwned>(body: &str, path: &str) -> Result<T, ApiError> {
+    serde_json::from_str::<T>(body).map_err(|e| {
+        let snippet: String = body.chars().take(800).collect();
+        tracing::warn!(
+            path = %path,
+            error = %e,
+            body_len = body.len(),
+            body_snippet = %snippet,
+            "JSON decode failed"
+        );
+        ApiError::BadResponse(format!("JSON decode failed for {path}: {e}"))
+    })
+}
+
 // ---- Client ----
 
 /// v0.19.x FIX: outcome of [`same_host_redirect_decision`] — kept separate
@@ -1717,6 +1749,12 @@ impl Client {
 
     /// GET a `{ "data": T }` resource and decode it.
     async fn get_data<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
+        let body = self.get_body(path).await?;
+        decode_body::<DataEnvelope<T>>(&body, path).map(|envelope| envelope.data)
+    }
+
+    /// GET mit API-Schluessel, Status pruefen, Antworttext lesen.
+    async fn get_body(&self, path: &str) -> Result<String, ApiError> {
         let url = self.endpoint(path)?;
         let response = self
             .http
@@ -1741,22 +1779,7 @@ impl Client {
             let head: String = body.chars().take(2000).collect();
             tracing::debug!(path = %path, body_len = body.len(), head = %head, "response body");
         }
-        match serde_json::from_str::<DataEnvelope<T>>(&body) {
-            Ok(envelope) => Ok(envelope.data),
-            Err(e) => {
-                let snippet: String = body.chars().take(800).collect();
-                tracing::warn!(
-                    path = %path,
-                    error = %e,
-                    body_len = body.len(),
-                    body_snippet = %snippet,
-                    "JSON decode failed"
-                );
-                Err(ApiError::BadResponse(format!(
-                    "JSON decode failed for {path}: {e}"
-                )))
-            }
-        }
+        Ok(body)
     }
 
     /// `GET /api/user` — ohne die Flottenliste des Rangs.
@@ -2645,10 +2668,11 @@ impl Client {
 
     /// Hilfsfunktion: paginierten Subfleet-Endpoint komplett durchziehen.
     ///
-    /// Phpvms `paginate_limit` clamped `?limit=` auf
-    /// `phpvms.pagination.max` (default 100). Wir fragen mit limit=100
-    /// per Page und folgen den Pages so lange wir volle Pages bekommen.
-    /// Sicherheits-Cap bei 50 Pages = 5000 Subfleets.
+    /// Wir fragen mit limit=100 je Seite. Der Server darf die Seite kleiner
+    /// deckeln (phpVMS 7.0.13 ohne CoreFixes: 20 je Seite), darum folgen wir
+    /// `meta.last_page` statt der Seitengroesse. Fehlt `meta` (nicht
+    /// paginierte Antwort), gilt die alte Regel: eine nicht volle Seite ist
+    /// die letzte. Sicherheits-Cap bei 50 Pages.
     async fn get_paginated_subfleets(
         &self,
         base_path: &str,
@@ -2658,20 +2682,32 @@ impl Client {
         let mut all = Vec::new();
         for page in 1..=MAX_PAGES {
             let path = format!("{base_path}?limit={PAGE_LIMIT}&page={page}");
-            let chunk: Vec<SubfleetWithAircraft> = self.get_data(&path).await?;
-            let n = chunk.len();
+            let seite: Seite<SubfleetWithAircraft> = self.get_data_seite(&path).await?;
+            let n = seite.data.len();
+            let last_page = seite.last_page();
             tracing::debug!(
                 page,
                 page_size = n,
+                ?last_page,
                 cumulative = all.len() + n,
                 "fetched subfleet page"
             );
-            all.extend(chunk);
-            if n < PAGE_LIMIT {
-                break; // letzte Page erreicht
+            all.extend(seite.data);
+            let letzte = match last_page {
+                Some(letzte) => n == 0 || u64::from(page) >= letzte,
+                None => n < PAGE_LIMIT,
+            };
+            if letzte {
+                break;
             }
         }
         Ok(all)
+    }
+
+    /// GET einer paginierten Liste `{ "data": [...], "meta": {...} }`.
+    async fn get_data_seite<T: DeserializeOwned>(&self, path: &str) -> Result<Seite<T>, ApiError> {
+        let body = self.get_body(path).await?;
+        decode_body::<Seite<T>>(&body, path)
     }
 
     /// v0.5.32 (gefixt v0.5.33): alle einzelnen Aircraft die der Pilot
@@ -4198,5 +4234,125 @@ mod zustellung_tests {
             zustellen(&server("401 Unauthorized")),
             Zustellung::Abgelehnt(ApiError::Unauthenticated)
         ));
+    }
+}
+
+#[cfg(test)]
+mod fleet_blaettern_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Server, der jede Anfrage mit `antwort(seite)` beantwortet und die
+    /// Zahl der Anfragen zaehlt.
+    fn server(
+        antwort: impl Fn(u32) -> String + Send + 'static,
+    ) -> (String, Arc<AtomicUsize>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let adresse = format!("http://{}", l.local_addr().unwrap());
+        let zahl = Arc::new(AtomicUsize::new(0));
+        let z = zahl.clone();
+        std::thread::spawn(move || {
+            for s in l.incoming() {
+                let Ok(mut s) = s else { break };
+                let mut puffer = [0u8; 8192];
+                let n = s.read(&mut puffer).unwrap_or(0);
+                let anfrage = String::from_utf8_lossy(&puffer[..n]);
+                let seite: u32 = anfrage
+                    .split("page=")
+                    .nth(1)
+                    .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+                    .and_then(|z| z.parse().ok())
+                    .unwrap_or(1);
+                z.fetch_add(1, Ordering::SeqCst);
+                let body = antwort(seite);
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        (adresse, zahl)
+    }
+
+    fn eintraege(von: usize, bis: usize) -> String {
+        (von..bis)
+            .map(|i| format!(r#"{{"id":{i},"aircraft":[{{"id":{i}}}]}}"#))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn flotte(basis: &str) -> Vec<SubfleetWithAircraft> {
+        let client = Client::new(Connection::new(basis, "test").unwrap()).unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(client.get_fleet())
+            .unwrap()
+    }
+
+    /// phpVMS 7.0.13 ohne CoreFixes deckelt `limit=100` auf 20 je Seite.
+    /// Frueher brach der Client nach Seite 1 ab (20 < 100).
+    #[test]
+    fn gedeckelte_seiten_folgen_last_page() {
+        let (basis, zahl) = server(|seite| {
+            let von = (seite as usize - 1) * 20;
+            let bis = (von + 20).min(45);
+            format!(
+                r#"{{"data":[{}],"meta":{{"current_page":{seite},"last_page":3,"per_page":20,"total":45}}}}"#,
+                eintraege(von, bis)
+            )
+        });
+        let f = flotte(&basis);
+        assert_eq!(f.len(), 45);
+        assert_eq!(f.iter().map(|s| s.id).collect::<Vec<_>>(), (0..45).collect::<Vec<_>>());
+        assert_eq!(zahl.load(Ordering::SeqCst), 3);
+    }
+
+    /// Volle Seite und `last_page` erreicht: nicht weiterfragen.
+    #[test]
+    fn volle_letzte_seite_endet_bei_last_page() {
+        let (basis, zahl) = server(|seite| {
+            let von = (seite as usize - 1) * 100;
+            format!(
+                r#"{{"data":[{}],"meta":{{"last_page":2}}}}"#,
+                eintraege(von, von + 100)
+            )
+        });
+        assert_eq!(flotte(&basis).len(), 200);
+        assert_eq!(zahl.load(Ordering::SeqCst), 2);
+    }
+
+    /// Leere Seite beendet auch dann, wenn `last_page` mehr verspricht.
+    #[test]
+    fn leere_seite_endet_trotz_last_page() {
+        let (basis, zahl) = server(|seite| {
+            let data = if seite == 1 { eintraege(0, 20) } else { String::new() };
+            format!(r#"{{"data":[{data}],"meta":{{"last_page":9}}}}"#)
+        });
+        assert_eq!(flotte(&basis).len(), 20);
+        assert_eq!(zahl.load(Ordering::SeqCst), 2);
+    }
+
+    /// Ohne `meta` (oder mit fremder Form) gilt die alte Regel: nicht volle
+    /// Seite = letzte. Eine nicht paginierte Antwort wird so nicht 50-mal
+    /// doppelt geladen.
+    #[test]
+    fn ohne_meta_gilt_die_seitengroesse() {
+        for meta in ["", r#","meta":[]"#, r#","meta":{"last_page":"3"}"#] {
+            let (basis, zahl) = server(move |_| format!(r#"{{"data":[{}]{meta}}}"#, eintraege(0, 7)));
+            assert_eq!(flotte(&basis).len(), 7, "{meta}");
+            assert_eq!(zahl.load(Ordering::SeqCst), 1, "{meta}");
+        }
+        let (basis, zahl) = server(|seite| {
+            let n = if seite == 1 { 100 } else { 5 };
+            format!(r#"{{"data":[{}]}}"#, eintraege(0, n))
+        });
+        assert_eq!(flotte(&basis).len(), 105);
+        assert_eq!(zahl.load(Ordering::SeqCst), 2);
     }
 }

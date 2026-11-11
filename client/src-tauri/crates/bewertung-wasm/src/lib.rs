@@ -31,6 +31,20 @@ pub unsafe extern "C" fn sollband(ptr: *mut u8, len: u32) -> u64 {
     antworten(landing_scoring::sollband::sollband_json(std::str::from_utf8(&eingabe).unwrap_or("")))
 }
 
+/// Aufsetz-Messung (`landing_scoring::aufsetz_messung`, DLH9901
+/// 11.11.2026): Proben des Aufsetzfensters → Sinkrate und Abfang-Endpunkte.
+/// Gleiche Aufrufkonvention wie [`bewerte`]; optionaler Export (fehlt er,
+/// rechnet der Client nativ).
+///
+/// # Safety
+/// Wie [`bewerte`].
+#[no_mangle]
+pub unsafe extern "C" fn messe(ptr: *mut u8, len: u32) -> u64 {
+    // SAFETY: Zeiger und Laenge stammen aus `alloc`.
+    let eingabe = unsafe { Vec::from_raw_parts(ptr, len as usize, len as usize) };
+    antworten(landing_scoring::aufsetz_messung::messen_json(std::str::from_utf8(&eingabe).unwrap_or("")))
+}
+
 /// Bewerten.
 ///
 /// # Safety
