@@ -729,6 +729,87 @@
         );
     }
 
+    /// Ein Stillstand, der VOR dem Messfenster beginnt, zaehlt in voller
+    /// Laenge. Beide Seiten der Kante: der Hoehenwert 15,0 steht ab −340 ms,
+    /// im Fenster (ab −310 ms) liegt davon nur der letzte Messpunkt. Die
+    /// alte Rechnung sah dort 0 ms Stillstand und liess beide Faelle durch.
+    #[test]
+    fn stillstand_vor_dem_fenster_zaehlt_in_voller_laenge() {
+        let b = base();
+        let mit_pause = |pause_ms: i64| {
+            vec![
+                tw(b, -340, 15.0, 2.0, false, -200.0),
+                tw(b, -340 + pause_ms, 15.0, 2.0, false, -200.0),
+                tw(b, -180, 13.0, 2.0, false, -200.0),
+                tw(b, -140, 11.0, 2.0, false, -200.0),
+                tw(b, -60, 9.0, 2.0, false, -200.0),
+                tw(b, -20, 8.0, 2.0, false, -200.0),
+                tw(b, 0, 0.0, 2.0, true, -200.0),
+                tw(b, 20, 0.0, 2.0, true, -190.0),
+            ]
+        };
+        let a = compute_landing_analysis(&mit_pause(120), b, Simulator::Msfs2024, None);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("hoehenkurve"),
+            "120 ms Stillstand liegen noch im erlaubten Bereich"
+        );
+        let a = compute_landing_analysis(&mit_pause(121), b, Simulator::Msfs2024, None);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("simvar_fallback"),
+            "121 ms Stillstand müssen die Ausgleichsgerade verwerfen, auch wenn er vor dem Fenster beginnt"
+        );
+    }
+
+    /// DLH 9901 (LFBO–EDDM, 11.11.2026, PIREP BNPAm2WQ7N1D6P6n): der
+    /// Simulator ruckelte beim Aufsetzen. Die Hoehe stand von −570 bis
+    /// −290 ms still, danach kam der Weg am Stueck. Im 310-ms-Fenster lagen
+    /// davon nur 20 ms, der Riegel griff nicht, und die Gerade las −661 fpm
+    /// bei 1,2 g und −204 fpm am Instrument. Die Werte sind die echten
+    /// Sim-Bilder aus dem Flugprotokoll (Wertwechsel), mit 50 Hz gehalten.
+    #[test]
+    fn dlh9901_ruckler_vor_dem_aufsetzen_liest_nicht_hart() {
+        let b = base();
+        // (ab ms, Hoehe ft, Sinkrate fpm, am Boden)
+        let bilder: [(i64, f32, f32, bool); 10] = [
+            (-1020, 22.72, 1.1, false),
+            (-900, 21.57, -55.4, false),
+            (-840, 21.09, -75.9, false),
+            (-750, 20.85, -85.3, false),
+            (-570, 20.50, -99.0, false),
+            (-290, 19.57, -132.5, false),
+            (-180, 18.00, -182.3, false),
+            (-100, 17.45, -198.0, false),
+            (0, 17.01, -204.5, true),
+            (180, 16.72, -199.7, true),
+        ];
+        let mut samples = Vec::new();
+        let mut ms = -1020_i64;
+        while ms <= 300 {
+            let bild = bilder.iter().rev().find(|x| x.0 <= ms).unwrap();
+            samples.push(tw(b, ms, bild.1, 3.3, bild.3, bild.2));
+            ms += 20;
+        }
+        let a = compute_landing_analysis(&samples, b, Simulator::Msfs2024, None);
+        assert_eq!(
+            a.get("vs_at_edge_quelle").and_then(|v| v.as_str()),
+            Some("simvar_fallback"),
+            "280 ms Stillstand vor dem Fenster: die Höhenkurve darf hier nicht tragen"
+        );
+        let vs = a.get("vs_at_edge_fpm").and_then(|v| v.as_f64()).unwrap();
+        assert!(
+            (-215.0..=-190.0).contains(&vs),
+            "bewertet wird das Instrument am Aufsetzpunkt (−204), nicht {vs}"
+        );
+        // Die Unfall-Erkennung behaelt den harten Kandidaten (nie weichspuelen).
+        let roh = a
+            .get("vs_geometrie_ungefiltert_fpm")
+            .and_then(|v| v.as_f64())
+            .unwrap();
+        assert!(roh < -550.0, "ungefilterte Kurve bleibt erhalten, ist {roh}");
+    }
+
     /// Doppelte Zeitstempel sind ein Aufzeichnungs-Artefakt, kein
     /// Stillstand. X-Plane liefert vereinzelt jeden Messpunkt mehrfach mit
     /// derselben Uhrzeit — eine Zaehlung gleicher Werte haette das als
