@@ -1682,16 +1682,23 @@ struct NachtankenHinweis {
 }
 
 /// Zeile und Detail fuer das Aktivitaetsprotokoll.
-fn nachtanken_luft_hinweis_text(h: &NachtankenHinweis) -> (String, String) {
+/// Der deutsche Wortlaut ist der Rueckfall; `AktivitaetText` traegt dieselben
+/// Teile als Schluessel (`activity.refuel.*`) fuer de/en/it.
+fn nachtanken_luft_hinweis_text(h: &NachtankenHinweis) -> (String, String, AktivitaetText) {
+    let mut teile = Vec::new();
     let zeile = format!(
         "In der Luft nachgetankt: {:.0} kg. Der Verbrauch dieses Fluges rechnet die Menge mit.",
         h.menge_kg
     );
     let mut detail = match h.tank_davor_kg {
-        Some(d) => format!("Tank davor {d:.0} kg"),
+        Some(d) => {
+            teile.push(AktivitaetTeil::neu("activity.refuel.before", &[("kg", d)]));
+            format!("Tank davor {d:.0} kg")
+        }
         None => String::new(),
     };
     if h.summe_kg - h.menge_kg > 0.5 {
+        teile.push(AktivitaetTeil::neu("activity.refuel.total", &[("kg", h.summe_kg)]));
         if !detail.is_empty() {
             detail.push_str(" · ");
         }
@@ -1701,7 +1708,12 @@ fn nachtanken_luft_hinweis_text(h: &NachtankenHinweis) -> (String, String) {
         detail.push_str(" · ");
     }
     detail.push_str("Die Flugleitung sieht den Vorgang in der Prüfung.");
-    (zeile, detail)
+    teile.push(AktivitaetTeil::neu("activity.refuel.review", &[]));
+    let text = AktivitaetText {
+        zeile: AktivitaetTeil::neu("activity.refuel.line", &[("kg", h.menge_kg)]),
+        detail: teile,
+    };
+    (zeile, detail, text)
 }
 
 /// v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE5): OFP-Trip-

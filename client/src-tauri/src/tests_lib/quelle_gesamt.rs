@@ -337,6 +337,9 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// — plus Nachtanken in der Luft 10.11. (DLH 41): `NachtankenLuft` in `lib_sprit.rs`, Takt (`nachtanken_luft_takt`), Streamer
 /// (Vorschau, sofort speichern, Hinweis), `blocksprit_mit_nachtanken`/`verbrauch_ab_block_kg` an allen Sendestellen,
 /// `fuel_used_effective_kg` hebt in der Luft die Basis an. Tests `nachtanken_luft_tests::*`.
+/// — plus Nachtanken-Hinweis in drei Sprachen 11.11.: `ActivityEntry.text` (`AktivitaetText`, Schluessel + Werte),
+/// `log_activity_uebersetzbar`, `nachtanken_luft_hinweis_text` liefert die Schluessel `activity.refuel.*`.
+/// Tests `nachtanken_luft_tests` (Schluessel, altes Protokoll lesbar), `aktivitaetText.test.ts`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -347,4 +350,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "eec6f9a68d31da4d7ed77d680afa933f809324534cb7b2a7abd45f9193ee601f";
+const HASH_VOR_DER_ZERLEGUNG: &str = "53f72dd18c3daff97c9e5d5f11c39dd9ae455d0454078977ff1a8e76fc83e6d0";

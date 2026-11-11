@@ -1977,6 +1977,14 @@
     "age_days": "{{tage}} giorni fa",
     "age_stale": "non aggiornato"
   },
+  "activity": {
+    "refuel": {
+      "line": "Rifornimento in volo: {{kg}} kg. Il consumo di questo volo tiene conto della quantità.",
+      "before": "serbatoio prima {{kg}} kg",
+      "total": "in totale {{kg}} kg in questo volo",
+      "review": "La direzione voli vede l'operazione nella revisione."
+    }
+  },
   "activity_log": {
     "title": "Log attività ACARS",
     "count_one": "{{count}} voce",

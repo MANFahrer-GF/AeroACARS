@@ -27,6 +27,36 @@ struct ActivityEntry {
     /// Optional context — flight phase, PIREP id, error code, etc.
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
+    /// 3.0.1: Schluessel und Werte, mit denen die Oberflaeche die Zeile in
+    /// der Sprache des Piloten zeigt (`bundle/texte/*.json`). `message` und
+    /// `detail` bleiben der deutsche Rueckfall (altes Paket, Logs, Dedupe).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text: Option<AktivitaetText>,
+}
+
+/// Eine uebersetzbare Aktivitaetszeile: die Zeile selbst und ihre Detailteile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct AktivitaetText {
+    zeile: AktivitaetTeil,
+    #[serde(default)]
+    detail: Vec<AktivitaetTeil>,
+}
+
+/// Ein Textschluessel mit den Werten fuer seine Platzhalter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct AktivitaetTeil {
+    schluessel: String,
+    #[serde(default)]
+    werte: serde_json::Map<String, serde_json::Value>,
+}
+
+impl AktivitaetTeil {
+    fn neu(schluessel: &str, werte: &[(&str, f32)]) -> Self {
+        Self {
+            schluessel: schluessel.to_string(),
+            werte: werte.iter().map(|(k, v)| (k.to_string(), serde_json::json!(v.round() as i64))).collect(),
+        }
+    }
 }
 
 #[derive(Default)]

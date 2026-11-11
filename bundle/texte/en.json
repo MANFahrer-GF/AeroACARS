@@ -1977,6 +1977,14 @@
     "age_days": "{{tage}} days ago",
     "age_stale": "outdated"
   },
+  "activity": {
+    "refuel": {
+      "line": "Refuelled in flight: {{kg}} kg. This flight's fuel burn includes that amount.",
+      "before": "tank before {{kg}} kg",
+      "total": "{{kg}} kg in total on this flight",
+      "review": "Flight operations will see this in the review."
+    }
+  },
   "activity_log": {
     "title": "ACARS activity log",
     "count_one": "{{count}} entry",

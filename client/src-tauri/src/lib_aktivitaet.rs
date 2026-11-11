@@ -635,6 +635,7 @@ fn log_activity(
         level,
         message,
         detail,
+        text: None,
     };
     match level {
         ActivityLevel::Info => {
@@ -684,6 +685,19 @@ fn log_activity_mit_meldung(
     detail: Option<String>,
     an_glitchtip: bool,
 ) {
+    log_activity_uebersetzbar(app, level, message, detail, None, an_glitchtip);
+}
+
+/// Wie `log_activity_mit_meldung`, dazu der uebersetzbare Text fuer die
+/// Oberflaeche (`AktivitaetText`).
+fn log_activity_uebersetzbar(
+    app: &AppHandle,
+    level: ActivityLevel,
+    message: String,
+    detail: Option<String>,
+    text: Option<AktivitaetText>,
+    an_glitchtip: bool,
+) {
     let now = Utc::now();
     let state = app.state::<AppState>();
     {
@@ -697,6 +711,7 @@ fn log_activity_mit_meldung(
         level,
         message,
         detail,
+        text,
     };
     match level {
         ActivityLevel::Info => {

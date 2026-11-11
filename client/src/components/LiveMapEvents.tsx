@@ -16,14 +16,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { i18n as I18n } from "i18next";
 import { invoke } from "../lib/ipc";
 import { useCpdlcMessages, type ThreadEntry } from "../hooks/useCpdlcMessages";
+import { aktivitaetAnzeige, type AktivitaetText } from "../lib/aktivitaetText";
 
 interface ActivityEntry {
   timestamp: string;
   level: "info" | "warn" | "error";
   message: string;
   detail?: string;
+  text?: AktivitaetText;
 }
 
 export type EventCategory = "flug" | "acars" | "system";
@@ -52,14 +55,17 @@ function stripEmoji(s: string): string {
  *  — collapsing e.g. per-engine start/shutdown entries into a bare count
  *  and losing each entry's own detail. Every entry now gets its own row
  *  with its own real timestamp and detail, no merging. */
-function mapSystemEntries(entries: ActivityEntry[]): MapEvent[] {
-  return entries.map((e, i) => ({
-    key: `sys-${e.timestamp}-${i}`,
-    at: e.timestamp,
-    category: "system" as const,
-    title: stripEmoji(e.message),
-    sub: e.detail ? stripEmoji(e.detail) : undefined,
-  }));
+function mapSystemEntries(entries: ActivityEntry[], i18n: I18n): MapEvent[] {
+  return entries.map((e, i) => {
+    const z = aktivitaetAnzeige(e, (k, w) => i18n.t(k, w ?? {}), (k) => i18n.exists(k));
+    return {
+      key: `sys-${e.timestamp}-${i}`,
+      at: e.timestamp,
+      category: "system" as const,
+      title: stripEmoji(z.message),
+      sub: z.detail ? stripEmoji(z.detail) : undefined,
+    };
+  });
 }
 
 /** One-line label for a raw ACARS/telex message. Deliberately a light
@@ -105,9 +111,10 @@ export function useMapEvents(active: boolean): { events: MapEvent[] } {
   }, [active]);
 
   const { messages: thread } = useCpdlcMessages(active);
+  const { i18n } = useTranslation();
 
   const events = useMemo(() => {
-    const sys = mapSystemEntries(activityEntries);
+    const sys = mapSystemEntries(activityEntries, i18n);
     const acars: MapEvent[] = thread.map((m, i) => ({
       key: `acars-${m.at}-${i}`,
       at: m.at,
@@ -116,7 +123,7 @@ export function useMapEvents(active: boolean): { events: MapEvent[] } {
       sub: stripEmoji(m.text).slice(0, 90),
     }));
     return [...sys, ...acars].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
-  }, [activityEntries, thread]);
+  }, [activityEntries, thread, i18n, i18n.language]);
 
   return { events };
 }

@@ -127,12 +127,14 @@
             level: ActivityLevel::Error,
             message: BIDS_FAILED_MESSAGE.to_string(),
             detail: Some("network error".into()),
+            text: None,
         });
         log.push_back(ActivityEntry {
             timestamp: Utc::now(),
             level: ActivityLevel::Error,
             message: "Ein ganz anderer Fehler".to_string(),
             detail: None,
+            text: None,
         });
 
         entwerte_bids_fehler(&mut log);

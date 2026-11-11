@@ -1977,6 +1977,14 @@
     "age_days": "vor {{tage}} Tagen",
     "age_stale": "veraltet"
   },
+  "activity": {
+    "refuel": {
+      "line": "In der Luft nachgetankt: {{kg}} kg. Der Verbrauch dieses Fluges rechnet die Menge mit.",
+      "before": "Tank davor {{kg}} kg",
+      "total": "auf diesem Flug insgesamt {{kg}} kg",
+      "review": "Die Flugleitung sieht den Vorgang in der Prüfung."
+    }
+  },
   "activity_log": {
     "title": "ACARS-Aktivitätsprotokoll",
     "count_one": "{{count}} Eintrag",

@@ -721,6 +721,7 @@ pub(crate) fn nach_dem_stand(app: &AppHandle, daten: Option<&std::path::Path>) {
                     message: format!("AeroACARS v{} gestartet", env!("CARGO_PKG_VERSION")),
                     // Tiny credit line — keeps the tool feeling human-made.
                     detail: Some("Made with ❤️ in Gifhorn — by Thomas Kant".into()),
+                    text: None,
                 };
                 tracing::info!(message = %banner.message, "activity");
                 log.push_back(banner);

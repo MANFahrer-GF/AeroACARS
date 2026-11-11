@@ -1185,8 +1185,8 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 save_active_flight(&app, &flight);
             }
             if let Some(h) = nachtanken_hinweis {
-                let (zeile, detail) = nachtanken_luft_hinweis_text(&h);
-                log_activity_mit_meldung(&app, ActivityLevel::Warn, zeile, Some(detail), false);
+                let (zeile, detail, text) = nachtanken_luft_hinweis_text(&h);
+                log_activity_uebersetzbar(&app, ActivityLevel::Warn, zeile, Some(detail), Some(text), false);
             }
             takt_uhr.abschnitt("step_flight");
             // Kabinenansagen (Beta): hier und nicht in `phasen_takt`, das

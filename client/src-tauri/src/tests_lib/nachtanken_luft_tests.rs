@@ -665,4 +665,23 @@
         assert!(text.0.contains("5024 kg"), "{}", text.0);
         assert!(text.1.contains("Tank davor 14976 kg"), "{}", text.1);
         assert!(text.1.contains("insgesamt 18634 kg"), "{}", text.1);
+        // Dieselben Teile als Schluessel + Werte fuer de/en/it in der Oberflaeche.
+        let json = serde_json::to_value(&text.2).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "zeile": {"schluessel": "activity.refuel.line", "werte": {"kg": 5024}},
+                "detail": [
+                    {"schluessel": "activity.refuel.before", "werte": {"kg": 14976}},
+                    {"schluessel": "activity.refuel.total", "werte": {"kg": 18634}},
+                    {"schluessel": "activity.refuel.review", "werte": {}},
+                ],
+            })
+        );
+        // Ein altes `activity_log.json` ohne das Feld bleibt lesbar.
+        let alt: ActivityEntry = serde_json::from_str(
+            r#"{"timestamp":"2026-11-10T10:00:00Z","level":"warn","message":"x"}"#,
+        )
+        .unwrap();
+        assert_eq!(alt.text, None);
     }
