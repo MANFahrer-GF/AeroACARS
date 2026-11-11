@@ -1579,6 +1579,14 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 }
                 stats.sampler_diagnose = Some(diagnose_lesen(&diagnose).als_json());
 
+                // Pruefer-Fund 3 (12.11.2026): Die Aufsetz-Messung im Modul
+                // laeuft hier unter der Sperre, wie die Sofortnote auch
+                // (`pirep_rechnung_bilden`). Gemessen: Median 2,7 ms, an der
+                // Fuel-Grenze rund 21 ms, einmal je Aufsetzer
+                // (`bewertung_host::MESS_FUEL_GRENZE`). Ein Herausloesen
+                // braeuchte eine zweite Sperre, zwischen der andere Leser
+                // `touchdown_window_dumped_at` ohne `landing_analysis` saehen;
+                // die Abtastung selbst steht ohnehin, weil dieser Faden rechnet.
                 let analysis = compute_landing_analysis_fuer(
                     Some(&flight.pirep_id),
                     &samples,
@@ -1610,6 +1618,7 @@ fn spawn_touchdown_sampler(app: AppHandle, flight: Arc<ActiveFlight>) {
                 // Teilnote `abfangen` (landing-scoring/src/abfangen.rs).
                 let abfangen = abfangen_in_analyse(&stats, &samples, edge_at, &mut analysis);
                 stats.abfangen_gesichert = Some(abfangen);
+                stats.messung_ohne_pin = analysis.get("messung_quelle").and_then(|v| v.as_str()) == Some("ohne_pin");
                 stats.landing_analysis = Some(analysis.clone());
                 // Codex-Folgefund (adversarial, 05.09.2026, fuenfte Runde):
                 // `peak_g_post_500ms` steht in `analysis` HIER schon fertig

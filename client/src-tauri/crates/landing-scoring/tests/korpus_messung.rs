@@ -1,14 +1,14 @@
 //! Korpus-Vergleich der Aufsetz-Messregeln (DLH9901, 11.11.2026).
 //!
 //! Rechnet jeden Aufsetzer eines Auszugs (`{log, pilot, seq, sim, alt,
-//! proben}` je Zeile, `proben` mit `t_ms`) mit jeder Regel-Variante und
+//! proben, kante_ms}` je Zeile, `proben` mit `t_ms`) mit jeder Regel-Variante und
 //! schreibt je Aufsetzer eine Zeile. Nicht im normalen Lauf:
 //!   MESS_KORPUS_EIN=<anfragen.jsonl.gz> MESS_KORPUS_AUS=<aus.jsonl> \
 //!     cargo test -p landing-scoring --release --test korpus_messung -- --ignored
 
 use std::io::{BufRead, Write};
 
-use landing_scoring::aufsetz_messung::{messen_mit, Anfrage, Parameter, Regeln, Rueckblick};
+use landing_scoring::aufsetz_messung::{messen_mit, Anfrage, Parameter, Regeln, Rueckblick, REGELN, REGELN_FASSUNG_1};
 
 fn parameter() -> Parameter {
     let landung: serde_json::Value =
@@ -36,9 +36,9 @@ fn korpus_regeln_vergleichen() {
     let leser = std::io::BufReader::new(flate2::read::GzDecoder::new(std::fs::File::open(ein).unwrap()));
     let mut ziel = std::io::BufWriter::new(std::fs::File::create(aus).unwrap());
     let varianten = [
-        ("K", Regeln { rueckblick: Rueckblick::Keiner, abfang_stillstand: false }),
-        ("B", Regeln { rueckblick: Rueckblick::Bild, abfang_stillstand: false }),
-        ("BF", Regeln { rueckblick: Rueckblick::Bild, abfang_stillstand: true }),
+        ("K", REGELN_FASSUNG_1),
+        ("B", Regeln { fassung: 2, rueckblick: Rueckblick::Bild, abfang_stillstand: false }),
+        ("BF", REGELN),
     ];
     let parameter = parameter();
     for zeile in leser.lines() {
@@ -47,6 +47,7 @@ fn korpus_regeln_vergleichen() {
             simulator: o["sim"].as_str().unwrap_or("Other").into(),
             proben: serde_json::from_value(o["proben"].clone()).unwrap(),
             parameter: parameter.clone(),
+            kante_ms: o["kante_ms"].as_i64().unwrap_or(0),
         };
         let mut r = serde_json::json!({ "log": o["log"], "pilot": o["pilot"], "seq": o["seq"], "sim": o["sim"], "alt": o["alt"] });
         for (name, regeln) in varianten {

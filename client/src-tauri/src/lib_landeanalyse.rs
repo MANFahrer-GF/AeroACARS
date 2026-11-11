@@ -232,10 +232,10 @@ fn scored_g_fuer_punkte(stats: &FlightStats) -> Option<f32> {
 // trusted. Below this the least-squares slope is too sensitive to a
 // single quantization step; we skip that time point.
 // Wert seit v3: bundle/grenzwerte/landung.json -> msfs_flare_agl_fit_min_samples (v2.1.24: 4)
-/// AGL above this (ft) at a fit point means we are not yet in the flare/
-/// short-final geometry — the same guard the touchdown AGL estimator
-/// uses for window-start. Keeps a high pre-flare descent out of the
-/// flare-window slope set. Reuses TD_AGL_MAX_AT_WINDOW_START_FT.
+// AGL above this (ft) at a fit point means we are not yet in the flare/
+// short-final geometry — the same guard the touchdown AGL estimator
+// uses for window-start. Keeps a high pre-flare descent out of the
+// flare-window slope set. Reuses TD_AGL_MAX_AT_WINDOW_START_FT.
 // v3: aus einem Grenzwert abgeleitet, deshalb Funktion statt Konstante.
 // ─── v0.16.22 hardening: phantom-flare guards ────────────────────────────
 //
@@ -327,58 +327,84 @@ fn scored_g_fuer_punkte(stats: &FlightStats) -> Option<f32> {
 // die Anfrage an das Modul und duenne Test-Huellen fuer die bestehenden
 // Riegel-Tests (sie rechnen gegen dieselbe Quelle).
 
-/// Anfrage an die Aufsetz-Messung: alle Kanaele jeder Probe plus `t_ms`
-/// (Millisekunden relativ zur Kante, wie bisher gerechnet) und die
-/// Grenzwerte des geltenden Pakets.
-fn mess_anfrage(samples: &[TouchdownWindowSample], edge_ms: i64, simulator: Simulator) -> serde_json::Value {
-    let g = &crate::grenzwerte::grenzwerte().landung;
-    let parameter = landing_scoring::aufsetz_messung::Parameter {
-        fenster_ms: crate::grenzwerte::grenzwerte().aufsetzen.luecken_fenster_vor_ms.wert,
-        agl_min_samples: g.agl_min_samples.wert,
-        agl_min_verschiedene: g.agl_min_verschiedene.wert,
-        agl_max_stillstand_ms: g.agl_max_stillstand_ms.wert,
-        agl_min_spanne_s: g.agl_min_spanne_s.wert,
-        agl_max_plausibel_fpm: g.agl_max_plausibel_fpm.wert,
-        probe_toleranz_fpm: g.probe_toleranz_fpm.wert,
-        td_agl_max_at_window_start_ft: g.td_agl_max_at_window_start_ft.wert,
-        msfs_flare_agl_fit_half_window_ms: g.msfs_flare_agl_fit_half_window_ms.wert,
-        msfs_flare_agl_fit_min_samples: g.msfs_flare_agl_fit_min_samples.wert,
-        msfs_flare_min_distinct_agl: g.msfs_flare_min_distinct_agl.wert,
-        msfs_flare_max_median_dt_ms: g.msfs_flare_max_median_dt_ms.wert,
-        msfs_flare_min_end_fit_distinct_agl: g.msfs_flare_min_end_fit_distinct_agl.wert,
-        msfs_flare_min_end_agl_span_ft: g.msfs_flare_min_end_agl_span_ft.wert,
-        msfs_flare_balloon_tol_ft: g.msfs_flare_balloon_tol_ft.wert,
-        msfs_flare_pitch_nosedown_veto_deg: g.msfs_flare_pitch_nosedown_veto_deg.wert,
-        msfs_flare_detect_floor_fpm: g.msfs_flare_detect_floor_fpm.wert,
+/// Anfrage an die Aufsetz-Messung mit den Grenzwerten `g` (die des
+/// rechnenden Stands): typisiert fuer den nativen Rueckfall, als JSON mit
+/// allen Kanaelen jeder Probe plus `t_ms` (Millisekunden relativ zur Kante,
+/// wie bisher gerechnet) fuer das Modul. Ein nicht-endlicher Messwert wird
+/// im JSON `null` und im Modul wieder NaN (Pruefer-Fund 1).
+fn mess_anfrage(
+    samples: &[TouchdownWindowSample],
+    edge_ms: i64,
+    simulator: Simulator,
+    g: &crate::grenzwerte::Grenzwerte,
+) -> crate::bewertung::MessAnfrage {
+    use landing_scoring::aufsetz_messung::{Anfrage, Parameter, Probe};
+    let l = &g.landung;
+    let parameter = Parameter {
+        fenster_ms: g.aufsetzen.luecken_fenster_vor_ms.wert,
+        agl_min_samples: l.agl_min_samples.wert,
+        agl_min_verschiedene: l.agl_min_verschiedene.wert,
+        agl_max_stillstand_ms: l.agl_max_stillstand_ms.wert,
+        agl_min_spanne_s: l.agl_min_spanne_s.wert,
+        agl_max_plausibel_fpm: l.agl_max_plausibel_fpm.wert,
+        probe_toleranz_fpm: l.probe_toleranz_fpm.wert,
+        td_agl_max_at_window_start_ft: l.td_agl_max_at_window_start_ft.wert,
+        msfs_flare_agl_fit_half_window_ms: l.msfs_flare_agl_fit_half_window_ms.wert,
+        msfs_flare_agl_fit_min_samples: l.msfs_flare_agl_fit_min_samples.wert,
+        msfs_flare_min_distinct_agl: l.msfs_flare_min_distinct_agl.wert,
+        msfs_flare_max_median_dt_ms: l.msfs_flare_max_median_dt_ms.wert,
+        msfs_flare_min_end_fit_distinct_agl: l.msfs_flare_min_end_fit_distinct_agl.wert,
+        msfs_flare_min_end_agl_span_ft: l.msfs_flare_min_end_agl_span_ft.wert,
+        msfs_flare_balloon_tol_ft: l.msfs_flare_balloon_tol_ft.wert,
+        msfs_flare_pitch_nosedown_veto_deg: l.msfs_flare_pitch_nosedown_veto_deg.wert,
+        msfs_flare_detect_floor_fpm: l.msfs_flare_detect_floor_fpm.wert,
     };
-    let proben: Vec<serde_json::Value> = samples
-        .iter()
-        .map(|s| {
-            let mut v = serde_json::to_value(s).unwrap_or(serde_json::Value::Null);
-            if let Some(o) = v.as_object_mut() {
-                o.insert("t_ms".into(), (s.at.timestamp_millis() - edge_ms).into());
-            }
-            v
-        })
-        .collect();
     let simulator = serde_json::to_value(simulator)
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_else(|| "Other".into());
-    serde_json::json!({ "simulator": simulator, "proben": proben, "parameter": parameter })
+    let t_ms = |s: &TouchdownWindowSample| s.at.timestamp_millis() - edge_ms;
+    let proben: Vec<serde_json::Value> = samples
+        .iter()
+        .map(|s| {
+            let mut v = serde_json::to_value(s).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(o) = v.as_object_mut() {
+                o.insert("t_ms".into(), t_ms(s).into());
+            }
+            v
+        })
+        .collect();
+    let json = serde_json::json!({ "simulator": simulator, "proben": proben, "parameter": parameter, "kante_ms": edge_ms }).to_string();
+    let typisiert = Anfrage {
+        simulator,
+        proben: samples
+            .iter()
+            .map(|s| Probe {
+                t_ms: t_ms(s),
+                vs_fpm: s.vs_fpm,
+                g_force: s.g_force,
+                on_ground: s.on_ground,
+                agl_ft: s.agl_ft,
+                msl_ft: s.msl_ft,
+                pitch_deg: s.pitch_deg,
+            })
+            .collect(),
+        parameter,
+        kante_ms: edge_ms,
+    };
+    crate::bewertung::MessAnfrage { typisiert, json }
 }
 
 /// Nur Tests: Probe mit absoluter Zeit (die Riegel rechnen nur mit
 /// Differenzen, der Nullpunkt ist gleichgueltig).
 #[cfg(test)]
 fn als_proben(samples: &[TouchdownWindowSample]) -> Vec<landing_scoring::aufsetz_messung::Probe> {
-    let anfrage = mess_anfrage(samples, 0, Simulator::Msfs2024);
-    serde_json::from_value::<landing_scoring::aufsetz_messung::Anfrage>(anfrage).expect("Anfrage").proben
+    mess_anfrage(samples, 0, Simulator::Msfs2024, crate::grenzwerte::grenzwerte()).typisiert.proben
 }
 
 #[cfg(test)]
 fn mess_parameter() -> landing_scoring::aufsetz_messung::Parameter {
-    serde_json::from_value(mess_anfrage(&[], 0, Simulator::Msfs2024)["parameter"].clone()).expect("Parameter")
+    mess_anfrage(&[], 0, Simulator::Msfs2024, crate::grenzwerte::grenzwerte()).typisiert.parameter
 }
 
 #[cfg(test)]
@@ -587,6 +613,8 @@ fn compute_landing_analysis_fuer(
     // Deckt sich mit `VS_FLOOR_FPM` der kanonischen Landerate.
     // Wert seit v3: bundle/grenzwerte/landung.json -> agl_max_plausibel_fpm (v2.1.24: -3000.0)
 
+    // (Die Rechnung zu diesen Schwellen steht seit 11.11.2026 im Crate,
+    // `landing_scoring::aufsetz_messung`; die Begruendungen bleiben hier.)
     // `auch_bei_stillstand` schaltet den Stillstands-Riegel ab. Der Score
     // laesst ihn an (eine eingefrorene Hoehenspur liest zu weich, siehe
     // `AGL_MAX_STILLSTAND_MS`); die Unfall-Erkennung braucht den Wert
@@ -597,7 +625,11 @@ fn compute_landing_analysis_fuer(
     // DLH9901 (11.11.2026): Hoehengerade, Riegel, Instrument, Wahl und
     // Abfang-Endpunkte rechnet die Aufsetz-Messung des Pakets (Export
     // `messe`), sonst dieselbe Funktion nativ (aelteres Paket ohne Export).
-    let (messung, messung_quelle) = crate::bewertung::messen(pirep_id, &mess_anfrage(samples, edge_ms, simulator));
+    let Some((messung, messung_quelle)) =
+        crate::bewertung::messen(pirep_id, |g| mess_anfrage(samples, edge_ms, simulator, g))
+    else {
+        return json!({ "error": "empty_buffer" });
+    };
     let vs_geometrie = messung.vs_geometrie_fpm;
     let vs_geometrie_ungefiltert = messung.vs_geometrie_ungefiltert_fpm;
     let vs_aus_simvar = messung.vs_simvar_edge_fpm;
@@ -910,7 +942,9 @@ fn compute_landing_analysis_fuer(
         // Hoehenkurve nachtraeglich noch nachrechnen laesst.
         "vs_geometrie_ungefiltert_fpm": vs_geometrie_ungefiltert,
         "vs_simvar_edge_fpm": vs_aus_simvar,
-        "vs_at_edge_quelle": if vs_geometrie.is_some() { "hoehenkurve" } else { "simvar_fallback" },
+        // Pruefer-Fund 5: die Quelle meldet das Modul (eine spaetere Fassung
+        // kann sie anders bestimmen), nicht der Kern.
+        "vs_at_edge_quelle": messung.vs_at_edge_quelle,
         "vs_smoothed_250ms_fpm": vs_250,
         "vs_smoothed_500ms_fpm": vs_500,
         "vs_smoothed_1000ms_fpm": vs_1000,

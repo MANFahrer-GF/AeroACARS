@@ -210,6 +210,16 @@ static PIN: OnceLock<(String, RuntimeBundleId)> = OnceLock::new();
 /// aber vor der Abgabe).
 static PIN_MODUL: OnceLock<&'static [u8]> = OnceLock::new();
 
+/// Die Grenzwerte des nachgeholten Stands (Pruefer-Fund 2, 12.11.2026): die
+/// Aufsetz-Messung im Modul des Stands bekommt SEINE Grenzwerte. Gesetzt vor
+/// `PIN_MODUL`, also nie ein Modul ohne sie.
+static PIN_GRENZWERTE: OnceLock<&'static crate::grenzwerte::Grenzwerte> = OnceLock::new();
+
+/// Die Grenzwerte des nachgeholten Stands, falls er da ist.
+pub(crate) fn pin_grenzwerte() -> Option<&'static crate::grenzwerte::Grenzwerte> {
+    PIN_GRENZWERTE.get().copied()
+}
+
 /// P-3.31: Gilt fuer den Flug sein gepinnter Stand?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PinStand {
@@ -1356,6 +1366,8 @@ async fn pin_nachholen(app_daten: &Path, pin: &RuntimeBundleId) -> Result<(), St
             return Err(format!("nachgeholter Stand {pin} nicht ladbar: {:?}", l.hinweise));
         }
         let modul = l.paket.datei(BEWERTUNG).map_err(|e| e.to_string())?;
+        let grenzwerte = crate::grenzwerte::lesen(|x| l.paket.datei(x).ok())?;
+        let _ = PIN_GRENZWERTE.set(Box::leak(Box::new(grenzwerte)));
         let _ = PIN_MODUL.set(Box::leak(modul.into_boxed_slice()));
         Ok(())
     })

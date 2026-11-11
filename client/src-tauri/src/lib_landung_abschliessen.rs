@@ -286,6 +286,7 @@ fn landung_beim_wegsteigen_abschliessen(stats: &mut FlightStats, snap: &SimSnaps
     stats.landing_rate_fpm = None;
     stats.landing_analysis = None;
     stats.abfangen_gesichert = None;
+    stats.messung_ohne_pin = false;
     stats.landing_source = None;
     stats.touch_and_go_pending_since = None;
     stats.sampler_steigflug_seit = None;

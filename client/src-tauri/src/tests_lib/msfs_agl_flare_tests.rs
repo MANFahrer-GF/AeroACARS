@@ -1487,3 +1487,167 @@
             "bounce falls back to SimVar (data quality is fine, not 'unreliable')"
         );
     }
+
+    // ── Pruefer-Funde 1, 2, 9 (12.11.2026): Zweige der Messwahl ──────────
+
+    /// Gleichmaessiger Sinkflug −240 fpm, Kante bei `base()`.
+    fn sinkflug_fenster() -> (Vec<TouchdownWindowSample>, DateTime<Utc>) {
+        let b = base();
+        let s = (-2500..=500)
+            .step_by(20)
+            .map(|t: i64| {
+                let luft = t < 0;
+                tw(b, t, if luft { (-240.0 / 60_000.0) * t as f32 } else { 0.0 }, 2.0, !luft, -240.0)
+            })
+            .collect();
+        (s, b)
+    }
+
+    fn dlh9901_fenster() -> (Vec<TouchdownWindowSample>, DateTime<Utc>) {
+        use std::io::Read;
+        let pfad = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dlh9901_touchdown_window.json.gz");
+        let mut text = String::new();
+        flate2::read::GzDecoder::new(std::fs::File::open(pfad).unwrap()).read_to_string(&mut text).unwrap();
+        let f: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let edge = DateTime::parse_from_rfc3339(f["edge_at"].as_str().unwrap()).unwrap().with_timezone(&Utc);
+        (serde_json::from_value(f["samples"].clone()).unwrap(), edge)
+    }
+
+    /// Die Analyse ohne die Angabe, wer gemessen hat.
+    fn ohne_quelle(mut a: serde_json::Value) -> serde_json::Value {
+        a.as_object_mut().unwrap().remove("messung_quelle");
+        a
+    }
+
+    /// Pruefer-Fund 1: Eine nicht-endliche Probe (Hoehe, Sinkrate, G,
+    /// Pitch — auch an der Kante) laesst die Messung nicht abbrechen: Das
+    /// Modul rechnet (nicht der Rueckfall), und die GANZE Analyse ist dieselbe
+    /// wie nativ gerechnet. Vorher: `null` im JSON, Modul „Anfrage ungueltig“,
+    /// Rueckfall-Parse gescheitert, `expect` unter der `stats`-Sperre.
+    #[test]
+    fn nicht_endliche_proben_messen_im_modul_wie_nativ() {
+        let (mut s, edge) = dlh9901_fenster();
+        let kante = s.iter().position(|p| p.on_ground).unwrap();
+        s[kante - 1].agl_ft = f32::NAN;
+        s[kante - 1].vs_fpm = f32::INFINITY;
+        s[kante].g_force = f32::NAN;
+        s[kante - 30].pitch_deg = f32::NAN;
+        s[kante - 40].vs_fpm = f32::NEG_INFINITY;
+        s[kante - 50].agl_ft = f32::INFINITY;
+        let paket = compute_landing_analysis_fuer(Some("NAN1"), &s, edge, Simulator::Msfs2024, None);
+        assert_eq!(paket["messung_quelle"], "paket", "das Modul nimmt die Anfrage an: {paket}");
+        let nativ = {
+            let _f = crate::bewertung::mess_fuel_erzwingen(1);
+            compute_landing_analysis_fuer(Some("NAN2"), &s, edge, Simulator::Msfs2024, None)
+        };
+        assert_eq!(nativ["messung_quelle"], "nativ", "Gegenprobe: Fuel 1 zwingt den Rueckfall");
+        assert_eq!(ohne_quelle(paket), ohne_quelle(nativ));
+    }
+
+    /// Advisor 12.11.: Paket und nativ liefern an DLH9901 und an einem
+    /// sauberen Sinkflug dieselbe ganze Analyse (MSFS und X-Plane).
+    #[test]
+    fn analyse_aus_dem_modul_gleich_nativ() {
+        for (s, edge) in [dlh9901_fenster(), sinkflug_fenster()] {
+            for sim in [Simulator::Msfs2024, Simulator::XPlane12] {
+                let paket = compute_landing_analysis_fuer(Some("GLEICH1"), &s, edge, sim, None);
+                assert_eq!(paket["messung_quelle"], "paket");
+                let _f = crate::bewertung::mess_fuel_erzwingen(1);
+                let nativ = compute_landing_analysis_fuer(Some("GLEICH2"), &s, edge, sim, None);
+                assert_eq!(nativ["messung_quelle"], "nativ");
+                assert_eq!(ohne_quelle(paket), ohne_quelle(nativ), "{sim:?}");
+            }
+        }
+    }
+
+    /// Pruefer-Fund 9: Ein Stand ohne den Export `messe` (das echte Modul
+    /// vor dieser Fassung, Commit 5567a670) ist der vorgesehene Rueckfall:
+    /// nativ, dieselbe Zahl.
+    #[test]
+    fn stand_ohne_export_misst_nativ() {
+        use crate::laufzeit_paket::PinStand;
+        let alt: &'static [u8] = Box::leak(std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bewertung_vor_messe.wasm")).unwrap().into_boxed_slice());
+        assert!(bewertung_host::Host::neu(alt).is_ok_and(|h| !h.hat_export("messe")), "Modul laedt, hat aber kein `messe`");
+        let (s, edge) = dlh9901_fenster();
+        let paket = compute_landing_analysis_fuer(Some("ALT1"), &s, edge, Simulator::Msfs2024, None);
+        let _w = crate::bewertung::pin_erzwingen(PinStand::Nachgeholt(alt));
+        let a = compute_landing_analysis_fuer(Some("ALT2"), &s, edge, Simulator::Msfs2024, None);
+        assert_eq!(a["messung_quelle"], "nativ");
+        assert_eq!(ohne_quelle(a), ohne_quelle(paket));
+    }
+
+    /// Pruefer-Fund 9: Eine ungueltige Modulausgabe (hier: das Modul lehnt
+    /// eine kaputte Anfrage mit `{"fehler"}` ab) faellt auf nativ zurueck.
+    #[test]
+    fn ungueltige_modulausgabe_misst_nativ() {
+        let (s, edge) = sinkflug_fenster();
+        let (m, quelle) = crate::bewertung::messen(Some("UNG"), |g| {
+            let mut a = mess_anfrage(&s, edge.timestamp_millis(), Simulator::Msfs2024, g);
+            a.json = "{}".into();
+            a
+        })
+        .unwrap();
+        assert_eq!(quelle, "nativ");
+        let erwartet = landing_scoring::aufsetz_messung::messen(&mess_anfrage(&s, edge.timestamp_millis(), Simulator::Msfs2024, crate::grenzwerte::grenzwerte()).typisiert).unwrap();
+        assert_eq!(m, erwartet);
+    }
+
+    /// Pruefer-Fund 2: Der nachgeholte Stand misst mit SEINEN Grenzwerten.
+    /// Stellvertreter: In seinen Grenzwerten braucht die Hoehengerade mehr
+    /// Proben, als das Fenster hat — die Messung liest dann das Instrument,
+    /// mit den aktiven Grenzwerten die Hoehenkurve.
+    #[test]
+    fn nachgeholter_stand_misst_mit_seinen_grenzwerten() {
+        use crate::laufzeit_paket::PinStand;
+        let (s, edge) = sinkflug_fenster();
+        let _w = crate::bewertung::pin_erzwingen(PinStand::Nachgeholt(crate::laufzeit_paket::eingebautes_bewertungsmodul().unwrap()));
+        let gegen = compute_landing_analysis_fuer(Some("NG1"), &s, edge, Simulator::Msfs2024, None);
+        assert_eq!((gegen["messung_quelle"].as_str(), gegen["vs_at_edge_quelle"].as_str()), (Some("nachgeholt"), Some("hoehenkurve")));
+        let mut g = crate::grenzwerte::grenzwerte().clone();
+        g.landung.agl_min_samples.wert = 10_000;
+        let _g = crate::bewertung::pin_grenzwerte_erzwingen(g);
+        let a = compute_landing_analysis_fuer(Some("NG2"), &s, edge, Simulator::Msfs2024, None);
+        assert_eq!((a["messung_quelle"].as_str(), a["vs_at_edge_quelle"].as_str()), (Some("nachgeholt"), Some("simvar_fallback")));
+    }
+
+    /// Pruefer-Fund 2: Lief die Messung ohne den Stand des Flugs, bleibt die
+    /// Note auch nach dem Nachholen „vorlaeufig“ (Messung und Note aus
+    /// demselben Stand). Eine neue Messung mit dem Stand hebt das auf; ein
+    /// anderer Flug ist nie betroffen.
+    #[test]
+    fn messung_ohne_stand_haelt_die_note_vorlaeufig() {
+        use crate::bewertung::{bewerten_fuer, pin_erzwingen, Status};
+        use crate::laufzeit_paket::PinStand;
+        let (s, edge) = sinkflug_fenster();
+        let e = landing_scoring::LandingScoringInput { vs_fpm: Some(-210.0), peak_g_load: Some(1.3), bounce_count: Some(0), ..Default::default() };
+        {
+            let _w = pin_erzwingen(PinStand::Fehlt);
+            let a = compute_landing_analysis_fuer(Some("OP1"), &s, edge, Simulator::Msfs2024, None);
+            assert_eq!(a["messung_quelle"], "ohne_pin");
+        }
+        let _w = pin_erzwingen(PinStand::Nachgeholt(crate::laufzeit_paket::eingebautes_bewertungsmodul().unwrap()));
+        assert_eq!(bewerten_fuer("OP1", &e).map(|(_, st)| st), Some(Status::Vorlaeufig), "Messung ohne Stand");
+        assert_eq!(bewerten_fuer("OP2", &e).map(|(_, st)| st), Some(Status::Endgueltig), "Gegenprobe: anderer Flug");
+        let a = compute_landing_analysis_fuer(Some("OP1"), &s, edge, Simulator::Msfs2024, None);
+        assert_eq!(a["messung_quelle"], "nachgeholt");
+        assert_eq!(bewerten_fuer("OP1", &e).map(|(_, st)| st), Some(Status::Endgueltig), "neu gemessen mit dem Stand");
+    }
+
+    /// Pruefer-Fund 2: Der Merker ueberlebt den Neustart (Sicherung der
+    /// Flugdaten) und wird beim naechsten Aufsetzer zurueckgesetzt.
+    #[test]
+    fn messung_ohne_stand_ueberlebt_den_neustart() {
+        let mut stats = FlightStats::new();
+        stats.messung_ohne_pin = true;
+        let json = serde_json::to_value(PersistedFlightStats::snapshot_from(&stats)).unwrap();
+        assert_eq!(json["messung_ohne_pin"], true);
+        let gesichert: PersistedFlightStats = serde_json::from_value(json.clone()).unwrap();
+        let mut neu = FlightStats::new();
+        gesichert.apply_to(&mut neu);
+        assert!(neu.messung_ohne_pin);
+        let mut alt = json;
+        alt.as_object_mut().unwrap().remove("messung_ohne_pin");
+        let mut leer = FlightStats::new();
+        serde_json::from_value::<PersistedFlightStats>(alt).unwrap().apply_to(&mut leer);
+        assert!(!leer.messung_ohne_pin, "alte Sicherung ohne Feld: kein Merker");
+    }

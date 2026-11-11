@@ -41,13 +41,26 @@ pub const MESS_FASSUNG: u32 = 2;
 pub struct Probe {
     /// Millisekunden relativ zum Aufsetzen (negativ = davor).
     pub t_ms: i64,
+    #[serde(deserialize_with = "nan_bei_null")]
     pub vs_fpm: f32,
+    #[serde(deserialize_with = "nan_bei_null")]
     pub g_force: f32,
     pub on_ground: bool,
+    #[serde(deserialize_with = "nan_bei_null")]
     pub agl_ft: f32,
     #[serde(default)]
     pub msl_ft: Option<f32>,
+    #[serde(deserialize_with = "nan_bei_null")]
     pub pitch_deg: f32,
+}
+
+/// JSON kennt kein NaN/Inf: `serde_json` schreibt einen nicht-endlichen
+/// Messwert als `null`. Das Modul liest ihn wieder als NaN, damit es genau
+/// wie die native Rechnung entscheidet (die Riegel verwerfen nicht-endliche
+/// Werte, wie seit jeher im Kern). Vorher scheiterte die ganze Anfrage an
+/// einer einzigen solchen Probe (Pruefer-Fund 1, 11.11.2026).
+fn nan_bei_null<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
+    Ok(Option::<f32>::deserialize(d)?.unwrap_or(f32::NAN))
 }
 
 /// Grenzwerte der Messung (Werte aus dem Paket).
@@ -80,6 +93,12 @@ pub struct Anfrage {
     pub simulator: String,
     pub proben: Vec<Probe>,
     pub parameter: Parameter,
+    /// Die Kante in Epoch-Millisekunden. Nur die Zeitbasis der Gelaende-
+    /// Geraden braucht sie: Client 3.0.1 rechnete dort in Epoch-Sekunden,
+    /// und erst damit ist Fassung 1 bitgenau (Pruefer-Fund 4). Fehlt sie,
+    /// rechnet die Gerade relativ zur Kante.
+    #[serde(default)]
+    pub kante_ms: i64,
 }
 
 /// Herkunft der Abfang-Endpunkte, nur bei MSFS (die Schluessel fehlen bei
@@ -141,6 +160,8 @@ pub enum Rueckblick {
 /// Die Regeln einer Fassung.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Regeln {
+    /// Die Fassung, die [`Messung::messung_fassung`] meldet.
+    pub fassung: u32,
     pub rueckblick: Rueckblick,
     /// Stillstands-Riegel auch im End-Fit-Fenster des Abfangens.
     pub abfang_stillstand: bool,
@@ -148,7 +169,7 @@ pub struct Regeln {
 
 /// Fassung 1 (Client 3.0.1) — fuer Gegenproben an Altdaten: dieselben
 /// Regeln ergeben dort die gespeicherte Zahl.
-pub const REGELN_FASSUNG_1: Regeln = Regeln { rueckblick: Rueckblick::Keiner, abfang_stillstand: false };
+pub const REGELN_FASSUNG_1: Regeln = Regeln { fassung: 1, rueckblick: Rueckblick::Keiner, abfang_stillstand: false };
 
 /// Die Regeln dieser Fassung (2, DLH9901 11.11.2026).
 ///
@@ -174,7 +195,7 @@ pub const REGELN_FASSUNG_1: Regeln = Regeln { rueckblick: Rueckblick::Keiner, ab
 /// nur zusammen mit 86–94 anderen Landungen getroffen. Die Rueckblick-Regel
 /// nur ueber die Hoehe aenderte am Korpus dieselben drei, greift aber auch bei
 /// normaler Nachfuehrung; die Bild-Regel ist enger und physikalisch begruendet.
-pub const REGELN: Regeln = Regeln { rueckblick: Rueckblick::Bild, abfang_stillstand: true };
+pub const REGELN: Regeln = Regeln { fassung: MESS_FASSUNG, rueckblick: Rueckblick::Bild, abfang_stillstand: true };
 
 /// Beginn des Stillstands, in dem `erste` steht, vor ihr zurueck gesucht.
 fn lauf_beginn(samples: &[Probe], erste: &Probe, regel: Rueckblick) -> i64 {
@@ -182,7 +203,10 @@ fn lauf_beginn(samples: &[Probe], erste: &Probe, regel: Rueckblick) -> i64 {
     if regel == Rueckblick::Keiner {
         return beginn;
     }
-    for s in samples.iter().rev().filter(|s| s.t_ms < erste.t_ms) {
+    // Zeitlich rueckwaerts, auch wenn `samples` nicht sortiert ist.
+    let mut davor: Vec<&Probe> = samples.iter().filter(|s| s.t_ms < erste.t_ms).collect();
+    davor.sort_by_key(|s| std::cmp::Reverse(s.t_ms));
+    for s in davor {
         let gleiche_hoehe = s.agl_ft.is_finite() && ((s.agl_ft - erste.agl_ft).abs() * 1000.0).round() as i64 == 0;
         if s.on_ground || !gleiche_hoehe {
             break;
@@ -222,10 +246,29 @@ pub fn messen(a: &Anfrage) -> Option<Messung> {
 
 /// Die Messung mit den Regeln `r` (Korpus-Vergleich).
 pub fn messen_mit(a: &Anfrage, r: Regeln) -> Option<Messung> {
-    let samples = &a.proben;
-    if samples.is_empty() {
+    if a.proben.is_empty() {
         return None;
     }
+    // Alle Pfade rechnen zeitlich sortiert (stabil: eine schon sortierte
+    // Aufzeichnung bleibt Probe fuer Probe gleich).
+    // Nicht-endliche Werte wie nach dem Weg ueber JSON (`null`): NaN, die
+    // Meeres-Hoehe fehlt. So rechnet der native Rueckfall genau wie das Modul
+    // (±Inf verhielte sich sonst in Minimum und Vergleich anders als NaN).
+    let nan = |x: f32| if x.is_finite() { x } else { f32::NAN };
+    let mut sortiert: Vec<Probe> = a
+        .proben
+        .iter()
+        .map(|s| Probe {
+            vs_fpm: nan(s.vs_fpm),
+            g_force: nan(s.g_force),
+            agl_ft: nan(s.agl_ft),
+            pitch_deg: nan(s.pitch_deg),
+            msl_ft: s.msl_ft.filter(|m| m.is_finite()),
+            ..*s
+        })
+        .collect();
+    sortiert.sort_by_key(|s| s.t_ms);
+    let samples = &sortiert[..];
     let p = &a.parameter;
     let edge_ms = 0_i64;
 
@@ -323,7 +366,7 @@ pub fn messen_mit(a: &Anfrage, r: Regeln) -> Option<Messung> {
                 if !y.is_finite() {
                     return None;
                 }
-                Some((s.t_ms as f64 / 1000.0, y as f64))
+                Some(((s.t_ms + a.kante_ms) as f64 / 1000.0, y as f64))
             })
             .collect();
         if punkte.len() < p.agl_min_samples {
@@ -413,13 +456,24 @@ pub fn messen_mit(a: &Anfrage, r: Regeln) -> Option<Messung> {
         }
     }
     let is_msfs = matches!(a.simulator.as_str(), "Msfs2020" | "Msfs2024");
+    // Fassung 2: Bild-Stillstaende sperren die Fit-Punkte, die sie
+    // beruehren (Pruefer-Fund 8b), wie der Riegel am End-Fit-Fenster.
+    let sperren = if r.abfang_stillstand { bild_stillstaende(samples, p) } else { Vec::new() };
     let (peak_vs_pre_agl, vs_at_flare_end_agl) =
-        if is_msfs { msfs_agl_flare_endpoints(samples, p, flare_lo, flare_hi) } else { (None, None) };
-    let flare_gates = if is_msfs {
+        if is_msfs { endpunkte_mit(samples, p, flare_lo, flare_hi, &sperren) } else { (None, None) };
+    let mut flare_gates = if is_msfs {
         flare_gates_mit(samples, p, flare_lo, flare_hi, r)
     } else {
         MsfsFlareGates { agl_reliable: true, unreliable_source: false, pitch_nose_down: false }
     };
+    // Beruehrt ein Bild-Stillstand das Fit-Fenster des Endpunkts, gilt das
+    // Ende als unzuverlaessig (wie der End-Riegel), statt auf einen
+    // frueheren Punkt zu rutschen.
+    let half = p.msfs_flare_agl_fit_half_window_ms;
+    if is_msfs && sperren.iter().any(|&(von, bis)| von <= flare_hi + 100 && bis >= flare_hi - half) {
+        flare_gates.agl_reliable = false;
+        flare_gates.unreliable_source = true;
+    }
     let use_agl = is_msfs && peak_vs_pre_agl.is_some() && vs_at_flare_end_agl.is_some() && flare_gates.agl_reliable;
     let (peak_vs_pre, vs_at_flare_end, flare_vs_source) = if use_agl {
         (peak_vs_pre_agl, vs_at_flare_end_agl, "msfs_agl")
@@ -437,7 +491,9 @@ pub fn messen_mit(a: &Anfrage, r: Regeln) -> Option<Messung> {
             let dt_sec = (flare_hi - start.t_ms) as f64 / 1000.0;
             if dt_sec > 0.1 {
                 let endpoints = if use_agl {
-                    let start_vs = agl_geometric_vs_fpm_at(samples, p, start.t_ms, start.pitch_deg, Some(flare_hi + 100));
+                    let (fit_lo, fit_hi) = (start.t_ms - p.msfs_flare_agl_fit_half_window_ms, start.t_ms + p.msfs_flare_agl_fit_half_window_ms);
+                    let gesperrt = sperren.iter().any(|&(von, bis)| von <= fit_hi && bis >= fit_lo);
+                    let start_vs = if gesperrt { None } else { agl_geometric_vs_fpm_at(samples, p, start.t_ms, start.pitch_deg, Some(flare_hi + 100)) };
                     match (start_vs, vs_at_flare_end) {
                         (Some(sv), Some(ev)) => Some((sv, ev)),
                         _ => None,
@@ -492,26 +548,33 @@ pub fn messen_mit(a: &Anfrage, r: Regeln) -> Option<Messung> {
     };
 
     Some(Messung {
-        messung_fassung: MESS_FASSUNG,
-        vs_at_edge_fpm: vs_at_edge,
+        messung_fassung: r.fassung,
+        vs_at_edge_fpm: endlich(vs_at_edge),
         vs_at_edge_quelle: if vs_geometrie.is_some() { "hoehenkurve" } else { "simvar_fallback" }.into(),
-        vs_geometrie_fpm: vs_geometrie,
-        vs_geometrie_ungefiltert_fpm: vs_geometrie_ungefiltert,
-        vs_simvar_edge_fpm: vs_aus_simvar,
-        vs_gelaende_fpm: vs_gelaende,
-        vs_eigensinken_fpm: vs_eigensinken,
-        peak_vs_pre_flare_fpm: peak_vs_pre,
-        vs_at_flare_end_fpm: vs_at_flare_end,
-        flare_reduction_fpm: flare_reduction,
-        flare_dvs_dt_fpm_per_sec: flare_dvs_dt,
+        vs_geometrie_fpm: endlich(vs_geometrie),
+        vs_geometrie_ungefiltert_fpm: endlich(vs_geometrie_ungefiltert),
+        vs_simvar_edge_fpm: endlich(vs_aus_simvar),
+        vs_gelaende_fpm: endlich(vs_gelaende),
+        vs_eigensinken_fpm: endlich(vs_eigensinken),
+        peak_vs_pre_flare_fpm: endlich(peak_vs_pre),
+        vs_at_flare_end_fpm: endlich(vs_at_flare_end),
+        flare_reduction_fpm: endlich(flare_reduction),
+        flare_dvs_dt_fpm_per_sec: endlich(flare_dvs_dt),
         flare_quality_score: flare_score,
         flare_detected,
         msfs: is_msfs.then(|| MsfsAbfangHerkunft {
             flare_vs_source: flare_vs_source.into(),
-            peak_vs_pre_flare_fpm_raw: peak_vs_pre_simvar,
-            vs_at_flare_end_fpm_raw: vs_at_flare_end_simvar,
+            peak_vs_pre_flare_fpm_raw: endlich(peak_vs_pre_simvar),
+            vs_at_flare_end_fpm_raw: endlich(vs_at_flare_end_simvar),
         }),
     })
+}
+
+/// Ein nicht-endliches Ergebnis ist keine Messung. Ueber JSON (Export
+/// `messe`) kaeme es ohnehin als `null` an; so rechnen Modul und nativer
+/// Rueckfall Feld fuer Feld gleich (Pruefer-Fund 1).
+fn endlich(x: Option<f32>) -> Option<f32> {
+    x.filter(|v| v.is_finite())
 }
 
 /// Lagfreie Sinkrate aus der Hoehenspur am Zeitpunkt `t_ms`: Ausgleichs-
@@ -581,6 +644,37 @@ pub fn agl_geometric_vs_fpm_at(
 /// Steilste Hoehen-Sinkrate in `[flare_lo, flare_hi]` und die am Punkt
 /// naechst `flare_hi`; alle Fits an der Kante gedeckelt.
 pub fn msfs_agl_flare_endpoints(samples: &[Probe], p: &Parameter, flare_lo: i64, flare_hi: i64) -> (Option<f32>, Option<f32>) {
+    endpunkte_mit(samples, p, flare_lo, flare_hi, &[])
+}
+
+/// Zeitraeume `[von, bis]` in ms, in denen in der Luft das GANZE Bild
+/// (Hoehe, Sinkrate, G, Pitch) laenger als `agl_max_stillstand_ms` stand;
+/// `bis` ist die naechste neue Probe (dort kommt der Weg am Stueck).
+/// `samples` zeitlich sortiert.
+fn bild_stillstaende(samples: &[Probe], p: &Parameter) -> Vec<(i64, i64)> {
+    let gleich = |a: &Probe, b: &Probe| {
+        !a.on_ground && !b.on_ground && a.agl_ft == b.agl_ft && a.vs_fpm == b.vs_fpm && a.g_force == b.g_force && a.pitch_deg == b.pitch_deg
+    };
+    let mut aus = Vec::new();
+    let mut i = 0;
+    while i < samples.len() {
+        let mut j = i;
+        while j + 1 < samples.len() && gleich(&samples[i], &samples[j + 1]) {
+            j += 1;
+        }
+        if samples[j].t_ms - samples[i].t_ms > p.agl_max_stillstand_ms {
+            let bis = samples.get(j + 1).map_or(samples[j].t_ms, |n| n.t_ms);
+            aus.push((samples[i].t_ms, bis));
+        }
+        i = j + 1;
+    }
+    aus
+}
+
+/// Wie [`msfs_agl_flare_endpoints`]; ein Fit-Punkt, dessen Fenster einen
+/// der Zeitraeume `sperren` beruehrt, faellt weg (Pruefer-Fund 8b: ein
+/// Ruckler MITTEN im Abfangen las z. B. −1066 statt rund −560 fpm).
+fn endpunkte_mit(samples: &[Probe], p: &Parameter, flare_lo: i64, flare_hi: i64, sperren: &[(i64, i64)]) -> (Option<f32>, Option<f32>) {
     let mut peak_vs_pre: Option<f32> = None;
     let mut vs_at_flare_end: Option<f32> = None;
     let mut min_dist_to_end = i64::MAX;
@@ -588,6 +682,10 @@ pub fn msfs_agl_flare_endpoints(samples: &[Probe], p: &Parameter, flare_lo: i64,
     for s in samples {
         let ts = s.t_ms;
         if ts < flare_lo || ts > flare_hi || s.on_ground {
+            continue;
+        }
+        let (fit_lo, fit_hi) = (ts - p.msfs_flare_agl_fit_half_window_ms, (ts + p.msfs_flare_agl_fit_half_window_ms).min(edge_cap));
+        if sperren.iter().any(|&(von, bis)| von <= fit_hi && bis >= fit_lo) {
             continue;
         }
         let vs_agl = match agl_geometric_vs_fpm_at(samples, p, ts, s.pitch_deg, Some(edge_cap)) {
@@ -771,18 +869,18 @@ mod tests {
 
     #[test]
     fn gleichmaessiger_sinkflug_liest_die_sinkrate() {
-        let m = messen(&Anfrage { simulator: "Msfs2024".into(), proben: sinkflug(-240.0), parameter: parameter() }).unwrap();
+        let m = messen(&Anfrage { simulator: "Msfs2024".into(), proben: sinkflug(-240.0), parameter: parameter(), kante_ms: 0 }).unwrap();
         assert_eq!(m.vs_at_edge_quelle, "hoehenkurve");
         let vs = m.vs_at_edge_fpm.unwrap();
         assert!((vs + 240.0).abs() < 1.0, "{vs}");
         assert!(m.msfs.is_some(), "MSFS traegt die Abfang-Herkunft");
-        let x = messen(&Anfrage { simulator: "XPlane12".into(), proben: sinkflug(-240.0), parameter: parameter() }).unwrap();
+        let x = messen(&Anfrage { simulator: "XPlane12".into(), proben: sinkflug(-240.0), parameter: parameter(), kante_ms: 0 }).unwrap();
         assert!(x.msfs.is_none(), "X-Plane ohne MSFS-Schluessel");
     }
 
     #[test]
     fn json_wie_nativ_und_unbekannte_felder_erlaubt() {
-        let a = Anfrage { simulator: "Msfs2024".into(), proben: sinkflug(-300.0), parameter: parameter() };
+        let a = Anfrage { simulator: "Msfs2024".into(), proben: sinkflug(-300.0), parameter: parameter(), kante_ms: 0 };
         let mut v = serde_json::to_value(&a).unwrap();
         // Spaetere Kanaele und Parameter duerfen in der Anfrage stehen.
         v["proben"][0]["lat"] = serde_json::json!(48.1);
@@ -827,7 +925,7 @@ mod tests {
     }
 
     fn anfrage(proben: Vec<Probe>) -> Anfrage {
-        Anfrage { simulator: "Msfs2024".into(), proben, parameter: parameter() }
+        Anfrage { simulator: "Msfs2024".into(), proben, parameter: parameter(), kante_ms: 0 }
     }
 
     /// DLH9901: Der Ruckler beginnt vor dem 310-ms-Fenster. Fassung 2 liest
@@ -872,13 +970,129 @@ mod tests {
         };
         assert_eq!(messen(&anfrage(mit_pause(120))).unwrap().vs_at_edge_quelle, "hoehenkurve");
         assert_eq!(messen(&anfrage(mit_pause(121))).unwrap().vs_at_edge_quelle, "simvar_fallback");
+        // Gegenprobe: ohne Rueckblick (Fassung 1) bleibt beides auf der
+        // Hoehenkurve — der Umschlag kommt allein von der Rueckblick-Regel.
+        for pause in [120, 121] {
+            assert_eq!(messen_mit(&anfrage(mit_pause(pause)), REGELN_FASSUNG_1).unwrap().vs_at_edge_quelle, "hoehenkurve", "{pause}");
+        }
+    }
+
+    /// Pruefer-Fund 1: Eine nicht-endliche Probe (Hoehe oder Sinkrate)
+    /// wird ueber JSON zu `null`. Das Modul muss sie annehmen und genau wie
+    /// die native Rechnung behandeln, statt die ganze Anfrage abzulehnen.
+    #[test]
+    fn nicht_endliche_probe_rechnet_ueber_json_wie_nativ() {
+        let mut proben = sinkflug(-240.0);
+        proben[100].agl_ft = f32::NAN;
+        proben[110].vs_fpm = f32::NAN;
+        proben[115].vs_fpm = f32::INFINITY;
+        proben[120].g_force = f32::NAN;
+        proben[121].pitch_deg = f32::NAN;
+        let a = anfrage(proben);
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains("null"), "serde_json schreibt NaN als null");
+        let aus = messen_json(&json);
+        assert!(!aus.contains("fehler"), "{aus}");
+        let nativ = messen(&a).unwrap();
+        assert_eq!(serde_json::from_str::<Messung>(&aus).unwrap(), nativ);
+        assert_eq!(nativ.vs_at_edge_quelle, "hoehenkurve", "eine kaputte Hoehe kippt die Gerade nicht");
+    }
+
+    /// Dasselbe an der Kante (letzte Luftprobe, erste Bodenprobe) und in
+    /// den Abfang-Proben: kein Feld darf nicht-endlich sein, und Modul und
+    /// Rueckfall rechnen gleich (Advisor 12.11.).
+    #[test]
+    fn nicht_endlich_an_der_kante_und_im_abfangen() {
+        // sinkflug: Index 124 = −20 ms (letzte Luft), 125 = 0 ms (Boden).
+        for (i, feld) in [(124, 0), (124, 1), (125, 1), (125, 2), (30, 1), (60, 3), (119, 0), (120, 1)] {
+            for wert in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut proben = sinkflug(-240.0);
+                let s = &mut proben[i];
+                match feld {
+                    0 => s.agl_ft = wert,
+                    1 => s.vs_fpm = wert,
+                    2 => s.g_force = wert,
+                    _ => s.pitch_deg = wert,
+                }
+                for sim in ["Msfs2024", "XPlane12"] {
+                    let a = Anfrage { simulator: sim.into(), ..anfrage(proben.clone()) };
+                    let nativ = messen(&a).unwrap();
+                    let aus = messen_json(&serde_json::to_string(&a).unwrap());
+                    assert_eq!(serde_json::from_str::<Messung>(&aus).unwrap(), nativ, "{i}/{feld}/{wert}/{sim}");
+                    let v = serde_json::to_value(&nativ).unwrap();
+                    let alle_endlich = v.as_object().unwrap().values().chain(v["msfs"].as_object().into_iter().flat_map(|o| o.values())).all(|x| x.as_f64().map_or(true, f64::is_finite));
+                    assert!(alle_endlich, "{i}/{feld}/{wert}/{sim}: {v}");
+                }
+            }
+        }
+    }
+
+    /// Pruefer-Fund 8b: Ein Ruckler MITTEN im Abfangen (ganzes Bild steht
+    /// −1200…−900 ms, danach der Weg am Stueck) machte die Spitze steiler,
+    /// als geflogen wurde. Fassung 2 laesst die Fit-Punkte weg, die ihn
+    /// beruehren; Fassung 1 (Gegenprobe) las die Spitze zu steil.
+    #[test]
+    fn ruckler_mitten_im_abfangen_macht_die_spitze_nicht_steiler() {
+        let mut proben = sinkflug(-240.0);
+        let halt = proben.iter().find(|s| s.t_ms == -1200).copied().unwrap();
+        for s in proben.iter_mut().filter(|s| (-1200..-900).contains(&s.t_ms)) {
+            *s = Probe { t_ms: s.t_ms, ..halt };
+        }
+        let neu = messen(&anfrage(proben.clone())).unwrap();
+        let alt = messen_mit(&anfrage(proben), REGELN_FASSUNG_1).unwrap();
+        let (pn, pa) = (neu.peak_vs_pre_flare_fpm.unwrap(), alt.peak_vs_pre_flare_fpm.unwrap());
+        assert!(pa < -300.0, "Gegenprobe: Fassung 1 las die Spitze zu steil ({pa})");
+        assert!((-250.0..=-230.0).contains(&pn), "Fassung 2 liest die geflogene Sinkrate ({pn})");
+        assert_eq!(neu.vs_at_edge_fpm, alt.vs_at_edge_fpm, "die Sinkrate am Aufsetzpunkt bleibt");
+        assert_eq!(neu.msfs.unwrap().flare_vs_source, "msfs_agl", "das Ende ist nicht beruehrt");
+    }
+
+    /// Pruefer-Fund 6: Die Fassung haengt an den Regeln.
+    #[test]
+    fn fassung_kommt_aus_den_regeln() {
+        assert_eq!(messen_mit(&anfrage(sinkflug(-240.0)), REGELN_FASSUNG_1).unwrap().messung_fassung, 1);
+        assert_eq!(messen(&anfrage(sinkflug(-240.0))).unwrap().messung_fassung, MESS_FASSUNG);
+    }
+
+    /// Pruefer-Fund 8: Die Reihenfolge der Proben aendert nichts.
+    #[test]
+    fn unsortierte_proben_rechnen_wie_sortierte() {
+        for proben in [sinkflug(-240.0), dlh9901(false), dlh9901(true)] {
+            let mut gemischt = proben.clone();
+            gemischt.reverse();
+            gemischt.swap(3, 40);
+            for r in [REGELN, REGELN_FASSUNG_1] {
+                assert_eq!(messen_mit(&anfrage(gemischt.clone()), r), messen_mit(&anfrage(proben.clone()), r));
+            }
+        }
+    }
+
+    /// Pruefer-Fund 4: Die Kantenzeit verschiebt nur die Zeitbasis der
+    /// Gelaende-Geraden (Epoch-Sekunden wie in 3.0.1), nie die Sinkrate.
+    #[test]
+    fn kante_aendert_nur_die_zeitbasis_der_gelaendegeraden() {
+        let mit_msl = |kante_ms: i64| {
+            let proben = sinkflug(-240.0)
+                .into_iter()
+                .map(|mut s| {
+                    s.msl_ft = Some(1500.0 + s.agl_ft + s.t_ms as f32 * 0.0005);
+                    s
+                })
+                .collect();
+            Anfrage { kante_ms, ..anfrage(proben) }
+        };
+        let relativ = messen(&mit_msl(0)).unwrap();
+        let epoch = messen(&mit_msl(1_762_870_000_123)).unwrap();
+        assert_eq!(relativ.vs_at_edge_fpm, epoch.vs_at_edge_fpm);
+        let (a, b) = (relativ.vs_gelaende_fpm.unwrap(), epoch.vs_gelaende_fpm.unwrap());
+        assert!((a - b).abs() < 0.5, "{a} {b}");
     }
 
     #[test]
     fn leere_oder_kaputte_anfrage_gibt_fehler() {
         let v: serde_json::Value = serde_json::from_str(&messen_json("{}")).unwrap();
         assert!(v["fehler"].as_str().unwrap().contains("ungueltig"));
-        let leer = Anfrage { simulator: "Msfs2024".into(), proben: vec![], parameter: parameter() };
+        let leer = Anfrage { simulator: "Msfs2024".into(), proben: vec![], parameter: parameter(), kante_ms: 0 };
         let v: serde_json::Value = serde_json::from_str(&messen_json(&serde_json::to_string(&leer).unwrap())).unwrap();
         assert_eq!(v["fehler"], "keine Proben");
     }

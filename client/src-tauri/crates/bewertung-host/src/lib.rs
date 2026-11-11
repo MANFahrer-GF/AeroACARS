@@ -43,6 +43,19 @@ pub struct Host {
     modul: Module,
 }
 
+/// Rechenzeitgrenze der Aufsetz-Messung (Export `messe`): 10 x Median wie
+/// bei der Bewertung (P-4.32). Gemessen 12.11.2026 ueber 2 088 Aufsetzfenster
+/// von live (`messe_korpus_wie_nativ`, Fassung 2 mit Fund 1–8): Median
+/// 20 699 946, Maximum 72 267 493. Eigene Grenze, weil die Messung das ganze
+/// Fenster liest (bis ~700 Proben, je Abfang-Punkt eine Ausgleichsgerade).
+/// Eine Quelle fuer Client und Pruefung (Pruefer-Fund 9).
+///
+/// Wandzeit (Pruefer-Fund 3, Release, Mac, frische Instanz eingeschlossen):
+/// Median 2,7 ms, Maximum 7,6–13,8 ms; Ausreisser bis 100 ms nur bei
+/// ausgelastetem Rechner (Last 5–6) bei gleichem Fuel. An der Grenze waeren
+/// es rund 21 ms (≈ ein Abtasttakt), einmal je Aufsetzer.
+pub const MESS_FUEL_GRENZE: u64 = 206_999_460;
+
 impl Host {
     /// Modul laden und pruefen (Exporte `memory`, `alloc`, `bewerte`).
     pub fn neu(wasm: &[u8]) -> Result<Self, Fehler> {
@@ -80,7 +93,7 @@ impl Host {
     }
 
     /// Aufsetz-Messung (Export `messe`, DLH9901 11.11.2026), dazu der
-    /// Verbrauch an Fuel.
+    /// Verbrauch an Fuel. Der Client ruft sie mit [`MESS_FUEL_GRENZE`].
     pub fn messe(&self, eingabe: &str, fuel: u64) -> Result<(String, u64), Fehler> {
         self.aufrufen("messe", eingabe, fuel)
     }
@@ -187,8 +200,7 @@ mod tests {
 
     const MODUL: &[u8] = include_bytes!("../../../../../bundle/module/bewertung.wasm");
     const VIEL: u64 = 1_000_000_000;
-    /// Gleich `bewertung.rs` `MESS_FUEL_GRENZE` im Client.
-    const MESS_FUEL: u64 = 199_229_590;
+    use super::MESS_FUEL_GRENZE as MESS_FUEL;
 
     fn faelle() -> Vec<Eingabe> {
         let mut v = Vec::new();
@@ -363,7 +375,7 @@ mod tests {
         let mut dauer_ms: Vec<f64> = Vec::new();
         for zeile in std::io::BufReader::new(flate2::read::GzDecoder::new(datei)).lines() {
             let o: serde_json::Value = serde_json::from_str(&zeile.unwrap()).unwrap();
-            let ein = serde_json::json!({ "simulator": o["sim"], "proben": o["proben"], "parameter": mess_parameter() }).to_string();
+            let ein = serde_json::json!({ "simulator": o["sim"], "proben": o["proben"], "parameter": mess_parameter(), "kante_ms": o["kante_ms"] }).to_string();
             let t = std::time::Instant::now();
             let (aus, f) = host.messe(&ein, VIEL).unwrap();
             dauer_ms.push(t.elapsed().as_secs_f64() * 1000.0);
