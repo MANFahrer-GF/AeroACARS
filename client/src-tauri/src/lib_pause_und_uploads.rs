@@ -126,10 +126,10 @@ fn apply_pause_resume(
     save_active_flight(app, flight);
     if let Some(d) = discontinuity {
         if is_impossible_discontinuity(&d) {
-            log_activity_and_record(
+            log_activity_and_record_t(
                 app,
                 &flight.pirep_id,
-                ActivityLevel::Error,
+                ActivityLevel::Error, akt("activity.jump.impossible", &[]).mit(sprung_grund_teil(&d)).und("activity.jump.werte_pause", &[("fuel", &format!("{:+.0}", d.fuel_delta_kg)), ("alt", &format!("{:+.0}", d.altitude_delta_ft)), ("nm", &format!("{:.1}", d.drift_nm))]),
                 format!(
                     "Unmöglicher Sprung beim Wiederaufnehmen erkannt ({})",
                     sprung_grund(&d)
@@ -192,7 +192,32 @@ fn apply_pause_resume(
         )),
         _ => Some(format!("Pause-Dauer: {} s", duration_secs)),
     };
-    log_activity_and_record(app, &flight.pirep_id, level, msg, detail);
+    let mut text_ak = akt(
+        match reason {
+            PauseReason::SimDisconnect => "activity.resume.auto",
+            PauseReason::SimPause => "activity.resume.sim_pause",
+            PauseReason::ManualResume => "activity.resume.manuell",
+        },
+        &[],
+    );
+    if let Some(d) = drift_nm {
+        let g = crate::grenzwerte::grenzwerte();
+        let nm = format!("{d:.1}");
+        if d > g.abgabe.resume_drift_extreme_nm.wert {
+            text_ak = text_ak.und("activity.resume.drift_extrem", &[("nm", &nm)]);
+        } else if d > g.abgabe.resume_drift_warn_nm.wert {
+            text_ak = text_ak.und("activity.resume.drift_warn", &[("nm", &nm)]);
+        } else if d > g.abgabe.resume_drift_toast_nm.wert {
+            text_ak = text_ak.und("activity.resume.drift_info", &[("nm", &nm)]);
+        }
+    }
+    text_ak = text_ak.und("activity.resume.pause_dauer", &[("s", &duration_secs)]);
+    if let (Some(prev), Some(cur)) = (&last_known, &current_snap) {
+        text_ak = text_ak
+            .und("activity.resume.vorher", &[("lat", &format!("{:.4}", prev.lat)), ("lon", &format!("{:.4}", prev.lon)), ("alt", &format!("{:.0}", prev.altitude_ft))])
+            .und("activity.resume.jetzt", &[("lat", &format!("{:.4}", cur.lat)), ("lon", &format!("{:.4}", cur.lon)), ("alt", &format!("{:.0}", cur.altitude_msl_ft))]);
+    }
+    log_activity_and_record_t(app, &flight.pirep_id, level, text_ak, msg, detail);
 
     // Spec v0.7.15 F7: Aircraft-Change-Detection nach Resume.
     //
@@ -254,9 +279,9 @@ fn apply_pause_resume(
                 sim_title,
                 &vps_aliases,
             ) {
-                log_activity_handle(
+                log_activity_handle_t(
                     app,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.resume.typ_anders", &[("sim", &actual), ("bid", &bid_icao)]).und("activity.resume.typ_anders_detail", &[("bid", &bid_icao), ("sim", &actual)]),
                     format!(
                         "Aircraft-Mismatch nach Resume: Sim meldet {}, Bid erwartet {}",
                         actual, bid_icao
@@ -348,9 +373,9 @@ async fn flight_resume_after_disconnect(
     if let Some(abweichung) = lage_abweichung_fuer(&flight, snap) {
         flight.was_just_resumed.store(true, Ordering::SeqCst);
         save_active_flight(&app, &flight);
-        log_activity_handle(
+        log_activity_handle_t(
             &app,
-            ActivityLevel::Warn,
+            ActivityLevel::Warn, akt("activity.resume.lage_banner", &[]).mit(lage_abweichung_teil(&abweichung)),
             "Lage passt nicht zum Flug — bitte im Banner bestätigen".to_string(),
             Some(lage_abweichung_text(&abweichung)),
         );
@@ -577,9 +602,9 @@ async fn flugprotokolle_senden(app: &AppHandle, daten: &std::path::Path) {
                 // Nur beim ersten Fehlschlag ins Aktivitaetsprotokoll; die
                 // Anzeige „Upload ausstehend“ (P-7.24) zeigt den Rest.
                 if erstmals {
-                    log_activity_handle(
+                    log_activity_handle_t(
                         app,
-                        ActivityLevel::Warn,
+                        ActivityLevel::Warn, akt("activity.upload.flight_log_failed", &[]).und("activity.upload.flight_log_failed_detail", &[("fehler", &err), ("pirep", &e.pirep_id)]),
                         "Flight log upload failed — wird automatisch wiederholt",
                         Some(format!(
                             "{} — Log liegt lokal in flight_logs/{}.jsonl",
@@ -599,9 +624,9 @@ fn paket_pruefung_hinweis(app: &AppHandle) -> impl FnOnce(i64) + Send + 'static 
     let app = app.clone();
     move |tage| {
         tracing::warn!(tage, "Laufzeit-Paket seit ueber 30 Tagen nicht erfolgreich geprueft");
-        log_activity_handle(
+        log_activity_handle_t(
             &app,
-            ActivityLevel::Warn,
+            ActivityLevel::Warn, akt("activity.upload.regeln_alt", &[("tage", &tage)]).und("activity.upload.regeln_alt_detail", &[]),
             format!("Bewertungsregeln seit {tage} Tagen nicht geprüft"),
             Some(
                 "AeroACARS konnte den Stand der Bewertungsregeln nicht beim Live-Server abfragen und \
@@ -742,9 +767,9 @@ fn spawn_flight_log_upload(
                             "Diagnose-Log mitgeschickt"
                         );
                         // Sichtbar machen, was den Server erreicht.
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app,
-                            ActivityLevel::Info,
+                            ActivityLevel::Info, akt("activity.upload.diagnose", &[]).und("activity.upload.diagnose_detail", &[("kb", &(stats.compressed_size / 1024))]),
                             "Diagnose-Protokoll mitgeschickt",
                             Some(format!(
                                 "{} KB — technische Meldungen des Clients, keine Zugangsdaten",

@@ -668,6 +668,19 @@ fn lage_abweichung_fuer(flight: &ActiveFlight, jetzt: &SimSnapshot) -> Option<La
 #[path = "tests_lib/lage_nach_luecke_tests.rs"]
 mod lage_nach_luecke_tests;
 
+/// Dasselbe wie `lage_abweichung_text`, als uebersetzbarer Teil.
+fn lage_abweichung_teil(a: &LageAbweichung) -> AktivitaetTeil {
+    match a {
+        LageAbweichung::KeinEchterWert => AktivitaetTeil::text("activity.lage.kein_wert", &[]),
+        LageAbweichung::AmBoden => AktivitaetTeil::text("activity.lage.am_boden", &[]),
+        LageAbweichung::SpritGestiegen => AktivitaetTeil::text("activity.lage.sprit", &[]),
+        LageAbweichung::ZuWeitWeg { drift_nm, erlaubt_nm } => AktivitaetTeil::text(
+            "activity.lage.zu_weit",
+            &[("nm", &format!("{drift_nm:.1}")), ("erlaubt", &format!("{erlaubt_nm:.1}"))],
+        ),
+    }
+}
+
 /// Fuer Protokoll und Banner: was nicht passt, in einem Satz.
 fn lage_abweichung_text(a: &LageAbweichung) -> String {
     match a {

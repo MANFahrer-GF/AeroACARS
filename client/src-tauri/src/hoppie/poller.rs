@@ -16,7 +16,7 @@ use hoppie_protocol::elements::Direction;
 use hoppie_protocol::wire::{self, HoppieRequest, HoppieResponseLine, PacketKind};
 
 use super::{HistoryMeta, HoppieHttp, HoppieSession, MinMeta, TelexEntry};
-use crate::{log_activity_handle, ActivityLevel};
+use crate::{akt, log_activity_handle, log_activity_handle_t, ActivityLevel};
 
 /// The official docs' recommended idle band
 /// (`hoppie.nl/acars/system/tech.html`): "heavily recommended to poll
@@ -272,9 +272,9 @@ pub fn spawn(
                             angemeldet,
                         ) {
                             umgestellt = true;
-                            log_activity_handle(
+                            log_activity_handle_t(
                                 &app,
-                                ActivityLevel::Info,
+                                ActivityLevel::Info, akt("activity.hoppie.callsign_change", &[("alt", &from_callsign), ("neu", &neu)]),
                                 format!("Hoppie: Rufzeichen {from_callsign} wird zu {neu}, Empfang wird neu aufgebaut"),
                                 None,
                             );
@@ -296,9 +296,9 @@ pub fn spawn(
                                         Err(e) => fehler = format!("{e:?}"),
                                     }
                                 }
-                                log_activity_handle(
+                                log_activity_handle_t(
                                     &app,
-                                    ActivityLevel::Warn,
+                                    ActivityLevel::Warn, akt("activity.hoppie.reconnect_failed", &[]),
                                     "Hoppie: Neuaufbau unter neuem Rufzeichen fehlgeschlagen — bitte „Empfang starten“",
                                     Some(fehler),
                                 );
@@ -345,6 +345,11 @@ fn notify_new_message(effects: &dyn PollEffects, from: &str) {
 /// real field traffic instead of invented message formats.
 pub(crate) trait PollEffects: Send + Sync {
     fn activity(&self, level: ActivityLevel, message: String, detail: Option<String>);
+    /// Wie `activity`, dazu der uebersetzbare Text. Ohne eigene Fassung (die
+    /// Rekorder der Wiedergabe-Tests) zaehlt nur der deutsche Wortlaut.
+    fn activity_t(&self, level: ActivityLevel, _text: crate::AktivitaetText, message: String, detail: Option<String>) {
+        self.activity(level, message, detail);
+    }
     #[allow(clippy::too_many_arguments)]
     fn datalink(
         &self,
@@ -364,6 +369,9 @@ pub(crate) trait PollEffects: Send + Sync {
 impl PollEffects for AppHandle {
     fn activity(&self, level: ActivityLevel, message: String, detail: Option<String>) {
         log_activity_handle(self, level, message, detail);
+    }
+    fn activity_t(&self, level: ActivityLevel, text: crate::AktivitaetText, message: String, detail: Option<String>) {
+        crate::log_activity_handle_t(self, level, text, message, detail);
     }
     fn datalink(
         &self,
@@ -401,6 +409,16 @@ fn log_activity(
     detail: Option<String>,
 ) {
     effects.activity(level, message.into(), detail);
+}
+
+fn log_activity_t(
+    effects: &dyn PollEffects,
+    level: ActivityLevel,
+    text: crate::AktivitaetText,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
+    effects.activity_t(level, text, message.into(), detail);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1109,9 +1127,9 @@ async fn process_poll_payload(
                             expected = %current_station,
                             "hoppie: ignoring HANDOVER from unexpected sender"
                         );
-                        log_activity(
+                        log_activity_t(
                             effects,
-                            ActivityLevel::Warn,
+                            ActivityLevel::Warn, akt("activity.cpdlc.handover_ignored", &[("next", &next), ("from", &env.from)]).und("activity.cpdlc.handover_ignored_detail", &[("station", &current_station)]),
                             format!(
                                 "CPDLC: HANDOVER-Anfrage an {next} von unerwartetem Absender \
                                  ({from}) ignoriert",
@@ -1123,9 +1141,9 @@ async fn process_poll_payload(
                             )),
                         );
                     } else {
-                        log_activity(
+                        log_activity_t(
                             effects,
-                            ActivityLevel::Info,
+                            ActivityLevel::Info, akt("activity.cpdlc.handover", &[("next", &next)]),
                             format!("CPDLC: Übergabe an {next}"),
                             None,
                         );
@@ -1200,9 +1218,9 @@ async fn process_poll_payload(
                         clear_marker_if_current(effects, session, generation);
                         match next {
                             Some(next) => {
-                                log_activity(
+                                log_activity_t(
                                     effects,
-                                    ActivityLevel::Info,
+                                    ActivityLevel::Info, akt("activity.cpdlc.end_service_handover", &[("station", &current_station), ("next", &next)]),
                                     format!(
                                         "CPDLC: {current_station} hat den Dienst beendet — \
                                          Übergabe an {next}"
@@ -1214,9 +1232,9 @@ async fn process_poll_payload(
                                 continue;
                             }
                             None => {
-                                log_activity(
+                                log_activity_t(
                                     effects,
-                                    ActivityLevel::Warn,
+                                    ActivityLevel::Warn, akt("activity.cpdlc.end_service", &[("station", &current_station)]).und("activity.cpdlc.end_service_detail", &[]),
                                     format!(
                                         "CPDLC: {current_station} hat den Dienst beendet (END SERVICE)"
                                     ),
@@ -1809,9 +1827,9 @@ async fn poll_once(
             // the pilot's problem (bad logon code, locked callsign) and
             // must be reviewable after the fact — Warn/Error entries also
             // ship to the error backend, so it's visible off-machine.
-            log_activity_handle(
+            log_activity_handle_t(
                 app,
-                ActivityLevel::Warn,
+                ActivityLevel::Warn, akt("activity.hoppie.poll_rejected", &[]),
                 "Hoppie: Abruf abgelehnt",
                 Some(reason.clone()),
             );
@@ -1820,9 +1838,9 @@ async fn poll_once(
             return code_rejected;
         }
         Err(e) => {
-            log_activity_handle(
+            log_activity_handle_t(
                 app,
-                ActivityLevel::Warn,
+                ActivityLevel::Warn, akt("activity.hoppie.poll_failed", &[]),
                 "Hoppie: Abruf fehlgeschlagen",
                 Some(e.message.clone()),
             );

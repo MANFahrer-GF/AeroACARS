@@ -29,6 +29,25 @@ fn friendly_net_error(e: &ApiError) -> String {
     }
 }
 
+/// Ein Text aus `friendly_net_error` als uebersetzbarer Teil.
+fn net_fehler_teil(text: &str) -> AktivitaetTeil {
+    if let Some(rest) = text.strip_prefix("Netzwerk-Fehler: ") {
+        return AktivitaetTeil::text("activity.netz.sonst", &[("fehler", &rest)]);
+    }
+    teil_aus_text(
+        text,
+        &[
+            ("Verbindung wurde unterbrochen (1236 — Router-NAT-Eviction o.ä.). Wiederversuch automatisch.", "activity.netz.1236"),
+            ("Verbindung lokal abgebrochen (10053). Wiederversuch automatisch.", "activity.netz.10053"),
+            ("Verbindung vom Server beendet (10054). Wiederversuch automatisch.", "activity.netz.10054"),
+            ("Server-Antwort-Timeout. Wiederversuch automatisch.", "activity.netz.timeout"),
+            ("DNS-Auflösung fehlgeschlagen. Internet-Verbindung prüfen.", "activity.netz.dns"),
+            ("Konnte phpVMS-Server nicht erreichen. Wiederversuch automatisch.", "activity.netz.connect"),
+            ("unbekannt", "activity.netz.unbekannt"),
+        ],
+    )
+}
+
 /// Open (or create) the per-flight JSONL recorder. None when we can't
 /// resolve the app data dir — caller treats it as "skip recording for
 /// this tick" rather than failing the streamer.
@@ -1587,9 +1606,9 @@ async fn landung_vor_dem_einreichen_nachschicken(app: &AppHandle, flight: &Activ
     // Ehrlich bleiben: Der Pilot erfährt, dass seine Landung nicht durchkam.
     // Verloren ist sie nicht — das hochgeladene Flugprotokoll trägt sie nach,
     // nur dauert die Bewertung dann länger.
-    log_activity_handle(
+    log_activity_handle_t(
         app,
-        ActivityLevel::Warn,
+        ActivityLevel::Warn, akt("activity.pirep.landung_nicht_gemeldet", &[]).und("activity.pirep.landung_nicht_gemeldet_detail", &[]),
         "Landung konnte nicht an den Server gemeldet werden",
         Some(
             "Die Verbindung stand beim Aufsetzen nicht. Der Flugbericht wird trotzdem \

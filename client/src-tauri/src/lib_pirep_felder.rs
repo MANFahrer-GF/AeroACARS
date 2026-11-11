@@ -191,9 +191,9 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
         .unwrap_or_else(|e| e.into_inner())
         .clear();
     flight.stop.store(true, Ordering::Relaxed);
-    log_activity_handle(
+    log_activity_handle_t(
         app,
-        ActivityLevel::Error,
+        ActivityLevel::Error, akt("activity.pirep.server_cancel", &[]).und("activity.pirep.server_cancel_detail", &[("quelle", &source)]),
         "PIREP wurde vom Server gecancelt".to_string(),
         Some(format!(
             "{source}: phpVMS führt den laufenden PIREP nicht mehr (entfernt oder storniert). Bitte als Manual-PIREP einreichen."

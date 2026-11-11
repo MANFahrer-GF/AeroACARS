@@ -302,9 +302,9 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                         tracing::warn!(pirep_id = %q.pirep_id, error = %e, "pirep_queue: persisting dead-letter flag failed");
                     }
                     tracing::error!(pirep_id = %q.pirep_id, attempts = q.attempt_count, "queued PIREP still not filed after many attempts — notifying pilot, will keep retrying more slowly");
-                    log_activity_handle(
+                    log_activity_handle_t(
                         &app,
-                        ActivityLevel::Warn,
+                        ActivityLevel::Warn, akt("activity.queue.noch_nicht", &[("n", &q.attempt_count), ("cs", &format_callsign(&q.airline_icao, &q.flight_number)), ("dep", &q.dpt_airport), ("arr", &q.arr_airport)]).mit(net_fehler_teil(q.last_error.as_deref().unwrap_or("unbekannt"))).und("activity.queue.bleibt", &[("pirep", &q.pirep_id)]),
                         format!(
                             "PIREP konnte nach {} Versuchen noch nicht eingereicht werden: {} {} – {}",
                             q.attempt_count,
@@ -420,9 +420,9 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                     Ok(()) => {
                         tracing::info!(pirep_id = %q.pirep_id, "queued PIREP filed successfully by background worker");
                         pirep_queue::remove(&app, &q.pirep_id);
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app,
-                            ActivityLevel::Info,
+                            ActivityLevel::Info, akt("activity.queue.nachgereicht", &[("cs", &format_callsign(&q.airline_icao, &q.flight_number)), ("dep", &q.dpt_airport), ("arr", &q.arr_airport)]).und("activity.queue.nachgereicht_detail", &[("n", &q.attempt_count)]),
                             format!(
                                 "Gequeueter PIREP nachträglich eingereicht: {} {} – {}",
                                 format_callsign(&q.airline_icao, &q.flight_number),
@@ -563,9 +563,9 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                                 error = %e,
                                 "queued PIREP rejected by server — removing from queue"
                             );
-                            log_activity_handle(
+                            log_activity_handle_t(
                                 &app,
-                                ActivityLevel::Warn,
+                                ActivityLevel::Warn, akt("activity.queue.abgelehnt", &[("cs", &format_callsign(&q.airline_icao, &q.flight_number))]).mit(net_fehler_teil(&friendly_net_error(&e))).und("activity.queue.abgelehnt_detail", &[]),
                                 format!(
                                     "PIREP {} serverseitig abgelehnt — Queue-Eintrag entfernt",
                                     format_callsign(&q.airline_icao, &q.flight_number),

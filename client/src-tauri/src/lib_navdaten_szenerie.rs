@@ -215,16 +215,16 @@ async fn fetch_navdata_for_flight(
     if let Some(c) = cycle.as_deref() {
         let mut sorted = loaded.clone();
         sorted.sort();
-        log_activity(
+        log_activity_t(
             &state,
-            ActivityLevel::Info,
+            ActivityLevel::Info, akt("activity.navdata.geladen", &[("airac", &c), ("plaetze", &sorted.join("/"))]),
             format!("Navdata AIRAC {} geladen für {}", c, sorted.join("/")),
             None,
         );
     } else {
-        log_activity(
+        log_activity_t(
             &state,
-            ActivityLevel::Warn,
+            ActivityLevel::Warn, akt("activity.navdata.fallback", &[]),
             "Navdata: OurAirports-Fallback aktiv (VPS nicht erreichbar)".to_string(),
             None,
         );

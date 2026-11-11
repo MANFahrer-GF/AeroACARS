@@ -57,6 +57,64 @@ impl AktivitaetTeil {
             werte: werte.iter().map(|(k, v)| (k.to_string(), serde_json::json!(v.round() as i64))).collect(),
         }
     }
+
+    /// Wie `neu`, aber mit fertigen Texten als Werten (Namen, ICAO, schon
+    /// formatierte Zahlen, rohe Fehlertexte vom Server).
+    fn text(schluessel: &str, werte: &[(&str, &dyn std::fmt::Display)]) -> Self {
+        Self {
+            schluessel: schluessel.to_string(),
+            werte: werte.iter().map(|(k, v)| (k.to_string(), serde_json::json!(v.to_string()))).collect(),
+        }
+    }
+}
+
+impl AktivitaetText {
+    /// Weiterer fertiger Detailteil (z. B. aus `lage_abweichung_teil`).
+    fn mit(mut self, teil: AktivitaetTeil) -> Self {
+        self.detail.push(teil);
+        self
+    }
+
+    /// Weiterer Detailteil mit eigenem Schluessel.
+    fn und(mut self, schluessel: &str, werte: &[(&str, &dyn std::fmt::Display)]) -> Self {
+        self.detail.push(AktivitaetTeil::text(schluessel, werte));
+        self
+    }
+
+    /// Detailteil, der in jeder Sprache gleich bleibt (roher Fehlertext).
+    fn roh(self, text: &dyn std::fmt::Display) -> Self {
+        self.und(AKTIVITAET_ROH, &[("text", text)])
+    }
+}
+
+/// Schluessel, dessen Text in allen Sprachen nur den Wert zeigt.
+const AKTIVITAET_ROH: &str = "activity.roh";
+
+/// Ein deutscher Satz aus einer festen Liste wird zu seinem Schluessel;
+/// unbekannte Saetze (rohe Server- oder Fehlertexte) bleiben als Wert stehen.
+/// Der Waechter `aktivitaetSchluessel.test.ts` verlangt, dass jeder Satz der
+/// Liste wortgleich im Quelltext vorkommt und im deutschen Paket steht.
+fn teil_aus_text(text: &str, tabelle: &[(&str, &str)]) -> AktivitaetTeil {
+    match tabelle.iter().find(|(satz, _)| *satz == text) {
+        Some((_, schluessel)) => AktivitaetTeil::text(schluessel, &[]),
+        None => AktivitaetTeil::text(AKTIVITAET_ROH, &[("text", &text)]),
+    }
+}
+
+/// Eine uebersetzbare Aktivitaetszeile beginnen: Schluessel der Zeile und
+/// ihre Werte. Details kommen mit `und`/`roh` dazu; fehlen sie, reicht
+/// `aktivitaet_text_fertig` das deutsche `detail` unveraendert durch.
+fn akt(schluessel: &str, werte: &[(&str, &dyn std::fmt::Display)]) -> AktivitaetText {
+    AktivitaetText { zeile: AktivitaetTeil::text(schluessel, werte), detail: Vec::new() }
+}
+
+/// Ein Text ohne eigene Detailteile darf das Detail der Zeile nicht
+/// verschlucken (die Oberflaeche zeigt bei gesetztem Text nur dessen Teile).
+fn aktivitaet_text_fertig(text: Option<AktivitaetText>, detail: Option<&str>) -> Option<AktivitaetText> {
+    text.map(|t| match detail {
+        Some(d) if t.detail.is_empty() => t.roh(&d),
+        _ => t,
+    })
 }
 
 #[derive(Default)]
@@ -622,3 +680,7 @@ impl NavdataCache {
         self.get(icao)?.elevation_ft.map(f64::from)
     }
 }
+
+#[cfg(test)]
+#[path = "tests_lib/aktivitaet_text_tests.rs"]
+mod aktivitaet_text_tests;

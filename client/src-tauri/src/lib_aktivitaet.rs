@@ -622,6 +622,17 @@ fn log_activity(
     message: impl Into<String>,
     detail: Option<String>,
 ) {
+    log_activity_t(state, level, None, message, detail);
+}
+
+/// Wie `log_activity`, dazu der uebersetzbare Text (`akt(...)`).
+fn log_activity_t(
+    state: &tauri::State<'_, AppState>,
+    level: ActivityLevel,
+    text: impl Into<Option<AktivitaetText>>,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
     let now = Utc::now();
     let message = message.into();
     {
@@ -634,8 +645,8 @@ fn log_activity(
         timestamp: now,
         level,
         message,
+        text: aktivitaet_text_fertig(text.into(), detail.as_deref()),
         detail,
-        text: None,
     };
     match level {
         ActivityLevel::Info => {
@@ -677,6 +688,17 @@ pub(crate) fn log_activity_handle(
     log_activity_mit_meldung(app, level, message.into(), detail, true);
 }
 
+/// Wie `log_activity_handle`, dazu der uebersetzbare Text (`akt(...)`).
+pub(crate) fn log_activity_handle_t(
+    app: &AppHandle,
+    level: ActivityLevel,
+    text: AktivitaetText,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
+    log_activity_uebersetzbar(app, level, message.into(), detail, Some(text), true);
+}
+
 
 fn log_activity_mit_meldung(
     app: &AppHandle,
@@ -710,8 +732,8 @@ fn log_activity_uebersetzbar(
         timestamp: now,
         level,
         message,
+        text: aktivitaet_text_fertig(text, detail.as_deref()),
         detail,
-        text,
     };
     match level {
         ActivityLevel::Info => {
@@ -763,6 +785,18 @@ fn log_activity_and_record(
     message: impl Into<String>,
     detail: Option<String>,
 ) {
+    log_activity_and_record_t(app, pirep_id, level, None, message, detail);
+}
+
+/// Wie `log_activity_and_record`, dazu der uebersetzbare Text (`akt(...)`).
+fn log_activity_and_record_t(
+    app: &AppHandle,
+    pirep_id: &str,
+    level: ActivityLevel,
+    text: impl Into<Option<AktivitaetText>>,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
     let message = message.into();
     let level_str = match level {
         ActivityLevel::Info => "info",
@@ -779,7 +813,7 @@ fn log_activity_and_record(
             detail: detail.clone(),
         },
     );
-    log_activity_handle(app, level, message, detail);
+    log_activity_uebersetzbar(app, level, message, detail, text.into(), true);
 }
 
 /// Was mit einem Lichtwechsel im Aktivitätsprotokoll geschehen soll.

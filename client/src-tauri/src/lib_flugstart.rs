@@ -972,9 +972,9 @@ async fn flight_start_mit(
                         abgeleitet = %typ,
                         "phpVMS liefert keinen ICAO-Typ — aus dem Flugzeug-Titel abgeleitet"
                     );
-                    log_activity_handle(
+                    log_activity_handle_t(
                         &app,
-                        ActivityLevel::Warn,
+                        ActivityLevel::Warn, akt("activity.start.typ_abgeleitet", &[("reg", &planned_registration), ("typ", &typ)]),
                         format!(
                             "Flugzeugtyp fehlt in phpVMS für {planned_registration} — \
                              aus dem Simulator-Titel abgeleitet: {typ}"
@@ -989,9 +989,9 @@ async fn flight_start_mit(
                         "phpVMS liefert keinen ICAO-Typ und der Titel gibt nichts her — \
                          die Landebewertung rechnet ohne Musterbezug"
                     );
-                    log_activity_handle(
+                    log_activity_handle_t(
                         &app,
-                        ActivityLevel::Warn,
+                        ActivityLevel::Warn, akt("activity.start.typ_unbekannt", &[("reg", &planned_registration)]),
                         format!(
                             "Flugzeugtyp unbekannt für {planned_registration} — \
                              die Landebewertung rechnet ohne Musterbezug"
@@ -1072,9 +1072,9 @@ async fn flight_start_mit(
                     plan_tow_kg = ofp.planned_tow_kg,
                     "SimBrief direct OFP fetched at flight_start",
                 );
-                log_activity(
+                log_activity_t(
                     &state,
-                    ActivityLevel::Info,
+                    ActivityLevel::Info, akt("activity.ofp.geladen_direkt", &[]).und("activity.ofp.geladen_detail", &[("block", &format!("{:.0}", ofp.planned_block_fuel_kg)), ("trip", &format!("{:.0}", ofp.planned_burn_kg)), ("tow", &format!("{:.0}", ofp.planned_tow_kg))]).und("activity.ofp.geladen_id", &[("ofp", &ofp.request_id)]),
                     "SimBrief OFP geladen (direct, aktueller Stand)".to_string(),
                     Some(format!(
                         "Plan-Block {:.0} kg · Trip {:.0} kg · TOW {:.0} kg · OFP {}",
@@ -1119,9 +1119,9 @@ async fn flight_start_mit(
                     plan_tow_kg = ofp.planned_tow_kg,
                     "SimBrief OFP fetched"
                 );
-                log_activity(
+                log_activity_t(
                     &state,
-                    ActivityLevel::Info,
+                    ActivityLevel::Info, akt("activity.ofp.geladen", &[]).und("activity.ofp.geladen_detail", &[("block", &format!("{:.0}", ofp.planned_block_fuel_kg)), ("trip", &format!("{:.0}", ofp.planned_burn_kg)), ("tow", &format!("{:.0}", ofp.planned_tow_kg))]),
                     "SimBrief OFP geladen".to_string(),
                     Some(format!(
                         "Plan-Block {:.0} kg · Trip {:.0} kg · TOW {:.0} kg",
@@ -1132,9 +1132,9 @@ async fn flight_start_mit(
             }
             Ok(None) => {
                 tracing::warn!(sb_id = %sb.id, "SimBrief OFP fetch returned no usable data");
-                log_activity(
+                log_activity_t(
                     &state,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.ofp.unbrauchbar", &[]).und("activity.ofp.unbrauchbar_detail", &[("id", &sb.id)]),
                     "SimBrief-OFP konnte nicht geladen werden".to_string(),
                     Some(format!(
                         "OFP-ID {} liefert keine brauchbaren Daten — Landung-Tab zeigt deshalb keine SOLL-Werte. Bitte einen frischen OFP auf simbrief.com erstellen.",
@@ -1145,9 +1145,9 @@ async fn flight_start_mit(
             }
             Err(e) => {
                 tracing::warn!(sb_id = %sb.id, error = %e, "SimBrief OFP fetch failed");
-                log_activity(
+                log_activity_t(
                     &state,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.ofp.fetch_failed", &[]).und("activity.ofp.fetch_failed_detail", &[("id", &sb.id), ("fehler", &e)]),
                     "SimBrief-OFP-Fetch fehlgeschlagen".to_string(),
                     Some(format!(
                         "OFP-ID {} konnte nicht geladen werden ({}). Landung-Tab zeigt deshalb keine SOLL-Werte. Probier später nochmal Refresh in My-Flights, oder generier einen neuen OFP.",
@@ -1161,9 +1161,9 @@ async fn flight_start_mit(
         // Bid hatte überhaupt keine SimBrief-Verbindung — kein Fehler,
         // aber wir sagen es dem Piloten damit er weiß warum keine
         // SOLL-Werte kommen.
-        log_activity(
+        log_activity_t(
             &state,
-            ActivityLevel::Info,
+            ActivityLevel::Info, akt("activity.ofp.keiner", &[]).und("activity.ofp.keiner_detail", &[]),
             "Kein SimBrief-OFP für diesen Flug".to_string(),
             Some("Der Bid hat keinen SimBrief-OFP gelinkt. Du kannst trotzdem fliegen — der Landung-Tab zeigt dann nur die IST-Werte ohne SOLL-IST-Vergleich.".to_string()),
         );
@@ -1288,9 +1288,9 @@ async fn flight_start_mit(
                     quelle = ?f.quelle,
                     "Spurweite aus der Flugzeugdatei gelesen"
                 );
-                log_activity_handle(
+                log_activity_handle_t(
                     &app_fuer_meldung,
-                    ActivityLevel::Info,
+                    ActivityLevel::Info, akt("activity.start.spurweite", &[("m", &format!("{:.2}", f.spurweite_m))]),
                     format!("Spurweite aus der Flugzeugdatei: {:.2} m", f.spurweite_m),
                     None,
                 );
@@ -2010,18 +2010,18 @@ async fn flight_start_manual(
             let titel = snapshot.aircraft_title.as_deref().unwrap_or("");
             let aus_titel = sim_core::icao_aus_titel(titel);
             match &aus_titel {
-                Some(typ) => log_activity_handle(
+                Some(typ) => log_activity_handle_t(
                     &app,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.start.typ_abgeleitet", &[("reg", &planned_registration), ("typ", &typ)]),
                     format!(
                         "Flugzeugtyp fehlt in phpVMS für {planned_registration} — \
                          aus dem Simulator-Titel abgeleitet: {typ}"
                     ),
                     None,
                 ),
-                None => log_activity_handle(
+                None => log_activity_handle_t(
                     &app,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.start.typ_unbekannt", &[("reg", &planned_registration)]),
                     format!(
                         "Flugzeugtyp unbekannt für {planned_registration} — \
                          die Landebewertung rechnet ohne Musterbezug"
@@ -2179,9 +2179,9 @@ async fn flight_start_manual(
     clear_activity_log_for_new_flight(&app);
 
     let info = flight_info(flight.as_ref(), false, None);
-    log_activity(
+    log_activity_t(
         &state,
-        ActivityLevel::Info,
+        ActivityLevel::Info, akt("activity.start.manual", &[("cs", &format_callsign(&flight.airline_icao, &flight.flight_number)), ("dep", &flight.dpt_airport), ("arr", &flight.arr_airport), ("block", &format!("{:.0}", plan.planned_block_fuel_kg)), ("eta", &plan.planned_flight_time_min)]),
         format!(
             "Manual-Mode-Flug gestartet: {} {} – {} (Block {:.0} kg, ETA {} min)",
             format_callsign(&flight.airline_icao, &flight.flight_number),

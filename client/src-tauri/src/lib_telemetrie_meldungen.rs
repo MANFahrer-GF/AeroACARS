@@ -42,6 +42,34 @@ fn touchdown_meldungen(
     )
 }
 
+/// Die Touchdown-Zeile als uebersetzbarer Text (gleiche Messdaten wie
+/// `touchdown_meldungen`; Hopser und Herkunft der Note stehen im Detail).
+fn touchdown_text(
+    peak_vs: f32,
+    scored_g: Option<f32>,
+    fenster_gemessen: bool,
+    bounces: u8,
+    bewertung: Option<&LandungsBewertung>,
+) -> AktivitaetText {
+    let vs = format!("{peak_vs:.0}");
+    let mut t = match scored_g {
+        Some(g) => akt("activity.touchdown.line", &[("vs", &vs), ("g", &format!("{g:.2}"))]),
+        None if !fenster_gemessen => akt("activity.touchdown.ohne_g", &[("vs", &vs)]),
+        None => akt("activity.touchdown.line", &[("vs", &vs), ("g", &"0.00")]),
+    };
+    if bounces > 0 {
+        t = t.und("activity.touchdown.bounces", &[("n", &bounces)]);
+    }
+    match bewertung {
+        Some(b) if b.status == "vorlaeufig" => match b.verdict {
+            Some(v) => t.und("activity.touchdown.note_vorlaeufig", &[("note", &v.grade)]),
+            None => t.und("activity.touchdown.vorlaeufig", &[]),
+        },
+        Some(b) if b.status == "modulfehler" => t.und("activity.touchdown.modulfehler", &[]),
+        _ => t,
+    }
+}
+
 fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<String> {
     let mut stats = flight.stats.lock().expect("flight stats");
     if stats.landing_score_announced {
@@ -156,20 +184,23 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     // for an OurAirports-fallback match. `assess_touchdown` is the single
     // source of truth for this classification (correct sign, both
     // sources) — reuse it instead of a second, divergent copy.
-    let dds_warning_msg: Option<String> = assess_touchdown(&stats).dds.and_then(|d| {
+    let dds_warning_msg: Option<(String, String)> = assess_touchdown(&stats).dds.and_then(|d| {
         if d.in_pre_threshold_zone {
-            Some(format!(
-                "Touchdown im Pre-Threshold-Bereich (DDS {:.0} m vor Landing-Threshold)",
-                d.displaced_threshold_m
+            Some((
+                format!(
+                    "Touchdown im Pre-Threshold-Bereich (DDS {:.0} m vor Landing-Threshold)",
+                    d.displaced_threshold_m
+                ),
+                format!("{:.0}", d.displaced_threshold_m),
             ))
         } else {
             None
         }
     });
     drop(stats);
-    log_activity_handle(
+    log_activity_handle_t(
         app,
-        level,
+        level, touchdown_text(peak_vs, sg.as_ref().map(|s| s.scored_g), fenster_gemessen, bounces, bewertung.as_ref()),
         // nur Messdaten — keine Note/Einstufung (siehe Kommentar oben)
         // (V/S signed: negative = descent, matches the PIREP; G = scored EMA,
         // ohne gemessenes Fenster "G nicht gemessen" statt 0.00, 13.09.2026)
@@ -182,8 +213,8 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
     if let Some((src_level, src_msg)) = nav_source_msg {
         log_activity_handle(app, src_level, src_msg, None);
     }
-    if let Some(msg) = dds_warning_msg {
-        log_activity_handle(app, ActivityLevel::Error, msg, None);
+    if let Some((msg, m)) = dds_warning_msg {
+        log_activity_handle_t(app, ActivityLevel::Error, akt("activity.touchdown.dds", &[("m", &m)]), msg, None);
     }
     record_event(
         app,
@@ -217,7 +248,7 @@ fn announce_landing_score(app: &AppHandle, flight: &ActiveFlight) -> Option<Stri
 /// `detect_telemetry_changes`). Reihenfolge bleibt erhalten.
 struct AufgeschobeneMeldungen<'a> {
     app: &'a AppHandle,
-    meldungen: Vec<(ActivityLevel, String, Option<String>, bool)>,
+    meldungen: Vec<(ActivityLevel, String, Option<String>, bool, Option<AktivitaetText>)>,
 }
 
 impl<'a> AufgeschobeneMeldungen<'a> {
@@ -236,7 +267,19 @@ impl<'a> AufgeschobeneMeldungen<'a> {
         message: impl Into<String>,
         detail: Option<String>,
     ) {
-        self.meldungen.push((level, message.into(), detail, true));
+        self.meldungen.push((level, message.into(), detail, true, None));
+    }
+
+    /// Wie `handle`, dazu der uebersetzbare Text (`akt(...)`).
+    fn handle_t(
+        &mut self,
+        _app: &AppHandle,
+        level: ActivityLevel,
+        text: AktivitaetText,
+        message: impl Into<String>,
+        detail: Option<String>,
+    ) {
+        self.meldungen.push((level, message.into(), detail, true, Some(text)));
     }
 
     /// Ohne GlitchTip-Meldung — fuer Ereignisse im Flugzeug (Cockpit-Lampen),
@@ -251,7 +294,7 @@ impl<'a> AufgeschobeneMeldungen<'a> {
         message: impl Into<String>,
         detail: Option<String>,
     ) {
-        self.meldungen.push((level, message.into(), detail, false));
+        self.meldungen.push((level, message.into(), detail, false, None));
     }
 }
 
@@ -263,8 +306,8 @@ impl Drop for AufgeschobeneMeldungen<'_> {
         if std::thread::panicking() {
             return;
         }
-        for (level, message, detail, an_glitchtip) in self.meldungen.drain(..) {
-            log_activity_mit_meldung(self.app, level, message, detail, an_glitchtip);
+        for (level, message, detail, an_glitchtip, text) in self.meldungen.drain(..) {
+            log_activity_uebersetzbar(self.app, level, message, detail, text, an_glitchtip);
         }
     }
 }
@@ -539,9 +582,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                             format!("{name} lights {}", if new { "ON" } else { "OFF" }),
                             None,
                         ),
-                        FlickerVerdict::AnnounceFlashing => aufgeschoben.handle(
+                        FlickerVerdict::AnnounceFlashing => aufgeschoben.handle_t(
                             app,
-                            ActivityLevel::Info,
+                            ActivityLevel::Info, akt("activity.cockpit.blinkmodus", &[("name", &name)]),
                             format!("{name} lights: Blinkmodus"),
                             None,
                         ),
@@ -1042,9 +1085,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
         // Once-per-flight: aircraft identification banner.
         if !stats.pmdg_detected_logged {
             stats.pmdg_detected_logged = true;
-            aufgeschoben.handle(
+            aufgeschoben.handle_t(
                 app,
-                ActivityLevel::Info,
+                ActivityLevel::Info, akt("activity.cockpit.pmdg_aktiv", &[("variant", &p.variant_label)]).und("activity.cockpit.pmdg_aktiv_detail", &[]),
                 format!("{} — PMDG SDK aktiv", p.variant_label),
                 Some("Premium-Cockpit-Daten verfügbar (FMA, MCP, V-Speeds, FMC)".to_string()),
             );
@@ -1058,9 +1101,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
                 (p.fmc_v1_kt, p.fmc_vr_kt, p.fmc_v2_kt, p.fmc_vref_kt)
             {
                 stats.pmdg_v_speeds_logged = true;
-                aufgeschoben.handle(
+                aufgeschoben.handle_t(
                     app,
-                    ActivityLevel::Info,
+                    ActivityLevel::Info, akt("activity.cockpit.v_speeds", &[("v1", &v1), ("vr", &vr), ("v2", &v2), ("vref", &vref)]),
                     format!("V-Speeds gesetzt: V1 {v1} · VR {vr} · V2 {v2} · VREF {vref}"),
                     None,
                 );
@@ -1305,9 +1348,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(to_warn) = snap.takeoff_config_warning {
         if stats.last_logged_pmdg_to_warning != Some(to_warn) {
             if to_warn {
-                aufgeschoben.handle(
+                aufgeschoben.handle_t(
                     app,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.cockpit.to_config", &[]).und("activity.cockpit.to_config_detail", &[]),
                     "TAKEOFF CONFIG warning".to_string(),
                     Some("Cockpit zeigt rote Warnung — TO-Setup unvollständig".to_string()),
                 );
@@ -1435,9 +1478,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             if mc {
                 aufgeschoben.ohne_meldung(app, ActivityLevel::Warn, "MASTER CAUTION", None);
             } else {
-                aufgeschoben.handle(
+                aufgeschoben.handle_t(
                     app,
-                    ActivityLevel::Info,
+                    ActivityLevel::Info, akt("activity.cockpit.master_caution_aus", &[]),
                     "MASTER CAUTION aus".to_string(),
                     None,
                 );
@@ -1452,9 +1495,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             if mw {
                 aufgeschoben.ohne_meldung(app, ActivityLevel::Error, "🔴 MASTER WARNING", None);
             } else {
-                aufgeschoben.handle(
+                aufgeschoben.handle_t(
                     app,
-                    ActivityLevel::Info,
+                    ActivityLevel::Info, akt("activity.cockpit.master_warning_aus", &[]),
                     "MASTER WARNING aus".to_string(),
                     None,
                 );
@@ -1487,9 +1530,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             last_seen_reverser,
             reverser_logged_this_landing,
         ) {
-            aufgeschoben.handle(
+            aufgeschoben.handle_t(
                 app,
-                ActivityLevel::Info,
+                ActivityLevel::Info, akt("activity.cockpit.umkehrschub", &[]),
                 "Umkehrschub aktiviert".to_string(),
                 None,
             );
@@ -1501,9 +1544,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             last_seen_ground_spoilers,
             ground_spoilers_logged_this_landing,
         ) {
-            aufgeschoben.handle(
+            aufgeschoben.handle_t(
                 app,
-                ActivityLevel::Info,
+                ActivityLevel::Info, akt("activity.cockpit.ground_spoiler", &[]),
                 "Ground Spoiler ausgefahren".to_string(),
                 None,
             );
@@ -1515,9 +1558,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(std_set) = snap.baro_std {
         if stats.last_logged_baro_std != Some(std_set) {
             if stats.last_logged_baro_std.is_some() {
-                aufgeschoben.handle(
+                aufgeschoben.handle_t(
                     app,
-                    ActivityLevel::Info,
+                    ActivityLevel::Info, akt(if std_set { "activity.cockpit.baro_std" } else { "activity.cockpit.baro_qnh" }, &[]),
                     if std_set {
                         "Baro: STD gesetzt"
                     } else {
@@ -1595,9 +1638,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
     if let Some(cab) = snap.cabin_altitude_warning {
         if stats.last_logged_cabin_alt_warning != Some(cab) {
             if stats.last_logged_cabin_alt_warning.is_some() && cab {
-                aufgeschoben.handle(
+                aufgeschoben.handle_t(
                     app,
-                    ActivityLevel::Error,
+                    ActivityLevel::Error, akt("activity.cockpit.kabinenhoehe", &[]),
                     "🔴 Kabinenhöhe-Warnung".to_string(),
                     None,
                 );
@@ -1631,9 +1674,9 @@ fn detect_telemetry_changes(app: &AppHandle, flight: &ActiveFlight, snap: &SimSn
             .premium_thrust_gate
             .update(gate.clone(), now, crate::grenzwerte::grenzwerte().cockpit.thrust_gate_debounce_secs.wert)
         {
-            aufgeschoben.handle(
+            aufgeschoben.handle_t(
                 app,
-                ActivityLevel::Info,
+                ActivityLevel::Info, akt("activity.cockpit.schubhebel", &[("gate", &gate)]),
                 format!("Schubhebel: {gate}"),
                 None,
             );

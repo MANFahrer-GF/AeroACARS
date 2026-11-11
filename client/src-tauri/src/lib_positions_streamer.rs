@@ -359,10 +359,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 let mut stats = flight.stats.lock().expect("flight stats");
                                 sprung_vermerken(&mut stats, discontinuity, Utc::now());
                             }
-                            log_activity_and_record(
+                            log_activity_and_record_t(
                                 &app,
                                 &flight.pirep_id,
-                                ActivityLevel::Error,
+                                ActivityLevel::Error, akt("activity.jump.impossible", &[]).mit(sprung_grund_teil(&discontinuity)).und("activity.jump.werte_neustart", &[("fuel", &format!("{:+.0}", discontinuity.fuel_delta_kg)), ("alt", &format!("{:+.0}", discontinuity.altitude_delta_ft)), ("nm", &format!("{:.1}", discontinuity.drift_nm))]),
                                 format!(
                                     "Unmöglicher Sprung beim Wiederaufnehmen erkannt ({})",
                                     sprung_grund(&discontinuity)
@@ -457,10 +457,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     // gerade geliefert hat.
                     last_good_snap = previous_snap_for_recovery.clone();
                     save_active_flight(&app, &flight);
-                    log_activity_and_record(
+                    log_activity_and_record_t(
                         &app,
                         &flight.pirep_id,
-                        ActivityLevel::Error,
+                        ActivityLevel::Error, akt("activity.sim.reload", &[]).und("activity.sim.reload_detail", &[("fl", &format!("{:.0}", prev.altitude_msl_ft / 100.0)), ("alt", &format!("{:.0}", curr.altitude_msl_ft)), ("lat", &format!("{:.3}", curr.lat)), ("lon", &format!("{:.3}", curr.lon)), ("drop", &format!("{:.0}", alt_drop_ft))]),
                         "Sim-Reload erkannt — Aufzeichnung pausiert".to_string(),
                         Some(format!(
                             "Vorher: FL{:.0} airborne · jetzt: {:.0} ft am Boden bei LAT {:.3}° LON {:.3}° (Drop: {:.0} ft). \
@@ -532,15 +532,19 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 p.lat, p.lon, p.altitude_ft,
                             )
                         });
+                        let pause_text = match paused.as_ref() {
+                            Some(p) => akt("activity.sim.paused", &[]).und("activity.sim.letzte_pos", &[("lat", &format!("{:.4}", p.lat)), ("lon", &format!("{:.4}", p.lon)), ("alt", &format!("{:.0}", p.altitude_ft))]),
+                            None => akt("activity.sim.paused", &[]),
+                        };
                         {
                             let mut stats = flight.stats.lock().expect("flight stats");
                             stats.paused_since = Some(Utc::now());
                             stats.paused_last_known = paused;
                             stats.current_pause_reason = Some(PauseReason::SimPause);
                         }
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app,
-                            ActivityLevel::Info,
+                            ActivityLevel::Info, pause_text,
                             "Simulator pausiert — AeroACARS pausiert die Aufzeichnung.".to_string(),
                             detail,
                         );
@@ -614,10 +618,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         let stats = flight.stats.lock().expect("flight stats");
                         gespeicherter_punkt(&stats).unwrap_or((jetzt.lat, jetzt.lon))
                     };
-                    log_activity_and_record(
+                    log_activity_and_record_t(
                         &app,
                         &flight.pirep_id,
-                        ActivityLevel::Error,
+                        ActivityLevel::Error, akt("activity.lage.sim_zurueck", &[]).mit(lage_abweichung_teil(&abweichung)).und("activity.lage.letzte_pos", &[("lat", &format!("{:.4}", vorher_lat)), ("lon", &format!("{:.4}", vorher_lon))]).und("activity.lage.jetzt_sim", &[("lat", &format!("{:.4}", jetzt.lat)), ("lon", &format!("{:.4}", jetzt.lon)), ("alt", &format!("{:.0}", jetzt.altitude_msl_ft))]).und("activity.lage.banner_waehlen", &[]),
                         "Simulator wieder da — Lage passt nicht zum Flug, Aufzeichnung pausiert"
                             .to_string(),
                         Some(format!(
@@ -771,10 +775,17 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             .unwrap_or_else(|| "—".to_string()),
                         liveness_line,
                     );
-                    log_activity_and_record(
+                    log_activity_and_record_t(
                         &app,
                         &flight.pirep_id,
-                        ActivityLevel::Warn,
+                        ActivityLevel::Warn, {
+                            let t = akt("activity.sim.getrennt", &[]).und("activity.sim.getrennt_pos", &[("lat", &format!("{:.4}", paused.lat)), ("lon", &format!("{:.4}", paused.lon)), ("hdg", &format!("{:.0}", paused.heading_deg)), ("alt", &format!("{:.0}", paused.altitude_ft)), ("fuel", &format!("{:.0}", paused.fuel_total_kg)), ("zfw", &paused.zfw_kg.map(|v| format!("{:.0} kg", v)).unwrap_or_else(|| "—".to_string()))]);
+                            match liveness {
+                                Some(sim_core::process_probe::ProcessLiveness::Gone) => t.und("activity.sim.prozess_weg", &[]),
+                                Some(sim_core::process_probe::ProcessLiveness::Alive) => t.und("activity.sim.prozess_laeuft", &[]),
+                                _ => t,
+                            }
+                        },
                         "Sim getrennt — Flug pausiert. Klicke „Flug wiederaufnehmen\" sobald du repositioniert hast.".to_string(),
                         Some(detail),
                     );
@@ -2479,6 +2490,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 let mut stats = flight.stats.lock().expect("flight stats");
                 if !stats.pending_acars_logs.is_empty() {
                     let drained: Vec<String> = std::mem::take(&mut stats.pending_acars_logs);
+                    let mut texte = std::mem::take(&mut stats.pending_acars_texte);
                     drop(stats);
                     let now_ts = Utc::now().to_rfc3339();
                     for line in drained {
@@ -2489,7 +2501,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // 5 s dedupe window is fine here — successive
                         // T&Gs are >1 min apart (FSM has to descend
                         // back to Approach in between).
-                        log_activity_handle(&app, ActivityLevel::Info, line.clone(), None);
+                        log_activity_uebersetzbar(&app, ActivityLevel::Info, line.clone(), None, texte.remove(&line), true);
                         acars_log_entries.push(api_client::LogEntry {
                             id: None,
                             log: line,

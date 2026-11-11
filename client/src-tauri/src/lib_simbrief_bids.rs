@@ -548,9 +548,9 @@ async fn phpvms_get_bids(state: tauri::State<'_, AppState>) -> Result<Vec<Bid>, 
     } else {
         format!("{letzter}")
     };
-    log_activity(
+    log_activity_t(
         &state,
-        ActivityLevel::Error,
+        ActivityLevel::Error, akt("activity.bids.failed", &[]),
         BIDS_FAILED_MESSAGE,
         Some(detail),
     );
@@ -1131,9 +1131,9 @@ async fn flight_refresh_simbrief(
         save_active_flight(&app, flight);
     }
     // v0.7.7 Audit-Trail: alte→neue OFP-ID + changed/unchanged-Marker.
-    log_activity(
+    log_activity_t(
         &state,
-        ActivityLevel::Info,
+        ActivityLevel::Info, akt(if changed { "activity.ofp.refreshed" } else { "activity.ofp.unchanged" }, &[]).und(if changed { "activity.ofp.detail_neu" } else { "activity.ofp.detail_identisch" }, &[("vorher", &previous_ofp_id.as_deref().unwrap_or("—")), ("jetzt", &sb_id), ("block", &format!("{:.0}", ofp.planned_block_fuel_kg)), ("tow", &format!("{:.0}", ofp.planned_tow_kg)), ("ldw", &format!("{:.0}", ofp.planned_ldw_kg))]),
         if changed {
             "OFP refreshed"
         } else {
@@ -1540,9 +1540,9 @@ async fn flight_refresh_route_only(
         }
     };
 
-    log_activity(
+    log_activity_t(
         &state,
-        ActivityLevel::Info,
+        ActivityLevel::Info, akt("activity.route.sync", &[]).und(if route_posted { "activity.route.sync_gepostet" } else if waypoint_count == 0 { "activity.route.sync_kein_navlog" } else { "activity.route.sync_upload_fehler" }, &[("n", &waypoint_count)]),
         "Route synchronisiert".to_string(),
         Some(format!(
             "{} Wegpunkte aus dem aktuellen SimBrief-OFP uebernommen ({}).",

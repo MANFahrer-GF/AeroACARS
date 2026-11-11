@@ -424,9 +424,9 @@ async fn flight_end(
                         // accident_at wird NICHT geloescht — Audit-Spur fuer den
                         // Override-Zeitpunkt bleibt. Notes-Builder ignoriert sie
                         // wenn accident_detected=false.
-                        log_activity(
+                        log_activity_t(
                             &state,
-                            ActivityLevel::Warn,
+                            ActivityLevel::Warn, akt("activity.pirep.accident_widerspruch", &[]).und("activity.pirep.accident_widerspruch_detail", &[("kind", &prev_kind), ("reasons", &prev_reasons)]),
                             "Pilot hat Accident-Klassifikation widersprochen — filing als harte Landung".to_string(),
                             Some(format!(
                                 "Vorherige Klassifikation: kind={prev_kind}, reasons=[{prev_reasons}]"
@@ -1163,9 +1163,9 @@ async fn flight_end(
                 if let Err(qe) = pirep_queue::enqueue(&app, &queued) {
                     // Queue selber kaputt — fallback auf altes Verhalten
                     tracing::error!(error = %qe, "PIREP-Queue enqueue failed — falling back to flight-in-state");
-                    log_activity(
+                    log_activity_t(
                         &state,
-                        ActivityLevel::Error,
+                        ActivityLevel::Error, akt("activity.pirep.file_failed", &[]).und("activity.pirep.file_failed_queue", &[("fehler", &e)]),
                         "PIREP file failed",
                         Some(format!(
                             "{} — Queue ebenfalls kaputt, Flug bleibt aktiv für Retry",
@@ -1193,9 +1193,9 @@ async fn flight_end(
                 anflug_forensik_nachtrag_schreiben(&app, &flight);
                 clear_persisted_flight(&app, Some(&flight.pirep_id));
                 bilder::nachlauf_beginnen(&app, &flight, &effective_arr_icao);
-                log_activity(
+                log_activity_t(
                     &state,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.pirep.queued", &[("cs", &format_callsign(&flight.airline_icao, &flight.flight_number)), ("dep", &flight.dpt_airport), ("arr", &flight.arr_airport)]).mit(net_fehler_teil(&friendly_net_error(&e))).und("activity.pirep.queued_detail", &[]),
                     format!(
                         "PIREP queued: {} {} – {}",
                         format_callsign(&flight.airline_icao, &flight.flight_number),

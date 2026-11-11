@@ -1213,10 +1213,15 @@ fn step_flight_at(
                         let threshold = p_block + p_reserve + 500.0;
                         if block > threshold {
                             let extra = block - p_block;
-                            stats.pending_acars_logs.push(format!(
+                            let zeile = format!(
                                 "💡 Über-tankt — Sehr viel Sprit an Bord ({:+.0} kg über Plan + Reserve), höherer Burn unterwegs zu erwarten.",
                                 extra
-                            ));
+                            );
+                            stats.pending_acars_texte.insert(
+                                zeile.clone(),
+                                akt("activity.loadsheet.ueber_tankt", &[("kg", &format!("{:+.0}", extra))]),
+                            );
+                            stats.pending_acars_logs.push(zeile);
                         }
                     }
                     stats.loadsheet_logged_at_blockoff = true;
@@ -2707,11 +2712,11 @@ fn step_flight_at(
                     "FSM phase=Arrived/PirepSubmitted but aircraft is flying again — stopping position stream"
                 );
                 stats.arrived_stale_warning_logged = true;
-                stats.pending_acars_logs.push(
-                    "Position-Stream gestoppt — Flugzeug fliegt wieder, aber PIREP war als 'angekommen' markiert. \
+                let zeile = "Position-Stream gestoppt — Flugzeug fliegt wieder, aber PIREP war als 'angekommen' markiert. \
                      Bitte den alten Flug manuell beenden (PIREP-Detail) oder via 'Flug verwerfen' verwerfen, \
-                     dann neuen Flug starten.".to_string(),
-                );
+                     dann neuen Flug starten.".to_string();
+                stats.pending_acars_texte.insert(zeile.clone(), akt("activity.loadsheet.stream_gestoppt", &[]));
+                stats.pending_acars_logs.push(zeile);
                 flight.stop.store(true, Ordering::Relaxed);
             }
         }

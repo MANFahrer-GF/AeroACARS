@@ -217,9 +217,9 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     // wie oft die Verbindung gezuckt hat. Mit Positions-`id`
                     // sind Wiederholungen folgenlos — die Zahl ist trotzdem
                     // das Fruehwarnsignal fuer Server- oder Leitungsprobleme.
-                    log_activity_handle(
+                    log_activity_handle_t(
                         &app,
-                        ActivityLevel::Info,
+                        ActivityLevel::Info, akt("activity.pos.wiederholt", &[("n", &requeue_events), ("pos", &requeue_positions)]).und("activity.pos.wiederholt_detail", &[]),
                         format!(
                             "phpVMS-Positionen: {requeue_events} Wiederholung(en), \
                              {requeue_positions} Positionen erneut gesendet"
@@ -423,9 +423,9 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                         "phpvms-worker terminating: account blocked (401/403). \
                          outbox cleared, no more retries"
                     );
-                    log_activity_handle(
+                    log_activity_handle_t(
                         &app,
-                        ActivityLevel::Error,
+                        ActivityLevel::Error, akt("activity.pos.gesperrt", &[]).und("activity.pos.gesperrt_detail", &[("http", &http_code)]),
                         "phpVMS lehnt deine Anfragen ab — Account gesperrt oder inaktiv",
                         Some(format!(
                             "HTTP {http_code}: VA-Admin kontaktieren und nach Freigabe neu einloggen. \
@@ -451,9 +451,9 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     requeue_positions += n;
                     if !requeue_reported {
                         requeue_reported = true;
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app,
-                            ActivityLevel::Warn,
+                            ActivityLevel::Warn, akt("activity.pos.nicht_bestaetigt", &[]).und("activity.pos.nicht_bestaetigt_detail", &[("n", &n)]),
                             "phpVMS hat einen Positions-Block nicht bestaetigt — wird erneut gesendet",
                             Some(format!(
                                 "{n} Positionen gehen noch einmal raus. Die Aufzeichnung \
@@ -488,9 +488,9 @@ fn spawn_phpvms_position_worker(app: AppHandle, flight: Arc<ActiveFlight>, clien
                     requeue_positions += n;
                     if !requeue_reported {
                         requeue_reported = true;
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app,
-                            ActivityLevel::Warn,
+                            ActivityLevel::Warn, akt("activity.pos.nicht_bestaetigt", &[]).und("activity.pos.nicht_bestaetigt_detail", &[("n", &n)]),
                             "phpVMS hat einen Positions-Block nicht bestaetigt — wird erneut gesendet",
                             Some(format!(
                                 "{n} Positionen gehen noch einmal raus. Die Aufzeichnung \
