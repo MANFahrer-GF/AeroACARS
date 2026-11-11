@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "New generations now also arrive during a flight: AeroACARS downloads them in the background like a client update and shows them. The running flight keeps its version, the new generation applies from the next flight. This needs AeroACARS 3.0.1. Refuelling in flight is now counted: if fuel is added during the flight, AeroACARS adds the amount to the fuel used, shows it in the fuel table of the landing and reports it in the activity log. Flight operations see the event in the review. With 3.0.1 the activity log also shows the notes for you in your language; cockpit and status lines stay in English."
+    "neu_text": "AeroACARS now measures the touchdown rate with the scoring module from the package. A short simulator stutter just before touchdown no longer makes the landing harder than it was. This needs AeroACARS 3.0.2; future improvements to the measurement then arrive with a new generation, without a new client. 3.0.2 also loads the complete fleet list for every airline, even if its server only returns a few entries per page."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
