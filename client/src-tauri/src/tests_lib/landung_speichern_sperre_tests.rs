@@ -23,21 +23,23 @@
             .filter(|l| !l.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
-        for direkt in ["log_activity_handle(", "log_activity_mit_meldung(", "log_activity("] {
+        for direkt in ["log_activity_handle(", "log_activity_mit_meldung(", "log_activity(", "log_activity_t(", "log_activity_handle_t("] {
             assert!(
                 !code.contains(direkt),
                 "{direkt} schreibt unter der Flugdaten-Sperre — über `aufgeschoben` gehen"
             );
         }
-        assert!(code.matches("aufgeschoben.handle(").count() >= 40, "Vorrichtung: Aufrufe nicht gefunden");
+        // Seit 11.11. auch `handle_t(` (Pilotenhinweis in drei Sprachen).
+        let aufrufe = code.matches("aufgeschoben.handle(").count() + code.matches("aufgeschoben.handle_t(").count();
+        assert!(aufrufe >= 40, "Vorrichtung: Aufrufe nicht gefunden");
         // Auch die Helfer, die unter der Sperre aufgerufen werden, schreiben
         // nur in den Puffer (Codex-Abnahme 2.0.19, P2: sie schrieben noch
         // direkt — unter der Sperre und in falscher Reihenfolge).
         for helfer in ["\nfn log_bool_change(", "\nfn log_three_state_change("] {
             let h = &src[src.find(helfer).expect("Helfer fehlt")..];
             let h = &h[..h[1..].find("\n}\n").map_or(h.len(), |i| i + 1)];
-            assert!(h.contains("aufgeschoben.handle("), "{helfer} schreibt nicht in den Puffer");
-            for direkt in ["log_activity_handle(", "log_activity_mit_meldung(", "log_activity("] {
+            assert!(h.contains("aufgeschoben.handle(") || h.contains("aufgeschoben.handle_t("), "{helfer} schreibt nicht in den Puffer");
+            for direkt in ["log_activity_handle(", "log_activity_mit_meldung(", "log_activity(", "log_activity_t(", "log_activity_handle_t("] {
                 assert!(!h.contains(direkt), "{helfer} schreibt direkt: {direkt}");
             }
         }

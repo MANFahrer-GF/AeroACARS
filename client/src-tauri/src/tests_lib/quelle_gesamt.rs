@@ -340,6 +340,8 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// — plus Nachtanken-Hinweis in drei Sprachen 11.11.: `ActivityEntry.text` (`AktivitaetText`, Schluessel + Werte),
 /// `log_activity_uebersetzbar`, `nachtanken_luft_hinweis_text` liefert die Schluessel `activity.refuel.*`.
 /// Tests `nachtanken_luft_tests` (Schluessel, altes Protokoll lesbar), `aktivitaetText.test.ts`.
+/// — plus alle Pilotenhinweise in drei Sprachen 11.11.: `akt`/`_t`-Geschwister, `teil_aus_text`,
+/// `pending_acars_texte`, `auto_start_hinweis` 4-Tupel. Tests `aktivitaet_text_tests`, `aktivitaetSchluessel.test.ts`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -350,4 +352,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "53f72dd18c3daff97c9e5d5f11c39dd9ae455d0454078977ff1a8e76fc83e6d0";
+const HASH_VOR_DER_ZERLEGUNG: &str = "afee33d3cd8efd866a567c48b76f28d2438834838e15b5fa2af095c5785388b2";
