@@ -318,6 +318,14 @@ function ComparisonTable({
 
 /** Fuel + Weight — Soll/Ist-Vergleich (v0.3.0). Sichtbar, sobald die
  *  Sprit-Auswertung oder irgendein Treibstoff- oder Gewichtswert vorliegt. */
+/** Block vom Anlassen: `block_fuel_kg` ohne den in der Luft nachgetankten Sprit. */
+export function blockVomAnlassen(
+  record: Pick<LandingRecord, "block_fuel_kg" | "nachgetankt_luft_kg">,
+): number | null {
+  if (record.block_fuel_kg == null) return null;
+  return record.block_fuel_kg - Math.max(record.nachgetankt_luft_kg ?? 0, 0);
+}
+
 export function LadeblattAbschnitt({ record }: { record: LandingRecord }) {
   const { t } = useTranslation();
   if (
@@ -383,7 +391,10 @@ export function LadeblattAbschnitt({ record }: { record: LandingRecord }) {
           rows={[
             {
               label: t("landing.block_fuel"),
-              ist: record.block_fuel_kg,
+              // 3.0.1 (DLH 41): `block_fuel_kg` trägt den in der Luft
+              // nachgetankten Sprit mit (so rechnet phpVMS). Gegen den Plan
+              // steht hier der Tank vom Anlassen, die Menge hat ihre Zeile.
+              ist: blockVomAnlassen(record),
               soll: record.planned_block_fuel_kg,
             },
             {

@@ -188,6 +188,8 @@ export interface LandingRecord {
   /** 3.0.1 (DLH 41): in der Luft nachgetankte Menge; `actual_trip_burn_kg`
    *  rechnet sie mit. Fehlt bei Landungen ohne Nachtanken und im Altbestand. */
   nachgetankt_luft_kg?: number | null;
+  /** Niedrigster Tankstand unmittelbar vor dem Nachtanken in der Luft. */
+  tank_vor_nachtanken_kg?: number | null;
   fuel_efficiency_kg_diff: number | null;
   fuel_efficiency_pct: number | null;
   /** v1.7.35: Sprit-Auswertung ohne Note — vom Rust-Client gerechnet, hier nur gerendert. */
