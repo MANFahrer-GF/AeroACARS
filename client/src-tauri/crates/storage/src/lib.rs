@@ -410,6 +410,13 @@ pub struct LandingRecord {
     pub planned_ldw_kg: Option<f32>,
     pub planned_zfw_kg: Option<f32>,
     pub actual_trip_burn_kg: Option<f32>,
+    /// 3.0.1 (DLH 41): in der Luft nachgetankte Menge. `actual_trip_burn_kg`
+    /// rechnet sie mit (Startsprit + nachgetankt − Landesprit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nachgetankt_luft_kg: Option<f32>,
+    /// Niedrigster Tankstand unmittelbar vor dem Nachtanken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tank_vor_nachtanken_kg: Option<f32>,
     pub fuel_efficiency_kg_diff: Option<f32>,
     pub fuel_efficiency_pct: Option<f32>,
     pub takeoff_weight_kg: Option<f64>,

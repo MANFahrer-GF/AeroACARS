@@ -51,7 +51,7 @@
 
     #[test]
     fn ohne_ofp_sagt_worauf_gewartet_wird() {
-        let (code, titel, text) = auto_start_hinweis(&AutoStartBeobachtung {
+        let (code, titel, text, _) = auto_start_hinweis(&AutoStartBeobachtung {
             ohne_ofp: Some("219".into()),
             naechster_nm: Some(0.2),
             ..Default::default()
@@ -65,7 +65,7 @@
     /// waehrend in Wahrheit die Pause nach einem Fehler lief.
     #[test]
     fn pause_nennt_bid_rest_und_fehler_statt_fragezeichen() {
-        let (code, _, text) = auto_start_hinweis(&AutoStartBeobachtung {
+        let (code, _, text, _) = auto_start_hinweis(&AutoStartBeobachtung {
             pause: Some((5719, 95, "not_at_departure".into())),
             ..Default::default()
         });
@@ -97,7 +97,7 @@
             ..Default::default()
         };
         assert_eq!(auto_start_hinweis(&nur_pause).0, "retry_pending");
-        let (code, _, text) = auto_start_hinweis(&AutoStartBeobachtung {
+        let (code, _, text, _) = auto_start_hinweis(&AutoStartBeobachtung {
             naechster_nm: Some(12.34),
             ..Default::default()
         });
@@ -312,7 +312,7 @@
     /// NUR, solange der Start wirklich laeuft.
     #[test]
     fn laufender_start_heisst_start_laeuft() {
-        let (code, titel, text) = auto_start_hinweis(&AutoStartBeobachtung {
+        let (code, titel, text, _) = auto_start_hinweis(&AutoStartBeobachtung {
             schon_gestartet: Some(5724),
             start_laeuft_bid: Some(5724),
             // Andere Bids duerfen das nicht verdraengen.
@@ -323,14 +323,14 @@
         assert!(titel.contains("Start läuft"), "{titel}");
         assert!(text.contains("5724"), "{text}");
         // Ohne laufenden Start bleibt es beim bisherigen Hinweis.
-        let (code, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
+        let (code, _, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
             schon_gestartet: Some(5724),
             ..Default::default()
         });
         assert_eq!(code, "bid_already_started");
         // Laeuft der Auto-Start eines ANDEREN Bids, ist dieser nicht „am
         // Starten" (Codex-Abnahme 22.09.2026: vorher globales Signal).
-        let (code, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
+        let (code, _, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
             schon_gestartet: Some(5724),
             start_laeuft_bid: Some(99),
             ..Default::default()
@@ -338,7 +338,7 @@
         assert_eq!(code, "bid_already_started");
         // Laeuft ein Start, aber fuer keinen beanspruchten Bid, gibt es
         // nichts „Laufendes" zu melden.
-        let (code, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
+        let (code, _, _, _) = auto_start_hinweis(&AutoStartBeobachtung {
             start_laeuft_bid: Some(5724),
             ..Default::default()
         });
@@ -376,7 +376,7 @@
     /// Piloten am Gate genau der Satz, was zu tun ist (Band: Titel - Text).
     #[test]
     fn hinweis_ohne_flugplan_passt_ungekuerzt_ins_band() {
-        let (code, titel, text) = auto_start_hinweis(&AutoStartBeobachtung {
+        let (code, titel, text, _) = auto_start_hinweis(&AutoStartBeobachtung {
             ohne_ofp: Some("9999".to_string()),
             ..Default::default()
         });

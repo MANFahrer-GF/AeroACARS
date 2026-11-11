@@ -1789,6 +1789,9 @@ struct FlightStats {
     /// each successful POST. Keeps the FSM decoupled from the HTTP
     /// client.
     pending_acars_logs: Vec<String>,
+    /// 3.0.1: uebersetzbarer Text zu einer Zeile aus `pending_acars_logs`
+    /// (Schluessel = die Zeile), fuer das Aktivitaetsprotokoll.
+    pending_acars_texte: std::collections::HashMap<String, AktivitaetText>,
 
     /// v0.7.17 (B-004): One-shot flag damit die „Aircraft fliegt nach
     /// ARRIVED"-Warnung pro Flug nur einmal gefeuert wird (kein Spam,
@@ -2000,6 +2003,11 @@ struct FlightStats {
     // ---- Fuel tracking ----
     block_fuel_kg: Option<f32>,
     last_fuel_kg: Option<f32>,
+    /// 3.0.1 (DLH 41, 10.11.2026): Sprit, der IN DER LUFT dazukam. Ohne ihn
+    /// war der Verbrauch „Startsprit − Landesprit" nach einem Nachtanken im
+    /// Flug um genau diese Menge zu klein (2 139 statt 22 316 kg). Gelesen
+    /// wird ueber `nachgetankt_luft`, gerechnet nur in `NachtankenLuft`.
+    nachtanken_luft: NachtankenLuft,
     // ---- Live-Loadsheet (v0.3.0) ----
     /// Letzter beobachteter ZFW-Wert vom Sim. Treibt das Live-
     /// Loadsheet-Display im Cockpit-Tab während der Boarding-Phase

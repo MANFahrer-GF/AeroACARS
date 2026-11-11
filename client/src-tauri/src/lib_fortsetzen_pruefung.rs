@@ -434,10 +434,10 @@ fn sprung_beim_fortsetzen_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
         "Der Flug läuft weiter, aber die App reicht ihn nicht mehr von selbst \
          ein — du entscheidest am Ende."
     };
-    log_activity_and_record(
+    log_activity_and_record_t(
         app,
         &flight.pirep_id,
-        ActivityLevel::Warn,
+        ActivityLevel::Warn, akt("activity.resume.trotz", &[]).und("activity.resume.trotz_detail", &[("nm", &format!("{:.1}", d.drift_nm)), ("boden", &snap.on_ground)]).und(if nach_ankunft { "activity.resume.folge_angekommen" } else { "activity.resume.folge_weiter" }, &[]),
         "Trotz erkannter Abweichung fortgesetzt".to_string(),
         Some(format!(
             "Der Simulator passte beim Fortsetzen nicht zum gespeicherten Flug \
@@ -484,10 +484,10 @@ fn wechsel_vor_der_abgabe_vermerken(app: &AppHandle, flight: &ActiveFlight, snap
         sprung_vermerken(&mut stats, d, Utc::now());
     }
     save_active_flight(app, flight);
-    log_activity_and_record(
+    log_activity_and_record_t(
         app,
         &flight.pirep_id,
-        ActivityLevel::Warn,
+        ActivityLevel::Warn, akt("activity.resume.simwechsel", &[]).und("activity.resume.simwechsel_detail", &[("nm", &format!("{:.1}", d.drift_nm))]),
         "Abgabe nach Simulatorwechsel".to_string(),
         Some(format!(
             "Der Flug war gelandet und geparkt; im Simulator ist inzwischen etwas \
@@ -589,9 +589,9 @@ fn auto_file_versuchen(app: &AppHandle, flight: &Arc<ActiveFlight>, beim_wechsel
                     Err(e) => {
                         // Der Versuch ist gelaufen; ein zweiter waere nur ein
                         // zweiter Fehlschlag. Der Pilot uebernimmt von Hand.
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app_af,
-                            ActivityLevel::Warn,
+                            ActivityLevel::Warn, akt("activity.resume.autofile_failed", &[]),
                             "Auto-File fehlgeschlagen — bitte manuell „Flug beenden\" klicken"
                                 .to_string(),
                             Some(format!("{}: {}", e.code, e.message)),
@@ -793,6 +793,20 @@ fn nach_ankunft_notiz(stats: &FlightStats, notes: &str) -> String {
 /// Welche Regel hat angeschlagen? Fuer Protokoll und PIREP-Notiz — eine
 /// Zahlenreihe allein sagt dem Pruefer nicht, WARUM das unmoeglich war
 /// (Cloud-QS 23.09.2026, Befund 8).
+/// `sprung_grund` als uebersetzbarer Teil.
+fn sprung_grund_teil(d: &ResumeDiscontinuity) -> AktivitaetTeil {
+    teil_aus_text(
+        sprung_grund(d),
+        &[
+            ("Fortsetzen trotz Abweichung bestätigt", "activity.jump.grund_bestaetigt"),
+            ("ans Ziel gesprungen", "activity.jump.grund_ziel"),
+            ("Position um mehr als 200 nm versetzt", "activity.jump.grund_weit"),
+            ("Sprit in der Luft gestiegen", "activity.jump.grund_sprit"),
+            ("Zustand beim Wiederaufnehmen nicht plausibel", "activity.jump.grund_unklar"),
+        ],
+    )
+}
+
 fn sprung_grund(d: &ResumeDiscontinuity) -> &'static str {
     if d.nur_bestaetigt {
         return "Fortsetzen trotz Abweichung bestätigt";

@@ -70,9 +70,9 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
             stillstand_stunden = stillstand.num_hours(),
             "seit über 24 h keine Aktualisierung — keine automatische Wiederaufnahme"
         );
-        log_activity_handle(
+        log_activity_handle_t(
             app,
-            ActivityLevel::Warn,
+            ActivityLevel::Warn, akt("activity.resume.not_auto", &[]).und("activity.resume.not_auto_detail", &[("h", &stillstand.num_hours())]),
             "Gespeicherter Flug nicht automatisch aufgenommen".to_string(),
             Some(format!(
                 "Der Flug wurde seit {} Stunden nicht aktualisiert und wird deshalb nicht \
@@ -190,9 +190,9 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
                     "persisted PIREP no longer in progress, discarding resume"
                 );
                 clear_persisted_flight(app, Some(&persisted.pirep_id));
-                log_activity_handle(
+                log_activity_handle_t(
                     app,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.resume.not_active", &[]).und("activity.resume.not_active_detail", &[("pirep", &persisted.pirep_id), ("status", &format!("{:?}", p.status))]),
                     "Gespeicherter Flug nicht mehr aktiv".to_string(),
                     Some(format!(
                         "PIREP {} hat serverseitig Status {:?} — Resume verworfen.",
@@ -208,9 +208,9 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
                 "persisted PIREP no longer on server (likely soft-deleted by cron), discarding resume"
             );
             clear_persisted_flight(app, Some(&persisted.pirep_id));
-            log_activity_handle(
+            log_activity_handle_t(
                 app,
-                ActivityLevel::Warn,
+                ActivityLevel::Warn, akt("activity.resume.gone", &[]).und("activity.resume.gone_detail", &[]),
                 "Gespeicherter Flug existiert nicht mehr".to_string(),
                 Some(
                     "phpVMS hat den PIREP entfernt (vermutlich Inaktivitäts-Timeout). \
@@ -331,9 +331,9 @@ async fn try_resume_flight(app: &AppHandle, state: &tauri::State<'_, AppState>) 
     let dep_gate_zustellung_unklar = persisted.stats.dep_gate_withdrawal_awaiting_confirmation;
     persisted.stats.clone().apply_to(&mut restored_stats);
     if dep_gate_zustellung_unklar {
-        log_activity_handle(
+        log_activity_handle_t(
             app,
-            ActivityLevel::Warn,
+            ActivityLevel::Warn, akt("activity.resume.gate_unklar", &[]).und("activity.resume.gate_unklar_detail", &[("pirep", &persisted.pirep_id)]),
             "Abflug-Stand: Zustellung nach Neustart unklar".to_string(),
             Some(format!(
                 "Vor dem Neustart wurde ein veralteter \"Departure Gate\"-Wert eventuell schon \
@@ -637,7 +637,7 @@ struct AutoStartBeobachtung {
 /// Watcher nicht gefeuert hat — vom konkretesten Grund zum allgemeinsten.
 /// Die Codes sind zugleich die Schluessel `bids.auto_start_skip.<code>`
 /// im Banner.
-fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, String) {
+fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, String, AktivitaetText) {
     // Der Start dieses Bids laeuft gerade: das ist jetzt die einzige
     // wichtige Auskunft. Vorher stand in diesen rund fuenf Sekunden „Bid N
     // wurde diese Session schon mal auto-gestartet" — technisch richtig,
@@ -650,6 +650,7 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
             "start_running",
             "Auto-Start: Start läuft",
             format!("Bid {bid} wird gerade gestartet — der Flug wird angelegt."),
+            akt("activity.auto_start.start_laeuft", &[]).und("activity.auto_start.start_laeuft_detail", &[("bid", &bid)]),
         );
     }
     if let Some((flug, erwartet, sim)) = &b.typ_passt_nicht {
@@ -663,6 +664,7 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
                  eigentlich (nur anderer Name)? Dann fehlt ein Aircraft-Type-Alias \
                  auf dem VPS."
             ),
+            akt("activity.auto_start.typ_passt_nicht", &[]).und("activity.auto_start.typ_passt_nicht_detail", &[("flug", flug), ("erwartet", erwartet), ("sim", sim)]),
         );
     }
     if let Some(flug) = &b.ohne_ofp {
@@ -670,6 +672,7 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
             "ofp_missing",
             "Kein Flugplan von der GSG-Seite",
             format!("Flug {flug} ohne Passagiere und Fracht. Auf der Flugseite erstellen."),
+            akt("activity.auto_start.kein_plan", &[]).und("activity.auto_start.kein_plan_detail", &[("flug", flug)]),
         );
     }
     if let Some((bid, rest, code)) = &b.pause {
@@ -680,6 +683,7 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
                 "Der letzte Start von Bid {bid} scheiterte ({code}). Neuer Versuch in \
                  {rest} s — oder manuell „Flug starten\"."
             ),
+            akt("activity.auto_start.neuer_versuch", &[]).und("activity.auto_start.neuer_versuch_detail", &[("bid", bid), ("code", code), ("rest", rest)]),
         );
     }
     if let Some(bid) = b.schon_gestartet {
@@ -690,6 +694,7 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
                 "Bid {bid} wurde diese Session schon mal auto-gestartet. \
                  Neu-Starten via Manual-Toggle oder anderem Bid."
             ),
+            akt("activity.auto_start.kein_match", &[]).und("activity.auto_start.schon_gestartet_detail", &[("bid", &bid)]),
         );
     }
     let abstand = b
@@ -703,7 +708,11 @@ fn auto_start_hinweis(b: &AutoStartBeobachtung) -> (&'static str, &'static str, 
             "Kein Bid passt zur aktuellen Position ({abstand}). Auto-Start \
              greift nur am Stand des Departure-Airports."
         ),
-    )
+        match b.naechster_nm {
+            Some(nm) => akt("activity.auto_start.kein_match", &[]).und("activity.auto_start.kein_match_nm", &[("nm", &format!("{:.1}", nm))]),
+            None => akt("activity.auto_start.kein_match", &[]).und("activity.auto_start.kein_match_fern", &[]),
+        },
+        )
 }
 
 // So lange muss der Simulator ruhig laufen, bevor der Auto-Start ihn
@@ -986,11 +995,53 @@ impl SimRuhe {
         let ruhig = (jetzt - seit).num_seconds();
         (ruhig < crate::grenzwerte::grenzwerte().cockpit.auto_start_sim_ruhe_secs.wert).then(|| {
             let auto_start_sim_ruhe_secs = crate::grenzwerte::grenzwerte().cockpit.auto_start_sim_ruhe_secs.wert;
-            format!(
-                "Der Simulator läuft erst {ruhig} s {SIM_RUHE_ZAEHLSTAND} {auto_start_sim_ruhe_secs} s."
-            )
+            sim_ruhe_zaehlstand(ruhig, auto_start_sim_ruhe_secs)
         })
     }
+}
+
+/// Der Zaehlstand-Grund der Ruhe-Regel (Banner und Protokoll).
+fn sim_ruhe_zaehlstand(ruhig: impl std::fmt::Display, secs: impl std::fmt::Display) -> String {
+    format!("Der Simulator läuft erst {ruhig} s {SIM_RUHE_ZAEHLSTAND} {secs} s.")
+}
+
+/// Ein Wartegrund des Sim-Gates (`resume_gate_takt`, `SimRuhe`) als
+/// uebersetzbarer Teil.
+fn sim_warte_teil(grund: &str) -> AktivitaetTeil {
+    if grund.contains(SIM_RUHE_ZAEHLSTAND) {
+        let zahlen: Vec<&str> = grund
+            .split(' ')
+            .filter(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_digit()))
+            .collect();
+        if let [s, n] = zahlen[..] {
+            return AktivitaetTeil::text("activity.sim.ruhig_zaehlstand", &[("s", &s), ("n", &n)]);
+        }
+    }
+    teil_aus_text(
+        grund,
+        &[
+            ("Der Simulator lädt oder ist pausiert.", "activity.sim.laedt"),
+            ("Die Position springt noch (Laden oder Flughafenwechsel).", "activity.sim.springt"),
+            ("Das Flugzeug wurde gerade gewechselt.", "activity.sim.gewechselt"),
+            ("Der Simulator lädt noch — es gibt keine brauchbare Position.", "activity.sim.keine_position"),
+            ("Der Simulator liefert keine frischen Werte.", "activity.sim.nicht_frisch"),
+        ],
+    )
+}
+
+/// Ein Grund, aus dem der Auto-Start gerade nicht greift, als uebersetzbarer Teil.
+fn auto_start_grund_teil(grund: &str) -> AktivitaetTeil {
+    teil_aus_text(
+        grund,
+        &[
+            ("Auto-Start wartet auf Sim-Daten: Aircraft-Titel fehlt. In X-Plane Settings > Network > Web API einschalten, damit AeroACARS den Flugzeug-Namen lesen kann.", "activity.auto_start.grund_titel_xplane"),
+            ("Auto-Start wartet auf Sim-Daten: Aircraft-Titel fehlt. Sim ist noch im Boot oder das Flugzeug ist nicht voll geladen.", "activity.auto_start.grund_titel"),
+            ("Auto-Start wartet auf Sim-Daten: Fuel = 0. Tank ist leer (Cold & Dark ohne Sprit) oder Sim noch im Boot.", "activity.auto_start.grund_fuel"),
+            ("Du bist in der Luft — Auto-Start funktioniert nur am Boden", "activity.auto_start.grund_luft"),
+            ("Flugzeug rollt schon — Auto-Start greift nur am Stand", "activity.auto_start.grund_rollt"),
+            ("Triebwerke sind an — Auto-Start greift nur bei kalt/stehendem Flugzeug. Manuell 'Flug starten' nutzen.", "activity.auto_start.grund_triebwerke"),
+        ],
+    )
 }
 
 /// Was der Watcher mit einem einzelnen Bid tut. Reine Entscheidung ohne
@@ -1234,9 +1285,9 @@ fn auto_start_set_enabled(
     // never came up at all and toggling off→on didn't recover (because
     // the gate `!was` blocked re-spawn after an IPC race).
     if enabled && !was {
-        log_activity_handle(
+        log_activity_handle_t(
             &app,
-            ActivityLevel::Info,
+            ActivityLevel::Info, akt("activity.auto_start.an", &[]).und("activity.auto_start.an_detail", &[]),
             "Auto-Start aktiviert".to_string(),
             Some(
                 "Watcher prüft alle 3 s ob ein Bid + Departure-Airport zueinander passen"
@@ -1244,9 +1295,9 @@ fn auto_start_set_enabled(
             ),
         );
     } else if !enabled && was {
-        log_activity_handle(
+        log_activity_handle_t(
             &app,
-            ActivityLevel::Info,
+            ActivityLevel::Info, akt("activity.auto_start.aus", &[]),
             "Auto-Start deaktiviert".to_string(),
             None,
         );
@@ -1283,6 +1334,7 @@ fn auto_start_melden(
     app: &AppHandle,
     protokoll: &mut HinweisProtokoll,
     code: &str,
+    text_ak: AktivitaetText,
     titel: &str,
     text: String,
     wiederholen_nach_s: Option<i64>,
@@ -1293,7 +1345,7 @@ fn auto_start_melden(
         .lock()
         .unwrap() = Some((jetzt, code.to_string()));
     if protokoll.protokollieren(code, jetzt, wiederholen_nach_s) {
-        log_activity_handle(app, auto_start_stufe(code), titel.to_string(), Some(text));
+        log_activity_handle_t(app, auto_start_stufe(code), text_ak, titel.to_string(), Some(text));
     }
 }
 
@@ -1397,12 +1449,12 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             if let Some(bid) = laeuft {
-                let (code, titel, text) = auto_start_hinweis(&AutoStartBeobachtung {
+                let (code, titel, text, text_ak) = auto_start_hinweis(&AutoStartBeobachtung {
                     schon_gestartet: Some(bid),
                     start_laeuft_bid: Some(bid),
                     ..Default::default()
                 });
-                auto_start_melden(&app, &mut protokoll, code, titel, text, None);
+                auto_start_melden(&app, &mut protokoll, code, text_ak, titel, text, None);
                 continue;
             }
             // v0.15.16: VPS-Alias-Cache lazy warm halten. Ohne das wäre er vor
@@ -1463,6 +1515,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     &app,
                     &mut protokoll,
                     AUTO_START_SIM_WARTET,
+                    akt("activity.auto_start.sim_wartet", &[]).mit(sim_warte_teil(&grund)),
                     "Auto-Start: wartet auf den Simulator",
                     grund,
                     None,
@@ -1542,6 +1595,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     &app,
                     &mut protokoll,
                     reason_code,
+                    akt("activity.auto_start.nicht_moeglich", &[]).mit(auto_start_grund_teil(reason_msg)),
                     "Auto-Start: nicht möglich",
                     reason_msg.to_string(),
                     Some(60),
@@ -1578,6 +1632,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     &app,
                     &mut protokoll,
                     "no_bids",
+                    akt("activity.auto_start.keine_bids", &[]).und("activity.auto_start.keine_bids_detail", &[]),
                     "Auto-Start: keine Bids verfuegbar",
                     "Im phpVMS-Bid-Tab steht aktuell nichts gebucht. Logged-in?".to_string(),
                     None,
@@ -1656,9 +1711,9 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                         // wondering why nothing happens.
                         if !no_geometry_logged.contains(&dpt_icao) {
                             no_geometry_logged.insert(dpt_icao.clone());
-                            log_activity_handle(
+                            log_activity_handle_t(
                                 &app,
-                                ActivityLevel::Warn,
+                                ActivityLevel::Warn, akt("activity.auto_start.keine_koord", &[("icao", &dpt_icao)]).und("activity.auto_start.keine_koord_detail", &[("icao", &dpt_icao)]),
                                 format!("Auto-Start für {dpt_icao} nicht möglich"),
                                 Some(format!(
                                     "Für {dpt_icao} liegen weder in der Runway-Datenbank noch \
@@ -1859,9 +1914,9 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                         // Flug nicht startete (z.B. „missing_aircraft",
                         // „not_at_departure", „flight_already_active").
                         let app_log = app_for_call.clone();
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app_log,
-                            ActivityLevel::Warn,
+                            ActivityLevel::Warn, akt("activity.auto_start.start_failed", &[]).und("activity.auto_start.start_failed_detail", &[("bid", &bid_id), ("code", &e.code)]),
                             "Auto-Start: flight_start fehlgeschlagen".to_string(),
                             Some(format!("Bid {} – Fehler: {}", bid_id, e.code)),
                         );
@@ -1895,7 +1950,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                 {
                     continue;
                 }
-                let (reason_code, title, reason_msg) = auto_start_hinweis(&beobachtung);
+                let (reason_code, title, reason_msg, text_ak) = auto_start_hinweis(&beobachtung);
                 let flug_ohne_plan = (reason_code == "ofp_missing")
                     .then(|| beobachtung.ohne_ofp.clone())
                     .flatten();
@@ -1908,6 +1963,7 @@ fn spawn_auto_start_watcher(app: AppHandle) {
                     &app,
                     &mut protokoll,
                     reason_code,
+                    text_ak,
                     title,
                     reason_msg,
                     Some(60),

@@ -883,6 +883,13 @@ fn sprit_tank_plausibel(stats: &FlightStats) -> bool {
     if !(to.is_finite() && ldg.is_finite()) || to <= 0.0 || ldg < 0.0 || ldg > to {
         return false;
     }
+    // 3.0.1: Nach einem Nachtanken in der Luft lassen sich Phasen und
+    // Reserve nicht mehr ehrlich zuordnen (der Vergleichspunkt liegt vor
+    // oder nach dem Sprung). Der Gesamtverbrauch stimmt trotzdem — er
+    // rechnet in `actual_burn_for_record` mit der nachgetankten Menge.
+    if nachgetankt_luft(stats) > 0.0 {
+        return false;
+    }
     if ldg < to * crate::grenzwerte::grenzwerte().sprit.sprit_tank_min_anteil.wert {
         return false;
     }
@@ -1273,11 +1280,440 @@ fn sprit_pirep_felder(
     }
 }
 
+/// Verbrauch vom Abheben bis zum Aufsetzen: Startsprit plus alles, was in
+/// der Luft dazukam (`startsprit_mit_nachtanken`), minus Landesprit.
 fn actual_burn_for_record(stats: &FlightStats) -> Option<f32> {
-    match (stats.takeoff_fuel_kg, stats.landing_fuel_kg) {
+    match (startsprit_mit_nachtanken(stats), stats.landing_fuel_kg) {
         (Some(toff), Some(land)) if toff > land && toff > 0.0 && land >= 0.0 => Some(toff - land),
         _ => None,
     }
+}
+
+// ---- Nachtanken in der Luft (3.0.1, DLH 41 vom 10.11.2026) ----
+//
+// Die Schwellen stehen bewusst im Code und nicht in
+// `bundle/grenzwerte/sprit.json`: `Sprit` dort hat `deny_unknown_fields`, ein
+// neuer Schluessel liesse jeden Client 3.0.0 die Generation ablehnen.
+
+/// Ab dieser Menge gilt ein Anstieg als Tanken — derselbe Wert wie
+/// `fuel_used_refuel_relatch_kg` am Gate. Darunter ist es Rauschen.
+const NACHTANKEN_LUFT_MIN_KG: f32 = 50.0;
+/// So lange muss ein Anstieg stehen, bevor er zaehlt. Ein Ausschlag der
+/// Anzeige, der gleich wieder zurueckfaellt, wird so nie zu Sprit.
+const NACHTANKEN_LUFT_BESTAETIGUNG_S: f64 = 10.0;
+/// Was ein Flugzeug hoechstens verbrennt (kg/s, grosszuegig: Nachbrenner),
+/// je Sekunde SIM-Zeit: Im Zeitraffer waechst die Grenze mit der Sim-Rate …
+const NACHTANKEN_LUFT_VERBRAUCH_MAX_KG_PRO_S: f32 = 30.0;
+/// … zuzueglich Spiel fuer Rundung. Faellt der Tank schneller, ist der
+/// Sprit nicht verbrannt, sondern verschwunden (Aussetzer, Sim-Neuladen).
+const NACHTANKEN_LUFT_SPIEL_KG: f32 = 20.0;
+/// Kommt ein Abfall binnen dieser Zeit zurueck, war er ein Ausschlag der
+/// Anzeige nach unten und die Rueckkehr kein Tanken (Feldmessung 10.11.2026,
+/// Flug gsg/30 E4x7…: −144 kg im Startlauf, eine Sekunde spaeter +146 kg).
+const NACHTANKEN_LUFT_RUECKKEHR_S: f32 = 30.0;
+/// Unter dieser Hoehe UND dieser Fahrt gilt das Flugzeug fuer die Erkennung
+/// als am Boden, auch wenn der Sim „nicht am Boden" meldet: Ein am Gate neu
+/// geladener Sim liefert einen solchen Takt (Feldmessung 10.11.2026, Flug
+/// gsg/4 lJPy…: 11 ft, 0 kt, Triebwerke aus, Tank 5 822 → 11 800 kg).
+const NACHTANKEN_LUFT_BODEN_AGL_FT: f32 = 50.0;
+const NACHTANKEN_LUFT_BODEN_GS_KT: f32 = 30.0;
+
+/// Steht das Flugzeug fuer die Nachtank-Erkennung am Boden?
+fn nachtanken_am_boden(snap: &SimSnapshot) -> bool {
+    snap.on_ground
+        || ((snap.altitude_agl_ft as f32) < NACHTANKEN_LUFT_BODEN_AGL_FT
+            && snap.groundspeed_kt < NACHTANKEN_LUFT_BODEN_GS_KT)
+}
+
+/// DIE Erkennung von Sprit, der in der Luft dazukommt — die einzige Stelle,
+/// die das entscheidet. Der Takt (`step_flight_at`) schreibt sie fort, der
+/// Streamer rechnet fuer den laufenden Verbrauchswert auf einer Kopie mit
+/// derselben Uhrzeit vor (`fuel_used_effective_kg`).
+///
+/// Gezaehlt wird ein Saldo aller Tankbewegungen, die kein Triebwerk erklaert:
+///
+/// * Anstiege sammeln sich in `offen_kg`. Erst wenn der Anstieg
+///   `NACHTANKEN_LUFT_BESTAETIGUNG_S` gestanden hat, geht er in den Saldo —
+///   auch ein langsames Tanken in kleinen Schritten. Faellt der Tank vorher
+///   zurueck, war es ein Ausschlag der Anzeige und zaehlt nicht.
+/// * Faellt der Tank schneller, als ein Triebwerk verbrennt, geht die Menge
+///   vom Saldo ab. Ein Aussetzer (Tank liest 1 000 statt 10 000 kg und kehrt
+///   zurueck) hebt sich so selbst auf, egal wie lange er dauert und ob die
+///   Rueckkehr vollstaendig ist.
+/// * Messwerte ≤ 0 werden uebersprungen.
+///
+/// Nachgetankt ist der Saldo, wenn er positiv ist. Im Zweifel wird zu wenig
+/// gezaehlt, nie zu viel: Die Menge geht in den Verbrauch, die Bewertung und
+/// die Abrechnung des Piloten.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+struct NachtankenLuft {
+    /// Letzter gueltiger Tankstand, den die Erkennung gesehen hat. Bewusst
+    /// ein eigener Stand und nicht `last_fuel_kg`: In der Luft bleibt er
+    /// stehen, solange der Landesprit noch steht — ein Durchstart verliert
+    /// so nichts. Am BODEN folgt er dem Tank, ohne zu zaehlen: Was dort
+    /// getankt wird (Zwischenlandung, „Vom Boden weiterfliegen"), ist nach
+    /// dem neuen Start kein Nachtanken in der Luft.
+    #[serde(default)]
+    stand_kg: Option<f32>,
+    /// Hoechste Sim-Rate seit `stand_am` (Zeitraffer). 0 = unbekannt = 1.
+    #[serde(default)]
+    stand_rate: f32,
+    /// Wann sich `stand_kg` zuletzt GEAENDERT hat. Manche Anzeigen fallen
+    /// in Treppen; die Stufe ist der Verbrauch der ganzen Zeit davor.
+    #[serde(default)]
+    stand_am: Option<DateTime<Utc>>,
+    /// Letzter Abfall, der als Verbrauch durchging, aber groesser war als
+    /// das Spiel — kommt er gleich zurueck, ist die Rueckkehr kein Tanken.
+    #[serde(default)]
+    abfall_kg: f32,
+    #[serde(default)]
+    abfall_am: Option<DateTime<Utc>>,
+    /// Noch nicht bestaetigter Anstieg.
+    #[serde(default)]
+    offen_kg: f32,
+    #[serde(default)]
+    offen_seit: Option<DateTime<Utc>>,
+    /// Tankstand vor dem offenen Anstieg.
+    #[serde(default)]
+    offen_davor_kg: Option<f32>,
+    /// Saldo: bestaetigte Anstiege minus unerklaerte Einbrueche.
+    #[serde(default)]
+    saldo_kg: f32,
+    /// Wann das erste Mal nachgetankt wurde.
+    #[serde(default)]
+    zuerst_am: Option<DateTime<Utc>>,
+    /// Niedrigster Tankstand vor einem Nachtanken (fuer PIREP und Pruefung).
+    #[serde(default)]
+    tank_davor_kg: Option<f32>,
+    /// Tankstand vor dem Vorgang, dessen Hinweis noch aussteht.
+    #[serde(default)]
+    vorgang_davor_kg: Option<f32>,
+    /// Bis zu dieser Menge hat der Pilot den Hinweis schon bekommen.
+    #[serde(default)]
+    gemeldet_kg: f32,
+    /// Hat der letzte Takt die Menge geaendert? Dann speichert der Streamer
+    /// sofort. Nur Laufzeit.
+    #[serde(skip)]
+    geaendert: bool,
+}
+
+impl NachtankenLuft {
+    /// In der Luft nachgetankte Menge, nie negativ.
+    fn menge_kg(&self) -> f32 {
+        if self.saldo_kg.is_finite() {
+            self.saldo_kg.max(0.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Wie `menge_kg`, zuzueglich des noch offenen Anstiegs. Nur fuer den
+    /// laufenden Verbrauchswert (`fuel_used_effective_kg`), damit er in den
+    /// Sekunden bis zur Bestaetigung nicht auf null faellt. In PIREP,
+    /// Bewertung und Abrechnung geht allein `menge_kg`.
+    fn vorlaeufig_kg(&self) -> f32 {
+        let v = self.saldo_kg + self.offen_kg.max(0.0);
+        if v.is_finite() {
+            v.max(0.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Ein Takt. Liefert, um wie viel sich `menge_kg` geaendert hat.
+    /// `sim_rate`: Zeitraffer-Faktor des Sims in diesem Takt.
+    fn takt(&mut self, live_kg: f32, sim_rate: f32, now: DateTime<Utc>) -> f32 {
+        let vorher = self.menge_kg();
+        if !live_kg.is_finite() || live_kg <= 0.0 {
+            return 0.0;
+        }
+        let sim_rate = if sim_rate.is_finite() { sim_rate.max(1.0) } else { 1.0 };
+        let Some(stand) = self.stand_kg.filter(|s| s.is_finite() && *s > 0.0) else {
+            self.stand_kg = Some(live_kg);
+            self.stand_am = Some(now);
+            self.stand_rate = sim_rate;
+            return 0.0;
+        };
+        // Wechselt die Rate zwischen zwei Staenden, gilt die hoehere.
+        let rate = self.stand_rate.max(sim_rate);
+        self.stand_rate = rate;
+        let schritt = live_kg - stand;
+        if schritt > 0.0 {
+            // Was nur einen eben gesehenen Abfall zurueckbringt, zaehlt nicht.
+            let frisch = self.abfall_am.is_some_and(|t| {
+                ((now - t).num_milliseconds() as f32 / 1000.0) <= NACHTANKEN_LUFT_RUECKKEHR_S
+            });
+            // Nur eine Rueckkehr in der Groesse des Abfalls — ein groesserer
+            // Anstieg ist Tanken und zaehlt ganz.
+            let rueckkehr = frisch && schritt <= self.abfall_kg * 1.5;
+            let zurueck = if rueckkehr { schritt.min(self.abfall_kg.max(0.0)) } else { 0.0 };
+            self.abfall_kg = if rueckkehr { self.abfall_kg - zurueck } else { 0.0 };
+            let zaehlbar = schritt - zurueck;
+            if zaehlbar > 0.0 {
+                if self.offen_kg <= 0.0 {
+                    self.offen_kg = 0.0;
+                    self.offen_seit = Some(now);
+                    self.offen_davor_kg = Some(stand + zurueck);
+                }
+                self.offen_kg += zaehlbar;
+            }
+        } else if schritt < 0.0 {
+            let dt = self
+                .stand_am
+                .map(|t| (now - t).num_milliseconds() as f32 / 1000.0)
+                .filter(|d| d.is_finite() && *d > 0.0)
+                .unwrap_or(0.0);
+            let ab = -schritt;
+            if ab > NACHTANKEN_LUFT_SPIEL_KG + NACHTANKEN_LUFT_VERBRAUCH_MAX_KG_PRO_S * dt * rate {
+                // Nicht verbrannt. Zuerst nimmt es einen offenen Anstieg
+                // zurueck (Ausschlag nach oben und wieder herunter), der
+                // Rest geht vom Saldo ab.
+                let aus_offen = ab.min(self.offen_kg.max(0.0));
+                self.offen_kg -= aus_offen;
+                self.saldo_kg -= ab - aus_offen;
+            } else if ab > NACHTANKEN_LUFT_SPIEL_KG {
+                self.abfall_kg = ab;
+                self.abfall_am = Some(now);
+            }
+        }
+        if schritt != 0.0 {
+            self.stand_kg = Some(live_kg);
+            self.stand_am = Some(now);
+            self.stand_rate = sim_rate;
+        }
+        self.offenen_anstieg_pruefen(live_kg, now);
+        let diff = self.menge_kg() - vorher;
+        if diff != 0.0 {
+            self.geaendert = true;
+        }
+        diff
+    }
+
+    /// Steht der offene Anstieg lange genug, geht er in den Saldo.
+    fn offenen_anstieg_pruefen(&mut self, live_kg: f32, now: DateTime<Utc>) {
+        if self.offen_kg <= 0.0 {
+            return;
+        }
+        let steht_s = self
+            .offen_seit
+            .map(|t| (now - t).num_milliseconds() as f64 / 1000.0)
+            .unwrap_or(0.0);
+        if steht_s < NACHTANKEN_LUFT_BESTAETIGUNG_S {
+            return;
+        }
+        let davor = self.offen_davor_kg.unwrap_or(live_kg);
+        let geblieben = live_kg - davor;
+        // Der Verbrauch waehrend des Wartens zehrt nicht am Tanken: Steht
+        // der Anstieg im Wesentlichen, zaehlt er ganz; sonst nur, was blieb.
+        let menge = if geblieben >= self.offen_kg * 0.9 {
+            self.offen_kg
+        } else {
+            geblieben.min(self.offen_kg)
+        };
+        if self.offen_kg > NACHTANKEN_LUFT_MIN_KG && menge > NACHTANKEN_LUFT_MIN_KG {
+            self.saldo_kg += menge;
+            if self.saldo_kg > 0.0 {
+                self.zuerst_am.get_or_insert(self.offen_seit.unwrap_or(now));
+                self.tank_davor_kg = Some(self.tank_davor_kg.map_or(davor, |alt| alt.min(davor)));
+                if self.vorgang_davor_kg.is_none() {
+                    self.vorgang_davor_kg = Some(davor);
+                }
+            }
+            tracing::warn!(
+                menge_kg = menge,
+                tank_davor_kg = davor,
+                live_kg,
+                saldo_kg = self.saldo_kg,
+                "Nachtanken in der Luft erkannt"
+            );
+        }
+        self.offen_kg = 0.0;
+        self.offen_seit = None;
+        self.offen_davor_kg = None;
+    }
+
+    /// Steht ein Hinweis an den Piloten aus? Erst, wenn kein Anstieg mehr
+    /// offen ist — sonst nennte der Hinweis eine Teilmenge. Einmal je
+    /// Tankvorgang.
+    fn hinweis_faellig(&mut self) -> Option<NachtankenHinweis> {
+        let summe = self.menge_kg();
+        // Ein Einbruch nach dem Hinweis kann die Menge wieder senken.
+        if self.gemeldet_kg > summe {
+            self.gemeldet_kg = summe;
+        }
+        let neu = summe - self.gemeldet_kg;
+        if self.offen_kg > 0.0 || neu <= 0.5 {
+            return None;
+        }
+        self.gemeldet_kg = summe;
+        self.geaendert = true;
+        Some(NachtankenHinweis {
+            menge_kg: neu,
+            summe_kg: summe,
+            tank_davor_kg: self.vorgang_davor_kg.take(),
+        })
+    }
+}
+
+/// Wird in dieser Lage Nachtanken in der Luft gezaehlt? Zwischen Abheben und
+/// Aufsetzen, nie am Boden, nie bei Replay-Verdacht. Pause und Slew zaehlen
+/// mit: Wer im Sim-Menue tankt, hat den Sprit an Bord.
+fn nachtanken_luft_moeglich(stats: &FlightStats, on_ground: bool) -> bool {
+    stats.takeoff_at.is_some()
+        && stats.landing_fuel_kg.is_none()
+        && !on_ground
+        && !stats.replay_verdacht
+}
+
+/// Ein Schritt der Erkennung in der gegebenen Lage — der eine Weg fuer den
+/// Takt und fuer die Vorschau des Streamers.
+fn nachtanken_luft_schritt(
+    n: &mut NachtankenLuft,
+    stats: &FlightStats,
+    live_kg: f32,
+    on_ground: bool,
+    sim_rate: f32,
+    now: DateTime<Utc>,
+) {
+    if nachtanken_luft_moeglich(stats, on_ground) {
+        n.takt(live_kg, sim_rate, now);
+    } else if stats.takeoff_at.is_some()
+        && !stats.replay_verdacht
+        && live_kg.is_finite()
+        && live_kg > 0.0
+    {
+        // Ein Anstieg kurz vor dem Aufsetzen wird am Boden noch bestaetigt
+        // (oder verworfen) — neu gezaehlt wird dort nichts.
+        let vorher = n.menge_kg();
+        n.offenen_anstieg_pruefen(live_kg, now);
+        if n.menge_kg() != vorher {
+            n.geaendert = true;
+        }
+        // Am Boden folgt der Vergleichsstand dem Tank, ohne zu zaehlen —
+        // sonst erschiene am Boden getankter Sprit nach dem naechsten Start
+        // als Nachtanken in der Luft (Zwischenlandung, GAF 278 „Vom Boden
+        // weiterfliegen"). In der Luft mit stehendem Landesprit bleibt er
+        // stehen, bis der Durchstart den Landesprit abraeumt.
+        if on_ground {
+            n.stand_kg = Some(live_kg);
+            n.stand_am = Some(now);
+            n.stand_rate = sim_rate;
+        }
+    }
+}
+
+/// Der Takt-Teil: die Erkennung fortschreiben.
+fn nachtanken_luft_takt(
+    stats: &mut FlightStats,
+    live_kg: f32,
+    on_ground: bool,
+    sim_rate: f32,
+    now: DateTime<Utc>,
+) {
+    let mut n = stats.nachtanken_luft;
+    nachtanken_luft_schritt(&mut n, stats, live_kg, on_ground, sim_rate, now);
+    stats.nachtanken_luft = n;
+}
+
+/// Dasselbe auf einer Kopie: Um wie viel aendert der Takt mit diesen Werten
+/// die vorlaeufige Menge (`vorlaeufig_kg`)? Fuer den Streamer, der
+/// `fuel_used_kg` VOR dem Takt setzt.
+fn nachtanken_luft_vorschau(
+    stats: &FlightStats,
+    live_kg: f32,
+    on_ground: bool,
+    sim_rate: f32,
+    now: DateTime<Utc>,
+) -> f32 {
+    let mut n = stats.nachtanken_luft;
+    let vorher = n.vorlaeufig_kg();
+    nachtanken_luft_schritt(&mut n, stats, live_kg, on_ground, sim_rate, now);
+    n.vorlaeufig_kg() - vorher
+}
+
+/// In der Luft nachgetankte Menge, nie negativ.
+fn nachgetankt_luft(stats: &FlightStats) -> f32 {
+    stats.nachtanken_luft.menge_kg()
+}
+
+/// Startsprit plus alles, was in der Luft dazukam. Basis JEDES Verbrauchs
+/// „Abheben bis Aufsetzen" — nie `takeoff_fuel_kg` allein dafuer nehmen.
+fn startsprit_mit_nachtanken(stats: &FlightStats) -> Option<f32> {
+    stats.takeoff_fuel_kg.map(|t| t + nachgetankt_luft(stats))
+}
+
+/// Blocksprit plus alles, was in der Luft dazukam: alles, was auf diesem
+/// Flug an Bord kam. DAS ist der Block, den der Client nach aussen meldet —
+/// phpVMS (`block_fuel`), PIREP-Felder, MQTT und Landungsdatensatz —, immer
+/// zusammen mit dem eigenen Feld „in der Luft nachgetankt".
+/// `stats.block_fuel_kg` selbst bleibt der Wert vom Anlassen.
+///
+/// phpVMS rechnet `fuel_onboard = block_fuel − fuel_used` und bezahlt den
+/// Sprit ueber den Block. Stiege nur der Verbrauch, wuerde der Resttank
+/// negativ; stiege keiner von beiden, waere der nachgetankte Sprit nie
+/// bezahlt (DLH 41: 20,7 t).
+fn blocksprit_mit_nachtanken(stats: &FlightStats) -> Option<f32> {
+    stats.block_fuel_kg.map(|b| b + nachgetankt_luft(stats))
+}
+
+/// Verbrauch ab Block bis zum aktuellen Tankstand in kg — der `fuel_used`
+/// von phpVMS. `None`, solange nichts Sinnvolles herauskommt.
+fn verbrauch_ab_block_kg(stats: &FlightStats) -> Option<f32> {
+    verbrauch_ab_block_bis_kg(stats, stats.last_fuel_kg)
+}
+
+/// Wie [`verbrauch_ab_block_kg`], mit einem vorgegebenen Resttank.
+fn verbrauch_ab_block_bis_kg(stats: &FlightStats, rest_kg: Option<f32>) -> Option<f32> {
+    match (blocksprit_mit_nachtanken(stats), rest_kg) {
+        (Some(b), Some(c)) if b > 0.0 && c >= 0.0 && b > c => Some(b - c),
+        _ => None,
+    }
+}
+
+/// Der Hinweis an den Piloten, sobald ein Tankvorgang in der Luft steht.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct NachtankenHinweis {
+    /// Menge dieses Tankvorgangs.
+    menge_kg: f32,
+    /// Summe des ganzen Fluges.
+    summe_kg: f32,
+    /// Tankstand vor DIESEM Vorgang.
+    tank_davor_kg: Option<f32>,
+}
+
+/// Zeile und Detail fuer das Aktivitaetsprotokoll.
+/// Der deutsche Wortlaut ist der Rueckfall; `AktivitaetText` traegt dieselben
+/// Teile als Schluessel (`activity.refuel.*`) fuer de/en/it.
+fn nachtanken_luft_hinweis_text(h: &NachtankenHinweis) -> (String, String, AktivitaetText) {
+    let mut teile = Vec::new();
+    let zeile = format!(
+        "In der Luft nachgetankt: {:.0} kg. Der Verbrauch dieses Fluges rechnet die Menge mit.",
+        h.menge_kg
+    );
+    let mut detail = match h.tank_davor_kg {
+        Some(d) => {
+            teile.push(AktivitaetTeil::neu("activity.refuel.before", &[("kg", d)]));
+            format!("Tank davor {d:.0} kg")
+        }
+        None => String::new(),
+    };
+    if h.summe_kg - h.menge_kg > 0.5 {
+        teile.push(AktivitaetTeil::neu("activity.refuel.total", &[("kg", h.summe_kg)]));
+        if !detail.is_empty() {
+            detail.push_str(" · ");
+        }
+        detail.push_str(&format!("auf diesem Flug insgesamt {:.0} kg", h.summe_kg));
+    }
+    if !detail.is_empty() {
+        detail.push_str(" · ");
+    }
+    detail.push_str("Die Flugleitung sieht den Vorgang in der Prüfung.");
+    teile.push(AktivitaetTeil::neu("activity.refuel.review", &[]));
+    let text = AktivitaetText {
+        zeile: AktivitaetTeil::neu("activity.refuel.line", &[("kg", h.menge_kg)]),
+        detail: teile,
+    };
+    (zeile, detail, text)
 }
 
 /// v0.12.4 (Spec docs/spec/v0.12.4-score-consistency.md, LE5): OFP-Trip-

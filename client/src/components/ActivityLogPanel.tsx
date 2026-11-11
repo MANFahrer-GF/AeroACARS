@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { invoke } from "../lib/ipc";
 import { useTranslation } from "react-i18next";
 import { useConfirm } from "./ConfirmDialog";
+import { aktivitaetAnzeige, type AktivitaetText } from "../lib/aktivitaetText";
 
 interface ActivityEntry {
   timestamp: string;
   level: "info" | "warn" | "error";
   message: string;
   detail?: string;
+  text?: AktivitaetText;
 }
 
 /** Format an ISO timestamp as HH:MM in the local timezone — same format as
@@ -20,7 +22,7 @@ function fmtTime(iso: string): string {
 }
 
 export function ActivityLogPanel() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
 
@@ -83,20 +85,23 @@ export function ActivityLogPanel() {
       ) : (
         <ol className="activity-log__list">
           {/* Newest at the top — same as smartcars. */}
-          {[...entries].reverse().map((e, i) => (
+          {[...entries].reverse().map((e, i) => {
+            const z = aktivitaetAnzeige(e, (k, w) => t(k, w ?? {}), (k) => i18n.exists(k));
+            return (
             <li
               key={`${e.timestamp}-${i}`}
               className={`activity-log__entry activity-log__entry--${e.level}`}
             >
               <span className="activity-log__time">{fmtTime(e.timestamp)}</span>
               <div className="activity-log__body">
-                <span className="activity-log__message">{e.message}</span>
-                {e.detail && (
-                  <span className="activity-log__detail">{e.detail}</span>
+                <span className="activity-log__message">{z.message}</span>
+                {z.detail && (
+                  <span className="activity-log__detail">{z.detail}</span>
                 )}
               </div>
             </li>
-          ))}
+            );
+          })}
         </ol>
       )}
     </section>

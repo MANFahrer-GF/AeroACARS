@@ -1825,7 +1825,8 @@
     "zusatz": {
       "title": "Additional fields",
       "hinweis": "Additional fields from the scoring module. They are stored and shown unchanged and do not count towards the score."
-    }
+    },
+    "refuelled_in_flight": "Refuelled in flight"
   },
   "about": {
     "lizenz": "© {{jahr}} Thomas Kant · Proprietary, for German Sky Group pilots only. Redistribution and circumventing the access restriction are prohibited.",
@@ -1843,7 +1844,7 @@
     "pin": "The open flight keeps generation {{n}}.",
     "neu_wartet": "New package {{n}} downloaded, becomes active on the next start.",
     "neu_starten": "Restart now",
-    "neu_starten_nach_flug": "Restart possible after the flight.",
+    "neu_starten_nach_flug": "Applies from the next flight: restart after the flight.",
     "pruefen": "Check for a new package",
     "pruefe": "Checking …",
     "ergebnis_kein_neueres": "No newer package.",
@@ -1858,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "AeroACARS 3 leaves beta: version 3.0.0 replaces AeroACARS 2 and arrives automatically through the update notice. A flight's Journal tab now also shows all PIREP fields grouped by topic and the finances. Logbook and flight log are now one tab: open a flight in the logbook to see the full flight map with replay, the flight log with checklist and flight profile, and the journal in one place. Flight log items appear on the map, “On map” jumps to the moment, and “View landing” opens that flight’s landing. The separate flight log tab is gone. A flight without a flight plan from the GSG site has no passengers and no cargo. AeroACARS now tells you so. With the new AeroACARS version you enter the load yourself when starting a VFR flight, and a waiting auto-start warns you in the sim band and with a notification. A quick beacon switch test no longer triggers the ground announcements: the beacon only counts once it stays on for 15 seconds and the aircraft is loaded, at the latest the pushback counts. With the new AeroACARS version the boarding music also ends only then. In the bookings list, “Book a flight” now takes you straight to the schedule, live flights, free flight and SkyAdventures on the website. With the new AeroACARS version, “Crew Story” on a booking opens a small window for the story of that flight. The live map now shows the picture points of all flights, even during a flight. While a flight is running, earlier flights are collapsed in the Pictures tab; a click on the header expands them. Moving the mouse over a picture point on the maps now shows a small preview of the picture with flight, time, altitude and phase. The picture points on the live map and the flight map can now be hidden with the “Pictures” switch. Pictures can now be viewed large: with the magnifier on the tile, a click on the picture on the right, and the points on the maps. The flight map now shows the pictures of the flight as points. Pictures can now also be sent from a tablet over the LAN bridge. With the new AeroACARS version: photos taken during deboarding still belong to the flight. For up to 30 minutes after filing, pictures go to the filed flight automatically while the aircraft stays parked. Pictures in windowed mode now show only the simulator image, without title bar and border. The live map has been rebuilt from the inside: when switching between light, dark and satellite, route, track, traffic and network display simply stay in place. The map bar has fixed buttons in a few groups, the flight info panel can be collapsed, and nothing overlaps any more, even in small windows. Picture points are on the map as soon as it opens, even without a running flight, and the globe stays when the map is changed and after a restart."
+    "neu_text": "New generations now also arrive during a flight: AeroACARS downloads them in the background like a client update and shows them. The running flight keeps its version, the new generation applies from the next flight. This needs AeroACARS 3.0.1. Refuelling in flight is now counted: if fuel is added during the flight, AeroACARS adds the amount to the fuel used, shows it in the fuel table of the landing and reports it in the activity log. Flight operations see the event in the review. With 3.0.1 the activity log also shows the notes for you in your language; cockpit and status lines stay in English."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -1975,6 +1976,279 @@
     "age_hours": "{{std}} h ago",
     "age_days": "{{tage}} days ago",
     "age_stale": "outdated"
+  },
+  "activity": {
+    "refuel": {
+      "line": "Refuelled in flight: {{kg}} kg. This flight's fuel burn includes that amount.",
+      "before": "tank before {{kg}} kg",
+      "total": "{{kg}} kg in total on this flight",
+      "review": "Flight operations will see this in the review."
+    },
+    "roh": "{{text}}",
+    "hoppie": {
+      "rx_started": "Hoppie: reception started as {{cs}}",
+      "rx_stopped": "Hoppie: reception stopped",
+      "callsign_old": "Hoppie: own callsign {{alt}} belonged to an earlier flight — now using {{neu}}",
+      "callsign_change": "Hoppie: callsign {{alt}} becomes {{neu}}, reconnecting reception",
+      "reconnect_failed": "Hoppie: reconnecting under the new callsign failed — please press “Start reception”",
+      "poll_rejected": "Hoppie: poll rejected",
+      "poll_failed": "Hoppie: poll failed"
+    },
+    "cpdlc": {
+      "handover_ignored": "CPDLC: HANDOVER request to {{next}} from unexpected sender ({{from}}) ignored",
+      "handover_ignored_detail": "Expected the currently connected station ({{station}}). The handover was NOT carried out.",
+      "handover": "CPDLC: handover to {{next}}",
+      "end_service_handover": "CPDLC: {{station}} ended service — handover to {{next}}",
+      "end_service": "CPDLC: {{station}} ended service (END SERVICE)",
+      "end_service_detail": "No next station given — please log on manually to the next responsible station."
+    },
+    "lan": {
+      "started": "LAN remote started automatically (port {{port}})",
+      "start_failed": "LAN remote could not start automatically"
+    },
+    "login": {
+      "relogin": "Logged in again — position updates continue with the previous credentials",
+      "relogin_detail": "The current flight keeps reporting to phpVMS with the credentials from before this login until it ends. If problems persist, end or cancel the flight and then start it again.",
+      "account_inactive": "AeroACARS session ended — GSG account not active",
+      "account_inactive_detail": "Status gate: {{reason}}. Please log in again or contact VA management.",
+      "logged_out": "phpVMS logged you out — account locked, inactive or API key revoked",
+      "logged_out_detail": "Please contact your VA admin. Once cleared, simply log in again."
+    },
+    "resume": {
+      "not_auto": "Saved flight not resumed automatically",
+      "not_auto_detail": "The flight has not been updated for {{h}} hours and is therefore not resumed by itself. It stays saved.",
+      "not_active": "Saved flight no longer active",
+      "not_active_detail": "PIREP {{pirep}} has status {{status}} on the server — resume discarded.",
+      "gone": "Saved flight no longer exists",
+      "gone_detail": "phpVMS removed the PIREP (probably an inactivity timeout). Please start the flight again or file it as a manual PIREP.",
+      "gate_unklar": "Departure stand: delivery unclear after restart",
+      "gate_unklar_detail": "Before the restart an outdated “Departure Gate” value may already have been sent to phpVMS — whether it arrived can no longer be determined after the restart. If the departure stand in PIREP {{pirep}} is wrong, please check it manually or tell the VA team.",
+      "queued": "Flight queued for a later retry instead of cancelled — PIREP {{pirep}}",
+      "queued_detail": "Temporary error while filing. The PIREP will be filed in the background as soon as the connection is back.",
+      "filed": "Flight filed properly instead of cancelled — PIREP {{pirep}}",
+      "filed_detail": "The server accepted the PIREP.",
+      "autofile_cancel_failed": "Auto-file before cancelling failed ({{code}}) — please confirm again",
+      "warte_sim": "Waiting for the simulator — the flight goes live once the sim is loaded and steady",
+      "warte_sim_detail": "Resuming after an app/sim restart: no streaming and no phpVMS posts until the simulator is loaded and delivering steady data.",
+      "lange": "The flight has been waiting unusually long for the simulator",
+      "lange_detail": "Is the simulator paused, in slew mode or running time acceleration? Until then AeroACARS records nothing. Alternatively, discard the flight.",
+      "lage_nicht": "Situation does not match the flight — not resumed, please confirm in the banner",
+      "boden_nicht": "Continuing from the ground not possible — the flight continues in its previous phase",
+      "boden_nicht_detail": "When going live the situation no longer matched (not on the ground, at the destination or landing already begun)",
+      "boden": "Continuing from the ground — new departure, destination remains {{arr}}",
+      "boden_detail": "On the ground after the sim restart at LAT {{lat}}° · LON {{lon}}°. The flight is set to taxi; departure time and takeoff values stay the original ones. The jump is noted for the review.",
+      "bereit": "Simulator ready — flight is live",
+      "trotz": "Resumed despite a detected mismatch",
+      "trotz_detail": "The simulator did not match the saved flight when resuming (position {{nm}} nm, on ground: {{boden}}).",
+      "folge_angekommen": "The flight had already landed and parked — it will be filed with the arrival values; the change is noted.",
+      "folge_weiter": "The flight continues, but the app no longer files it by itself — you decide at the end.",
+      "simwechsel": "Filing after a simulator change",
+      "simwechsel_detail": "The flight had landed and parked; something else is now loaded in the simulator (position {{nm}} nm away). The arrival values are filed; the change is noted.",
+      "autofile_failed": "Auto-file failed — please click “End flight” manually",
+      "auto": "Flight resumed automatically",
+      "sim_pause": "Sim pause ended — flight resumed",
+      "manuell": "Flight resumed",
+      "drift_extrem": "Very large reposition {{nm}} nm. Check that the right flight is loaded.",
+      "drift_warn": "Unusual reposition {{nm}} nm",
+      "drift_info": "Repositioned {{nm}} nm",
+      "pause_dauer": "Pause duration: {{s}} s",
+      "vorher": "Before: LAT {{lat}}° · LON {{lon}}° · ALT {{alt}} ft",
+      "jetzt": "Now: LAT {{lat}}° · LON {{lon}}° · ALT {{alt}} ft",
+      "typ_anders": "Aircraft mismatch after resume: sim reports {{sim}}, bid expects {{bid}}",
+      "typ_anders_detail": "If you really are loading a different aircraft, cancel the current PIREP and start a new flight with the matching bid. Otherwise load the correct aircraft in the sim (bid ICAO: {{bid}}). If it is the same aircraft and the sim only reports a different type string, add an aircraft alias {{bid}} for {{sim}} in the recorder admin.",
+      "lage_banner": "Situation does not match the flight — please confirm in the banner"
+    },
+    "lage": {
+      "kein_wert": "The simulator is not yet delivering a real position (loading screen/menu).",
+      "am_boden": "The aircraft is on the ground in the sim, but the flight was airborne.",
+      "sprit": "There is more fuel on board in the sim than before the interruption — a newly loaded state.",
+      "zu_weit": "The aircraft is {{nm}} nm away from the last position (allowed {{erlaubt}} nm).",
+      "passt": "Situation matches",
+      "sim_zurueck": "Simulator back — situation does not match the flight, recording paused",
+      "letzte_pos": "Last position: LAT {{lat}}° · LON {{lon}}°",
+      "jetzt_sim": "Now in the sim: LAT {{lat}}° · LON {{lon}}° · ALT {{alt}} ft",
+      "banner_waehlen": "Please confirm in the banner: move back to the last position and “Check position”, continue anyway (will be noted) or discard the flight."
+    },
+    "sim": {
+      "warten": "Waiting for the simulator",
+      "laedt": "The simulator is loading or paused.",
+      "springt": "The position is still jumping (loading or airport change).",
+      "gewechselt": "The aircraft was just changed.",
+      "keine_position": "The simulator is still loading — there is no usable position.",
+      "nicht_frisch": "The simulator is not delivering fresh values.",
+      "ruhig_zaehlstand": "The simulator has been steady for only {{s}} s — checked after {{n}} s.",
+      "paused": "Simulator paused — AeroACARS pauses recording.",
+      "letzte_pos": "Last known position: LAT {{lat}}° · LON {{lon}}° · ALT {{alt}} ft",
+      "getrennt": "Sim disconnected — flight paused. Click “Resume flight” once you have repositioned.",
+      "getrennt_pos": "Last known position: LAT {{lat}}° · LON {{lon}}° · HDG {{hdg}}° · ALT {{alt}} ft · fuel {{fuel}} kg · ZFW {{zfw}}",
+      "prozess_weg": "Sim process: NO LONGER found (probably closed/crashed).",
+      "prozess_laeuft": "Sim process still running — only the data connection is gone.",
+      "reload": "Sim reload detected — recording paused",
+      "reload_detail": "Before: FL{{fl}} airborne · now: {{alt}} ft on the ground at LAT {{lat}}° LON {{lon}}° (drop: {{drop}} ft). Please choose in the banner: move back to the cruise position and check position, or continue anyway — the jump is recorded in the activity log.",
+      "erkannt": "Simulator detected automatically: {{sim}}"
+    },
+    "jump": {
+      "impossible": "Impossible jump detected on resume",
+      "grund_bestaetigt": "Resuming despite the mismatch confirmed",
+      "grund_ziel": "jumped to the destination",
+      "grund_weit": "position moved by more than 200 nm",
+      "grund_sprit": "fuel increased in the air",
+      "grund_unklar": "state on resume not plausible",
+      "werte_pause": "Fuel diff {{fuel}} kg · altitude diff {{alt}} ft · drift {{nm}} nm — physically implausible (no normal burn/flight), probably a reload/new load state during the pause.",
+      "werte_neustart": "Fuel diff {{fuel}} kg · altitude diff {{alt}} ft · drift {{nm}} nm — physically implausible (no normal burn/flight), probably a reload/new load state during an app or sim restart."
+    },
+    "auto_start": {
+      "an": "Auto-start enabled",
+      "an_detail": "Checks every 3 s whether a bid and the departure airport match",
+      "aus": "Auto-start disabled",
+      "keine_koord": "Auto-start not possible for {{icao}}",
+      "keine_koord_detail": "Neither the runway database nor phpVMS has coordinates for {{icao}} — auto-start cannot check whether you are there. Please start the flight manually.",
+      "start_failed": "Auto-start: flight start failed",
+      "start_failed_detail": "Bid {{bid}} – error: {{code}}",
+      "start_laeuft": "Auto-start: start in progress",
+      "start_laeuft_detail": "Bid {{bid}} is being started — the flight is being created.",
+      "typ_passt_nicht": "Auto-start: aircraft does not match",
+      "typ_passt_nicht_detail": "Bid {{flug}} expects {{erwartet}}, the sim has {{sim}} loaded. Auto-start does not apply here — please use “Start anyway” manually (wetlease) or load the matching aircraft. Tip: is it actually the right type (just a different name)? Then an aircraft type alias is missing on the server.",
+      "kein_plan": "No flight plan from the GSG site",
+      "kein_plan_detail": "Flight {{flug}} has no passengers and no cargo. Create the plan on the flight page.",
+      "neuer_versuch": "Auto-start: retrying shortly",
+      "neuer_versuch_detail": "The last start of bid {{bid}} failed ({{code}}). Retrying in {{rest}} s — or use “Start flight” manually.",
+      "kein_match": "Auto-start: no match",
+      "schon_gestartet_detail": "Bid {{bid}} was already auto-started in this session. Restart via the manual toggle or another bid.",
+      "kein_match_nm": "No bid matches the current position ({{nm}} nm to the nearest departure airport). Auto-start only applies at a stand of the departure airport.",
+      "kein_match_fern": "No bid matches the current position (no departure airport in range). Auto-start only applies at a stand of the departure airport.",
+      "sim_wartet": "Auto-start: waiting for the simulator",
+      "nicht_moeglich": "Auto-start: not possible",
+      "keine_bids": "Auto-start: no bids available",
+      "keine_bids_detail": "Nothing is currently booked in the phpVMS bids tab. Are you logged in?",
+      "grund_titel_xplane": "Auto-start is waiting for sim data: aircraft title missing. Enable X-Plane Settings > Network > Web API so AeroACARS can read the aircraft name.",
+      "grund_titel": "Auto-start is waiting for sim data: aircraft title missing. The sim is still booting or the aircraft isn't fully loaded.",
+      "grund_fuel": "Auto-start is waiting for sim data: fuel = 0. The tank is empty (cold & dark without fuel) or the sim is still booting.",
+      "grund_luft": "You are airborne — auto-start only works on the ground",
+      "grund_rollt": "The aircraft is already taxiing — auto-start only applies at the stand",
+      "grund_triebwerke": "Engines are running — auto-start only works on a cold-and-dark aircraft. Use 'Start flight' manually."
+    },
+    "pirep": {
+      "accident_widerspruch": "Pilot disputed the accident classification — filing as a hard landing",
+      "accident_widerspruch_detail": "Previous classification: kind={{kind}}, reasons=[{{reasons}}]",
+      "file_failed": "PIREP filing failed",
+      "file_failed_queue": "{{fehler}} — queue also broken, the flight stays active for a retry",
+      "queued": "PIREP queued: {{cs}} {{dep}} – {{arr}}",
+      "queued_detail": "Will be filed automatically once the connection is back. You can start your next flight.",
+      "server_cancel": "PIREP was cancelled by the server",
+      "server_cancel_detail": "{{quelle}}: phpVMS no longer has the current PIREP (removed or cancelled). Please file it as a manual PIREP.",
+      "landung_nicht_gemeldet": "Landing could not be reported to the server",
+      "landung_nicht_gemeldet_detail": "There was no connection at touchdown. The flight report is still filed; the flight log delivers the landing afterwards. The rating on the website may therefore appear later."
+    },
+    "queue": {
+      "noch_nicht": "PIREP still not filed after {{n}} attempts: {{cs}} {{dep}} – {{arr}}",
+      "bleibt": "The flight stays in the queue and will keep being retried (now at longer intervals) — if problems persist, please tell the VA team (PIREP ID {{pirep}}).",
+      "nachgereicht": "Queued PIREP filed afterwards: {{cs}} {{dep}} – {{arr}}",
+      "nachgereicht_detail": "After {{n}} attempt(s) — the connection was back",
+      "abgelehnt": "PIREP {{cs}} rejected by the server — queue entry removed",
+      "abgelehnt_detail": "If you wanted to file the flight: check the phpVMS website (the PIREP may already be filed or cancelled)."
+    },
+    "netz": {
+      "1236": "Connection was interrupted (1236 — router NAT eviction or similar). Retrying automatically.",
+      "10053": "Connection aborted locally (10053). Retrying automatically.",
+      "10054": "Connection closed by the server (10054). Retrying automatically.",
+      "timeout": "Server response timeout. Retrying automatically.",
+      "dns": "DNS resolution failed. Check your internet connection.",
+      "connect": "Could not reach the phpVMS server. Retrying automatically.",
+      "sonst": "Network error: {{fehler}}",
+      "unbekannt": "unknown"
+    },
+    "start": {
+      "typ_abgeleitet": "Aircraft type missing in phpVMS for {{reg}} — derived from the simulator title: {{typ}}",
+      "typ_unbekannt": "Aircraft type unknown for {{reg}} — the landing rating works without a type reference",
+      "spurweite": "Gear track from the aircraft file: {{m}} m",
+      "manual": "Manual-mode flight started: {{cs}} {{dep}} – {{arr}} (block {{block}} kg, ETA {{eta}} min)"
+    },
+    "ofp": {
+      "geladen_direkt": "SimBrief OFP loaded (direct, latest version)",
+      "geladen": "SimBrief OFP loaded",
+      "geladen_detail": "Planned block {{block}} kg · trip {{trip}} kg · TOW {{tow}} kg",
+      "geladen_id": "OFP {{ofp}}",
+      "unbrauchbar": "SimBrief OFP could not be loaded",
+      "unbrauchbar_detail": "OFP ID {{id}} returns no usable data — the Landing tab therefore shows no target values. Please create a fresh OFP on simbrief.com.",
+      "fetch_failed": "SimBrief OFP fetch failed",
+      "fetch_failed_detail": "OFP ID {{id}} could not be loaded ({{fehler}}). The Landing tab therefore shows no target values. Try Refresh in My Flights later, or generate a new OFP.",
+      "keiner": "No SimBrief OFP for this flight",
+      "keiner_detail": "The bid has no SimBrief OFP linked. You can still fly — the Landing tab then shows only the actual values without a target/actual comparison.",
+      "refreshed": "OFP refreshed",
+      "unchanged": "OFP unchanged",
+      "detail_neu": "before {{vorher}}, now {{jetzt}} (new). Block {{block}} kg, TOW {{tow}} kg, LDW {{ldw}} kg",
+      "detail_identisch": "before {{vorher}}, now {{jetzt}} (identical). Block {{block}} kg, TOW {{tow}} kg, LDW {{ldw}} kg"
+    },
+    "route": {
+      "sync": "Route synced",
+      "sync_gepostet": "{{n}} waypoints taken from the current SimBrief OFP (posted to phpVMS).",
+      "sync_kein_navlog": "{{n}} waypoints taken from the current SimBrief OFP (no navlog in the OFP).",
+      "sync_upload_fehler": "{{n}} waypoints taken from the current SimBrief OFP (phpVMS upload failed — updated locally)."
+    },
+    "bids": {
+      "failed": "Bids could not be loaded"
+    },
+    "navdata": {
+      "geladen": "Navdata AIRAC {{airac}} loaded for {{plaetze}}",
+      "fallback": "Navdata: OurAirports fallback active (server unreachable)"
+    },
+    "upload": {
+      "flight_log_failed": "Flight log upload failed — will be retried automatically",
+      "flight_log_failed_detail": "{{fehler}} — log stored locally in flight_logs/{{pirep}}.jsonl",
+      "regeln_alt": "Rating rules not checked for {{tage}} days",
+      "regeln_alt_detail": "AeroACARS could not query the current rating rules from the live server and keeps using the existing version. Please check your internet connection; if this continues, tell the GSG team.",
+      "diagnose": "Diagnostic log sent",
+      "diagnose_detail": "{{kb}} KB — technical client messages, no credentials"
+    },
+    "pos": {
+      "wiederholt": "phpVMS positions: {{n}} retry(ies), {{pos}} positions resent",
+      "wiederholt_detail": "No duplicate rows result — every position carries a unique key.",
+      "gesperrt": "phpVMS is rejecting your requests — account locked or inactive",
+      "gesperrt_detail": "HTTP {{http}}: contact your VA admin and log in again once cleared. Position streaming has been stopped.",
+      "nicht_bestaetigt": "phpVMS did not confirm a block of positions — resending",
+      "nicht_bestaetigt_detail": "{{n}} positions are sent again. Recording continues normally; the track on the live map may lag briefly."
+    },
+    "orphan": {
+      "cleaned": "Orphaned flight {{nr}} ({{dep}}–{{arr}}) cleaned up automatically",
+      "alter_tage": "{{n}} days old",
+      "alter_h": "{{h}} h old",
+      "alter_unbekannt": "age unknown",
+      "cleaned_detail": "PIREP {{pirep}} cancelled on the server (self-repair at flight start)",
+      "cancelled": "Orphaned flight cancelled — PIREP {{pirep}}",
+      "cancelled_detail": "PIREP cancelled, bid {{bid}} dropped, local queues cleaned up.",
+      "forgotten": "Orphaned flight forgotten locally — PIREP {{pirep}}",
+      "forgotten_detail": "No server request made. PIREP status on phpVMS unchanged."
+    },
+    "touchdown": {
+      "line": "Touchdown: V/S {{vs}} fpm, G {{g}}",
+      "ohne_g": "Touchdown: V/S {{vs}} fpm, G not measured",
+      "bounces": "Bounces: {{n}}",
+      "note_vorlaeufig": "Grade {{note}} (provisional)",
+      "vorlaeufig": "Rating provisional",
+      "modulfehler": "Rating not possible, will be completed on the server",
+      "dds": "Touchdown in the pre-threshold area (DDS {{m}} m before the landing threshold)"
+    },
+    "cockpit": {
+      "blinkmodus": "{{name}} lights: flashing",
+      "pmdg_aktiv": "{{variant}} — PMDG SDK active",
+      "pmdg_aktiv_detail": "Premium cockpit data available (FMA, MCP, V-speeds, FMC)",
+      "v_speeds": "V-speeds set: V1 {{v1}} · VR {{vr}} · V2 {{v2}} · VREF {{vref}}",
+      "to_config": "TAKEOFF CONFIG warning",
+      "to_config_detail": "Cockpit shows a red warning — takeoff setup incomplete",
+      "master_caution_aus": "MASTER CAUTION off",
+      "master_warning_aus": "MASTER WARNING off",
+      "umkehrschub": "Reverse thrust engaged",
+      "ground_spoiler": "Ground spoilers deployed",
+      "baro_std": "Baro: STD set",
+      "baro_qnh": "Baro: QNH set",
+      "kabinenhoehe": "🔴 Cabin altitude warning",
+      "schubhebel": "Thrust levers: {{gate}}"
+    },
+    "loadsheet": {
+      "ueber_tankt": "💡 Overfuelled — a lot of fuel on board ({{kg}} kg above plan + reserve), expect a higher burn en route.",
+      "stream_gestoppt": "Position stream stopped — the aircraft is flying again, but the PIREP was marked as “arrived”. Please end the old flight manually (PIREP detail) or discard it via “Discard flight”, then start a new flight."
+    }
   },
   "activity_log": {
     "title": "ACARS activity log",

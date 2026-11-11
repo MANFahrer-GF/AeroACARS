@@ -334,6 +334,14 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Tests `modul_api::tests::*`, `paket-endpunkte` (`modul_api_*`), `tests/befehlsliste.rs::modul_api_ist_fachlich`.
 /// — plus Beladung beim VFR-Start 10.11.: Befehl `vfr_beladungsklassen` in der Befehlsliste,
 /// sonst nichts an `lib.rs`. Tests `vfr_beladung_*`, `vfr_plan_ohne_beladung_bleibt_gueltig`, `tests/befehlsliste.rs`.
+/// — plus Nachtanken in der Luft 10.11. (DLH 41): `NachtankenLuft` in `lib_sprit.rs`, Takt (`nachtanken_luft_takt`), Streamer
+/// (Vorschau, sofort speichern, Hinweis), `blocksprit_mit_nachtanken`/`verbrauch_ab_block_kg` an allen Sendestellen,
+/// `fuel_used_effective_kg` hebt in der Luft die Basis an. Tests `nachtanken_luft_tests::*`.
+/// — plus Nachtanken-Hinweis in drei Sprachen 11.11.: `ActivityEntry.text` (`AktivitaetText`, Schluessel + Werte),
+/// `log_activity_uebersetzbar`, `nachtanken_luft_hinweis_text` liefert die Schluessel `activity.refuel.*`.
+/// Tests `nachtanken_luft_tests` (Schluessel, altes Protokoll lesbar), `aktivitaetText.test.ts`.
+/// — plus alle Pilotenhinweise in drei Sprachen 11.11.: `akt`/`_t`-Geschwister, `teil_aus_text`,
+/// `pending_acars_texte`, `auto_start_hinweis` 4-Tupel. Tests `aktivitaet_text_tests`, `aktivitaetSchluessel.test.ts`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -344,4 +352,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "aa1f874e6c3fa3fd53e180e41e0a515e961aa449565c2c49fdb111de596ba251";
+const HASH_VOR_DER_ZERLEGUNG: &str = "afee33d3cd8efd866a567c48b76f28d2438834838e15b5fa2af095c5785388b2";

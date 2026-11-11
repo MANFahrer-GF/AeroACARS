@@ -1556,6 +1556,13 @@ pub struct PirepPayload {
     /// Spec docs/spec/v0.7.6-landing-payload-consistency.md §3 P1-1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actual_trip_burn_kg: Option<f32>,
+    /// 3.0.1 (DLH 41): in der Luft nachgetankte Menge. `actual_trip_burn_kg`
+    /// rechnet sie mit; `block_fuel_kg` bleibt der Wert vom Anlassen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nachgetankt_luft_kg: Option<f32>,
+    /// Niedrigster Tankstand unmittelbar vor dem Nachtanken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tank_vor_nachtanken_kg: Option<f32>,
     pub takeoff_weight_kg: Option<f32>,
     pub landing_weight_kg: Option<f32>,
     pub planned_tow_kg: Option<f32>,

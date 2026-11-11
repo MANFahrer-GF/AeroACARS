@@ -501,12 +501,12 @@
         use super::fuel_used_effective_kg as fu;
         let mut initial: Option<f32> = None;
         // Erster Tick: Baseline latcht, Delta 0 → SimVar-Wert (0) durchgereicht.
-        assert_eq!(fu(&mut initial, 0.0, 8_000.0, true, None), 0.0);
+        assert_eq!(fu(&mut initial, 0.0, 8_000.0, true, None, 0.0), 0.0);
         assert_eq!(initial, Some(8_000.0));
         // Kleines Delta (< 5 kg, Mess-Rauschen am Gate) → weiter 0.
-        assert_eq!(fu(&mut initial, 0.0, 7_997.0, true, Some(8_000.0)), 0.0);
+        assert_eq!(fu(&mut initial, 0.0, 7_997.0, true, Some(8_000.0), 0.0), 0.0);
         // Cruise: 1500 kg verbrannt, SimVar tot → FOB-Delta.
-        let used = fu(&mut initial, 0.0, 6_500.0, false, Some(6_520.0));
+        let used = fu(&mut initial, 0.0, 6_500.0, false, Some(6_520.0), 0.0);
         assert!((used - 1_500.0).abs() < 0.01, "erwartete 1500, war {used}");
         // Baseline bleibt stabil über die Ticks.
         assert_eq!(initial, Some(8_000.0));
@@ -520,11 +520,11 @@
         let mut initial: Option<f32> = Some(8_000.0);
         // SimVar lebt (1234 kg) → authoritativ, kein Delta-Override.
         assert_eq!(
-            fu(&mut initial, 1_234.0, 6_500.0, false, Some(6_510.0)),
+            fu(&mut initial, 1_234.0, 6_500.0, false, Some(6_510.0), 0.0),
             1_234.0
         );
         // Knapp unter der Alive-Schwelle (< 0.5) zählt als tot → Delta.
-        let used = fu(&mut initial, 0.4, 6_500.0, false, Some(6_500.0));
+        let used = fu(&mut initial, 0.4, 6_500.0, false, Some(6_500.0), 0.0);
         assert!((used - 1_500.0).abs() < 0.01, "erwartete 1500, war {used}");
     }
 
@@ -537,13 +537,13 @@
         let mut initial: Option<f32> = Some(8_000.0);
         // FOB leicht über Baseline (< 50 kg drüber, z.B. Dichte-Jitter):
         // KEIN Re-Latch, Delta negativ → SimVar-Wert (0), nicht negativ.
-        assert_eq!(fu(&mut initial, 0.0, 8_030.0, true, Some(8_000.0)), 0.0);
+        assert_eq!(fu(&mut initial, 0.0, 8_030.0, true, Some(8_000.0), 0.0), 0.0);
         assert_eq!(initial, Some(8_000.0));
         // Echtes Refuel: 8000 → 12000 kg → Re-Latch auf 12000.
-        assert_eq!(fu(&mut initial, 0.0, 12_000.0, true, Some(8_030.0)), 0.0);
+        assert_eq!(fu(&mut initial, 0.0, 12_000.0, true, Some(8_030.0), 0.0), 0.0);
         assert_eq!(initial, Some(12_000.0));
         // Danach zählt das Delta von der NEUEN Baseline.
-        let used = fu(&mut initial, 0.0, 11_000.0, false, Some(11_050.0));
+        let used = fu(&mut initial, 0.0, 11_000.0, false, Some(11_050.0), 0.0);
         assert!((used - 1_000.0).abs() < 0.01, "erwartete 1000, war {used}");
     }
 
@@ -556,10 +556,10 @@
         use super::fuel_used_effective_kg as fu;
         let mut initial: Option<f32> = Some(10_000.0);
         // Defuel am Gate: 10 t → 7 t in einem Tick → Re-Latch auf 7 t.
-        assert_eq!(fu(&mut initial, 0.0, 7_000.0, true, Some(10_000.0)), 0.0);
+        assert_eq!(fu(&mut initial, 0.0, 7_000.0, true, Some(10_000.0), 0.0), 0.0);
         assert_eq!(initial, Some(7_000.0));
         // Danach zählt das Delta von der NEUEN Baseline.
-        let used = fu(&mut initial, 0.0, 6_400.0, false, Some(6_420.0));
+        let used = fu(&mut initial, 0.0, 6_400.0, false, Some(6_420.0), 0.0);
         assert!((used - 600.0).abs() < 0.01, "erwartete 600, war {used}");
     }
 
@@ -576,11 +576,11 @@
         // 50 Ticks à 8 kg Taxi-/APU-Burn = 400 kg kumuliert.
         for _ in 0..50 {
             fob -= 8.0;
-            let _ = fu(&mut initial, 0.0, fob, true, Some(prev));
+            let _ = fu(&mut initial, 0.0, fob, true, Some(prev), 0.0);
             prev = fob;
         }
         assert_eq!(initial, Some(8_000.0));
-        let used = fu(&mut initial, 0.0, fob, true, Some(prev));
+        let used = fu(&mut initial, 0.0, fob, true, Some(prev), 0.0);
         assert!((used - 400.0).abs() < 0.5, "erwartete ~400, war {used}");
     }
 
@@ -591,7 +591,7 @@
     fn fuel_used_fallback_airborne_drop_never_relatches() {
         use super::fuel_used_effective_kg as fu;
         let mut initial: Option<f32> = Some(8_000.0);
-        let used = fu(&mut initial, 0.0, 5_000.0, false, Some(8_000.0));
+        let used = fu(&mut initial, 0.0, 5_000.0, false, Some(8_000.0), 0.0);
         assert!((used - 3_000.0).abs() < 0.01, "erwartete 3000, war {used}");
         assert_eq!(initial, Some(8_000.0));
     }
@@ -602,10 +602,10 @@
     fn fuel_used_fallback_ignores_zero_fob_for_latch() {
         use super::fuel_used_effective_kg as fu;
         let mut initial: Option<f32> = None;
-        assert_eq!(fu(&mut initial, 0.0, 0.0, true, None), 0.0);
+        assert_eq!(fu(&mut initial, 0.0, 0.0, true, None, 0.0), 0.0);
         assert_eq!(initial, None);
         // Erster echter Fuel-Tick latcht dann normal.
-        assert_eq!(fu(&mut initial, 0.0, 5_000.0, true, Some(0.0)), 0.0);
+        assert_eq!(fu(&mut initial, 0.0, 5_000.0, true, Some(0.0), 0.0), 0.0);
         assert_eq!(initial, Some(5_000.0));
     }
 

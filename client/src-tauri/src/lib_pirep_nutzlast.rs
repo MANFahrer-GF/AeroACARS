@@ -29,6 +29,25 @@ fn friendly_net_error(e: &ApiError) -> String {
     }
 }
 
+/// Ein Text aus `friendly_net_error` als uebersetzbarer Teil.
+fn net_fehler_teil(text: &str) -> AktivitaetTeil {
+    if let Some(rest) = text.strip_prefix("Netzwerk-Fehler: ") {
+        return AktivitaetTeil::text("activity.netz.sonst", &[("fehler", &rest)]);
+    }
+    teil_aus_text(
+        text,
+        &[
+            ("Verbindung wurde unterbrochen (1236 — Router-NAT-Eviction o.ä.). Wiederversuch automatisch.", "activity.netz.1236"),
+            ("Verbindung lokal abgebrochen (10053). Wiederversuch automatisch.", "activity.netz.10053"),
+            ("Verbindung vom Server beendet (10054). Wiederversuch automatisch.", "activity.netz.10054"),
+            ("Server-Antwort-Timeout. Wiederversuch automatisch.", "activity.netz.timeout"),
+            ("DNS-Auflösung fehlgeschlagen. Internet-Verbindung prüfen.", "activity.netz.dns"),
+            ("Konnte phpVMS-Server nicht erreichen. Wiederversuch automatisch.", "activity.netz.connect"),
+            ("unbekannt", "activity.netz.unbekannt"),
+        ],
+    )
+}
+
 /// Open (or create) the per-flight JSONL recorder. None when we can't
 /// resolve the app data dir — caller treats it as "skip recording for
 /// this tick" rather than failing the streamer.
@@ -1176,11 +1195,15 @@ fn build_pirep_payload(
         // `_kg`-Feld (Recorder/Web sah ~2,2× zu viel „kg").
         fuel_used_kg: body.fuel_used.map(|lb| (lb / KG_TO_LB) as f32),
         planned_burn_kg: stats.planned_burn_kg,
-        block_fuel_kg: stats.block_fuel_kg,
+        // 3.0.1: derselbe Block wie in phpVMS — `block − fuel_used` bleibt
+        // auch hier der Resttank (`blocksprit_mit_nachtanken`).
+        block_fuel_kg: blocksprit_mit_nachtanken(&stats),
         takeoff_fuel_kg: stats.takeoff_fuel_kg,
         landing_fuel_kg: stats.landing_fuel_kg,
         // v0.7.6 P1-1: Trip-Burn als SSoT fuer OFP-Vergleich.
         actual_trip_burn_kg: actual_burn,
+        nachgetankt_luft_kg: Some(nachgetankt_luft(&stats)).filter(|v| *v > 0.0),
+        tank_vor_nachtanken_kg: stats.nachtanken_luft.tank_davor_kg,
         takeoff_weight_kg: stats.takeoff_weight_kg.map(|w| w as f32),
         landing_weight_kg: stats.landing_weight_kg.map(|w| w as f32),
         planned_tow_kg: stats.planned_tow_kg,
@@ -1583,9 +1606,9 @@ async fn landung_vor_dem_einreichen_nachschicken(app: &AppHandle, flight: &Activ
     // Ehrlich bleiben: Der Pilot erfährt, dass seine Landung nicht durchkam.
     // Verloren ist sie nicht — das hochgeladene Flugprotokoll trägt sie nach,
     // nur dauert die Bewertung dann länger.
-    log_activity_handle(
+    log_activity_handle_t(
         app,
-        ActivityLevel::Warn,
+        ActivityLevel::Warn, akt("activity.pirep.landung_nicht_gemeldet", &[]).und("activity.pirep.landung_nicht_gemeldet_detail", &[]),
         "Landung konnte nicht an den Server gemeldet werden",
         Some(
             "Die Verbindung stand beim Aufsetzen nicht. Der Flugbericht wird trotzdem \

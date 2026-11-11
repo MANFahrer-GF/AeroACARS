@@ -8,7 +8,7 @@
     }
 
     /// Ein Flug im Sinkflug, wie GAF 278 vor dem Absturz.
-    fn sinkflug() -> ActiveFlight {
+    pub(super) fn sinkflug() -> ActiveFlight {
         let flight = crate::enroute_reconcile_replay_tests::replay_fixture();
         {
             let mut st = flight.stats.lock().unwrap();
@@ -24,7 +24,7 @@
 
     /// Kalt und dunkel am Ausweichplatz: `SimSnapshot::default()` ist „am
     /// Boden, Triebwerke aus, steht".
-    fn kalt_am_boden() -> SimSnapshot {
+    pub(super) fn kalt_am_boden() -> SimSnapshot {
         SimSnapshot::default()
     }
 
@@ -55,7 +55,7 @@
         assert_eq!(step_flight(&flight, &kalt_am_boden()), Some(FlightPhase::Arrived));
     }
 
-    fn abheben() -> SimSnapshot {
+    pub(super) fn abheben() -> SimSnapshot {
         SimSnapshot {
             on_ground: false,
             altitude_agl_ft: 60.0,

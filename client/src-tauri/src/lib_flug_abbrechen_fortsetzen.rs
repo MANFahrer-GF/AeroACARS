@@ -179,19 +179,13 @@ async fn flight_end_manual(
         // `stats.block_fuel_kg` trägt hier schon den Manual-Override
         // (oben gesetzt falls `block_fuel_kg`-Param > 0).
         let fuel_used = {
-            let from_remaining = match (stats.block_fuel_kg, remaining_fuel_kg) {
-                (Some(block), Some(rem)) if rem >= 0.0 && block > rem => Some((block - rem) as f64),
-                _ => None,
-            };
-            from_remaining
-                .or_else(|| match (stats.block_fuel_kg, stats.last_fuel_kg) {
-                    (Some(b), Some(c)) if b > c => Some((b - c) as f64),
-                    _ => None,
-                })
-                .map(|kg| kg.round() * KG_TO_LB)
+            // 3.0.1: beide Wege mit in der Luft Nachgetanktem
+            // (`blocksprit_mit_nachtanken`).
+            verbrauch_ab_block_bis_kg(&stats, remaining_fuel_kg)
+                .or_else(|| verbrauch_ab_block_kg(&stats))
+                .map(|kg| (kg as f64).round() * KG_TO_LB)
         };
-        let block_fuel = stats
-            .block_fuel_kg
+        let block_fuel = blocksprit_mit_nachtanken(&stats)
             .filter(|kg| *kg > 0.0)
             .map(|kg| (kg as f64).round() * KG_TO_LB);
         let level = cruise_level_ft.filter(|ft| *ft > 0).or_else(|| {
@@ -776,9 +770,9 @@ async fn flight_cancel(
                     .any(|q| q.pirep_id == pirep_id_for_outcome);
 
                 if is_queued {
-                    log_activity(
+                    log_activity_t(
                         &state,
-                        ActivityLevel::Warn,
+                        ActivityLevel::Warn, akt("activity.resume.queued", &[("pirep", &pirep_id_for_outcome)]).und("activity.resume.queued_detail", &[]),
                         format!(
                             "Flug statt abgebrochen in der Queue für späteren Retry — PIREP {pirep_id_for_outcome}"
                         ),
@@ -791,9 +785,9 @@ async fn flight_cancel(
                     });
                 }
 
-                log_activity(
+                log_activity_t(
                     &state,
-                    ActivityLevel::Info,
+                    ActivityLevel::Info, akt("activity.resume.filed", &[("pirep", &pirep_id_for_outcome)]).und("activity.resume.filed_detail", &[]),
                     format!("Flug statt abgebrochen ordentlich eingereicht — PIREP {pirep_id_for_outcome}"),
                     Some("B-014 File-First-Pfad: Server hat den PIREP angenommen.".into()),
                 );
@@ -830,9 +824,9 @@ async fn flight_cancel(
                     code = e.code,
                     "flight_cancel: File-First fehlgeschlagen, gebe an UI zurueck statt Auto-Cancel"
                 );
-                log_activity(
+                log_activity_t(
                     &state,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.resume.autofile_cancel_failed", &[("code", &e.code)]),
                     format!(
                         "Auto-File vor Cancel fehlgeschlagen ({}) — Pilot muss erneut bestätigen",
                         e.code
@@ -1045,9 +1039,9 @@ fn spawn_resume_sim_gate(
     vom_boden: bool,
 ) {
     tauri::async_runtime::spawn(async move {
-        log_activity_handle(
+        log_activity_handle_t(
             &app,
-            ActivityLevel::Warn,
+            ActivityLevel::Warn, akt("activity.resume.warte_sim", &[]).und("activity.resume.warte_sim_detail", &[]),
             "Warte auf Simulator — Flug wird scharfgeschaltet, sobald der Sim geladen und ruhig ist"
                 .to_string(),
             Some(
@@ -1186,9 +1180,9 @@ fn spawn_resume_sim_gate(
                     let art: String = grund.chars().filter(|c| !c.is_ascii_digit()).collect();
                     let nur_zaehlstand = grund.contains(SIM_RUHE_ZAEHLSTAND);
                     if !nur_zaehlstand && letzter_grund.as_deref() != Some(art.as_str()) {
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app,
-                            ActivityLevel::Info,
+                            ActivityLevel::Info, akt("activity.sim.warten", &[]).mit(sim_warte_teil(&grund)),
                             "Warte auf den Simulator".to_string(),
                             Some(grund.clone()),
                         );
@@ -1196,9 +1190,9 @@ fn spawn_resume_sim_gate(
                     }
                     if gewartet_s >= RESUME_GATE_WARNUNG_SECS && !gewarnt {
                         gewarnt = true;
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app,
-                            ActivityLevel::Warn,
+                            ActivityLevel::Warn, akt("activity.resume.lange", &[]).und("activity.resume.lange_detail", &[]),
                             "Der Flug wartet ungewöhnlich lange auf den Simulator".to_string(),
                             Some(
                                 "Ist der Simulator pausiert, im Slew-Modus oder läuft \
@@ -1216,9 +1210,9 @@ fn spawn_resume_sim_gate(
                     // der Banner fragt erneut (Codex-Abnahme 24.10.2026).
                     if !trotzdem_fortsetzen {
                         if let Some(abweichung) = lage_abweichung_fuer(&flight, &snap) {
-                            log_activity_handle(
+                            log_activity_handle_t(
                                 &app,
-                                ActivityLevel::Warn,
+                                ActivityLevel::Warn, akt("activity.resume.lage_nicht", &[]).mit(lage_abweichung_teil(&abweichung)),
                                 "Lage passt nicht zum Flug — nicht fortgesetzt, bitte im Banner bestätigen"
                                     .to_string(),
                                 Some(lage_abweichung_text(&abweichung)),
@@ -1270,10 +1264,10 @@ fn spawn_resume_sim_gate(
                             }
                         };
                         if vom_boden && vorher.is_none() {
-                            log_activity_and_record(
+                            log_activity_and_record_t(
                                 &app,
                                 &flight.pirep_id,
-                                ActivityLevel::Warn,
+                                ActivityLevel::Warn, akt("activity.resume.boden_nicht", &[]).und("activity.resume.boden_nicht_detail", &[]).mit(abweichung.as_ref().map_or_else(|| AktivitaetTeil::text("activity.lage.passt", &[]), lage_abweichung_teil)),
                                 "Weiterflug vom Boden nicht möglich — Flug läuft in der bisherigen Phase weiter"
                                     .to_string(),
                                 Some(format!(
@@ -1299,10 +1293,10 @@ fn spawn_resume_sim_gate(
                                     altitude_agl_ft: snap.altitude_agl_ft,
                                 },
                             );
-                            log_activity_and_record(
+                            log_activity_and_record_t(
                                 &app,
                                 &flight.pirep_id,
-                                ActivityLevel::Warn,
+                                ActivityLevel::Warn, akt("activity.resume.boden", &[("arr", &flight.arr_airport)]).und("activity.resume.boden_detail", &[("lat", &format!("{:.4}", snap.lat)), ("lon", &format!("{:.4}", snap.lon))]),
                                 format!("Weiterflug vom Boden — neuer Start, Ziel bleibt {}", flight.arr_airport),
                                 Some(format!(
                                     "Nach dem Sim-Neustart am Boden bei LAT {:.4}° · LON {:.4}°. Der Flug steht auf \
@@ -1337,9 +1331,9 @@ fn spawn_resume_sim_gate(
                         gewartet_s = wartet_seit.map_or(0, |t| (jetzt - t).num_seconds()),
                         "resume sim-gate: Simulator ruhig — flight armed"
                     );
-                    log_activity_handle(
+                    log_activity_handle_t(
                         &app,
-                        ActivityLevel::Info,
+                        ActivityLevel::Info, akt("activity.resume.bereit", &[]),
                         "Simulator bereit — Flug scharfgeschaltet".to_string(),
                         None,
                     );

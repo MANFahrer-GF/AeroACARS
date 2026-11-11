@@ -359,10 +359,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 let mut stats = flight.stats.lock().expect("flight stats");
                                 sprung_vermerken(&mut stats, discontinuity, Utc::now());
                             }
-                            log_activity_and_record(
+                            log_activity_and_record_t(
                                 &app,
                                 &flight.pirep_id,
-                                ActivityLevel::Error,
+                                ActivityLevel::Error, akt("activity.jump.impossible", &[]).mit(sprung_grund_teil(&discontinuity)).und("activity.jump.werte_neustart", &[("fuel", &format!("{:+.0}", discontinuity.fuel_delta_kg)), ("alt", &format!("{:+.0}", discontinuity.altitude_delta_ft)), ("nm", &format!("{:.1}", discontinuity.drift_nm))]),
                                 format!(
                                     "Unmöglicher Sprung beim Wiederaufnehmen erkannt ({})",
                                     sprung_grund(&discontinuity)
@@ -457,10 +457,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                     // gerade geliefert hat.
                     last_good_snap = previous_snap_for_recovery.clone();
                     save_active_flight(&app, &flight);
-                    log_activity_and_record(
+                    log_activity_and_record_t(
                         &app,
                         &flight.pirep_id,
-                        ActivityLevel::Error,
+                        ActivityLevel::Error, akt("activity.sim.reload", &[]).und("activity.sim.reload_detail", &[("fl", &format!("{:.0}", prev.altitude_msl_ft / 100.0)), ("alt", &format!("{:.0}", curr.altitude_msl_ft)), ("lat", &format!("{:.3}", curr.lat)), ("lon", &format!("{:.3}", curr.lon)), ("drop", &format!("{:.0}", alt_drop_ft))]),
                         "Sim-Reload erkannt — Aufzeichnung pausiert".to_string(),
                         Some(format!(
                             "Vorher: FL{:.0} airborne · jetzt: {:.0} ft am Boden bei LAT {:.3}° LON {:.3}° (Drop: {:.0} ft). \
@@ -532,15 +532,19 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 p.lat, p.lon, p.altitude_ft,
                             )
                         });
+                        let pause_text = match paused.as_ref() {
+                            Some(p) => akt("activity.sim.paused", &[]).und("activity.sim.letzte_pos", &[("lat", &format!("{:.4}", p.lat)), ("lon", &format!("{:.4}", p.lon)), ("alt", &format!("{:.0}", p.altitude_ft))]),
+                            None => akt("activity.sim.paused", &[]),
+                        };
                         {
                             let mut stats = flight.stats.lock().expect("flight stats");
                             stats.paused_since = Some(Utc::now());
                             stats.paused_last_known = paused;
                             stats.current_pause_reason = Some(PauseReason::SimPause);
                         }
-                        log_activity_handle(
+                        log_activity_handle_t(
                             &app,
-                            ActivityLevel::Info,
+                            ActivityLevel::Info, pause_text,
                             "Simulator pausiert — AeroACARS pausiert die Aufzeichnung.".to_string(),
                             detail,
                         );
@@ -614,10 +618,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         let stats = flight.stats.lock().expect("flight stats");
                         gespeicherter_punkt(&stats).unwrap_or((jetzt.lat, jetzt.lon))
                     };
-                    log_activity_and_record(
+                    log_activity_and_record_t(
                         &app,
                         &flight.pirep_id,
-                        ActivityLevel::Error,
+                        ActivityLevel::Error, akt("activity.lage.sim_zurueck", &[]).mit(lage_abweichung_teil(&abweichung)).und("activity.lage.letzte_pos", &[("lat", &format!("{:.4}", vorher_lat)), ("lon", &format!("{:.4}", vorher_lon))]).und("activity.lage.jetzt_sim", &[("lat", &format!("{:.4}", jetzt.lat)), ("lon", &format!("{:.4}", jetzt.lon)), ("alt", &format!("{:.0}", jetzt.altitude_msl_ft))]).und("activity.lage.banner_waehlen", &[]),
                         "Simulator wieder da — Lage passt nicht zum Flug, Aufzeichnung pausiert"
                             .to_string(),
                         Some(format!(
@@ -771,10 +775,17 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                             .unwrap_or_else(|| "—".to_string()),
                         liveness_line,
                     );
-                    log_activity_and_record(
+                    log_activity_and_record_t(
                         &app,
                         &flight.pirep_id,
-                        ActivityLevel::Warn,
+                        ActivityLevel::Warn, {
+                            let t = akt("activity.sim.getrennt", &[]).und("activity.sim.getrennt_pos", &[("lat", &format!("{:.4}", paused.lat)), ("lon", &format!("{:.4}", paused.lon)), ("hdg", &format!("{:.0}", paused.heading_deg)), ("alt", &format!("{:.0}", paused.altitude_ft)), ("fuel", &format!("{:.0}", paused.fuel_total_kg)), ("zfw", &paused.zfw_kg.map(|v| format!("{:.0} kg", v)).unwrap_or_else(|| "—".to_string()))]);
+                            match liveness {
+                                Some(sim_core::process_probe::ProcessLiveness::Gone) => t.und("activity.sim.prozess_weg", &[]),
+                                Some(sim_core::process_probe::ProcessLiveness::Alive) => t.und("activity.sim.prozess_laeuft", &[]),
+                                _ => t,
+                            }
+                        },
                         "Sim getrennt — Flug pausiert. Klicke „Flug wiederaufnehmen\" sobald du repositioniert hast.".to_string(),
                         Some(detail),
                     );
@@ -843,6 +854,10 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             // Umfeld). Der PIREP-`fuel_used`-Payload selbst rechnet
             // unabhängig davon weiter block_fuel_kg − last_fuel_kg (Peak-
             // FOB-Delta, war nie von der toten SimVar abhängig).
+            // Eine Uhrzeit fuer die Nachtank-Vorschau hier und den Takt unten.
+            // Dazwischen liegt kein `await` (nur abgespaltene Aufgaben), die
+            // Phasen-Zeitstempel haengen also nicht nach.
+            let takt_jetzt = Utc::now();
             {
                 let mut stats = flight.stats.lock().expect("flight stats");
                 // v0.16.10 QS (M1): pre_takeoff + Vor-Tick-FOB für den
@@ -856,12 +871,23 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 // FOB des VOR-Ticks.
                 let pre_takeoff = stats.takeoff_at.is_none();
                 let prev_fob_kg = stats.last_fuel_kg;
+                // Dieselbe Erkennung, die der Takt gleich fortschreibt — hier
+                // auf einer Kopie und mit derselben Uhrzeit (`takt_jetzt`),
+                // damit der Verbrauchswert zur gemeldeten Menge passt.
+                let nachgetankt_luft_kg = nachtanken_luft_vorschau(
+                    &stats,
+                    snap.fuel_total_kg,
+                    nachtanken_am_boden(&snap),
+                    snap.simulation_rate,
+                    takt_jetzt,
+                );
                 snap.fuel_used_kg = fuel_used_effective_kg(
                     &mut stats.initial_fob_kg,
                     snap.fuel_used_kg,
                     snap.fuel_total_kg,
                     pre_takeoff,
                     prev_fob_kg,
+                    nachgetankt_luft_kg,
                 );
             }
 
@@ -1154,8 +1180,25 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
             }
 
             takt_uhr.abschnitt("bahn_nachholen");
-            let takt = phasen_takt(&flight, &snap, Utc::now());
+            let takt = phasen_takt(&flight, &snap, takt_jetzt);
             let phase_change = takt.wechsel;
+            // 3.0.1 (DLH 41): Nachtanken in der Luft. Aendert sich die Menge
+            // oder wird der Hinweis faellig, wird SOFORT gespeichert und erst
+            // danach gemeldet — nach einem Absturz ist die Menge noch da, und
+            // der Hinweis kommt kein zweites Mal. Kein Softwarefehler, also
+            // ohne GlitchTip; geschrieben wird nach dem Freigeben der Flugdaten.
+            let (nachtanken_sichern, nachtanken_hinweis) = {
+                let mut stats = flight.stats.lock().expect("flight stats");
+                let hinweis = stats.nachtanken_luft.hinweis_faellig();
+                (std::mem::take(&mut stats.nachtanken_luft.geaendert), hinweis)
+            };
+            if nachtanken_sichern {
+                save_active_flight(&app, &flight);
+            }
+            if let Some(h) = nachtanken_hinweis {
+                let (zeile, detail, text) = nachtanken_luft_hinweis_text(&h);
+                log_activity_uebersetzbar(&app, ActivityLevel::Warn, zeile, Some(detail), Some(text), false);
+            }
             takt_uhr.abschnitt("step_flight");
             // Kabinenansagen (Beta): hier und nicht in `phasen_takt`, das
             // laeuft auch im Korpus-Replay.
@@ -2072,7 +2115,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                                 // Eingefroren in `sprit_auswertung_einmal` — hier nur gelesen.
                                 sprit: stats.sprit_auswertung.clone(),
                                 fuel_efficiency_pct: trip_burn_efficiency_pct(
-                                    stats.takeoff_fuel_kg,
+                                    startsprit_mit_nachtanken(&stats),
                                     stats.landing_fuel_kg,
                                     stats.planned_burn_kg,
                                 ),
@@ -2447,6 +2490,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                 let mut stats = flight.stats.lock().expect("flight stats");
                 if !stats.pending_acars_logs.is_empty() {
                     let drained: Vec<String> = std::mem::take(&mut stats.pending_acars_logs);
+                    let mut texte = std::mem::take(&mut stats.pending_acars_texte);
                     drop(stats);
                     let now_ts = Utc::now().to_rfc3339();
                     for line in drained {
@@ -2457,7 +2501,7 @@ fn spawn_position_streamer(app: AppHandle, flight: Arc<ActiveFlight>, client: Cl
                         // 5 s dedupe window is fine here — successive
                         // T&Gs are >1 min apart (FSM has to descend
                         // back to Approach in between).
-                        log_activity_handle(&app, ActivityLevel::Info, line.clone(), None);
+                        log_activity_uebersetzbar(&app, ActivityLevel::Info, line.clone(), None, texte.remove(&line), true);
                         acars_log_entries.push(api_client::LogEntry {
                             id: None,
                             log: line,

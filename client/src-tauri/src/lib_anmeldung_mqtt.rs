@@ -117,9 +117,9 @@ async fn phpvms_login(
             // Positions-Uebertragung bis dahin mit dem alten Schluessel
             // weiterlaeuft. Ehrlich sichtbar machen statt so tun als sei
             // alles wieder normal (siehe feedback-no-unverified-claims).
-            log_activity_handle(
+            log_activity_handle_t(
                 &app,
-                ActivityLevel::Warn,
+                ActivityLevel::Warn, akt("activity.login.relogin", &[]).und("activity.login.relogin_detail", &[]),
                 "Erneut angemeldet — Positions-Updates laufen mit dem alten Zugang weiter"
                     .to_string(),
                 Some(
@@ -1350,9 +1350,9 @@ async fn phpvms_load_session(
                 // nicht aktiv erklaert. Symmetrisch zu `phpvms_logout`
                 // stoppen und leeren.
                 stoppe_mqtt_publisher(&state).await;
-                log_activity_handle(
+                log_activity_handle_t(
                     &app,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.login.account_inactive", &[]).und("activity.login.account_inactive_detail", &[("reason", &reason)]),
                     "AeroACARS-Sitzung beendet — GSG-Account nicht aktiv".to_string(),
                     Some(format!(
                         "Status-Gate: {reason}. Bitte neu einloggen oder \
@@ -1455,9 +1455,9 @@ async fn phpvms_load_session(
             // installierter Publisher fuer einen Account zurueck, den
             // diese Funktion hier gerade als nicht mehr gueltig erklaert.
             stoppe_mqtt_publisher(&state).await;
-            log_activity_handle(
+            log_activity_handle_t(
                 &app,
-                ActivityLevel::Warn,
+                ActivityLevel::Warn, akt("activity.login.logged_out", &[]).und("activity.login.logged_out_detail", &[]),
                 "phpVMS hat dich abgemeldet — Account gesperrt, inaktiv oder API-Key revoked",
                 Some(
                     "Bitte VA-Admin kontaktieren. Nach Freigabe einfach neu einloggen.".to_string(),

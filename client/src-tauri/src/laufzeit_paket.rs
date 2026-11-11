@@ -459,31 +459,33 @@ fn info_json(
 }
 
 /// Zwischenspeicher fuer [`naechster_start`]: je Zeigerstand der Ablage
-/// und Pin des offenen Flugs einmal laden (das prueft alle Hashes).
-type NaechsterSchluessel = (Option<u64>, Option<u64>, Option<RuntimeBundleId>);
+/// einmal laden (das prueft alle Hashes).
+type NaechsterSchluessel = (Option<u64>, Option<u64>);
 static NAECHSTER: std::sync::Mutex<Option<(NaechsterSchluessel, Option<Naechster>)>> = std::sync::Mutex::new(None);
 
-/// Was der naechste Start laden wird — derselbe Weg wie beim Start
-/// (`Ablage::laden` mit dem Pin des offenen Flugs). Nur ein Paket zaehlt,
-/// das NICHT der geltende Stand ist; ein unpassendes `aktuell` (Thomas
-/// 30.10.: Generation 47 ohne `ui-befehle-2`) zaehlt nicht.
+/// Was der naechste Start OHNE offenen Flug laden wird, also der Stand fuer
+/// den naechsten Flug (`Ablage::laden` ohne Pin). 3.0.1 (Thomas 10.11.): Im
+/// Flug wird eine neue Generation geholt und angezeigt („gilt ab dem
+/// naechsten Flug“); der offene Flug selbst laedt bei einem Neustart weiter
+/// seinen Pin. Nur ein Paket zaehlt, das NICHT der geltende Stand ist; ein
+/// unpassendes `aktuell` (Thomas 30.10.: Generation 47 ohne `ui-befehle-2`)
+/// zaehlt nicht.
 fn naechster_start(app_daten: &Path, geltend: &RuntimeBundleId) -> Option<Naechster> {
     let ablage = Ablage::oeffnen(app_daten.join("laufzeit-paket")).ok()?;
-    let pin = pin_des_offenen_flugs(app_daten).map(|(_, id)| id);
-    let schluessel = (ablage.aktuell(), ablage.vorher(), pin.clone());
+    let schluessel = (ablage.aktuell(), ablage.vorher());
     let mut z = NAECHSTER.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((k, n)) = z.as_ref() {
         if *k == schluessel {
             return n.clone();
         }
     }
-    let n = naechster_aus(&ablage, pin.as_ref(), &kontext(), geltend);
+    let n = naechster_aus(&ablage, &kontext(), geltend);
     *z = Some((schluessel, n.clone()));
     n
 }
 
-fn naechster_aus(ablage: &Ablage, pin: Option<&RuntimeBundleId>, k: &Kontext, geltend: &RuntimeBundleId) -> Option<Naechster> {
-    let l = ablage.laden(pin, k, &eingebaut()).ok()?;
+fn naechster_aus(ablage: &Ablage, k: &Kontext, geltend: &RuntimeBundleId) -> Option<Naechster> {
+    let l = ablage.laden(None, k, &eingebaut()).ok()?;
     let paket = !matches!(l.herkunft, Herkunft::Eingebaut | Herkunft::EingebautStattPin);
     (paket && &l.paket.id != geltend && NICHT_ANWENDBAR.get() != Some(&l.paket.id)).then(|| Naechster {
         id: l.paket.id.to_string(),
@@ -928,34 +930,32 @@ pub(crate) fn pruefung_ueberfaellig(app_daten: &Path, jetzt: chrono::DateTime<ch
 }
 
 /// Holt einen neueren Stand von live und installiert ihn; aktiv wird er erst
-/// beim naechsten Programmstart (P-3.20). Nicht bei offenem Flug, nicht ohne
-/// Pruefschluessel (dann bestuende ohnehin kein Stand die Pruefung).
+/// beim naechsten Programmstart (P-3.20). Nicht ohne Pruefschluessel (dann
+/// bestuende ohnehin kein Stand die Pruefung).
 ///
-/// P-3.04: Danach — oder sofort, wenn im Flug nicht geprueft wird — ruft es
-/// `hinweis(tage)`, falls die letzte erfolgreiche Pruefung mehr als 30 Tage
-/// zurueckliegt. Der aktive Stand laeuft trotzdem weiter.
+/// 3.0.1 (Thomas 10.11.: „wie das Client-Update“): auch bei offenem Flug.
+/// Der Flug bleibt bei seinem Pin — `STAND` gilt den ganzen Lauf, und ein
+/// Neustart mitten im Flug laedt wieder den Pin (`starten_einmal`); das
+/// Aufraeumen behaelt ihn (`aktualisieren`). Der neue Stand gilt ab dem
+/// naechsten Flug.
+///
+/// P-3.04: Danach ruft es `hinweis(tage)`, falls die letzte erfolgreiche
+/// Pruefung mehr als 30 Tage zurueckliegt. Der aktive Stand laeuft trotzdem
+/// weiter.
 pub(crate) fn aktualisieren_im_hintergrund(app_daten: PathBuf, hinweis: impl FnOnce(i64) + Send + 'static) {
     if PRUEFSCHLUESSEL.is_empty() {
         return;
     }
     let _ = APP_DATEN.set(app_daten.clone());
-    if flug_offen(&app_daten) {
-        if let Some(tage) = pruefung_ueberfaellig(&app_daten, chrono::Utc::now()) {
-            hinweis(tage);
-        }
-        // Kein Update im Flug — aber fehlte beim Start der Stand des offenen
-        // Flugs, genau diesen nachholen (P-3.31).
-        if let Some((_, pin)) = PIN.get().cloned() {
-            tauri::async_runtime::spawn(async move {
-                match pin_nachholen(&app_daten, &pin).await {
-                    Ok(()) => tracing::info!(stand = %pin, "Laufzeit-Paket: Stand des offenen Flugs nachgeholt"),
-                    Err(e) => tracing::warn!(stand = %pin, error = %e, "Laufzeit-Paket: Stand des Flugs nicht nachholbar"),
-                }
-            });
-        }
-        return;
-    }
     tauri::async_runtime::spawn(async move {
+        // Fehlte beim Start der Stand des offenen Flugs, zuerst genau diesen
+        // nachholen (P-3.31).
+        if let Some((_, pin)) = PIN.get().cloned() {
+            match pin_nachholen(&app_daten, &pin).await {
+                Ok(()) => tracing::info!(stand = %pin, "Laufzeit-Paket: Stand des offenen Flugs nachgeholt"),
+                Err(e) => tracing::warn!(stand = %pin, error = %e, "Laufzeit-Paket: Stand des Flugs nicht nachholbar"),
+            }
+        }
         abrufen(&app_daten, false, true).await;
         if let Some(tage) = pruefung_ueberfaellig(&app_daten, chrono::Utc::now()) {
             hinweis(tage);
@@ -976,12 +976,8 @@ static ABRUF: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const WIEDERHOLEN_NACH: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Ein Abruf mit hoechstens EINER Wiederholung nach `warten`, wenn der erste
-/// scheitert. Vor der Wiederholung `noch_erlaubt` (kein Flug begonnen).
-async fn mit_einer_wiederholung<F, Fut>(
-    mut versuch: F,
-    warten: std::time::Duration,
-    noch_erlaubt: impl Fn() -> bool,
-) -> Result<Option<RuntimeBundleId>, String>
+/// scheitert. Seit 3.0.1 auch, wenn inzwischen ein Flug begonnen hat.
+async fn mit_einer_wiederholung<F, Fut>(mut versuch: F, warten: std::time::Duration) -> Result<Option<RuntimeBundleId>, String>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<Option<RuntimeBundleId>, String>>,
@@ -990,9 +986,6 @@ where
         Err(e) => {
             tracing::warn!(error = %e, "Laufzeit-Paket: Aktualisierung nicht moeglich, ein weiterer Versuch folgt");
             tokio::time::sleep(warten).await;
-            if !noch_erlaubt() {
-                return Ok(None);
-            }
             versuch().await
         }
         ok => ok,
@@ -1011,7 +1004,8 @@ pub(crate) struct Pruefung {
     /// RFC 3339, UTC.
     pub zeit: String,
     /// `neu` (Stand geholt, aktiv ab naechstem Start), `kein_neueres`,
-    /// `fehler`, `flug_offen` (im Flug wird nicht geholt).
+    /// `fehler`. `flug_offen` liefern nur Kerne vor 3.0.1 (dort wurde im
+    /// Flug nicht geholt); die Oberflaeche aus dem Paket kennt es weiter.
     pub ergebnis: &'static str,
     pub generation: Option<u64>,
     pub fehler: Option<String>,
@@ -1045,7 +1039,7 @@ async fn abrufen(app_daten: &Path, nur_ohne_token: bool, wiederholen: bool) -> O
     }
     let warten = if wiederholen { WIEDERHOLEN_NACH } else { std::time::Duration::ZERO };
     let ergebnis = if wiederholen {
-        mit_einer_wiederholung(|| aktualisieren(app_daten), warten, || !flug_offen(app_daten)).await
+        mit_einer_wiederholung(|| aktualisieren(app_daten), warten).await
     } else {
         aktualisieren(app_daten).await
     };
@@ -1065,17 +1059,14 @@ async fn abrufen(app_daten: &Path, nur_ohne_token: bool, wiederholen: bool) -> O
 /// Knopf „Auf neues Paket pruefen“: sofort bei live fragen (ohne
 /// Wiederholung, der Pilot sieht das Ergebnis). Stufe „fachlich“: Netz nur
 /// zu live (Adresse aus dem Paket, Host fest), das Token setzt der Kern.
-/// Im Flug wird nicht geholt (P-3.20). Hoechstens alle 5 s (sonst die
-/// letzte Antwort).
+/// Seit 3.0.1 auch im Flug (der neue Stand gilt ab dem naechsten Flug).
+/// Hoechstens alle 5 s (sonst die letzte Antwort).
 #[tauri::command]
 pub(crate) async fn paket_jetzt_pruefen() -> Pruefung {
     let jetzt = || chrono::Utc::now().to_rfc3339();
     let Some(daten) = APP_DATEN.get().cloned() else {
         return Pruefung { zeit: jetzt(), ergebnis: "fehler", generation: None, fehler: Some("Paket noch nicht gestartet".into()) };
     };
-    if flug_offen(&daten) {
-        return Pruefung { zeit: jetzt(), ergebnis: "flug_offen", generation: None, fehler: None };
-    }
     if let Some(l) = letzte().filter(|l| {
         chrono::DateTime::parse_from_rfc3339(&l.zeit).is_ok_and(|t| chrono::Utc::now() - t.with_timezone(&chrono::Utc) < chrono::Duration::seconds(5))
     }) {
@@ -1109,17 +1100,24 @@ fn neustart_erlaubt(flug_offen: bool, wartet: bool) -> Result<(), &'static str> 
 pub(crate) async fn paket_neu_starten(app: tauri::AppHandle) -> Result<(), crate::UiError> {
     let daten = APP_DATEN.get().cloned().ok_or_else(|| crate::UiError::new("kein_neues_paket", "Paket noch nicht gestartet"))?;
     let geltend = stand().id.clone();
-    let offen = flug_offen(&daten);
-    let wartet = tokio::task::spawn_blocking(move || naechster_start(&daten, &geltend).is_some()).await.unwrap_or(false);
-    neustart_erlaubt(offen, wartet).map_err(|c| crate::UiError::new(c, "Neustart nicht moeglich"))?;
+    let d = daten.clone();
+    let wartet = tokio::task::spawn_blocking(move || naechster_start(&d, &geltend).is_some()).await.unwrap_or(false);
+    // Erst NACH dem (laengeren) Laden auf einen Flug pruefen, ohne `await`
+    // bis zum Neustart (Codex 10.11.: begann der Flug waehrend des Ladens,
+    // wurde sonst trotzdem neu gestartet).
+    neustart_pruefen(&app, &daten, wartet).map_err(|c| crate::UiError::new(c, "Neustart nicht moeglich"))?;
     tracing::info!("Laufzeit-Paket: Neustart fuer den neuen Stand");
     app.restart()
 }
 
-/// Soll nach dem Setzen des Pilot-Tokens noch einmal abgerufen werden? Nur
-/// wenn noch kein Abruf MIT Token durchging und kein Flug offen ist.
-fn nach_token_abrufen(mit_token_geprueft: bool, flug_offen: bool) -> bool {
-    !mit_token_geprueft && !flug_offen
+/// Offener Flug JETZT: seine Datei oder ein laufender Flug, der noch nicht
+/// gespeichert ist (`AppState::active_flight`).
+fn neustart_pruefen<R: tauri::Runtime>(app: &tauri::AppHandle<R>, daten: &Path, wartet: bool) -> Result<(), &'static str> {
+    use tauri::Manager;
+    let im_speicher = app
+        .try_state::<crate::AppState>()
+        .is_some_and(|s| s.active_flight.lock().map_or(true, |f| f.is_some()));
+    neustart_erlaubt(flug_offen(daten) || im_speicher, wartet)
 }
 
 /// Das Pilot-Token ist jetzt da (`live_zugang::token_setzen`). Der Start-
@@ -1130,7 +1128,8 @@ pub(crate) fn token_bereit() {
         return;
     }
     let Some(daten) = APP_DATEN.get().cloned() else { return };
-    if !nach_token_abrufen(MIT_TOKEN_GEPRUEFT.load(std::sync::atomic::Ordering::SeqCst), flug_offen(&daten)) {
+    // Nur wenn noch kein Abruf MIT Token durchging — seit 3.0.1 auch im Flug.
+    if MIT_TOKEN_GEPRUEFT.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
     // Im Test nur zaehlen — kein Netz.
@@ -1174,8 +1173,18 @@ struct Holweg<'a> {
     hilfe: Option<StartHilfe>,
 }
 
+/// Staende, die das Aufraeumen behalten muss: der geltende, der Pin vom
+/// Start und — seit im Flug geholt wird (3.0.1) — der Pin, den die
+/// Flugdatei JETZT nennt.
+fn zu_behalten(app_daten: &Path, geltend: u64, start_pin: Option<u64>) -> Vec<u64> {
+    [Some(geltend), start_pin, pin_des_offenen_flugs(app_daten).map(|(_, p)| p.generation)]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 async fn aktualisieren(app_daten: &Path) -> Result<Option<RuntimeBundleId>, String> {
-    let pins: Vec<u64> = [Some(stand().id.generation), PIN.get().map(|(_, p)| p.generation)].into_iter().flatten().collect();
+    let pins = zu_behalten(app_daten, stand().id.generation, PIN.get().map(|(_, p)| p.generation));
     // Mit Pilot-Token: Vorab-Piloten bekommen den neueren Vorabstand (P-3.13).
     let weg = Holweg {
         basis: crate::live_zugang::live_basis(),
@@ -1270,12 +1279,9 @@ async fn holen_und_installieren(app_daten: &Path, weg: Holweg<'_>) -> Result<Opt
         h.abbruch.sperren();
     }
     zaehler.melden(Phase::Installieren, zaehler.gesamt);
-    let daten = app_daten.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        // Erneut unmittelbar davor: Ein Flug kann waehrend des Ladens begonnen haben.
-        if flug_offen(&daten) {
-            return Ok(None);
-        }
+        // Seit 3.0.1 auch bei offenem Flug: Er laedt bei jedem Start seinen
+        // Pin, und das Aufraeumen behaelt ihn (`pins`).
         let id = ablage
             .installieren(
                 Eingang { manifest: &manifest, signatur: &signatur },
@@ -2038,6 +2044,25 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         assert!(START_FRIST_VERBINDUNG < START_FRIST_ANFRAGE);
     }
 
+    /// Codex 10.11.: Die Flugpruefung des Neustarts liest den Zustand zum
+    /// Zeitpunkt des Aufrufs (nach dem Laden), nicht einen frueheren Wert.
+    /// Ohne Flug: Neustart erlaubt; Flugdatei taucht auf: verweigert.
+    #[test]
+    #[cfg(not(windows))] // tauri-Testhilfe nur ohne Windows (Cargo.toml dev-dependencies)
+    fn neustart_prueft_den_flug_erst_unmittelbar_davor() {
+        use tauri::Manager;
+        let app = tauri::test::mock_app();
+        app.manage(crate::AppState::default());
+        let d = std::env::temp_dir().join(format!("aeroacars-neustart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(neustart_pruefen(app.handle(), &d, true), Ok(()));
+        assert_eq!(neustart_pruefen(app.handle(), &d, false), Err("kein_neues_paket"));
+        std::fs::write(d.join(crate::ACTIVE_FLIGHT_FILE), "{}").unwrap();
+        assert_eq!(neustart_pruefen(app.handle(), &d, true), Err("flug_offen"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// „Jetzt neu starten“ nur ohne Flug und nur mit wartendem Stand
     /// (keine Neustart-Schleife durch eine fremde Oberflaeche).
     #[test]
@@ -2112,7 +2137,7 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
             jetzt: chrono::Utc::now(),
         };
         let eingebaut_id = eingebaut().paket().unwrap().id;
-        assert_eq!(naechster_aus(&ablage, None, &k(&[]), &eingebaut_id), None, "leere Ablage");
+        assert_eq!(naechster_aus(&ablage, &k(&[]), &eingebaut_id), None, "leere Ablage");
         let datei = b"{}";
         let m = serde_json::json!({
             "bundle_schema": 1, "generation": 54, "created_at": chrono::Utc::now(),
@@ -2126,21 +2151,22 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
         let id = ablage
             .installieren(Eingang { manifest: &bytes, signatur: &sig }, &k(&["probe-1"]), &mut |_| Ok(datei.to_vec()), &|_| Ok(()))
             .unwrap();
-        let n = naechster_aus(&ablage, None, &k(&["probe-1"]), &eingebaut_id).expect("geholtes Paket");
+        let n = naechster_aus(&ablage, &k(&["probe-1"]), &eingebaut_id).expect("geholtes Paket");
         assert_eq!((n.generation, n.bewertung_fassung, n.id.clone()), (54, 27, id.to_string()));
-        assert_eq!(naechster_aus(&ablage, None, &k(&["probe-1"]), &id), None, "gilt schon");
-        assert_eq!(naechster_aus(&ablage, None, &k(&[]), &eingebaut_id), None, "unpassend: eingebaut");
+        assert_eq!(naechster_aus(&ablage, &k(&["probe-1"]), &id), None, "gilt schon");
+        assert_eq!(naechster_aus(&ablage, &k(&[]), &eingebaut_id), None, "unpassend: eingebaut");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Zusatz 30.10. (Thomas' Protokoll: Startabruf ~0,7 s vor dem Token,
     /// 401): Ein gescheiterter Abruf wird genau EINMAL wiederholt, nicht erst
     /// beim naechsten Start. Gegenproben: Erfolg → kein zweiter Versuch; zwei
-    /// Fehler → Schluss nach dem zweiten; Flug begonnen → keine Wiederholung.
+    /// Fehler → Schluss nach dem zweiten. (Bis 3.0.0 entfiel die Wiederholung
+    /// bei begonnenem Flug; seit 3.0.1 wird auch im Flug geholt.)
     #[tokio::test]
     async fn gescheiterter_abruf_wird_einmal_wiederholt() {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-        let lauf = |antworten: Vec<Result<Option<RuntimeBundleId>, String>>, erlaubt: bool| async move {
+        let lauf = |antworten: Vec<Result<Option<RuntimeBundleId>, String>>| async move {
             let n = AtomicUsize::new(0);
             let a = std::sync::Mutex::new(antworten.into_iter());
             let erg = mit_einer_wiederholung(
@@ -2150,16 +2176,140 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
                     async move { x }
                 },
                 std::time::Duration::ZERO,
-                || erlaubt,
             )
             .await;
             (n.load(SeqCst), erg)
         };
         let id = RuntimeBundleId { generation: 54, manifest_sha256: "cd".repeat(32) };
-        assert_eq!(lauf(vec![Err("401".into()), Ok(Some(id.clone()))], true).await, (2, Ok(Some(id))));
-        assert_eq!(lauf(vec![Ok(None)], true).await, (1, Ok(None)), "Gegenprobe: Erfolg, kein zweiter Versuch");
-        assert_eq!(lauf(vec![Err("a".into()), Err("b".into())], true).await, (2, Err("b".into())), "hoechstens einmal");
-        assert_eq!(lauf(vec![Err("a".into())], false).await, (1, Ok(None)), "Flug begonnen: keine Wiederholung");
+        assert_eq!(lauf(vec![Err("401".into()), Ok(Some(id.clone()))]).await, (2, Ok(Some(id))));
+        assert_eq!(lauf(vec![Ok(None)]).await, (1, Ok(None)), "Gegenprobe: Erfolg, kein zweiter Versuch");
+        assert_eq!(lauf(vec![Err("a".into()), Err("b".into())]).await, (2, Err("b".into())), "hoechstens einmal");
+    }
+
+    /// 3.0.1 (Thomas 10.11.): Bei offenem Flug wird eine neue Generation
+    /// geholt und installiert. Der Flug bleibt bei seinem Pin: Der Startweg
+    /// (`laden` mit dem Pin) liefert weiter genau ihn, auch nachdem zwei
+    /// neuere Staende den Pin aus `aktuell`/`vorher` verdraengt haben und er
+    /// aelter als 30 Tage ist — das Aufraeumen behaelt ihn (`zu_behalten`
+    /// liest ihn aus der Flugdatei). `naechster_start` nennt den neuesten
+    /// Stand („gilt ab dem naechsten Flug“). Gegenprobe: ohne den Pin in der
+    /// Liste wird er aufgeraeumt (der Schutz kommt wirklich aus `zu_behalten`).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn abruf_im_flug_installiert_und_der_flug_behaelt_seinen_pin() {
+        use std::io::Cursor;
+        let kp = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
+        let k = || Kontext {
+            client_version: "3.0.1".into(),
+            faehigkeiten: vec!["probe-1".into()],
+            schluessel: vec![kp.pk.to_base64()],
+            jetzt: chrono::Utc::now(),
+        };
+        // Ein Server je Generation, jede mit eigener Datei.
+        let server = |g: u64| {
+            let datei = format!("{{\"probe\":{g}}}").into_bytes();
+            let sha = runtime_bundle::hex(&Sha256::digest(&datei));
+            let m = serde_json::to_vec(&serde_json::json!({
+                "bundle_schema": 1, "generation": g, "created_at": chrono::Utc::now(),
+                "expires_at": chrono::Utc::now() + chrono::Duration::days(30),
+                "client_min": "3.0.0", "client_max": "3.99.0", "requires": ["probe-1"],
+                "score_version": 27, "input_schema": 1,
+                "files": [{"path": "tabellen/probe.json", "sha256": sha, "size": datei.len(), "kind": "tabellen"}],
+            }))
+            .unwrap();
+            let sig = minisign::sign(Some(&kp.pk), &kp.sk, Cursor::new(&m), None, None).unwrap().into_string();
+            let mut inhalt: HashMap<String, Vec<u8>> = HashMap::new();
+            inhalt.insert(
+                "/api/bundle/current".into(),
+                format!(r#"{{"generation":{g},"manifest":"/m","signatur":"/s","blobs":"/b/"}}"#).into_bytes(),
+            );
+            inhalt.insert("/m".into(), m);
+            inhalt.insert("/s".into(), sig.into_bytes());
+            inhalt.insert(format!("/b/{sha}"), datei);
+            let inhalt = std::sync::Arc::new(inhalt);
+            axum::Router::new().fallback(move |uri: axum::http::Uri| {
+                let inhalt = inhalt.clone();
+                async move {
+                    match inhalt.get(uri.path()) {
+                        Some(b) => (axum::http::StatusCode::OK, b.clone()),
+                        None => (axum::http::StatusCode::NOT_FOUND, Vec::new()),
+                    }
+                }
+            })
+        };
+        let mut basen = Vec::new();
+        for g in [53, 54, 55] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            basen.push(format!("http://{}", listener.local_addr().unwrap()));
+            let app = server(g);
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        }
+        let ok: fn(&Paket) -> Result<(), String> = |_| Ok(());
+        let weg = |basis: &str, pins: Vec<u64>| Holweg {
+            basis: Box::leak(basis.to_string().into_boxed_str()),
+            token: None,
+            frist: START_FRIST_ANFRAGE,
+            je_abschnitt: false,
+            kontext: k(),
+            selbsttest: ok,
+            pins,
+            hilfe: None,
+        };
+        let ordner = |n: &str| {
+            let d = std::env::temp_dir().join(format!("aeroacars-imflug-{n}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            d
+        };
+        let ablage = |d: &Path| Ablage::oeffnen(d.join("laufzeit-paket")).unwrap();
+        for (name, schuetzen) in [("geschuetzt", true), ("gegenprobe", false)] {
+            let d = ordner(name);
+            // Vor dem Flug: Generation 53 gilt, der Flug fliegt mit ihr.
+            let pin = holen_und_installieren(&d, weg(&basen[0], Vec::new())).await.unwrap().expect("53 geholt");
+            std::fs::write(
+                d.join(crate::ACTIVE_FLIGHT_FILE),
+                serde_json::json!({ "pirep_id": "imflug", "runtime_bundle_id": pin }).to_string(),
+            )
+            .unwrap();
+            assert!(flug_offen(&d));
+            // Den Pin alt machen: nur noch `pins` schuetzt ihn vor dem Aufraeumen.
+            std::fs::write(d.join("laufzeit-paket/gen/53/installiert"), "2020-01-01T00:00:00+00:00").unwrap();
+            let pins = if schuetzen { zu_behalten(&d, 0, None) } else { vec![0] };
+            assert_eq!(pins.contains(&53), schuetzen);
+            // Im Flug: 54 und 55 werden geholt und installiert.
+            for (i, g) in [(1, 54), (2, 55)] {
+                let id = holen_und_installieren(&d, weg(&basen[i], pins.clone())).await.unwrap();
+                assert_eq!(id.map(|id| id.generation), Some(g), "{name}: im Flug geholt");
+            }
+            let a = ablage(&d);
+            assert_eq!((a.aktuell(), a.vorher()), (Some(55), Some(54)));
+            // Neustart mitten im Flug: derselbe Weg wie `starten_einmal`.
+            let l = a.laden(Some(&pin), &k(), &eingebaut()).unwrap();
+            if schuetzen {
+                assert_eq!((l.herkunft, l.paket.id.clone()), (Herkunft::Pin, pin.clone()), "Flug bleibt bei 53");
+            } else {
+                assert_ne!(l.herkunft, Herkunft::Pin, "Gegenprobe: ohne Schutz ist der Pin weg");
+            }
+            // Der naechste Flug bekommt 55.
+            let n = naechster_aus(&a, &k(), &pin).expect("55 wartet");
+            assert_eq!(n.generation, 55);
+            let _ = std::fs::remove_dir_all(&d);
+        }
+    }
+
+    /// Die Liste fuer das Aufraeumen: geltender Stand, Pin vom Start und der
+    /// Pin aus der Flugdatei; ohne Flugdatei nur die ersten beiden.
+    #[test]
+    fn zu_behalten_nennt_den_pin_aus_der_flugdatei() {
+        let d = std::env::temp_dir().join(format!("aeroacars-behalten-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(zu_behalten(&d, 91, None), vec![91]);
+        assert_eq!(zu_behalten(&d, 91, Some(90)), vec![91, 90]);
+        let pin = RuntimeBundleId { generation: 89, manifest_sha256: "ab".repeat(32) };
+        std::fs::write(d.join(crate::ACTIVE_FLIGHT_FILE), serde_json::json!({ "pirep_id": "x", "runtime_bundle_id": pin }).to_string())
+            .unwrap();
+        assert_eq!(zu_behalten(&d, 91, None), vec![91, 89]);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// Kommt das Pilot-Token, wird genau einmal nachgefragt — solange noch
@@ -2168,9 +2318,6 @@ aEu/MqmKECj2KRoMCUN4vPp/tna5e5vMHgCJUby+H4hRcGGSg0YLQtsc+uMfQ5bBhOmKm/UsiuqF+IkK
     #[test]
     fn token_stoesst_den_abruf_genau_einmal_an() {
         use std::sync::atomic::Ordering::SeqCst;
-        assert!(nach_token_abrufen(false, false));
-        assert!(!nach_token_abrufen(true, false));
-        assert!(!nach_token_abrufen(false, true), "offener Flug: kein Abruf");
         let dir = std::env::temp_dir().join(format!("aeroacars-token-abruf-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _ = APP_DATEN.set(dir.clone());

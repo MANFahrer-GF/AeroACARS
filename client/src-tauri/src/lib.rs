@@ -721,6 +721,7 @@ pub(crate) fn nach_dem_stand(app: &AppHandle, daten: Option<&std::path::Path>) {
                     message: format!("AeroACARS v{} gestartet", env!("CARGO_PKG_VERSION")),
                     // Tiny credit line — keeps the tool feeling human-made.
                     detail: Some("Made with ❤️ in Gifhorn — by Thomas Kant".into()),
+                    text: None,
                 };
                 tracing::info!(message = %banner.message, "activity");
                 log.push_back(banner);
@@ -880,18 +881,18 @@ pub(crate) fn nach_dem_stand(app: &AppHandle, daten: Option<&std::path::Path>) {
                 let app_for_lan = app.clone();
                 tauri::async_runtime::spawn(async move {
                     match remote::start_server(&app_for_lan).await {
-                        Ok(status) => log_activity_handle(
+                        Ok(status) => log_activity_handle_t(
                             &app_for_lan,
-                            ActivityLevel::Info,
+                            ActivityLevel::Info, akt("activity.lan.started", &[("port", &status.port)]),
                             format!(
                                 "LAN-Fernbedienung automatisch gestartet (Port {})",
                                 status.port
                             ),
                             None,
                         ),
-                        Err(e) => log_activity_handle(
+                        Err(e) => log_activity_handle_t(
                             &app_for_lan,
-                            ActivityLevel::Warn,
+                            ActivityLevel::Warn, akt("activity.lan.start_failed", &[]),
                             "LAN-Fernbedienung konnte nicht automatisch starten",
                             Some(e.message.clone()),
                         ),

@@ -728,6 +728,8 @@ fn step_flight_at(
     stats.last_known_at = Some(now);
     stats.position_count = stats.position_count.saturating_add(1);
     let prev_fuel_kg = stats.last_fuel_kg;
+    // 3.0.1 (DLH 41): Sprit, der in der Luft dazukommt, mitzaehlen.
+    nachtanken_luft_takt(&mut stats, snap.fuel_total_kg, nachtanken_am_boden(snap), snap.simulation_rate, now);
     // Aufsetzzeit: die der FSM, sonst die des Aufsetz-Samplers (Busch- und
     // Hubschrauberlandungen, bei denen die FSM noch nicht in Landing ist).
     // Fuer Zeitbasis UND Verbrauchsrate — sonst bekam eine Cessna, deren
@@ -1211,10 +1213,15 @@ fn step_flight_at(
                         let threshold = p_block + p_reserve + 500.0;
                         if block > threshold {
                             let extra = block - p_block;
-                            stats.pending_acars_logs.push(format!(
+                            let zeile = format!(
                                 "💡 Über-tankt — Sehr viel Sprit an Bord ({:+.0} kg über Plan + Reserve), höherer Burn unterwegs zu erwarten.",
                                 extra
-                            ));
+                            );
+                            stats.pending_acars_texte.insert(
+                                zeile.clone(),
+                                akt("activity.loadsheet.ueber_tankt", &[("kg", &format!("{:+.0}", extra))]),
+                            );
+                            stats.pending_acars_logs.push(zeile);
                         }
                     }
                     stats.loadsheet_logged_at_blockoff = true;
@@ -2705,11 +2712,11 @@ fn step_flight_at(
                     "FSM phase=Arrived/PirepSubmitted but aircraft is flying again — stopping position stream"
                 );
                 stats.arrived_stale_warning_logged = true;
-                stats.pending_acars_logs.push(
-                    "Position-Stream gestoppt — Flugzeug fliegt wieder, aber PIREP war als 'angekommen' markiert. \
+                let zeile = "Position-Stream gestoppt — Flugzeug fliegt wieder, aber PIREP war als 'angekommen' markiert. \
                      Bitte den alten Flug manuell beenden (PIREP-Detail) oder via 'Flug verwerfen' verwerfen, \
-                     dann neuen Flug starten.".to_string(),
-                );
+                     dann neuen Flug starten.".to_string();
+                stats.pending_acars_texte.insert(zeile.clone(), akt("activity.loadsheet.stream_gestoppt", &[]));
+                stats.pending_acars_logs.push(zeile);
                 flight.stop.store(true, Ordering::Relaxed);
             }
         }
@@ -3107,6 +3114,10 @@ fn step_flight_at(
 #[cfg(test)]
 #[path = "tests_lib/weiterflug_vom_boden_tests.rs"]
 mod weiterflug_vom_boden_tests;
+
+#[cfg(test)]
+#[path = "tests_lib/nachtanken_luft_tests.rs"]
+mod nachtanken_luft_tests;
 
 #[cfg(test)]
 #[path = "tests_lib/arrived_fallback_dwell_tests.rs"]

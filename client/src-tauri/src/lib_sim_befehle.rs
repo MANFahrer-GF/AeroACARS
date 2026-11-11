@@ -286,9 +286,9 @@ fn sim_automatik_schritt(
     }
     apply_sim_kind(state, neu);
     tracing::info!(von = ?cfg.kind, nach = ?neu, "Simulator automatisch umgestellt");
-    log_activity(
+    log_activity_t(
         state,
-        ActivityLevel::Info,
+        ActivityLevel::Info, akt("activity.sim.erkannt", &[("sim", &sim_anzeigename(neu))]),
         format!("Simulator automatisch erkannt: {}", sim_anzeigename(neu)),
         None,
     );

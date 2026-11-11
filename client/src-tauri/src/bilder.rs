@@ -1765,7 +1765,8 @@ mod tests {
         assert_eq!(quelle.matches("bilder::nachlauf_beginnen(&app, &flight, divert_to.as_deref().unwrap_or(&flight.arr_airport));").count(), 1, "von Hand");
         for marke in ["\"PIREP filed: {} {} – {}{}\"", "\"PIREP queued: {} {} – {}\""] {
             let davor = &quelle[..quelle.find(marke).unwrap()];
-            assert!(davor[davor.len().saturating_sub(400)..].contains("bilder::nachlauf_beginnen("), "{marke}");
+            // 600: die Pilotenhinweis-Zeile (akt(…), 11.11.) steht im selben Aufruf davor.
+            assert!(davor[davor.len().saturating_sub(600)..].contains("bilder::nachlauf_beginnen("), "{marke}");
         }
         let abbruch = quelle.split("async fn flight_cancel(").nth(1).unwrap().split("async fn ").next().unwrap();
         assert!(!abbruch.contains("nachlauf_beginnen"), "ein abgebrochener Flug hat keinen Nachlauf");

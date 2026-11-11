@@ -151,25 +151,27 @@ async fn sweep_stale_orphans_before_prefile(
             Ok(()) => {
                 // Alter ist hier immer parsebar — should_auto_cleanup hätte
                 // sonst false geliefert. Fallback trotzdem defensiv.
-                let alter = p
+                let alter_h = p
                     .created_at
                     .as_deref()
                     .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| {
-                        let h = (now - dt.with_timezone(&Utc)).num_hours();
-                        if h >= 48 {
-                            format!("{} Tage alt", h / 24)
-                        } else {
-                            format!("{h} h alt")
-                        }
-                    })
-                    .unwrap_or_else(|| "Alter unbekannt".to_string());
+                    .map(|dt| (now - dt.with_timezone(&Utc)).num_hours());
+                let alter = match alter_h {
+                    Some(h) if h >= 48 => format!("{} Tage alt", h / 24),
+                    Some(h) => format!("{h} h alt"),
+                    None => "Alter unbekannt".to_string(),
+                };
+                let alter_teil = match alter_h {
+                    Some(h) if h >= 48 => AktivitaetTeil::text("activity.orphan.alter_tage", &[("n", &(h / 24))]),
+                    Some(h) => AktivitaetTeil::text("activity.orphan.alter_h", &[("h", &h)]),
+                    None => AktivitaetTeil::text("activity.orphan.alter_unbekannt", &[]),
+                };
                 let nr = p.flight_number.as_deref().unwrap_or("?");
                 let dep = p.dpt_airport_id.as_deref().unwrap_or("?");
                 let arr = p.arr_airport_id.as_deref().unwrap_or("?");
-                log_activity_handle(
+                log_activity_handle_t(
                     app,
-                    ActivityLevel::Info,
+                    ActivityLevel::Info, akt("activity.orphan.cleaned", &[("nr", &nr), ("dep", &dep), ("arr", &arr)]).mit(alter_teil).und("activity.orphan.cleaned_detail", &[("pirep", &p.id)]),
                     format!("Verwaister Flug {nr} ({dep}–{arr}, {alter}) automatisch aufgeräumt"),
                     Some(format!(
                         "PIREP {} server-seitig gecancelt (Selbstheilung beim Flugstart)",
@@ -420,9 +422,9 @@ async fn flight_cancel_orphan(
     discard_queued_positions_for(&app, &pirep_id);
     pirep_queue::remove(&app, &pirep_id);
 
-    log_activity(
+    log_activity_t(
         &state,
-        ActivityLevel::Warn,
+        ActivityLevel::Warn, akt("activity.orphan.cancelled", &[("pirep", &pirep_id)]).und("activity.orphan.cancelled_detail", &[("bid", &format!("{:?}", bid_id))]),
         format!("Verwaister Flug abgebrochen — PIREP {pirep_id}"),
         Some(format!(
             "PIREP cancelled, Bid {:?} dropped, lokale Queues bereinigt.",
@@ -470,9 +472,9 @@ async fn flight_forget_remote(
     discard_queued_positions_for(&app, &pirep_id);
     pirep_queue::remove(&app, &pirep_id);
 
-    log_activity(
+    log_activity_t(
         &state,
-        ActivityLevel::Info,
+        ActivityLevel::Info, akt("activity.orphan.forgotten", &[("pirep", &pirep_id)]).und("activity.orphan.forgotten_detail", &[]),
         format!("Verwaister Flug lokal vergessen — PIREP {pirep_id}"),
         Some("Keine Server-Anfrage gemacht. PIREP-Status auf phpVMS unveraendert.".to_string()),
     );

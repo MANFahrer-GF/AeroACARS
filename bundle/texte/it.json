@@ -1825,7 +1825,8 @@
     "zusatz": {
       "title": "Campi aggiuntivi",
       "hinweis": "Campi aggiuntivi del modulo di valutazione. Vengono salvati e mostrati senza modifiche e non contano per il punteggio."
-    }
+    },
+    "refuelled_in_flight": "Rifornito in volo"
   },
   "about": {
     "lizenz": "© {{jahr}} Thomas Kant · Software proprietario, solo per i piloti di German Sky Group. Ridistribuzione ed elusione delle restrizioni di accesso sono vietate.",
@@ -1843,7 +1844,7 @@
     "pin": "Per il volo aperto resta valida la generazione {{n}}.",
     "neu_wartet": "Nuovo pacchetto {{n}} scaricato, sarà attivo al prossimo avvio.",
     "neu_starten": "Riavvia ora",
-    "neu_starten_nach_flug": "Riavvio possibile dopo il volo.",
+    "neu_starten_nach_flug": "Vale dal prossimo volo: riavvia dopo il volo.",
     "pruefen": "Cerca un nuovo pacchetto",
     "pruefe": "Controllo …",
     "ergebnis_kein_neueres": "Nessun pacchetto più recente.",
@@ -1858,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "AeroACARS 3 esce dalla beta: la versione 3.0.0 sostituisce AeroACARS 2 e arriva automaticamente tramite l’avviso di aggiornamento. La scheda Registro di un volo mostra ora anche tutti i campi PIREP per tema e le finanze. Logbook e diario di bordo sono ora una sola scheda: aprendo un volo nel logbook trovi in un unico posto la mappa completa con riproduzione, il diario di bordo con checklist e profilo di volo e il registro. Le voci del diario compaiono sulla mappa, “Sulla mappa” porta al momento e “Vedi atterraggio” apre l’atterraggio di quel volo. La scheda separata del diario di bordo non c’è più. Un volo senza piano di volo dal sito GSG non ha passeggeri né carico. Ora AeroACARS lo segnala. Con la nuova versione di AeroACARS inserisci tu il carico alla partenza VFR, e l'auto-start in attesa ti avvisa nella banda del simulatore e con una notifica. Un breve test dell'interruttore del beacon non attiva più gli annunci a terra: il beacon conta solo quando resta acceso per 15 secondi e l'aereo è caricato, al più tardi vale il pushback. Con la nuova versione di AeroACARS anche la musica d'imbarco termina solo allora. Nell'elenco delle prenotazioni, “Prenota un volo” porta ora direttamente a operativo voli, voli live, volo libero e SkyAdventures sul sito. Con la nuova versione di AeroACARS, “Crew Story” su una prenotazione apre una piccola finestra per la storia del volo. La mappa live ora mostra i punti immagine di tutti i voli, anche durante un volo. Mentre un volo è in corso, i voli precedenti sono compressi nella scheda Immagini; un clic sull'intestazione li espande. Passando il mouse su un punto immagine nelle mappe ora appare una piccola anteprima dell'immagine con volo, ora, quota e fase. I punti immagine sulla mappa live e sulla mappa del volo ora si possono nascondere con l'interruttore «Immagini». Ora le immagini si possono vedere ingrandite: con la lente sulla miniatura, con un clic sull'immagine a destra e con i punti sulle mappe. La mappa del volo mostra ora le immagini del volo come punti. Ora le immagini si possono inviare anche dal tablet tramite il bridge LAN. Con la nuova versione di AeroACARS: le foto durante lo sbarco appartengono ancora al volo. Fino a 30 minuti dopo la consegna le immagini vanno automaticamente al volo consegnato, finché l’aereo resta parcheggiato. Le immagini in modalità finestra mostrano ora solo l'immagine del simulatore, senza barra del titolo e bordo. La mappa live è stata ricostruita dall'interno: passando tra chiaro, scuro e satellite, rotta, traccia, traffico e rete restano semplicemente al loro posto. La barra della mappa ha pulsanti fissi in pochi gruppi, il pannello informazioni volo si può chiudere e nulla si sovrappone più, anche nelle finestre piccole. I punti immagine sono sulla mappa appena si apre, anche senza un volo in corso, e il globo resta quando si cambia mappa e dopo il riavvio."
+    "neu_text": "Le nuove generazioni arrivano ora anche durante un volo: AeroACARS le scarica in background come un aggiornamento del client e le mostra. Il volo in corso resta alla sua versione, la nuova generazione vale dal prossimo volo. Serve AeroACARS 3.0.1. Il rifornimento in volo ora viene conteggiato: se durante il volo si aggiunge carburante, AeroACARS somma la quantità al consumo, la mostra nella tabella carburante dell'atterraggio e la segnala nel registro attività. La direzione voli vede l'evento nella revisione. Con la 3.0.1 il registro attività mostra inoltre i messaggi per te nella tua lingua; le righe di cockpit e di stato restano in inglese."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -1975,6 +1976,279 @@
     "age_hours": "{{std}} h fa",
     "age_days": "{{tage}} giorni fa",
     "age_stale": "non aggiornato"
+  },
+  "activity": {
+    "refuel": {
+      "line": "Rifornimento in volo: {{kg}} kg. Il consumo di questo volo tiene conto della quantità.",
+      "before": "serbatoio prima {{kg}} kg",
+      "total": "in totale {{kg}} kg in questo volo",
+      "review": "La direzione voli vede l'operazione nella revisione."
+    },
+    "roh": "{{text}}",
+    "hoppie": {
+      "rx_started": "Hoppie: ricezione avviata come {{cs}}",
+      "rx_stopped": "Hoppie: ricezione interrotta",
+      "callsign_old": "Hoppie: il nominativo {{alt}} apparteneva a un volo precedente — ora vale {{neu}}",
+      "callsign_change": "Hoppie: il nominativo {{alt}} diventa {{neu}}, ricezione in riavvio",
+      "reconnect_failed": "Hoppie: riavvio con il nuovo nominativo non riuscito — premi „Avvia ricezione“",
+      "poll_rejected": "Hoppie: interrogazione rifiutata",
+      "poll_failed": "Hoppie: interrogazione non riuscita"
+    },
+    "cpdlc": {
+      "handover_ignored": "CPDLC: richiesta di HANDOVER a {{next}} da mittente inatteso ({{from}}) ignorata",
+      "handover_ignored_detail": "Era atteso l'ente attualmente connesso ({{station}}). Il passaggio NON è stato eseguito.",
+      "handover": "CPDLC: passaggio a {{next}}",
+      "end_service_handover": "CPDLC: {{station}} ha terminato il servizio — passaggio a {{next}}",
+      "end_service": "CPDLC: {{station}} ha terminato il servizio (END SERVICE)",
+      "end_service_detail": "Nessun ente successivo indicato — effettua manualmente il logon all'ente competente successivo."
+    },
+    "lan": {
+      "started": "Telecomando LAN avviato automaticamente (porta {{port}})",
+      "start_failed": "Impossibile avviare automaticamente il telecomando LAN"
+    },
+    "login": {
+      "relogin": "Nuovo accesso — gli aggiornamenti di posizione continuano con le credenziali precedenti",
+      "relogin_detail": "Il volo in corso continua a essere trasmesso a phpVMS con le credenziali di prima di questo accesso, fino alla sua conclusione. Se i problemi persistono, termina o annulla il volo e poi riavvialo.",
+      "account_inactive": "Sessione AeroACARS terminata — account GSG non attivo",
+      "account_inactive_detail": "Controllo stato: {{reason}}. Effettua di nuovo l'accesso o contatta la direzione della VA.",
+      "logged_out": "phpVMS ti ha disconnesso — account bloccato, inattivo o chiave API revocata",
+      "logged_out_detail": "Contatta l'amministratore della VA. Dopo lo sblocco, accedi di nuovo."
+    },
+    "resume": {
+      "not_auto": "Volo salvato non ripreso automaticamente",
+      "not_auto_detail": "Il volo non viene aggiornato da {{h}} ore e quindi non riprende da solo. Resta salvato.",
+      "not_active": "Volo salvato non più attivo",
+      "not_active_detail": "Il PIREP {{pirep}} ha sul server lo stato {{status}} — ripresa annullata.",
+      "gone": "Il volo salvato non esiste più",
+      "gone_detail": "phpVMS ha rimosso il PIREP (probabilmente per inattività). Riavvia il volo o invialo come PIREP manuale.",
+      "gate_unklar": "Piazzola di partenza: invio incerto dopo il riavvio",
+      "gate_unklar_detail": "Prima del riavvio un valore „Departure Gate“ non aggiornato potrebbe essere già stato inviato a phpVMS — dopo il riavvio non è più possibile stabilire se è arrivato. Se la piazzola di partenza nel PIREP {{pirep}} non è corretta, controllala manualmente o segnalalo al team della VA.",
+      "queued": "Volo messo in coda per un nuovo tentativo invece di annullarlo — PIREP {{pirep}}",
+      "queued_detail": "Errore temporaneo durante l'invio. Il PIREP verrà inviato in background appena la connessione torna disponibile.",
+      "filed": "Volo inviato regolarmente invece di annullarlo — PIREP {{pirep}}",
+      "filed_detail": "Il server ha accettato il PIREP.",
+      "autofile_cancel_failed": "Invio automatico prima dell'annullamento non riuscito ({{code}}) — conferma di nuovo",
+      "warte_sim": "In attesa del sim — il volo si attiva quando il sim è caricato e stabile",
+      "warte_sim_detail": "Ripresa dopo il riavvio di app/sim: nessuno streaming e nessun invio a phpVMS finché il sim non è caricato e stabile.",
+      "lange": "Il volo attende il sim da un tempo insolitamente lungo",
+      "lange_detail": "Il sim è in pausa, in modalità slew o con accelerazione del tempo? Fino ad allora AeroACARS non registra nulla. In alternativa, annulla il volo.",
+      "lage_nicht": "La situazione non corrisponde al volo — non ripreso, conferma nel banner",
+      "boden_nicht": "Ripartenza da terra non possibile — il volo prosegue nella fase precedente",
+      "boden_nicht_detail": "All'attivazione la situazione non corrispondeva più (non a terra, a destinazione o atterraggio già iniziato)",
+      "boden": "Ripartenza da terra — nuovo decollo, la destinazione resta {{arr}}",
+      "boden_detail": "A terra dopo il riavvio del sim a LAT {{lat}}° · LON {{lon}}°. Il volo è in rullaggio; orario di partenza e valori di decollo restano quelli originali. Il salto è annotato per la revisione.",
+      "bereit": "Il sim è pronto — volo attivo",
+      "trotz": "Ripreso nonostante una differenza rilevata",
+      "trotz_detail": "Al momento della ripresa il sim non corrispondeva al volo salvato (posizione {{nm}} nm, a terra: {{boden}}).",
+      "folge_angekommen": "Il volo era già atterrato e parcheggiato — verrà inviato con i valori dell'arrivo, il cambio è annotato.",
+      "folge_weiter": "Il volo prosegue, ma l'app non lo invia più da sola — decidi tu alla fine.",
+      "simwechsel": "Invio dopo un cambio di sim",
+      "simwechsel_detail": "Il volo era atterrato e parcheggiato; nel sim ora è caricato altro (posizione a {{nm}} nm). Vengono inviati i valori dell'arrivo, il cambio è annotato.",
+      "autofile_failed": "Invio automatico non riuscito — clicca manualmente „Termina volo“",
+      "auto": "Volo ripreso automaticamente",
+      "sim_pause": "Pausa del sim terminata — volo ripreso",
+      "manuell": "Volo ripreso",
+      "drift_extrem": "Riposizionamento molto grande di {{nm}} nm. Verifica che sia caricato il volo giusto.",
+      "drift_warn": "Riposizionamento insolito di {{nm}} nm",
+      "drift_info": "Riposizionato di {{nm}} nm",
+      "pause_dauer": "Durata della pausa: {{s}} s",
+      "vorher": "Prima: LAT {{lat}}° · LON {{lon}}° · ALT {{alt}} ft",
+      "jetzt": "Ora: LAT {{lat}}° · LON {{lon}}° · ALT {{alt}} ft",
+      "typ_anders": "Velivolo diverso dopo la ripresa: il sim indica {{sim}}, il bid prevede {{bid}}",
+      "typ_anders_detail": "Se stai davvero caricando un altro velivolo, annulla il PIREP attuale e avvia un nuovo volo con il bid corrispondente. Altrimenti carica nel sim il velivolo giusto (ICAO del bid: {{bid}}). Se è lo stesso velivolo e il sim indica solo un altro nome del tipo, aggiungi nell'amministrazione del recorder un alias {{bid}} per {{sim}}.",
+      "lage_banner": "La situazione non corrisponde al volo — conferma nel banner"
+    },
+    "lage": {
+      "kein_wert": "Il sim non fornisce ancora una posizione reale (schermata di caricamento/menu).",
+      "am_boden": "Nel sim il velivolo è a terra, ma il volo era in aria.",
+      "sprit": "Nel sim c'è più carburante a bordo che prima dell'interruzione — stato ricaricato.",
+      "zu_weit": "Il velivolo si trova a {{nm}} nm dall'ultima posizione (consentiti {{erlaubt}} nm).",
+      "passt": "La situazione corrisponde",
+      "sim_zurueck": "Il sim è di nuovo disponibile — la situazione non corrisponde al volo, registrazione in pausa",
+      "letzte_pos": "Ultima posizione: LAT {{lat}}° · LON {{lon}}°",
+      "jetzt_sim": "Ora nel sim: LAT {{lat}}° · LON {{lon}}° · ALT {{alt}} ft",
+      "banner_waehlen": "Conferma nel banner: torna all'ultima posizione e „Verifica posizione“, continua comunque (verrà annotato) o annulla il volo."
+    },
+    "sim": {
+      "warten": "In attesa del sim",
+      "laedt": "Il sim sta caricando o è in pausa.",
+      "springt": "La posizione salta ancora (caricamento o cambio aeroporto).",
+      "gewechselt": "Il velivolo è appena stato cambiato.",
+      "keine_position": "Il sim sta ancora caricando — non c'è una posizione utilizzabile.",
+      "nicht_frisch": "Il sim non fornisce valori aggiornati.",
+      "ruhig_zaehlstand": "Il sim è stabile solo da {{s}} s — il controllo avviene dopo {{n}} s.",
+      "paused": "Il sim è in pausa — AeroACARS sospende la registrazione.",
+      "letzte_pos": "Ultima posizione nota: LAT {{lat}}° · LON {{lon}}° · ALT {{alt}} ft",
+      "getrennt": "Sim disconnesso — volo in pausa. Clicca „Riprendi volo“ dopo esserti riposizionato.",
+      "getrennt_pos": "Ultima posizione nota: LAT {{lat}}° · LON {{lon}}° · HDG {{hdg}}° · ALT {{alt}} ft · carburante {{fuel}} kg · ZFW {{zfw}}",
+      "prozess_weg": "Processo del sim: NON PIÙ trovato (probabilmente chiuso/andato in crash).",
+      "prozess_laeuft": "Il processo del sim è ancora attivo — manca solo la connessione dati.",
+      "reload": "Ricaricamento del sim rilevato — registrazione in pausa",
+      "reload_detail": "Prima: FL{{fl}} in volo · ora: {{alt}} ft a terra a LAT {{lat}}° LON {{lon}}° (calo: {{drop}} ft). Scegli nel banner: torna alla posizione di crociera e verifica la posizione, oppure continua comunque — il salto viene registrato nel registro attività.",
+      "erkannt": "Il sim è stato rilevato automaticamente: {{sim}}"
+    },
+    "jump": {
+      "impossible": "Salto impossibile rilevato alla ripresa",
+      "grund_bestaetigt": "Ripresa nonostante la differenza confermata",
+      "grund_ziel": "salto alla destinazione",
+      "grund_weit": "posizione spostata di oltre 200 nm",
+      "grund_sprit": "carburante aumentato in volo",
+      "grund_unklar": "stato alla ripresa non plausibile",
+      "werte_pause": "Diff. carburante {{fuel}} kg · diff. quota {{alt}} ft · deriva {{nm}} nm — fisicamente non plausibile (nessun consumo/volo normale), probabilmente ricaricamento/nuovo stato durante la pausa.",
+      "werte_neustart": "Diff. carburante {{fuel}} kg · diff. quota {{alt}} ft · deriva {{nm}} nm — fisicamente non plausibile (nessun consumo/volo normale), probabilmente ricaricamento/nuovo stato durante un riavvio dell'app o del sim."
+    },
+    "auto_start": {
+      "an": "Auto-start attivato",
+      "an_detail": "Controlla ogni 3 s se un bid e l'aeroporto di partenza corrispondono",
+      "aus": "Auto-start disattivato",
+      "keine_koord": "Auto-start non possibile per {{icao}}",
+      "keine_koord_detail": "Per {{icao}} non ci sono coordinate né nel database piste né in phpVMS — l'auto-start non può verificare se ti trovi lì. Avvia il volo manualmente.",
+      "start_failed": "Auto-start: avvio del volo non riuscito",
+      "start_failed_detail": "bid {{bid}} – errore: {{code}}",
+      "start_laeuft": "Auto-start: avvio in corso",
+      "start_laeuft_detail": "Il bid {{bid}} è in fase di avvio — il volo viene creato.",
+      "typ_passt_nicht": "Auto-start: il velivolo non corrisponde",
+      "typ_passt_nicht_detail": "Il bid {{flug}} prevede {{erwartet}}, nel sim è caricato {{sim}}. L'auto-start qui non parte — usa manualmente „Avvia comunque“ (wetlease) o carica il velivolo giusto. Suggerimento: il tipo in realtà corrisponde (solo un nome diverso)? Allora manca un alias del tipo di velivolo sul server.",
+      "kein_plan": "Nessun piano di volo dal sito GSG",
+      "kein_plan_detail": "Volo {{flug}} senza passeggeri né merci. Crealo nella pagina del volo.",
+      "neuer_versuch": "Auto-start: nuovo tentativo a breve",
+      "neuer_versuch_detail": "L'ultimo avvio del bid {{bid}} non è riuscito ({{code}}). Nuovo tentativo tra {{rest}} s — oppure usa manualmente „Avvia volo“.",
+      "kein_match": "Auto-start: nessuna corrispondenza",
+      "schon_gestartet_detail": "Il bid {{bid}} è già stato avviato automaticamente in questa sessione. Riavvia con l'interruttore manuale o con un altro bid.",
+      "kein_match_nm": "Nessun bid corrisponde alla posizione attuale ({{nm}} nm dall'aeroporto di partenza più vicino). L'auto-start parte solo da una piazzola dell'aeroporto di partenza.",
+      "kein_match_fern": "Nessun bid corrisponde alla posizione attuale (nessun aeroporto di partenza nelle vicinanze). L'auto-start parte solo da una piazzola dell'aeroporto di partenza.",
+      "sim_wartet": "Auto-start: in attesa del sim",
+      "nicht_moeglich": "Auto-start: non possibile",
+      "keine_bids": "Auto-start: nessun bid disponibile",
+      "keine_bids_detail": "Nella scheda bid di phpVMS al momento non c'è nulla di prenotato. Hai effettuato l'accesso?",
+      "grund_titel_xplane": "L'auto-start attende i dati del sim: nome del velivolo mancante. Attiva X-Plane Settings > Network > Web API così AeroACARS può leggere il nome del velivolo.",
+      "grund_titel": "L'auto-start attende i dati del sim: nome del velivolo mancante. Il sim è ancora in avvio o il velivolo non è del tutto caricato.",
+      "grund_fuel": "L'auto-start attende i dati del sim: carburante = 0. Serbatoi vuoti (cold & dark senza carburante) o sim ancora in avvio.",
+      "grund_luft": "Sei in volo — l'auto-start funziona solo a terra",
+      "grund_rollt": "Il velivolo sta già rullando — l'auto-start parte solo da fermo",
+      "grund_triebwerke": "Motori accesi — l'auto-start parte solo con il velivolo freddo e fermo. Usa 'Avvia volo' manualmente."
+    },
+    "pirep": {
+      "accident_widerspruch": "Il pilota ha contestato la classificazione come incidente — invio come atterraggio duro",
+      "accident_widerspruch_detail": "Classificazione precedente: kind={{kind}}, reasons=[{{reasons}}]",
+      "file_failed": "Invio del PIREP non riuscito",
+      "file_failed_queue": "{{fehler}} — anche la coda non funziona, il volo resta attivo per un nuovo tentativo",
+      "queued": "PIREP in coda: {{cs}} {{dep}} – {{arr}}",
+      "queued_detail": "Verrà inviato automaticamente appena la connessione torna disponibile. Puoi iniziare il prossimo volo.",
+      "server_cancel": "Il PIREP è stato annullato dal server",
+      "server_cancel_detail": "{{quelle}}: phpVMS non gestisce più il PIREP in corso (rimosso o annullato). Invialo come PIREP manuale.",
+      "landung_nicht_gemeldet": "Impossibile segnalare l'atterraggio al server",
+      "landung_nicht_gemeldet_detail": "Al momento del contatto non c'era connessione. Il rapporto di volo viene comunque inviato; il registro di volo trasmette l'atterraggio in seguito. La valutazione sul sito potrebbe quindi comparire più tardi."
+    },
+    "queue": {
+      "noch_nicht": "PIREP non ancora inviato dopo {{n}} tentativi: {{cs}} {{dep}} – {{arr}}",
+      "bleibt": "Il volo resta in coda e verrà ritentato (ora a intervalli più lunghi) — se i problemi persistono, segnalalo al team della VA (ID PIREP {{pirep}}).",
+      "nachgereicht": "PIREP in coda inviato in seguito: {{cs}} {{dep}} – {{arr}}",
+      "nachgereicht_detail": "Dopo {{n}} tentativo/i — la connessione era tornata",
+      "abgelehnt": "PIREP {{cs}} rifiutato dal server — voce rimossa dalla coda",
+      "abgelehnt_detail": "Se volevi inviare il volo: controlla il sito phpVMS (il PIREP potrebbe essere già inviato o annullato)."
+    },
+    "netz": {
+      "1236": "Connessione interrotta (1236 — espulsione NAT del router o simile). Nuovo tentativo automatico.",
+      "10053": "Connessione interrotta localmente (10053). Nuovo tentativo automatico.",
+      "10054": "Connessione chiusa dal server (10054). Nuovo tentativo automatico.",
+      "timeout": "Timeout della risposta del server. Nuovo tentativo automatico.",
+      "dns": "Risoluzione DNS non riuscita. Controlla la connessione internet.",
+      "connect": "Impossibile raggiungere il server phpVMS. Nuovo tentativo automatico.",
+      "sonst": "Errore di rete: {{fehler}}",
+      "unbekannt": "sconosciuto"
+    },
+    "start": {
+      "typ_abgeleitet": "Tipo di velivolo mancante in phpVMS per {{reg}} — ricavato dal titolo nel sim: {{typ}}",
+      "typ_unbekannt": "Tipo di velivolo sconosciuto per {{reg}} — la valutazione dell'atterraggio procede senza riferimento al tipo",
+      "spurweite": "Carreggiata dal file del velivolo: {{m}} m",
+      "manual": "Volo in modalità manuale avviato: {{cs}} {{dep}} – {{arr}} (blocco {{block}} kg, ETA {{eta}} min)"
+    },
+    "ofp": {
+      "geladen_direkt": "OFP SimBrief caricato (diretto, versione attuale)",
+      "geladen": "OFP SimBrief caricato",
+      "geladen_detail": "Blocco pianificato {{block}} kg · trip {{trip}} kg · TOW {{tow}} kg",
+      "geladen_id": "OFP {{ofp}}",
+      "unbrauchbar": "Impossibile caricare l'OFP SimBrief",
+      "unbrauchbar_detail": "L'OFP ID {{id}} non fornisce dati utilizzabili — la tab Atterraggio quindi non mostra valori previsti. Crea un nuovo OFP su simbrief.com.",
+      "fetch_failed": "Download dell'OFP SimBrief non riuscito",
+      "fetch_failed_detail": "Impossibile caricare l'OFP ID {{id}} ({{fehler}}). La tab Atterraggio quindi non mostra valori previsti. Riprova più tardi con Aggiorna in I miei voli, oppure genera un nuovo OFP.",
+      "keiner": "Nessun OFP SimBrief per questo volo",
+      "keiner_detail": "Il bid non ha un OFP SimBrief collegato. Puoi volare comunque — la tab Atterraggio mostrerà solo i valori effettivi senza confronto con quelli previsti.",
+      "refreshed": "OFP aggiornato",
+      "unchanged": "OFP invariato",
+      "detail_neu": "prima {{vorher}}, ora {{jetzt}} (nuovo). Blocco {{block}} kg, TOW {{tow}} kg, LDW {{ldw}} kg",
+      "detail_identisch": "prima {{vorher}}, ora {{jetzt}} (identico). Blocco {{block}} kg, TOW {{tow}} kg, LDW {{ldw}} kg"
+    },
+    "route": {
+      "sync": "Rotta sincronizzata",
+      "sync_gepostet": "{{n}} waypoint presi dall'OFP SimBrief attuale (inviati a phpVMS).",
+      "sync_kein_navlog": "{{n}} waypoint presi dall'OFP SimBrief attuale (nessun navlog nell'OFP).",
+      "sync_upload_fehler": "{{n}} waypoint presi dall'OFP SimBrief attuale (caricamento su phpVMS non riuscito — aggiornata localmente)."
+    },
+    "bids": {
+      "failed": "Impossibile caricare i bid"
+    },
+    "navdata": {
+      "geladen": "Navdata AIRAC {{airac}} caricati per {{plaetze}}",
+      "fallback": "Navdata: fallback OurAirports attivo (server non raggiungibile)"
+    },
+    "upload": {
+      "flight_log_failed": "Caricamento del registro di volo non riuscito — verrà ritentato automaticamente",
+      "flight_log_failed_detail": "{{fehler}} — registro salvato localmente in flight_logs/{{pirep}}.jsonl",
+      "regeln_alt": "Regole di valutazione non verificate da {{tage}} giorni",
+      "regeln_alt_detail": "AeroACARS non è riuscito a interrogare il server live sulle regole di valutazione e continua con la versione presente. Controlla la connessione internet; se persiste, segnalalo al team GSG.",
+      "diagnose": "Registro diagnostico inviato",
+      "diagnose_detail": "{{kb}} KB — messaggi tecnici del client, nessuna credenziale"
+    },
+    "pos": {
+      "wiederholt": "Posizioni phpVMS: {{n}} ripetizione/i, {{pos}} posizioni reinviate",
+      "wiederholt_detail": "Non si creano righe doppie — ogni posizione ha una chiave univoca.",
+      "gesperrt": "phpVMS rifiuta le tue richieste — account bloccato o inattivo",
+      "gesperrt_detail": "HTTP {{http}}: contatta l'amministratore della VA e accedi di nuovo dopo lo sblocco. L'invio delle posizioni è stato interrotto.",
+      "nicht_bestaetigt": "phpVMS non ha confermato un blocco di posizioni — nuovo invio",
+      "nicht_bestaetigt_detail": "{{n}} posizioni vengono reinviate. La registrazione prosegue normalmente; sulla mappa live la traccia può essere in ritardo per poco."
+    },
+    "orphan": {
+      "cleaned": "Volo orfano {{nr}} ({{dep}}–{{arr}}) rimosso automaticamente",
+      "alter_tage": "vecchio di {{n}} giorni",
+      "alter_h": "vecchio di {{h}} h",
+      "alter_unbekannt": "età sconosciuta",
+      "cleaned_detail": "PIREP {{pirep}} annullato sul server (autoriparazione all'avvio del volo)",
+      "cancelled": "Volo orfano annullato — PIREP {{pirep}}",
+      "cancelled_detail": "PIREP annullato, bid {{bid}} rimosso, code locali ripulite.",
+      "forgotten": "Volo orfano dimenticato localmente — PIREP {{pirep}}",
+      "forgotten_detail": "Nessuna richiesta al server. Stato del PIREP su phpVMS invariato."
+    },
+    "touchdown": {
+      "line": "Touchdown: V/S {{vs}} fpm, G {{g}}",
+      "ohne_g": "Touchdown: V/S {{vs}} fpm, G non misurato",
+      "bounces": "Rimbalzi: {{n}}",
+      "note_vorlaeufig": "Voto {{note}} (provvisorio)",
+      "vorlaeufig": "Valutazione provvisoria",
+      "modulfehler": "Valutazione non possibile, verrà completata sul server",
+      "dds": "Touchdown nella zona prima della soglia (DDS {{m}} m prima della soglia di atterraggio)"
+    },
+    "cockpit": {
+      "blinkmodus": "Luci {{name}}: lampeggianti",
+      "pmdg_aktiv": "{{variant}} — SDK PMDG attivo",
+      "pmdg_aktiv_detail": "Dati cockpit premium disponibili (FMA, MCP, V-speed, FMC)",
+      "v_speeds": "V-speed impostate: V1 {{v1}} · VR {{vr}} · V2 {{v2}} · VREF {{vref}}",
+      "to_config": "TAKEOFF CONFIG warning",
+      "to_config_detail": "Il cockpit mostra un avviso rosso — configurazione di decollo incompleta",
+      "master_caution_aus": "MASTER CAUTION spento",
+      "master_warning_aus": "MASTER WARNING spento",
+      "umkehrschub": "Spinta inversa attivata",
+      "ground_spoiler": "Ground spoiler estesi",
+      "baro_std": "Baro: STD impostato",
+      "baro_qnh": "Baro: QNH impostato",
+      "kabinenhoehe": "🔴 Avviso quota cabina",
+      "schubhebel": "Manette: {{gate}}"
+    },
+    "loadsheet": {
+      "ueber_tankt": "💡 Troppo carburante — molto carburante a bordo ({{kg}} kg oltre piano + riserva), consumo più alto da prevedere in rotta.",
+      "stream_gestoppt": "Stream di posizione interrotto — il velivolo vola di nuovo, ma il PIREP era segnato come „arrivato“. Termina manualmente il vecchio volo (dettaglio PIREP) o scartalo con „Annulla volo“, poi avvia un nuovo volo."
+    }
   },
   "activity_log": {
     "title": "Log attività ACARS",

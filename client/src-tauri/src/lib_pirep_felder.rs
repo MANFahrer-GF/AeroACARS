@@ -102,10 +102,9 @@ fn build_heartbeat_body(
     // Round to whole kg before lb conversion so the live-map / dashboard
     // shows clean integer kg values (no `5890.29 kg` artefacts from the
     // round-trip).
-    let fuel_used = match (stats.block_fuel_kg, stats.last_fuel_kg) {
-        (Some(b), Some(c)) if b > c => Some(((b - c) as f64).round() * KG_TO_LB),
-        _ => None,
-    };
+    // 3.0.1: Block und Verbrauch tragen in der Luft Nachgetanktes mit
+    // (`blocksprit_mit_nachtanken`) — `block − fuel_used` bleibt der Resttank.
+    let fuel_used = verbrauch_ab_block_kg(stats).map(|kg| (kg as f64).round() * KG_TO_LB);
     // Prefer the peak altitude observed (matches the FILE-time `level`),
     // but fall back to the current MSL altitude during early climb so the
     // live map shows something sensible before peak gets captured.
@@ -144,7 +143,7 @@ fn build_heartbeat_body(
     // remaining-fuel display reads as "−<fuel_used>" (bug reported by
     // pilot on 2026-05-04: "−17008 kg" mid-cruise). Same kg→lb round-
     // trip as fuel_used so the dashboard shows clean integer values.
-    let block_fuel = stats.block_fuel_kg.map(|b| (b as f64).round() * KG_TO_LB);
+    let block_fuel = blocksprit_mit_nachtanken(stats).map(|b| (b as f64).round() * KG_TO_LB);
     UpdateBody {
         state: None,
         source: None,
@@ -192,9 +191,9 @@ fn handle_remote_cancellation(app: &AppHandle, flight: &Arc<ActiveFlight>, sourc
         .unwrap_or_else(|e| e.into_inner())
         .clear();
     flight.stop.store(true, Ordering::Relaxed);
-    log_activity_handle(
+    log_activity_handle_t(
         app,
-        ActivityLevel::Error,
+        ActivityLevel::Error, akt("activity.pirep.server_cancel", &[]).und("activity.pirep.server_cancel_detail", &[("quelle", &source)]),
         "PIREP wurde vom Server gecancelt".to_string(),
         Some(format!(
             "{source}: phpVMS führt den laufenden PIREP nicht mehr (entfernt oder storniert). Bitte als Manual-PIREP einreichen."
@@ -463,16 +462,26 @@ fn build_pirep_fields_mit(
     if let Some(w) = stats.landing_weight_kg.filter(|v| *v > 0.0) {
         f.insert("Landing Weight".into(), format!("{:.0} kg", w));
     }
-    if let Some(b) = stats.block_fuel_kg.filter(|v| *v > 0.0) {
+    // 3.0.1: derselbe Block wie im nativen phpVMS-Feld (`blocksprit_mit_nachtanken`).
+    if let Some(b) = blocksprit_mit_nachtanken(stats).filter(|v| *v > 0.0) {
         f.insert("Block Fuel".into(), format!("{:.0} kg", b));
     }
     if let Some(fuel) = stats.landing_fuel_kg.filter(|v| *v > 0.0) {
         f.insert("Landing Fuel".into(), format!("{:.0} kg", fuel));
     }
-    if let (Some(b), Some(c)) = (stats.block_fuel_kg, stats.last_fuel_kg) {
-        if b > 0.0 && b > c {
-            f.insert("Fuel Used".into(), format!("{:.0} kg", b - c));
+    // 3.0.1 (DLH 41): eigenes Feld, damit der Admin Block und Verbrauch
+    // zusammenbringt — der Verbrauch rechnet die Menge mit.
+    if nachgetankt_luft(stats) > 0.0 {
+        f.insert(
+            "Refuelled In Flight".into(),
+            format!("{:.0} kg", nachgetankt_luft(stats)),
+        );
+        if let Some(d) = stats.nachtanken_luft.tank_davor_kg {
+            f.insert("Fuel Before Refuelling".into(), format!("{:.0} kg", d));
         }
+    }
+    if let Some(used) = verbrauch_ab_block_kg(stats) {
+        f.insert("Fuel Used".into(), format!("{:.0} kg", used));
     }
 
     // ---- Touchdown analysis ----
@@ -753,7 +762,7 @@ fn build_pirep_fields_mit(
     // burn (excludes taxi out/in, matching SimBrief's est_burn).
     if let (Some(plan_burn), Some(toff), Some(land)) = (
         stats.planned_burn_kg,
-        stats.takeoff_fuel_kg,
+        startsprit_mit_nachtanken(stats),
         stats.landing_fuel_kg,
     ) {
         if plan_burn > 0.0 && toff > 0.0 && land >= 0.0 && toff > land {
@@ -1074,13 +1083,14 @@ fn build_pirep_notes_mit(
     if any_fuel {
         start_section(&mut s, "FUEL & WEIGHT");
         wrote_section = true;
-        if let Some(b) = stats.block_fuel_kg.filter(|v| *v > 0.0) {
+        if let Some(b) = blocksprit_mit_nachtanken(stats).filter(|v| *v > 0.0) {
             let _ = writeln!(s, "  Block fuel    {:.0} kg", b);
         }
-        if let (Some(b), Some(c)) = (stats.block_fuel_kg, stats.last_fuel_kg) {
-            if b > 0.0 && b > c {
-                let _ = writeln!(s, "  Fuel used     {:.0} kg", b - c);
-            }
+        if nachgetankt_luft(stats) > 0.0 {
+            let _ = writeln!(s, "  Refuelled in flight {:.0} kg", nachgetankt_luft(stats));
+        }
+        if let Some(used) = verbrauch_ab_block_kg(stats) {
+            let _ = writeln!(s, "  Fuel used     {:.0} kg", used);
         }
         if let Some(f) = stats.landing_fuel_kg.filter(|v| *v > 0.0) {
             let _ = writeln!(s, "  Landing fuel  {:.0} kg", f);
@@ -1106,7 +1116,7 @@ fn build_pirep_notes_mit(
         }
         if let (Some(plan_burn), Some(toff), Some(land)) = (
             stats.planned_burn_kg,
-            stats.takeoff_fuel_kg,
+            startsprit_mit_nachtanken(stats),
             stats.landing_fuel_kg,
         ) {
             if plan_burn > 0.0 && toff > land && toff > 0.0 && land >= 0.0 {

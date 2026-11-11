@@ -424,9 +424,9 @@ async fn flight_end(
                         // accident_at wird NICHT geloescht — Audit-Spur fuer den
                         // Override-Zeitpunkt bleibt. Notes-Builder ignoriert sie
                         // wenn accident_detected=false.
-                        log_activity(
+                        log_activity_t(
                             &state,
-                            ActivityLevel::Warn,
+                            ActivityLevel::Warn, akt("activity.pirep.accident_widerspruch", &[]).und("activity.pirep.accident_widerspruch_detail", &[("kind", &prev_kind), ("reasons", &prev_reasons)]),
                             "Pilot hat Accident-Klassifikation widersprochen — filing als harte Landung".to_string(),
                             Some(format!(
                                 "Vorherige Klassifikation: kind={prev_kind}, reasons=[{prev_reasons}]"
@@ -743,16 +743,13 @@ async fn flight_end(
         // sub-kg precision anyway, and a half-kg loss is invisible
         // to pilots — what's NOT invisible is `9733.45 kg` looking
         // like a unit-mix-up bug. Same logic for fuel_used.
-        let fuel_used = match (stats.block_fuel_kg, stats.last_fuel_kg) {
-            (Some(b), Some(c)) if b > c => Some(((b - c) as f64).round() * KG_TO_LB),
-            _ => None,
-        };
+        // 3.0.1: mit in der Luft Nachgetanktem (`blocksprit_mit_nachtanken`).
+        let fuel_used = verbrauch_ab_block_kg(&stats).map(|kg| (kg as f64).round() * KG_TO_LB);
         // Block fuel sent natively so phpVMS computes "Verbleibender
         // Treibstoff" correctly (= block_fuel - fuel_used). Without
         // this the dashboard shows "-fuel_used kg" because the
         // missing block_fuel defaults to 0. Same unit as fuel_used.
-        let block_fuel = stats
-            .block_fuel_kg
+        let block_fuel = blocksprit_mit_nachtanken(&stats)
             .filter(|kg| *kg > 0.0)
             .map(|kg| (kg as f64).round() * KG_TO_LB);
         // Cruise level = peak MSL altitude observed. phpVMS column
@@ -1166,9 +1163,9 @@ async fn flight_end(
                 if let Err(qe) = pirep_queue::enqueue(&app, &queued) {
                     // Queue selber kaputt — fallback auf altes Verhalten
                     tracing::error!(error = %qe, "PIREP-Queue enqueue failed — falling back to flight-in-state");
-                    log_activity(
+                    log_activity_t(
                         &state,
-                        ActivityLevel::Error,
+                        ActivityLevel::Error, akt("activity.pirep.file_failed", &[]).und("activity.pirep.file_failed_queue", &[("fehler", &e)]),
                         "PIREP file failed",
                         Some(format!(
                             "{} — Queue ebenfalls kaputt, Flug bleibt aktiv für Retry",
@@ -1196,9 +1193,9 @@ async fn flight_end(
                 anflug_forensik_nachtrag_schreiben(&app, &flight);
                 clear_persisted_flight(&app, Some(&flight.pirep_id));
                 bilder::nachlauf_beginnen(&app, &flight, &effective_arr_icao);
-                log_activity(
+                log_activity_t(
                     &state,
-                    ActivityLevel::Warn,
+                    ActivityLevel::Warn, akt("activity.pirep.queued", &[("cs", &format_callsign(&flight.airline_icao, &flight.flight_number)), ("dep", &flight.dpt_airport), ("arr", &flight.arr_airport)]).mit(net_fehler_teil(&friendly_net_error(&e))).und("activity.pirep.queued_detail", &[]),
                     format!(
                         "PIREP queued: {} {} – {}",
                         format_callsign(&flight.airline_icao, &flight.flight_number),

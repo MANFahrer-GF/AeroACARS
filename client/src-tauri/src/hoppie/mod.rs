@@ -51,7 +51,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tokio::sync::watch;
 
-use crate::{log_activity_handle, ActivityLevel, AppState, UiError};
+use crate::{akt, log_activity_handle_t, ActivityLevel, AppState, UiError};
 
 pub use settings::HoppieSettings;
 
@@ -851,9 +851,9 @@ pub async fn hoppie_connect(
         from_callsign: from.clone(),
         poll_wake,
     });
-    log_activity_handle(
+    log_activity_handle_t(
         &app,
-        ActivityLevel::Info,
+        ActivityLevel::Info, akt("activity.hoppie.rx_started", &[("cs", &from_for_log)]),
         format!("Hoppie: Empfang gestartet als {from_for_log}"),
         None,
     );
@@ -926,7 +926,7 @@ pub async fn hoppie_disconnect(
     // Logged so a "it stayed connected" report can be checked against
     // what actually happened, instead of guessed at.
     if was_running {
-        log_activity_handle(&app, ActivityLevel::Info, "Hoppie: Empfang gestoppt", None);
+        log_activity_handle_t(&app, ActivityLevel::Info, akt("activity.hoppie.rx_stopped", &[]), "Hoppie: Empfang gestoppt", None);
     }
     Ok(build_status(&guard))
 }
@@ -1182,9 +1182,9 @@ pub(crate) fn resolve_callsign(app: &AppHandle) -> Option<String> {
                 }),
             );
             let neu = des_flugs();
-            log_activity_handle(
+            log_activity_handle_t(
                 app,
-                ActivityLevel::Info,
+                ActivityLevel::Info, akt("activity.hoppie.callsign_old", &[("alt", &alt.trim().to_uppercase()), ("neu", &neu.as_deref().unwrap_or("-"))]),
                 format!(
                     "Hoppie: eigenes Rufzeichen {} gehörte zu einem früheren Flug — es gilt jetzt {}",
                     alt.trim().to_uppercase(),

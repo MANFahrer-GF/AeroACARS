@@ -62,6 +62,7 @@ fn log_fuel_weight_at_phase(
         landing_fuel,
         landing_weight,
         last_fuel,
+        fuel_used_ab_block,
         blocks_on_reached,
     ) = {
         let stats = flight.stats.lock().expect("flight stats");
@@ -72,6 +73,8 @@ fn log_fuel_weight_at_phase(
             stats.landing_fuel_kg,
             stats.landing_weight_kg,
             stats.last_fuel_kg,
+            // 3.0.1: mit in der Luft Nachgetanktem.
+            verbrauch_ab_block_kg(&stats),
             stats.blocks_on_reached,
         )
     };
@@ -134,10 +137,7 @@ fn log_fuel_weight_at_phase(
             // current fuel. Only show when both are valid and
             // block > current — otherwise the math is meaningless
             // (e.g. defuel during taxi, fuel SimVar missing).
-            let fuel_used = match (block_fuel, last_fuel) {
-                (Some(b), Some(c)) if b > 0.0 && b > c => Some(b - c),
-                _ => None,
-            };
+            let fuel_used = fuel_used_ab_block;
             (
                 "Fuel & Weight @ Block-on".to_string(),
                 Some(format!(
@@ -622,6 +622,17 @@ fn log_activity(
     message: impl Into<String>,
     detail: Option<String>,
 ) {
+    log_activity_t(state, level, None, message, detail);
+}
+
+/// Wie `log_activity`, dazu der uebersetzbare Text (`akt(...)`).
+fn log_activity_t(
+    state: &tauri::State<'_, AppState>,
+    level: ActivityLevel,
+    text: impl Into<Option<AktivitaetText>>,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
     let now = Utc::now();
     let message = message.into();
     {
@@ -634,6 +645,7 @@ fn log_activity(
         timestamp: now,
         level,
         message,
+        text: aktivitaet_text_fertig(text.into(), detail.as_deref()),
         detail,
     };
     match level {
@@ -676,12 +688,36 @@ pub(crate) fn log_activity_handle(
     log_activity_mit_meldung(app, level, message.into(), detail, true);
 }
 
+/// Wie `log_activity_handle`, dazu der uebersetzbare Text (`akt(...)`).
+pub(crate) fn log_activity_handle_t(
+    app: &AppHandle,
+    level: ActivityLevel,
+    text: AktivitaetText,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
+    log_activity_uebersetzbar(app, level, message.into(), detail, Some(text), true);
+}
+
 
 fn log_activity_mit_meldung(
     app: &AppHandle,
     level: ActivityLevel,
     message: String,
     detail: Option<String>,
+    an_glitchtip: bool,
+) {
+    log_activity_uebersetzbar(app, level, message, detail, None, an_glitchtip);
+}
+
+/// Wie `log_activity_mit_meldung`, dazu der uebersetzbare Text fuer die
+/// Oberflaeche (`AktivitaetText`).
+fn log_activity_uebersetzbar(
+    app: &AppHandle,
+    level: ActivityLevel,
+    message: String,
+    detail: Option<String>,
+    text: Option<AktivitaetText>,
     an_glitchtip: bool,
 ) {
     let now = Utc::now();
@@ -696,6 +732,7 @@ fn log_activity_mit_meldung(
         timestamp: now,
         level,
         message,
+        text: aktivitaet_text_fertig(text, detail.as_deref()),
         detail,
     };
     match level {
@@ -748,6 +785,18 @@ fn log_activity_and_record(
     message: impl Into<String>,
     detail: Option<String>,
 ) {
+    log_activity_and_record_t(app, pirep_id, level, None, message, detail);
+}
+
+/// Wie `log_activity_and_record`, dazu der uebersetzbare Text (`akt(...)`).
+fn log_activity_and_record_t(
+    app: &AppHandle,
+    pirep_id: &str,
+    level: ActivityLevel,
+    text: impl Into<Option<AktivitaetText>>,
+    message: impl Into<String>,
+    detail: Option<String>,
+) {
     let message = message.into();
     let level_str = match level {
         ActivityLevel::Info => "info",
@@ -764,7 +813,7 @@ fn log_activity_and_record(
             detail: detail.clone(),
         },
     );
-    log_activity_handle(app, level, message, detail);
+    log_activity_uebersetzbar(app, level, message, detail, text.into(), true);
 }
 
 /// Was mit einem Lichtwechsel im Aktivitätsprotokoll geschehen soll.
