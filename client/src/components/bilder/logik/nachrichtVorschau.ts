@@ -33,14 +33,17 @@ export type SendeMeta = BildMeta & { phase_text?: string | null };
  * im Dialog), Zeit, Hoehe und Phase gehen mit.
  */
 export function sendeMeta(m: BildMeta, stufe: GeoStufe, phaseText: string): SendeMeta {
-  const ohneOrt = stufe === "aus" || nurKopf(stufe) ? { breite: null, laenge: null, kurs: null, naechster_flugplatz: null } : {};
-  // „nur_flug“/„nur_name“: Zeit, Hoehe, Tempo und Phase verlassen das Programm nicht.
-  const ohneDaten = nurKopf(stufe) ? { zeit_utc: null, hoehe_ft: null, gs_kt: null, phase: null } : {};
-  // „nur_name“: auch Flug, Strecke und Flugzeug bleiben im Programm.
-  const ohneFlug = stufe === "nur_name"
-    ? { rufzeichen: null, abflug: null, ziel: null, flugzeug_titel: null, flugzeug_icao: null, pirep_id: null }
-    : {};
-  return { ...m, ...ohneOrt, ...ohneDaten, ...ohneFlug, phase_text: nurKopf(stufe) ? null : phaseText || null };
+  if (nurKopf(stufe)) {
+    // Positivliste: Bei „nur_name“ geht nur die Fassung mit, bei „nur_flug“ zusaetzlich
+    // Flug, Strecke und Flugzeug. Alles andere (auch ein spaeter neues Feld) bleibt im Programm.
+    const leer = Object.fromEntries(Object.keys(m).map((k) => [k, null])) as unknown as BildMeta;
+    const flug = stufe === "nur_flug"
+      ? { rufzeichen: m.rufzeichen, abflug: m.abflug, ziel: m.ziel, flugzeug_titel: m.flugzeug_titel, flugzeug_icao: m.flugzeug_icao }
+      : {};
+    return { ...leer, fassung: m.fassung, ...flug, phase_text: null };
+  }
+  const ohneOrt = stufe === "aus" ? { breite: null, laenge: null, kurs: null, naechster_flugplatz: null } : {};
+  return { ...m, ...ohneOrt, phase_text: phaseText || null };
 }
 
 /** Immer sichtbar, auch bei „verdeckt“ und „aus“: „17:26Z · 92 ft · Boarding“. */

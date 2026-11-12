@@ -1859,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "AeroACARS ora misura il rateo di contatto con il modulo di valutazione del pacchetto. Un breve scatto del simulatore poco prima del contatto non rende più l'atterraggio più duro di quanto fosse. Serve AeroACARS 3.0.2; i futuri miglioramenti della misura arriveranno poi con una nuova generazione, senza un nuovo client. Inoltre la 3.0.2 carica la lista completa della flotta per ogni compagnia, anche se il suo server restituisce solo pochi elementi per pagina."
+    "neu_text": "Nell’invio di immagini a Discord ci sono due nuove opzioni. “Solo volo” mostra il tuo nome, il numero di volo, la tratta e l’aereo, senza ora, quota, fase e posizione. “Solo nome” mostra solo il tuo nome, nient’altro."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -5855,7 +5855,7 @@
     },
     "einschalten": {
       "titel": "Invia immagini a Discord",
-      "text": "Con l’invio compaiono nel canale Discord del GSG il tuo nome da pilota, il volo, l’aeromobile e, se lo consenti, la posizione dell’immagine. Nulla viene inviato automaticamente: scegli tu ogni immagine. Le immagini inviate non si possono ritirare; quelle sbagliate le elimina un moderatore in Discord. Sul server non restano dati delle immagini, solo l’ID del messaggio, così che il tuo messaggio possa essere rimosso anche in Discord se il tuo account viene eliminato.",
+      "text": "Con l’invio compare nel canale Discord del GSG il tuo nome da pilota e, a seconda della tua scelta, il volo, l’aeromobile e la posizione dell’immagine. Nulla viene inviato automaticamente: scegli tu ogni immagine. Le immagini inviate non si possono ritirare; quelle sbagliate le elimina un moderatore in Discord. Sul server non restano dati delle immagini, solo l’ID del messaggio, così che il tuo messaggio possa essere rimosso anche in Discord se il tuo account viene eliminato.",
       "hinweis_privat": "Controlla ogni immagine prima dell’invio: altre finestre possono mostrare contenuti privati.",
       "einschalten": "Attiva l’invio",
       "spaeter": "Più tardi",
@@ -5923,7 +5923,7 @@
         "titel": "Raccogli le immagini e condividile su Discord",
         "text": "AeroACARS archivia i tuoi screenshot per volo, con luogo, altitudine e aeromobile. Nulla lascia questo computer prima che tu lo selezioni.",
         "punkt1": "Le immagini restano qui e si possono spostare nel cestino in qualsiasi momento.",
-        "punkt2": "Solo le immagini selezionate vanno a Discord, con il tuo nome da pilota e il volo. Se i dati di posizione vanno visibili, nascosti o per niente lo decidi prima di ogni invio.",
+        "punkt2": "Solo le immagini selezionate vanno a Discord, sempre con il tuo nome da pilota. Se il volo e i dati di posizione vanno visibili, nascosti o per niente lo decidi prima di ogni invio.",
         "punkt3": "L’invio passa dal server GSG. I dati di accesso a Discord non sono sul tuo computer.",
         "einschalten": "Attiva le immagini",
         "spaeter": "Più tardi"

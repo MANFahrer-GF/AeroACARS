@@ -1859,7 +1859,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Die Aufsetz-Sinkrate misst AeroACARS jetzt mit dem Bewertungsmodul aus dem Paket. Ein kurzer Ruckler des Simulators kurz vor dem Aufsetzen macht die Landung nicht mehr härter, als sie war. Dafür braucht es AeroACARS 3.0.2; künftige Verbesserungen der Messung kommen dann mit einer neuen Generation, ohne neuen Client. Außerdem lädt 3.0.2 die Flottenliste bei jeder Airline vollständig, auch wenn deren Server nur wenige Einträge je Seite liefert."
+    "neu_text": "Beim Senden von Bildern an Discord gibt es zwei neue Stufen. „Nur Flug“ zeigt deinen Namen, die Flugnummer, die Strecke und das Flugzeug, ohne Zeit, Höhe, Phase und Position. „Nur Name“ zeigt nur deinen Namen, sonst nichts."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
@@ -5855,7 +5855,7 @@
     },
     "einschalten": {
       "titel": "Bilder an Discord senden",
-      "text": "Mit dem Senden erscheinen dein Pilotenname, Flug, Flugzeug und, wenn du es erlaubst, die Position des Bildes im Discord-Kanal der GSG. Nichts wird automatisch gesendet: Du wählst jedes Bild selbst aus. Gesendete Bilder kannst du nicht zurückholen; falsche Bilder löscht ein Moderator in Discord. Auf dem Server bleiben keine Bilddaten, nur die Nachrichten-ID, damit deine Nachricht bei einer Löschung deines Kontos auch in Discord entfernt werden kann.",
+      "text": "Mit dem Senden erscheint im Discord-Kanal der GSG dein Pilotenname und, je nach deiner Wahl, Flug, Flugzeug und die Position des Bildes. Nichts wird automatisch gesendet: Du wählst jedes Bild selbst aus. Gesendete Bilder kannst du nicht zurückholen; falsche Bilder löscht ein Moderator in Discord. Auf dem Server bleiben keine Bilddaten, nur die Nachrichten-ID, damit deine Nachricht bei einer Löschung deines Kontos auch in Discord entfernt werden kann.",
       "hinweis_privat": "Prüfe jedes Bild vor dem Senden: Fremde Fenster können private Inhalte zeigen.",
       "einschalten": "Senden einschalten",
       "spaeter": "Später",
@@ -5923,7 +5923,7 @@
         "titel": "Bilder sammeln und nach Discord teilen",
         "text": "AeroACARS legt deine Screenshots je Flug ab, mit Ort, Höhe und Flugzeug im Bild. Nichts verlässt diesen Rechner, bevor du es auswählst.",
         "punkt1": "Bilder bleiben hier und lassen sich jederzeit in den Papierkorb legen.",
-        "punkt2": "Nur ausgewählte Bilder gehen nach Discord, mit deinem Pilotennamen und Flug. Ob Positionsdaten sichtbar, verdeckt oder gar nicht mitgehen, entscheidest du vor jedem Senden.",
+        "punkt2": "Nur ausgewählte Bilder gehen nach Discord, immer mit deinem Pilotennamen. Ob Flug und Positionsdaten sichtbar, verdeckt oder gar nicht mitgehen, entscheidest du vor jedem Senden.",
         "punkt3": "Der Versand läuft über den GSG-Server. Zugangsdaten für Discord liegen nicht auf deinem Rechner.",
         "einschalten": "Bilder einschalten",
         "spaeter": "Später"

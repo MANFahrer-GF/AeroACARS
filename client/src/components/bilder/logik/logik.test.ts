@@ -250,7 +250,7 @@ describe("Vorschau der Nachricht (Spiegel des Servers)", () => {
   });
   it("„nur_flug“: Name, Flug, Strecke, Flugzeug; Zeit, Hoehe, Phase und Ort verlassen das Programm nicht", () => {
     const f = sendeMeta(m, "nur_flug", "Boarding");
-    expect([f.breite, f.laenge, f.kurs, f.naechster_flugplatz, f.zeit_utc, f.hoehe_ft, f.gs_kt, f.phase, f.phase_text]).toEqual([null, null, null, null, null, null, null, null, null]);
+    expect(Object.entries(f).filter(([, v]) => v !== null).map(([k]) => k).sort()).toEqual(["abflug", "fassung", "flugzeug_icao", "flugzeug_titel", "rufzeichen", "ziel"]);
     expect([f.rufzeichen, f.abflug, f.ziel]).toEqual(["GSG101", "EDDF", "LEPA"]);
     const v = vorschauBauen("Thomas K", [f, f], "nur_flug", "Schoen!", 2000);
     expect(v.kopf).toBe("📷 **Thomas K** · GSG101 · EDDF–LEPA · Airbus A320 (A320)");
@@ -260,7 +260,9 @@ describe("Vorschau der Nachricht (Spiegel des Servers)", () => {
   });
   it("„nur_name“: nur der Name, sonst verlaesst nichts das Programm", () => {
     const n = sendeMeta(m, "nur_name", "Boarding");
-    expect([n.rufzeichen, n.abflug, n.ziel, n.flugzeug_titel, n.flugzeug_icao, n.pirep_id, n.breite, n.zeit_utc, n.hoehe_ft, n.phase_text]).toEqual([null, null, null, null, null, null, null, null, null, null]);
+    // Positivliste: ausser der Fassung ist jedes Feld leer, auch simulator, quelle und pirep_id.
+    expect(Object.entries(n).filter(([, v]) => v !== null).map(([k]) => k)).toEqual(["fassung"]);
+    expect(Object.keys(n).sort()).toEqual([...Object.keys(m), "phase_text"].sort());
     const v = vorschauBauen("Thomas K", [n], "nur_name", "Schoen!", 2000);
     expect(v.kopf).toBe("📷 **Thomas K**");
     expect(v.zeilen).toEqual([]);
