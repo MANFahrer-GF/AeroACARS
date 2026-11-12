@@ -6,7 +6,7 @@ import { Button, Modal } from "../ui";
 import { GRENZEN, TABELLE } from "./logik/grenzen";
 import { reichtKontingent } from "./logik/kontingent";
 import { simulatorName, streckeText } from "./logik/metaFormat";
-import { sendeMeta, vorschauBauen } from "./logik/nachrichtVorschau";
+import { sendeMeta, vorschauBauen, nurKopf } from "./logik/nachrichtVorschau";
 import { schonAufDiscord } from "./logik/sendezustand";
 import type { Eintrag, GeoStufe, Kontingent } from "./logik/typen";
 import { useKachelTexte } from "./Kacheln";
@@ -41,7 +41,8 @@ function SendenInhalt({
   const [spoilerOffen, setSpoilerOffen] = useState(false);
   useEffect(() => { if (offen) { setText(startText); setSpoilerOffen(false); } }, [offen, startText]);
   const metas = bilder.map((b) => b.sidecar!.meta!);
-  const m0 = metas[0];
+  // Der Kopf der Vorschau zeigt nur, was die Stufe wirklich mitschickt.
+  const m0 = metas[0] && nurKopf(geoStufe) ? sendeMeta(metas[0], geoStufe, "") : metas[0];
   const v = vorschauBauen(pilotName, bilder.map((b) => sendeMeta(b.sidecar!.meta!, geoStufe, phase(b))), geoStufe, text, GRENZEN.nachricht_max_zeichen);
   const schonDa = bilder.filter((b) => schonAufDiscord(b.sidecar?.sendungen)).length;
   const zuViele = bilder.length > GRENZEN.max_je_sendung;
@@ -50,8 +51,8 @@ function SendenInhalt({
   const keinOrt = metas.every((m) => m.breite === null || m.laenge === null);
   const titel = bilder.length === 1 ? t("bilder.senden.titel_eins") : t("bilder.senden.titel_n", { count: bilder.length });
   const stufen: Array<[GeoStufe, string]> = TABELLE.geoStufen.map((s) => [s, t(`bilder.senden.geo.${s === "aus" ? "aus" : s}`)]);
-  const datum = m0?.zeit_utc ? new Date(m0.zeit_utc).toLocaleDateString(sprache, { timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric" }) : "";
-  const sim = m0?.simulator ? simulatorName(m0.simulator) : "";
+  const datum = !nurKopf(geoStufe) && m0?.zeit_utc ? new Date(m0.zeit_utc).toLocaleDateString(sprache, { timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+  const sim = !nurKopf(geoStufe) && m0?.simulator ? simulatorName(m0.simulator) : "";
   return (
     <Modal
       open={offen}
@@ -105,7 +106,7 @@ function SendenInhalt({
             ))}
             {v.text && <p className="bt-nachricht__text">{v.text}</p>}
             <div className="bt-nachricht__bilder">{bilder.map((b) => <Vorschaubild key={b.id} e={b} />)}</div>
-            {keinOrt && geoStufe !== "aus" && <span className="bt-hinweis">{t("bilder.senden.geo.ohne_position")}</span>}
+            {keinOrt && geoStufe !== "aus" && !nurKopf(geoStufe) && <span className="bt-hinweis">{t("bilder.senden.geo.ohne_position")}</span>}
           </div>
         </div>
 
@@ -124,6 +125,7 @@ function SendenInhalt({
               {name}
             </label>
           ))}
+          <span className="bt-hinweis" data-geo-erklaerung={geoStufe}>{t(`bilder.senden.geo.${geoStufe}_text`)}</span>
         </fieldset>
       </div>
     </Modal>

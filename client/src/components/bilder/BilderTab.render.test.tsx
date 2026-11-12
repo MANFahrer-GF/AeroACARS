@@ -162,6 +162,39 @@ describe("Bilder-Tab", () => {
     await waitFor(() => expect(screen.queryByText(/^\d+ ausgewählt$/)).toBeNull());
   });
 
+  it("„Nur Flug“ und „Nur Name“: Vorschau zeigt nur, was rausgeht; gesendet wird nur das", async () => {
+    vorbereiten();
+    zeigen();
+    const boxen = await screen.findAllByRole("checkbox", { name: /Auswählen/ });
+    await userEvent.click(boxen[0]);
+    await userEvent.click(screen.getByRole("button", { name: "1 Bild senden" }));
+    const dialog = await screen.findByRole("dialog");
+    const kopf = () => dialog.querySelector(".bt-nachricht__kopf")!.textContent!;
+    const nachricht = () => dialog.querySelector(".bt-nachricht")!.textContent!;
+    // Gegenprobe: Bei „Verdeckt“ stehen Flug, Datum und Zeile in der Vorschau.
+    expect(kopf()).toMatch(/GSG101/);
+    expect(kopf()).toMatch(/\d{2}\.\d{2}\.2026/);
+
+    await userEvent.click(within(dialog).getByRole("radio", { name: "Nur Flug" }));
+    expect(kopf()).toMatch(/GSG101/);
+    expect(kopf()).toMatch(/EDDF/);
+    expect(kopf()).not.toMatch(/\d{2}\.\d{2}\.2026/);
+    expect(nachricht()).not.toMatch(/ ft|Geo-Daten|Z ·/);
+    expect(within(dialog).getByText(/Zeit, Höhe, Phase und Position verlassen dein Programm nicht/)).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("radio", { name: "Nur Name" }));
+    expect(kopf()).not.toMatch(/GSG101|EDDF|LEPA|A320|\d{2}\.\d{2}\.2026/);
+    expect(kopf()).toMatch(/Thomas K\./);
+    expect(within(dialog).getByText(/Nur dein Name steht am Bild/)).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Jetzt senden" }));
+    await waitFor(() => expect(h.aufrufe.some((a) => a.cmd === "bild_senden")).toBe(true));
+    const a = h.aufrufe.find((x) => x.cmd === "bild_senden")!.args as { geoStufe: string; bilder: Array<{ meta: Record<string, unknown> }> };
+    expect(a.geoStufe).toBe("nur_name");
+    const gesetzt = Object.entries(a.bilder[0].meta).filter(([, v]) => v !== null).map(([k]) => k);
+    expect(gesetzt).toEqual(["fassung"]);
+  });
+
   // Michel 08.11.2026: Die LAN-Bruecke liefert die Oberflaeche ueber http://<LAN-IP> aus. Dort
   // fehlt dem Browser crypto.randomUUID, „Jetzt senden“ blieb ohne jeden Aufruf und ohne Meldung.
   it("Senden klappt auch ohne crypto.randomUUID (Tablet ueber die LAN-Bruecke, kein sicherer Kontext)", async () => {

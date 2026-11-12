@@ -56,7 +56,11 @@ export interface Sidecar {
   flug_von_hand?: boolean;
 }
 
-export type GeoStufe = "sichtbar" | "verdeckt" | "aus";
+/**
+ * „nur_flug“: Name, Flug, Strecke, Flugzeug, ohne Zeit, Hoehe, Phase und Ort.
+ * „nur_name“: nur der Pilotenname. Beide schicken diese Angaben gar nicht erst zum Server.
+ */
+export type GeoStufe = "sichtbar" | "verdeckt" | "aus" | "nur_flug" | "nur_name";
 
 /** Ein Eintrag aus `bilder_liste` (Kern: `speicher::Eintrag`). */
 export interface Eintrag {

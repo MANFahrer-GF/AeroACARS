@@ -248,6 +248,30 @@ describe("Vorschau der Nachricht (Spiegel des Servers)", () => {
     expect([aus.breite, aus.laenge, aus.kurs, aus.naechster_flugplatz]).toEqual([null, null, null, null]);
     expect(vorschauBauen("T", [aus], "aus", "", 2000).zeilen).toEqual([{ nummer: null, info: "10:00Z · 12000 ft · Boarding", ort: null, ortRoh: null, verdeckt: false }]);
   });
+  it("„nur_flug“: Name, Flug, Strecke, Flugzeug; Zeit, Hoehe, Phase und Ort verlassen das Programm nicht", () => {
+    const f = sendeMeta(m, "nur_flug", "Boarding");
+    expect(Object.entries(f).filter(([, v]) => v !== null).map(([k]) => k).sort()).toEqual(["abflug", "fassung", "flugzeug_icao", "flugzeug_titel", "rufzeichen", "ziel"]);
+    expect([f.rufzeichen, f.abflug, f.ziel]).toEqual(["GSG101", "EDDF", "LEPA"]);
+    const v = vorschauBauen("Thomas K", [f, f], "nur_flug", "Schoen!", 2000);
+    expect(v.kopf).toBe("📷 **Thomas K** · GSG101 · EDDF–LEPA · Airbus A320 (A320)");
+    expect(v.zeilen).toEqual([]);
+    // Auch mit vollen Daten (falls je ungefiltert gerufen) bleibt nur der Kopf.
+    expect(vorschauBauen("T", [m], "nur_flug", "", 2000).zeilen).toEqual([]);
+  });
+  it("„nur_name“: nur der Name, sonst verlaesst nichts das Programm", () => {
+    const n = sendeMeta(m, "nur_name", "Boarding");
+    // Positivliste: ausser der Fassung ist jedes Feld leer, auch simulator, quelle und pirep_id.
+    expect(Object.entries(n).filter(([, v]) => v !== null).map(([k]) => k)).toEqual(["fassung"]);
+    expect(Object.keys(n).sort()).toEqual([...Object.keys(m), "phase_text"].sort());
+    const v = vorschauBauen("Thomas K", [n], "nur_name", "Schoen!", 2000);
+    expect(v.kopf).toBe("📷 **Thomas K**");
+    expect(v.zeilen).toEqual([]);
+    expect(v.text).toBe("Schoen!");
+    expect(vorschauBauen("T", [m], "nur_name", "", 2000).kopf).toBe("📷 **T**");
+  });
+  it("die Stufen kommen aus dem Paket, auch die zwei neuen", () => {
+    expect(TABELLE.geoStufen).toEqual(["sichtbar", "verdeckt", "aus", "nur_flug", "nur_name"]);
+  });
   it("ohne Position bleibt die Info; mehrere Bilder werden nummeriert; ohne alles keine Zeile", () => {
     expect(vorschauBauen("T", [meta({ breite: null, laenge: null })], "sichtbar", "", 2000).zeilen[0].ort).toBeNull();
     expect(vorschauBauen("T", [m, m], "sichtbar", "", 2000).zeilen.map((g) => g.nummer)).toEqual([1, 2]);

@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "AeroACARS now measures the touchdown rate with the scoring module from the package. A short simulator stutter just before touchdown no longer makes the landing harder than it was. This needs AeroACARS 3.0.2; future improvements to the measurement then arrive with a new generation, without a new client. 3.0.2 also loads the complete fleet list for every airline, even if its server only returns a few entries per page."
+    "neu_text": "When sending pictures to Discord there are two new options. “Flight only” shows your name, flight number, route and aircraft, without time, altitude, phase and position. “Name only” shows just your name, nothing else."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -5782,13 +5782,17 @@
         "hinweis": "Links, for example to YouTube, are allowed."
       },
       "geo": {
-        "titel": "Geo data in Discord",
+        "titel": "Details with the picture in Discord",
         "sichtbar": "Visible",
         "sichtbar_text": "Time, place, altitude and heading appear openly in the message.",
         "verdeckt": "Hidden, click to reveal",
         "verdeckt_text": "The same details sit under a grey bar and only appear when clicked.",
         "aus": "Do not send",
         "aus_text": "Your position does not leave the program. The message names you, the flight, time, altitude, phase and your text.",
+        "nur_flug": "Flight only",
+        "nur_flug_text": "Only your name, flight number, route and aircraft. Time, altitude, phase and position never leave your program.",
+        "nur_name": "Name only",
+        "nur_name_text": "Only your name appears with the image, nothing else. Flight, time, altitude, phase and position never leave your program.",
         "ohne_position": "These pictures have no position, so this choice has no effect."
       },
       "vorschau": {
@@ -5851,7 +5855,7 @@
     },
     "einschalten": {
       "titel": "Send pictures to Discord",
-      "text": "When you send, your pilot name, flight, aircraft and, if you allow it, the position of the picture appear in the GSG Discord channel. Nothing is sent automatically: you choose every picture yourself. Sent pictures cannot be taken back; a moderator deletes wrong ones in Discord. No picture data stays on the server, only the message ID, so that your message can also be removed in Discord if your account is deleted.",
+      "text": "When you send, your pilot name appears in the GSG Discord channel and, depending on your choice, the flight, aircraft and position of the picture. Nothing is sent automatically: you choose every picture yourself. Sent pictures cannot be taken back; a moderator deletes wrong ones in Discord. No picture data stays on the server, only the message ID, so that your message can also be removed in Discord if your account is deleted.",
       "hinweis_privat": "Check every picture before sending: other windows can show private content.",
       "einschalten": "Turn on sending",
       "spaeter": "Later",
@@ -5919,7 +5923,7 @@
         "titel": "Collect pictures and share them on Discord",
         "text": "AeroACARS stores your screenshots per flight, with place, altitude and aircraft attached. Nothing leaves this computer before you select it.",
         "punkt1": "Pictures stay here and can be moved to the trash at any time.",
-        "punkt2": "Only selected pictures go to Discord, with your pilot name and flight. Whether position data goes along visibly, hidden or not at all is your choice before every post.",
+        "punkt2": "Only selected pictures go to Discord, always with your pilot name. Whether flight and position data go along visibly, hidden or not at all is your choice before every post.",
         "punkt3": "Posting goes through the GSG server. Access data for Discord is not stored on your computer.",
         "einschalten": "Turn on pictures",
         "spaeter": "Later"
