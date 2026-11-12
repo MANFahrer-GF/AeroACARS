@@ -5789,6 +5789,10 @@
         "verdeckt_text": "Dieselben Angaben stehen unter einem grauen Balken und erscheinen erst beim Klick.",
         "aus": "Nicht mitsenden",
         "aus_text": "Die Position verlässt dein Programm nicht. Die Nachricht nennt dich, den Flug, Zeit, Höhe, Phase und deinen Text.",
+        "nur_flug": "Nur Flug",
+        "nur_flug_text": "Nur dein Name, Flugnummer, Strecke und Flugzeug. Zeit, Höhe, Phase und Position verlassen dein Programm nicht.",
+        "nur_name": "Nur Name",
+        "nur_name_text": "Nur dein Name steht am Bild, sonst nichts. Flug, Zeit, Höhe, Phase und Position verlassen dein Programm nicht.",
         "ohne_position": "Zu diesen Bildern gibt es keine Position, die Auswahl bleibt ohne Wirkung."
       },
       "vorschau": {

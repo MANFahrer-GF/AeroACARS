@@ -5789,6 +5789,10 @@
         "verdeckt_text": "Gli stessi dati stanno sotto una barra grigia e compaiono solo al clic.",
         "aus": "Non inviare",
         "aus_text": "La posizione non lascia il programma. Il messaggio indica te, il volo, ora, quota, fase e il tuo testo.",
+        "nur_flug": "Solo volo",
+        "nur_flug_text": "Solo il tuo nome, numero di volo, tratta e aereo. Ora, quota, fase e posizione non lasciano il tuo programma.",
+        "nur_name": "Solo nome",
+        "nur_name_text": "Accanto all'immagine compare solo il tuo nome, nient'altro. Volo, ora, quota, fase e posizione non lasciano il tuo programma.",
         "ohne_position": "Queste immagini non hanno una posizione, la scelta non ha effetto."
       },
       "vorschau": {

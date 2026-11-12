@@ -10,8 +10,14 @@ export function sauber(s: string | null | undefined, max: number): string {
   return s.normalize("NFKC").replace(/[^\p{L}\p{N} ./+-]/gu, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
-export function kopfZeile(pilotName: string | null | undefined, m: Pick<BildMeta, "abflug" | "ziel" | "flugzeug_titel" | "flugzeug_icao" | "rufzeichen">): string {
+/** Die Stufen, bei denen nur der Kopf in die Nachricht geht: keine Zeit, Hoehe, Phase, kein Ort. */
+export function nurKopf(stufe: GeoStufe): boolean {
+  return stufe === "nur_flug" || stufe === "nur_name";
+}
+
+export function kopfZeile(pilotName: string | null | undefined, m: Pick<BildMeta, "abflug" | "ziel" | "flugzeug_titel" | "flugzeug_icao" | "rufzeichen">, stufe?: GeoStufe): string {
   const name = `📷 **${sauber(pilotName, 80) || "Pilot"}**`;
+  if (stufe === "nur_name") return name;
   const strecke = [sauber(m.abflug, 8), sauber(m.ziel, 8)].filter(Boolean).join("\u2013");
   const titel = sauber(m.flugzeug_titel, 80);
   const icao = sauber(m.flugzeug_icao, 8);
@@ -27,8 +33,14 @@ export type SendeMeta = BildMeta & { phase_text?: string | null };
  * im Dialog), Zeit, Hoehe und Phase gehen mit.
  */
 export function sendeMeta(m: BildMeta, stufe: GeoStufe, phaseText: string): SendeMeta {
-  const ohneOrt = stufe === "aus" ? { breite: null, laenge: null, kurs: null, naechster_flugplatz: null } : {};
-  return { ...m, ...ohneOrt, phase_text: phaseText || null };
+  const ohneOrt = stufe === "aus" || nurKopf(stufe) ? { breite: null, laenge: null, kurs: null, naechster_flugplatz: null } : {};
+  // „nur_flug“/„nur_name“: Zeit, Hoehe, Tempo und Phase verlassen das Programm nicht.
+  const ohneDaten = nurKopf(stufe) ? { zeit_utc: null, hoehe_ft: null, gs_kt: null, phase: null } : {};
+  // „nur_name“: auch Flug, Strecke und Flugzeug bleiben im Programm.
+  const ohneFlug = stufe === "nur_name"
+    ? { rufzeichen: null, abflug: null, ziel: null, flugzeug_titel: null, flugzeug_icao: null, pirep_id: null }
+    : {};
+  return { ...m, ...ohneOrt, ...ohneDaten, ...ohneFlug, phase_text: nurKopf(stufe) ? null : phaseText || null };
 }
 
 /** Immer sichtbar, auch bei „verdeckt“ und „aus“: „17:26Z · 92 ft · Boarding“. */
@@ -51,7 +63,7 @@ export interface GeoTeil {
 }
 
 export function geoZeile(m: BildMeta, stufe: GeoStufe): GeoTeil | null {
-  if (stufe === "aus" || m.breite === null || m.laenge === null) return null;
+  if (stufe === "aus" || nurKopf(stufe) || m.breite === null || m.laenge === null) return null;
   const teile: string[] = [];
   const platz = sauber(m.naechster_flugplatz, 8);
   if (platz) teile.push(platz);
@@ -86,11 +98,11 @@ export interface Vorschau {
 
 /** Wie `baueNachricht`: Kopf, eine Zeile je Bild, Pilotentext zuletzt; gekuerzt auf die Discord-Grenze. */
 export function vorschauBauen(pilotName: string | null, metas: SendeMeta[], stufe: GeoStufe, text: string, maxZeichen: number): Vorschau {
-  const kopf = kopfZeile(pilotName, metas[0] ?? { abflug: null, ziel: null, flugzeug_titel: null, flugzeug_icao: null, rufzeichen: null });
+  const kopf = kopfZeile(pilotName, metas[0] ?? { abflug: null, ziel: null, flugzeug_titel: null, flugzeug_icao: null, rufzeichen: null }, stufe);
   const zeilen = metas
     .map((m, i): BildZeile => {
       const g = geoZeile(m, stufe);
-      return { nummer: metas.length > 1 ? i + 1 : null, info: infoZeile(m), ort: g?.anzeige ?? null, ortRoh: g?.text ?? null, verdeckt: g?.verdeckt ?? false };
+      return { nummer: metas.length > 1 ? i + 1 : null, info: nurKopf(stufe) ? "" : infoZeile(m), ort: g?.anzeige ?? null, ortRoh: g?.text ?? null, verdeckt: g?.verdeckt ?? false };
     })
     .filter((z) => z.info || z.ort);
   const zeileRoh = (z: BildZeile) =>

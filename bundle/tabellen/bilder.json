@@ -39,7 +39,9 @@
   "stufen": [
    "sichtbar",
    "verdeckt",
-   "aus"
+   "aus",
+   "nur_flug",
+   "nur_name"
   ],
   "vorgabe": "verdeckt"
  },

@@ -5789,6 +5789,10 @@
         "verdeckt_text": "The same details sit under a grey bar and only appear when clicked.",
         "aus": "Do not send",
         "aus_text": "Your position does not leave the program. The message names you, the flight, time, altitude, phase and your text.",
+        "nur_flug": "Flight only",
+        "nur_flug_text": "Only your name, flight number, route and aircraft. Time, altitude, phase and position never leave your program.",
+        "nur_name": "Name only",
+        "nur_name_text": "Only your name appears with the image, nothing else. Flight, time, altitude, phase and position never leave your program.",
         "ohne_position": "These pictures have no position, so this choice has no effect."
       },
       "vorschau": {

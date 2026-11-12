@@ -6,7 +6,7 @@ import { Button, Modal } from "../ui";
 import { GRENZEN, TABELLE } from "./logik/grenzen";
 import { reichtKontingent } from "./logik/kontingent";
 import { simulatorName, streckeText } from "./logik/metaFormat";
-import { sendeMeta, vorschauBauen } from "./logik/nachrichtVorschau";
+import { sendeMeta, vorschauBauen, nurKopf } from "./logik/nachrichtVorschau";
 import { schonAufDiscord } from "./logik/sendezustand";
 import type { Eintrag, GeoStufe, Kontingent } from "./logik/typen";
 import { useKachelTexte } from "./Kacheln";
@@ -105,7 +105,7 @@ function SendenInhalt({
             ))}
             {v.text && <p className="bt-nachricht__text">{v.text}</p>}
             <div className="bt-nachricht__bilder">{bilder.map((b) => <Vorschaubild key={b.id} e={b} />)}</div>
-            {keinOrt && geoStufe !== "aus" && <span className="bt-hinweis">{t("bilder.senden.geo.ohne_position")}</span>}
+            {keinOrt && geoStufe !== "aus" && !nurKopf(geoStufe) && <span className="bt-hinweis">{t("bilder.senden.geo.ohne_position")}</span>}
           </div>
         </div>
 
