@@ -5782,7 +5782,7 @@
         "hinweis": "Links, zum Beispiel zu YouTube, sind erlaubt."
       },
       "geo": {
-        "titel": "Geo-Daten in Discord",
+        "titel": "Angaben am Bild in Discord",
         "sichtbar": "Sichtbar",
         "sichtbar_text": "Zeit, Ort, Höhe und Kurs stehen offen in der Nachricht.",
         "verdeckt": "Verdeckt, zum Aufklappen",

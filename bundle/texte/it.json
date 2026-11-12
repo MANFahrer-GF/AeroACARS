@@ -5782,7 +5782,7 @@
         "hinweis": "I link, per esempio a YouTube, sono consentiti."
       },
       "geo": {
-        "titel": "Dati geografici in Discord",
+        "titel": "Dati con l’immagine in Discord",
         "sichtbar": "Visibili",
         "sichtbar_text": "Ora, luogo, altitudine e prua compaiono in chiaro nel messaggio.",
         "verdeckt": "Nascosti, da aprire",
