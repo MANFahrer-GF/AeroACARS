@@ -360,4 +360,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "1cb2e2cb5b214f5e19d511ba0310f9f3b3e222106cf05b71a090f5ae43aba1cf";
+const HASH_VOR_DER_ZERLEGUNG: &str = "273fdfd1b29ac608d18af3830fea22e6b4eca6d5e9d77eb372ab4b7f840cb8ba";

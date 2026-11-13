@@ -279,21 +279,31 @@ fn bid_gehoert_laufendem_flug(
     bid_id: Option<i64>,
     flight_id: Option<&str>,
 ) -> bool {
-    let trifft = |p: &str, b: i64, f: &str| {
-        p != pirep_id
-            && (bid_id.is_some_and(|id| id > 0 && id == b)
-                || flight_id.is_some_and(|fid| !fid.is_empty() && fid == f))
-    };
     let aktiv = {
         let state = app.state::<AppState>();
         let guard = state.active_flight.lock().expect("active_flight lock");
-        guard
-            .as_ref()
-            .is_some_and(|f| trifft(&f.pirep_id, f.bid_id, &f.flight_id))
+        guard.as_ref().is_some_and(|f| {
+            bid_trifft_laufenden_flug(pirep_id, bid_id, flight_id, (&f.pirep_id, f.bid_id, &f.flight_id))
+        })
     };
     aktiv
-        || read_persisted_flight(app)
-            .is_some_and(|p| trifft(&p.pirep_id, p.bid_id, &p.flight_id))
+        || read_persisted_flight(app).is_some_and(|p| {
+            bid_trifft_laufenden_flug(pirep_id, bid_id, flight_id, (&p.pirep_id, p.bid_id, &p.flight_id))
+        })
+}
+
+/// Reiner Vergleich fuer `bid_gehoert_laufendem_flug`: `laufend` ist
+/// (pirep_id, bid_id, flight_id) des laufenden Flugs.
+fn bid_trifft_laufenden_flug(
+    pirep_id: &str,
+    bid_id: Option<i64>,
+    flight_id: Option<&str>,
+    laufend: (&str, i64, &str),
+) -> bool {
+    let (l_pirep, l_bid, l_flug) = laufend;
+    l_pirep != pirep_id
+        && (bid_id.is_some_and(|id| id > 0 && id == l_bid)
+            || flight_id.is_some_and(|f| !f.is_empty() && f == l_flug))
 }
 
 /// v0.7.19 GAF-707: drain-Pass fuer den PendingBidCleanupQueue. Wird im
@@ -441,7 +451,7 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
         // nicht (mehr) einem neueren Flug gehoert — siehe
         // `bid_gehoert_laufendem_flug` und `bid_aufraeum_entscheidung`.
         if bid_gehoert_laufendem_flug(app, &e.pirep_id, e.bid_id, e.flight_id.as_deref()) {
-            tracing::info!(
+            tracing::debug!(
                 pirep_id = %e.pirep_id,
                 "pending_bid_cleanup: Buchung gehoert einem laufenden Flug — wartet"
             );

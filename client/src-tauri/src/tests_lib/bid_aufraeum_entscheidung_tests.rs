@@ -75,3 +75,53 @@
         let b = [bid(4711, "flug-a", Some("2026-11-13T09:00:00Z"))];
         assert_eq!(bid_aufraeum_entscheidung(None, Some("flug-a"), Some(&b), None), Liegenlassen);
     }
+
+    mod laufender_flug {
+        use super::super::bid_trifft_laufenden_flug;
+
+        const LAUFEND: (&str, i64, &str) = ("pirep-neu", 4711, "flug-a");
+
+        /// Pilot hat denselben Flug mit derselben, nie geloeschten Buchung neu
+        /// gestartet: Aufraeumen des alten PIREP darf sie nicht anfassen.
+        #[test]
+        fn gleiche_bid_id_anderer_pirep_trifft() {
+            assert!(bid_trifft_laufenden_flug("pirep-alt", Some(4711), None, LAUFEND));
+        }
+
+        #[test]
+        fn gleiche_flight_id_anderer_pirep_trifft() {
+            assert!(bid_trifft_laufenden_flug("pirep-alt", None, Some("flug-a"), LAUFEND));
+            assert!(bid_trifft_laufenden_flug("pirep-alt", Some(99), Some("flug-a"), LAUFEND));
+        }
+
+        #[test]
+        fn derselbe_pirep_oder_anderer_flug_trifft_nicht() {
+            assert!(!bid_trifft_laufenden_flug("pirep-neu", Some(4711), Some("flug-a"), LAUFEND));
+            assert!(!bid_trifft_laufenden_flug("pirep-alt", Some(99), Some("flug-b"), LAUFEND));
+            assert!(!bid_trifft_laufenden_flug("pirep-alt", None, Some(""), ("pirep-neu", 0, "")));
+        }
+    }
+
+    /// Wiring: in beiden Aufraeumwegen stehen Laufend-Sperre und Entscheidung
+    /// VOR dem `delete_bid`. Fenster bis zur naechsten Top-Level-Funktion.
+    #[test]
+    fn sperre_und_entscheidung_stehen_vor_delete_bid() {
+        const SRC: &str = crate::quelle_gesamt::PRODUKTION;
+        for start in [
+            "async fn drain_pending_bid_cleanup(",
+            "async fn flight_cancel_orphan(",
+        ] {
+            let ab = SRC.find(start).unwrap_or_else(|| panic!("{start} nicht gefunden — Test anpassen"));
+            let rest = &SRC[ab..];
+            let ende = ["\nfn ", "\nasync fn ", "\n#[tauri::command]"]
+                .iter()
+                .filter_map(|m| rest[1..].find(m).map(|i| i + 1))
+                .min()
+                .unwrap_or(rest.len());
+            let koerper = &rest[..ende];
+            let pos = |n: &str| koerper.find(n).unwrap_or_else(|| panic!("{n} fehlt in {start}"));
+            let delete = pos("client.delete_bid(");
+            assert!(pos("bid_gehoert_laufendem_flug(") < delete, "{start}: Laufend-Sperre nach delete_bid");
+            assert!(pos("bid_aufraeum_entscheidung(") < delete, "{start}: Entscheidung nach delete_bid");
+        }
+    }

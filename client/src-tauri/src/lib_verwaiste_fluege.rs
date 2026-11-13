@@ -432,9 +432,11 @@ async fn flight_cancel_orphan(
             }
         }
     };
+    let mut bid_geloescht: Option<i64> = None;
     if let Some((bid_id, flight_id)) = loeschen {
         match client.delete_bid(bid_id, flight_id.as_deref()).await {
             Ok(()) => {
+                bid_geloescht = bid_id;
                 tracing::info!(
                     bid_id = ?bid_id,
                     flight_id = ?flight_id,
@@ -467,11 +469,11 @@ async fn flight_cancel_orphan(
 
     log_activity_t(
         &state,
-        ActivityLevel::Warn, akt("activity.orphan.cancelled", &[("pirep", &pirep_id)]).und("activity.orphan.cancelled_detail", &[("bid", &format!("{:?}", bid_id))]),
+        ActivityLevel::Warn, akt("activity.orphan.cancelled", &[("pirep", &pirep_id)]).und("activity.orphan.cancelled_detail", &[("bid", &format!("{:?}", bid_geloescht))]),
         format!("Verwaister Flug abgebrochen — PIREP {pirep_id}"),
         Some(format!(
             "PIREP cancelled, Bid {:?} dropped, lokale Queues bereinigt.",
-            bid_id
+            bid_geloescht
         )),
     );
     record_event(
