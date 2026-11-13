@@ -40,6 +40,28 @@ export const SC_HOECHSTENS = 45;
 /** Fehlversuche ohne jede Antwort, danach bleibt es still wie bisher. */
 const SC_FEHLVERSUCHE = 3;
 
+// Letzter bekannter Stand je eigener Nummer, über Reiterwechsel hinweg: Die
+// Ansicht zeigt ihn sofort (die eigene Note blitzt beim Partner nicht auf),
+// und die Abgabe-Meldung kennt ihn noch, wenn das Cockpit neu eingehängt wird.
+const bekannt = new Map<string, ScLandung>();
+let letzterFlug: string | null = null;
+
+/** Das Cockpit merkt sich den laufenden Flug für die Abgabe-Meldung. */
+export function merkeFlug(pirepId: string): void {
+  letzterFlug = pirepId;
+}
+
+/** War der zuletzt laufende Flug der eines Partners? */
+export function letzterFlugAlsPartner(): boolean {
+  return letzterFlug != null && istPartner(bekannt.get(letzterFlug) ?? null);
+}
+
+/** Nur für Tests. */
+export function scVergessen(): void {
+  bekannt.clear();
+  letzterFlug = null;
+}
+
 /** Partner einer Crew: gelandet oder ausstehend. */
 export function istPartner(l: ScLandung | null): l is ScPartnerLandung {
   return l?.status === "gelandet" || l?.status === "ausstehend";
@@ -70,6 +92,7 @@ export function useScLandung(
         const l = await invoke<ScLandung>("sc_landung_gastgeber", { pirepId });
         if (weg) return;
         letzte = l;
+        bekannt.set(pirepId, l);
         setStand({ id: pirepId, l });
       } catch {
         if (weg) return;
@@ -91,5 +114,6 @@ export function useScLandung(
       window.clearTimeout(timer);
     };
   }, [pirepId, nachfragen, anlass]);
-  return stand && stand.id === pirepId ? stand.l : null;
+  if (stand && stand.id === pirepId) return stand.l;
+  return pirepId ? (bekannt.get(pirepId) ?? null) : null;
 }

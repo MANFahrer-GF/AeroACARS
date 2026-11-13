@@ -11,7 +11,7 @@ import deCommon from "../../../bundle/texte/de.json";
 import type { ActiveFlightInfo } from "../types";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import THY from "../lib/landungsFaelle.thy39.json";
-import { SC_HOECHSTENS, SC_NACHFRAGE_MS } from "../lib/scLandung";
+import { SC_HOECHSTENS, SC_NACHFRAGE_MS, scVergessen } from "../lib/scLandung";
 
 const lage = vi.hoisted(() => ({
   faehigkeiten: ["sc-landung-1"] as string[],
@@ -54,6 +54,7 @@ afterEach(() => {
   lage.faehigkeiten = ["sc-landung-1"];
   lage.sc = [];
   lage.aufrufe = [];
+  scVergessen();
 });
 
 const REC = THY as unknown as LandingRecord;
@@ -92,6 +93,18 @@ describe("Landungsansicht beim Partner", () => {
     expect(container.textContent).not.toContain("-46");
     expect(screen.queryByText(/PDF/)).toBeNull();
     expect(lage.aufrufe).toEqual([{ pirepId: REC.pirep_id }]);
+  });
+
+  it("beim erneuten Öffnen steht die Gastgeber-Landung im ersten Bild, die eigene blitzt nicht auf", async () => {
+    lage.sc = [GELANDET];
+    const erst = render(<LandingDetail record={REC} allRecords={[REC]} onBack={() => {}} isPreview={false} />);
+    await ruhe();
+    erst.unmount();
+    lage.sc = [new Error("langsam")];
+    const { container } = render(<LandingDetail record={REC} allRecords={[REC]} onBack={() => {}} isPreview={false} />);
+    // ohne Warten: erstes Bild
+    expect(container.querySelectorAll(".landing-section")).toHaveLength(1);
+    expect(screen.getByTestId("sc-landung").textContent).toContain("-200 fpm");
   });
 
   it("in der Live-Vorschau nach dem Aufsetzen: Hinweis, bis der Gastgeber gelandet ist", async () => {
@@ -188,6 +201,16 @@ describe("Abgabe-Hinweis beim Partner", () => {
     await ruhe();
     expect(screen.getByText(deCommon.cockpit.pirep_filed_title)).toBeTruthy();
     expect(screen.queryByText(deCommon.cockpit.sc_partner_title)).toBeNull();
+  });
+
+  it("das Cockpit wird nach dem Flug neu eingehängt (Reiterwechsel): Partner-Text bleibt", async () => {
+    lage.sc = [AUSSTEHEND];
+    const erst = render(cockpit(flug({ pirep_id: "P5" })));
+    await ruhe();
+    erst.unmount();
+    render(cockpit(null, FILED));
+    await ruhe();
+    expect(screen.getByText(deCommon.cockpit.sc_partner_title)).toBeTruthy();
   });
 
   it("ohne Antwort von live bleibt die übliche Meldung", async () => {
