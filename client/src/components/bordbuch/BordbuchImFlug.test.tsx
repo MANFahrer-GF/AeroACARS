@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../../../../bundle/texte/de.json";
@@ -74,8 +74,24 @@ describe("Bordbuch im Reiter „Flug“", () => {
   it("zeigt nichts, wenn das Bordbuch für den Flug aus ist", async () => {
     h.live = live({ aus_grund: "ga" });
     const { container } = render(<BordbuchImFlug aktiv />);
-    await vi.waitFor(() => expect(h.aufrufe).toContain("bordbuch_live"));
+    await act(async () => {}); // Antwort verarbeiten lassen, sonst ist der Kasten nur „noch nicht da“
+    expect(h.aufrufe).toContain("bordbuch_live");
     expect(container.innerHTML).toBe("");
+  });
+
+  it("zeigt keinen leeren Kasten, solange kein Punkt sichtbar ist", async () => {
+    h.live = live({ eingeschaltet: [] });
+    const { container } = render(<BordbuchImFlug aktiv />);
+    await act(async () => {});
+    expect(h.aufrufe).toContain("bordbuch_live");
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("Gegenprobe: dieselbe Antwort ohne Abschaltgrund zeigt den Kasten nach demselben Warten", async () => {
+    h.live = live();
+    render(<BordbuchImFlug aktiv />);
+    await act(async () => {});
+    expect(screen.getByTestId("flug-bordbuch")).toBeTruthy();
   });
 
   it("fragt nicht ab und zeigt nichts, solange der Flug gerade wieder aufgenommen wird", async () => {
