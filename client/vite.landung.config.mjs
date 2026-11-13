@@ -17,6 +17,7 @@ export default defineConfig({
       enforce: "pre",
       resolveId(source, importer) {
         if (source === "../../lib/ipc" && importer?.endsWith("bordbuch/BordbuchLandung.tsx")) return ERSATZ;
+        if (source === "../../lib/ipc" && importer?.endsWith("bordbuch/BordbuchImFlug.tsx")) return ERSATZ;
         if (source === "../lib/ipc" && importer?.endsWith("components/ResumeFlightBanner.tsx")) return ERSATZ;
         if (source === "../../lib/ipc" && importer?.endsWith("vermessen/FlugzeugVermessen.tsx")) return ERSATZ_VERMESSEN;
         return null;

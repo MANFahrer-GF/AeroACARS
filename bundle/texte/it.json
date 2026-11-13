@@ -1859,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Nell’invio di immagini a Discord ci sono due nuove opzioni. “Solo volo” mostra il tuo nome, il numero di volo, la tratta e l’aereo, senza ora, quota, fase e posizione. “Solo nome” mostra solo il tuo nome, nient’altro."
+    "neu_text": "Nell’invio di immagini a Discord ci sono due nuove opzioni. “Solo volo” mostra il tuo nome, il numero di volo, la tratta e l’aereo, senza ora, quota, fase e posizione. “Solo nome” mostra solo il tuo nome, nient’altro. Nella scheda «Volo» ora vedi la checklist del diario di bordo del volo in corso subito sotto il volo. Un clic la chiude."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

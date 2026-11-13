@@ -12,6 +12,11 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
       snapshot: sim ? { lat: 1.3502, lon: 103.9840, altitude_msl_ft: 139, heading_deg_true: 114, fuel_total_kg: 90594, zfw_kg: 224885, total_weight_kg: 315480, aircraft_icao: "B77W" } : null } as T;
   }
   if (cmd === "bordbuch_eintrag") return eintrag as T;
+  if (cmd === "bordbuch_live") {
+    return { klasse: eintrag.klasse, nacht_start: eintrag.nacht_start, eingeschaltet: eintrag.eingeschaltet,
+      aus_grund: null, punkte: eintrag.punkte, hinweis: null, profil: eintrag.profil,
+      rolltempo_grenze_kt: eintrag.rolltempo_grenze_kt, hinweise_im_flug: true } as T;
+  }
   if (cmd === "bordbuch_markieren") {
     const { regel, nachAtc } = args as { regel: string; nachAtc: boolean };
     eintrag = {

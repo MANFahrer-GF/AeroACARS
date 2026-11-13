@@ -9,6 +9,7 @@ import deCommon from "../../../bundle/texte/de.json";
 import { MOCK_LANDING_OPTIONS } from "./mockLandingRecords";
 import { LandingDetail, type LandingRecord } from "../components/LandingPanel";
 import { applyTheme } from "../theme";
+import { BordbuchImFlug } from "../components/bordbuch/BordbuchImFlug";
 import "../App.css";
 
 void i18n.use(initReactI18next).init({
@@ -27,7 +28,10 @@ const record = { ...(opt.build() as unknown as LandingRecord), pirep_id: "BEISPI
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <div className="landing-panel" style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-      <LandingDetail record={record} allRecords={[record]} onBack={() => undefined} isPreview={false} />
+      {/* `?imflug`: Bordbuch-Block aus dem Reiter „Flug“ mit dem Beispiel als laufendem Flug. */}
+      {new URLSearchParams(location.search).has("imflug")
+        ? <BordbuchImFlug aktiv />
+        : <LandingDetail record={record} allRecords={[record]} onBack={() => undefined} isPreview={false} />}
     </div>
   </StrictMode>,
 );
