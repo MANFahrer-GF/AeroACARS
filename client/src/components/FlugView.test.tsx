@@ -35,6 +35,9 @@ vi.mock("./DivertBanner", () => ({ DivertBanner: () => null }));
 vi.mock("./SimRateHinweis", () => ({ SimRateHinweis: () => null }));
 vi.mock("./kabine/KabinenHinweis", () => ({ KabinenHinweis: () => null }));
 vi.mock("./bordbuch/BordbuchHinweis", () => ({ BordbuchHinweis: () => null }));
+vi.mock("./bordbuch/BordbuchImFlug", () => ({
+  BordbuchImFlug: (p: { aktiv: boolean }) => <div data-testid="bordbuch-im-flug" data-aktiv={String(p.aktiv)} />,
+}));
 vi.mock("./StableApproachBanner", () => ({ StableApproachBanner: () => null }));
 
 import { FlugView } from "./FlugView";
@@ -126,6 +129,22 @@ describe("FlugView — ein Reiter folgt dem Flug", () => {
     render(ansicht({ ...flug, was_just_resumed: true } as ActiveFlightInfo));
     expect(screen.queryByTestId("cockpit-tafel")).toBeNull();
     expect(screen.getByTestId("flug-briefing")).toBeTruthy();
+  });
+
+  it("im Flug steht das Bordbuch zwischen Cockpit und Briefing, nicht vor dem Flug", () => {
+    const r = render(ansicht(null));
+    expect(screen.queryByTestId("bordbuch-im-flug")).toBeNull();
+
+    r.rerender(ansicht(flug));
+    const bordbuch = screen.getByTestId("bordbuch-im-flug");
+    expect(bordbuch.getAttribute("data-aktiv")).toBe("true");
+    const folgt = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(folgt(screen.getByTestId("cockpit-tafel"), bordbuch)).toBe(true);
+    expect(folgt(bordbuch, screen.getByTestId("flug-briefing"))).toBe(true);
+
+    // Wiederaufnahme: keine Abfrage, kein Kasten.
+    r.rerender(ansicht({ ...flug, was_just_resumed: true } as ActiveFlightInfo));
+    expect(screen.getByTestId("bordbuch-im-flug").getAttribute("data-aktiv")).toBe("false");
   });
 
   it("nach dem PIREP steht die Abschlussmeldung über dem Briefing", () => {

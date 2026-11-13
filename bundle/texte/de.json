@@ -1859,7 +1859,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Beim Senden von Bildern an Discord gibt es zwei neue Stufen. „Nur Flug“ zeigt deinen Namen, die Flugnummer, die Strecke und das Flugzeug, ohne Zeit, Höhe, Phase und Position. „Nur Name“ zeigt nur deinen Namen, sonst nichts."
+    "neu_text": "Im Reiter „Flug“ siehst du jetzt die Bordbuch-Checkliste des laufenden Flugs direkt unter dem Flug. Ein Klick klappt sie zu."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
