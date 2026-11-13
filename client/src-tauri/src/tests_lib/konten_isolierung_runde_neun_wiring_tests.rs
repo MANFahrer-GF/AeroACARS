@@ -35,7 +35,7 @@
         );
         let koerper = funktionskoerper(SRC, &nadel);
         let pruefung_pos = koerper.find("pirep_queue_eintrag_gehoert_aktuellem_piloten(");
-        let delete_pos = koerper.find("client.delete_bid(e.bid_id, e.flight_id.as_deref())");
+        let delete_pos = koerper.find("client.delete_bid(bid_arg, flight_arg.as_deref())");
         match (pruefung_pos, delete_pos) {
             (Some(p), Some(d)) => assert!(
                 p < d,

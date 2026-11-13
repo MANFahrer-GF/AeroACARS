@@ -284,11 +284,19 @@ async fn flight_list_orphans(
             // Bid-Match via flight_id (PirepSummary.flight_id ↔ Bid.flight.id).
             // Bid.flight.id ist canonical String, PirepSummary.flight_id ist
             // Option<String>.
-            let matching_bid = bids.iter().find(|b| {
-                p.flight_id
-                    .as_ref()
-                    .map(|fid| &b.flight.id == fid)
-                    .unwrap_or(false)
+            // Befund 13.11.2026: nur eine VOR dem PIREP angelegte Buchung ist
+            // seine — sonst wuerde eine neue Buchung desselben Flugs als
+            // „Orphan-Bid" angezeigt und beim Aufraeumen geloescht.
+            let matching_bid = p.flight_id.as_ref().and_then(|fid| {
+                match bid_aufraeum_entscheidung(
+                    None,
+                    Some(fid),
+                    Some(&bids),
+                    p.created_at.as_deref(),
+                ) {
+                    BidAufraeumen::Loeschen(Some(id), _) => bids.iter().find(|b| b.id == id),
+                    _ => None,
+                }
             });
 
             // Aircraft-Anreicherung: erst aus PIREP-Summary direkt
@@ -364,6 +372,14 @@ async fn flight_cancel_orphan(
         }
     }
 
+    // Anlagezeit des PIREP fuer die Bid-Zuordnung ohne `bid_id` — vor dem
+    // Cancel holen, solange er sicher abrufbar ist. Best-effort.
+    let pirep_erstellt = if bid_id.is_none() && flight_id.is_some() {
+        client.get_pirep(&pirep_id).await.ok().and_then(|p| p.created_at)
+    } else {
+        None
+    };
+
     // 1) PIREP cancellen
     match client.cancel_pirep(&pirep_id).await {
         Ok(()) => {
@@ -389,7 +405,34 @@ async fn flight_cancel_orphan(
     }
 
     // 2) Bid droppen — nur wenn bid_id ODER flight_id vorhanden ist.
-    if bid_id.is_some() || flight_id.is_some() {
+    // Befund 13.11.2026: serverseitig neu entscheiden statt den Werten aus
+    // dem Panel zu trauen — weder eine neuere Buchung desselben Flugs noch
+    // die eines laufenden Flugs darf hier verschwinden (siehe
+    // `bid_aufraeum_entscheidung`, `bid_gehoert_laufendem_flug`).
+    let loeschen = if bid_id.is_none() && flight_id.is_none() {
+        None
+    } else if bid_gehoert_laufendem_flug(&app, &pirep_id, bid_id, flight_id.as_deref()) {
+        tracing::info!(pirep_id = %pirep_id, "orphan bid gehoert einem laufenden Flug — bleibt");
+        None
+    } else {
+        match bid_aufraeum_entscheidung(
+            bid_id,
+            flight_id.as_deref(),
+            client.get_bids().await.ok().as_deref(),
+            pirep_erstellt.as_deref(),
+        ) {
+            BidAufraeumen::Loeschen(b, f) => Some((b, f)),
+            BidAufraeumen::Erledigt => None,
+            BidAufraeumen::Liegenlassen => {
+                tracing::warn!(
+                    pirep_id = %pirep_id,
+                    "orphan bid nicht sicher zuzuordnen — bleibt (manuell auf der Webseite loeschbar)"
+                );
+                None
+            }
+        }
+    };
+    if let Some((bid_id, flight_id)) = loeschen {
         match client.delete_bid(bid_id, flight_id.as_deref()).await {
             Ok(()) => {
                 tracing::info!(

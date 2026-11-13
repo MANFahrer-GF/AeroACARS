@@ -9,9 +9,11 @@
 /// transient versagt (Netz weg, 5xx). Spec §Pending Bid Cleanup Queue.
 ///
 /// v0.7.19 (QS-R2 Finding 2): `flight_id` wird als Fallback mitgegeben.
-/// Wenn `delete_bid(bid_id)` 400/404/422 liefert (Bid existiert nicht
-/// mehr oder VA-Plugin akzeptiert `bid_id` nicht), versucht die
-/// `delete_bid`-Implementation den `flight_id`-Body-Pfad. Ohne den
+/// Wenn `delete_bid(bid_id)` 400/422 liefert (VA-Plugin akzeptiert
+/// `bid_id` nicht), versucht die `delete_bid`-Implementation den
+/// `flight_id`-Body-Pfad; 404 heisst seit 13.11.2026 „schon weg". Hier,
+/// direkt nach file/cancel, ist der Rueckfall unkritisch: seither konnte
+/// keine neue Buchung entstehen. Ohne den
 /// Fallback haette der Background-Worker 8x denselben kaputten Pfad
 /// retried. Empty-String-`flight_id` (pre-v0.7.7-Bid) wird zu None
 /// gemapped.
@@ -190,6 +192,110 @@ fn ausgereizter_bid_eintrag(
     }
 }
 
+/// Was ein Aufraeumversuch fuer die Buchung eines ALTEN Flugs tun darf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BidAufraeumen {
+    /// `delete_bid` mit genau diesen Argumenten; `flight_id` nur, wenn auf
+    /// dem Flug keine fremde (neuere) eigene Buchung liegt.
+    Loeschen(Option<i64>, Option<String>),
+    /// Die alte Buchung existiert nicht mehr — Ziel erreicht.
+    Erledigt,
+    /// Nicht sicher entscheidbar, nichts loeschen.
+    Liegenlassen,
+}
+
+/// Entscheidet, ob und wie die Buchung eines alten PIREP geloescht werden
+/// darf, ohne eine neuere Buchung desselben Flugs zu treffen (Befund
+/// 13.11.2026). phpVMS `removeBid()` loescht ALLE Buchungen des Piloten auf
+/// der `flight_id`, und ab GSG CoreFixes 1.12.6 bricht der Server dabei einen
+/// laufenden PIREP am Boden auf diesem Flug ab.
+///
+/// Tragend: `BidService::addBid` gibt eine vorhandene eigene Buchung zurueck
+/// statt eine zweite anzulegen — je Pilot und Flug gibt es hoechstens eine.
+/// Mit `bid_id` reicht deshalb der Abgleich der ID: liegt auf dem Flug eine
+/// eigene Buchung mit ANDERER ID, ist das die neue und die alte ist weg.
+/// Ohne `bid_id` entscheidet die Anlagezeit der Buchung gegen die des alten
+/// PIREP (`pirep_erstellt`, beides Serveruhr): nur eine VOR dem PIREP
+/// angelegte Buchung ist die alte. `eigene_bids` ist `None`, wenn der Abruf
+/// scheiterte — dann nie ueber `flight_id`.
+fn bid_aufraeum_entscheidung(
+    bid_id: Option<i64>,
+    flight_id: Option<&str>,
+    eigene_bids: Option<&[api_client::Bid]>,
+    pirep_erstellt: Option<&str>,
+) -> BidAufraeumen {
+    let zeit = |s: Option<&str>| {
+        s.and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.with_timezone(&Utc))
+    };
+    let Some(bids) = eigene_bids else {
+        return match bid_id {
+            Some(id) => BidAufraeumen::Loeschen(Some(id), None),
+            None => BidAufraeumen::Liegenlassen,
+        };
+    };
+    let auf_flug: Vec<&api_client::Bid> = match flight_id {
+        Some(f) => bids.iter().filter(|b| b.flight_id == f).collect(),
+        None => Vec::new(),
+    };
+    match bid_id {
+        Some(id) if bids.iter().any(|b| b.id == id) => {
+            let rueckfall = auf_flug.iter().all(|b| b.id == id);
+            BidAufraeumen::Loeschen(
+                Some(id),
+                flight_id.filter(|_| rueckfall).map(str::to_string),
+            )
+        }
+        Some(_) => BidAufraeumen::Erledigt,
+        None => {
+            if auf_flug.is_empty() {
+                return BidAufraeumen::Erledigt;
+            }
+            let Some(pirep) = zeit(pirep_erstellt) else {
+                return BidAufraeumen::Liegenlassen;
+            };
+            let anlage: Vec<Option<_>> =
+                auf_flug.iter().map(|b| zeit(b.created_at.as_deref())).collect();
+            match anlage.as_slice() {
+                [Some(t)] if *t < pirep => BidAufraeumen::Loeschen(
+                    Some(auf_flug[0].id),
+                    flight_id.map(str::to_string),
+                ),
+                a if a.iter().all(|t| t.is_some_and(|t| t >= pirep)) => BidAufraeumen::Erledigt,
+                _ => BidAufraeumen::Liegenlassen,
+            }
+        }
+    }
+}
+
+/// Gehoert die Buchung zu einem laufenden Flug (aktiv oder Resume-Kandidat
+/// auf der Platte), der nicht `pirep_id` ist? Dann darf sie kein Aufraeumen
+/// fuer einen alten PIREP loeschen — auch nicht per `bid_id`: der Pilot
+/// kann denselben Flug mit derselben, nie geloeschten Buchung neu gestartet
+/// haben, und CoreFixes 1.12.6 braeche dessen PIREP ab.
+fn bid_gehoert_laufendem_flug(
+    app: &AppHandle,
+    pirep_id: &str,
+    bid_id: Option<i64>,
+    flight_id: Option<&str>,
+) -> bool {
+    let trifft = |p: &str, b: i64, f: &str| {
+        p != pirep_id
+            && (bid_id.is_some_and(|id| id > 0 && id == b)
+                || flight_id.is_some_and(|fid| !fid.is_empty() && fid == f))
+    };
+    let aktiv = {
+        let state = app.state::<AppState>();
+        let guard = state.active_flight.lock().expect("active_flight lock");
+        guard
+            .as_ref()
+            .is_some_and(|f| trifft(&f.pirep_id, f.bid_id, &f.flight_id))
+    };
+    aktiv
+        || read_persisted_flight(app)
+            .is_some_and(|p| trifft(&p.pirep_id, p.bid_id, &p.flight_id))
+}
+
 /// v0.7.19 GAF-707: drain-Pass fuer den PendingBidCleanupQueue. Wird im
 /// spawn_pirep_queue_worker-Tick mit aufgerufen (selbe 60s-Frequenz).
 /// Cap auf 8 Versuche pro Eintrag. Danach wird der Eintrag einmal pro Tick
@@ -331,9 +437,54 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
                 continue;
             }
         }
+        // Befund 13.11.2026: vor JEDEM Loeschen pruefen, dass die Buchung
+        // nicht (mehr) einem neueren Flug gehoert — siehe
+        // `bid_gehoert_laufendem_flug` und `bid_aufraeum_entscheidung`.
+        if bid_gehoert_laufendem_flug(app, &e.pirep_id, e.bid_id, e.flight_id.as_deref()) {
+            tracing::info!(
+                pirep_id = %e.pirep_id,
+                "pending_bid_cleanup: Buchung gehoert einem laufenden Flug — wartet"
+            );
+            survivors.push(e);
+            continue;
+        }
+        if eigene_bids.is_none() {
+            eigene_bids = Some(client.get_bids().await.ok());
+        }
+        let pirep_erstellt = if e.bid_id.is_none() {
+            client.get_pirep(&e.pirep_id).await.ok().and_then(|p| p.created_at)
+        } else {
+            None
+        };
+        let (bid_arg, flight_arg) = match bid_aufraeum_entscheidung(
+            e.bid_id,
+            e.flight_id.as_deref(),
+            eigene_bids.as_ref().and_then(|abruf| abruf.as_deref()),
+            pirep_erstellt.as_deref(),
+        ) {
+            BidAufraeumen::Loeschen(b, f) => (b, f),
+            BidAufraeumen::Erledigt => {
+                tracing::info!(
+                    pirep_id = %e.pirep_id,
+                    "pending_bid_cleanup: alte Buchung existiert nicht mehr — Eintrag entfernt"
+                );
+                continue;
+            }
+            BidAufraeumen::Liegenlassen => {
+                e.attempts += 1;
+                e.last_attempt_at = Some(Utc::now());
+                tracing::warn!(
+                    pirep_id = %e.pirep_id,
+                    attempt = e.attempts,
+                    "pending_bid_cleanup: alte Buchung nicht sicher bestimmbar — nichts geloescht"
+                );
+                survivors.push(e);
+                continue;
+            }
+        };
         e.attempts += 1;
         e.last_attempt_at = Some(Utc::now());
-        match client.delete_bid(e.bid_id, e.flight_id.as_deref()).await {
+        match client.delete_bid(bid_arg, flight_arg.as_deref()).await {
             Ok(()) => {
                 tracing::info!(
                     pirep_id = %e.pirep_id,
@@ -373,3 +524,7 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
 #[cfg(test)]
 #[path = "tests_lib/ausgereizter_bid_eintrag_tests.rs"]
 mod ausgereizter_bid_eintrag_tests;
+
+#[cfg(test)]
+#[path = "tests_lib/bid_aufraeum_entscheidung_tests.rs"]
+mod bid_aufraeum_entscheidung_tests;
