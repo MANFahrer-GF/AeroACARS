@@ -493,6 +493,8 @@ async fn status_handler(
     }
     let mut value = crate::remote::current_flight_status_value(&ctx.app);
     with_display_callsign(&mut value);
+    let sc = sc_anzeige_fuer_status(&ctx.app, &value);
+    sc_status_fuer_anzeige(&mut value, &sc);
     cors_open((StatusCode::OK, Json(value)).into_response())
 }
 
@@ -553,6 +555,11 @@ async fn debrief_handler(
     if let Some(r) = reject_non_loopback(peer) {
         return r;
     }
+    // Shared Cockpit (B4): beim Partner nie die eigene Landung.
+    let status = crate::remote::current_flight_status_value(&ctx.app);
+    if let Some(v) = sc_debrief(&sc_anzeige_fuer_status(&ctx.app, &status), true) {
+        return cors_open((StatusCode::OK, Json(v)).into_response());
+    }
     let state = ctx.app.state::<crate::AppState>();
     let beginn = std::time::Instant::now();
     let record = crate::landing_get_current(ctx.app.clone(), state);
@@ -584,10 +591,203 @@ pub(crate) fn debrief_fuer_anzeige(mut v: Value) -> Value {
     v
 }
 
+// ── Shared Cockpit (B4): Anzeigen im Simulator beim Partner ─────────────
+//
+// MSFS-Panel, Flow-Widget, Browser-HUD und Stream Deck lesen `/panel/status`
+// und `/panel/debrief`, das X-Plane-Band baut aus denselben Werten. Die
+// Umstellung sitzt bewusst HIER (wie `with_display_callsign`): Sie wirkt auf
+// jede schon ausgelieferte Panel-, Widget- und Stream-Deck-Fassung, ohne dass
+// ein Paket neu gebaut werden muss. App und LAN-Bruecke sehen die Werte
+// unveraendert.
+//
+// Panel und Widget holen das Landeprotokoll genau einmal, an der Kante zu
+// „Ergebnis“, und merken sich jede Antwort ausser `null`. Deshalb:
+// - ausstehend: `/panel/status` meldet die Landung als noch nicht fertig
+//   ausgewertet (die Anzeigen bleiben bei „Landung wird ausgewertet“), ohne
+//   eigene Sinkrate/G-Last; `/panel/debrief` liefert `null` (eine aeltere
+//   Anzeige fragt dann weiter, statt etwas Falsches festzuhalten);
+// - gelandet: die Kante kommt, das Protokoll traegt die Werte des Gastgebers
+//   und das Kennzeichen.
+// Alle Texte nur ASCII: Coherent GT (MSFS) und die Cockpit-Schrift kennen
+// nicht jedes Zeichen, und das Etikett geht im Widget nicht durch `nurAscii`.
+
+/// Text in den Anzeigen, solange der Gastgeber noch nicht gelandet ist.
+pub(crate) const SC_FOLGT: &str = "Landung des Gastgebers folgt";
+
+/// Kennzeichen „SC - Landung von <Name>“, ASCII, Name hoechstens 24 Zeichen.
+pub(crate) fn sc_kennzeichen(name: Option<&str>) -> String {
+    let name: String = name
+        .map(sim_xplane::hud_band::nur_ascii)
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(24)
+        .collect();
+    let name = name.trim();
+    if name.is_empty() {
+        "SC - Landung des Gastgebers".into()
+    } else {
+        format!("SC - Landung von {name}")
+    }
+}
+
+/// Anzeige fuer den laufenden Flug (kein Flug: wie bisher).
+pub(crate) fn sc_anzeige_fuer_status(app: &AppHandle, status: &Value) -> crate::landungs_eingabe::ScAnzeige {
+    let pirep = status.get("pirep_id").and_then(Value::as_str).unwrap_or("");
+    if status.is_null() || pirep.is_empty() {
+        return crate::landungs_eingabe::ScAnzeige::WieBisher;
+    }
+    crate::landungs_eingabe::sc_anzeige(app, pirep, sc_nach_aufsetzen(status))
+}
+
+/// Aufgesetzt? (`landing_at` steht im Status.)
+pub(crate) fn sc_nach_aufsetzen(status: &Value) -> bool {
+    status.get("landing_at").and_then(Value::as_str).is_some_and(|s| !s.is_empty())
+}
+
+/// `/panel/status` fuer die Anzeigen umstellen (beim Partner nach dem Aufsetzen).
+pub(crate) fn sc_status_fuer_anzeige(status: &mut Value, a: &crate::landungs_eingabe::ScAnzeige) {
+    use crate::landungs_eingabe::{ScAnzeige, ScLandung};
+    let Some(o) = status.as_object_mut() else { return };
+    match a {
+        ScAnzeige::WieBisher => {}
+        ScAnzeige::Warten | ScAnzeige::Folgt { .. } => {
+            if matches!(a, ScAnzeige::Warten | ScAnzeige::Folgt { halten: true, .. }) {
+                o.insert("landing_score_finalized".into(), Value::Bool(false));
+            }
+            o.insert("landing_rate_fpm".into(), Value::Null);
+            o.insert("landing_g_force".into(), Value::Null);
+        }
+        ScAnzeige::Gelandet(ScLandung::Gelandet { landing_rate_fpm, g_force, .. }) => {
+            o.insert("landing_rate_fpm".into(), serde_json::json!(landing_rate_fpm));
+            o.insert("landing_g_force".into(), serde_json::json!(g_force));
+        }
+        ScAnzeige::Gelandet(_) => {}
+    }
+}
+
+/// Landeprotokoll fuer die Anzeigen beim Partner. `None` = wie bisher (eigene
+/// Landung), `Some(null)` = noch nichts zeigen, sonst die Landung des
+/// Gastgebers (unveraendert von live, ohne Bahn: live liefert keine).
+/// `etikett_kennzeichen`: Panel und Widget haben nur das Etikett als freies
+/// Textfeld, dort steht dann das Kennzeichen; das X-Plane-Band zeigt die
+/// Kategorie (mit Farbe) und das Kennzeichen als Anhang.
+pub(crate) fn sc_debrief(a: &crate::landungs_eingabe::ScAnzeige, etikett_kennzeichen: bool) -> Option<Value> {
+    use crate::landungs_eingabe::{ScAnzeige, ScLandung};
+    match a {
+        ScAnzeige::WieBisher => None,
+        ScAnzeige::Warten | ScAnzeige::Folgt { .. } => Some(Value::Null),
+        ScAnzeige::Gelandet(ScLandung::Gelandet {
+            gastgeber_name,
+            landing_rate_fpm,
+            landing_score,
+            g_force,
+            bounce_count,
+            score_text,
+            ..
+        }) => {
+            let kennzeichen = sc_kennzeichen(gastgeber_name.as_deref());
+            let etikett = if etikett_kennzeichen {
+                Some(kennzeichen.clone())
+            } else {
+                score_text.as_deref().map(sim_xplane::hud_band::nur_ascii)
+            };
+            Some(serde_json::json!({
+                "score_numeric": landing_score.map(f64::round),
+                "score_label": etikett,
+                "landing_rate_fpm": landing_rate_fpm,
+                "landing_scored_g_force": g_force,
+                "bounce_count": bounce_count,
+                "runway_match": null,
+                "sc_kennzeichen": kennzeichen,
+            }))
+        }
+        ScAnzeige::Gelandet(_) => Some(Value::Null),
+    }
+}
+
 #[cfg(test)]
 mod debrief_tests {
     use super::debrief_fuer_anzeige;
     use serde_json::json;
+
+    use super::{sc_debrief, sc_kennzeichen, sc_nach_aufsetzen, sc_status_fuer_anzeige};
+    use crate::landungs_eingabe::{ScAnzeige, ScLandung};
+
+    fn gelandet(name: Option<&str>) -> ScLandung {
+        ScLandung::Gelandet {
+            touchdown_id: 1,
+            fuehrender_pirep_id: "H1".into(),
+            gastgeber_name: name.map(Into::into),
+            rolle_gastgeber: None,
+            landing_rate_fpm: -180.4,
+            landing_score: Some(90.6),
+            g_force: Some(1.12),
+            bounce_count: Some(0),
+            score_text: Some("smooth".into()),
+        }
+    }
+
+    fn status() -> serde_json::Value {
+        json!({"pirep_id":"P1","phase":"landing","landing_at":"2026-11-13T10:00:00Z",
+            "landing_score_finalized":true,"landing_rate_fpm":-512.0,"landing_g_force":1.6})
+    }
+
+    /// `/panel/status` beim Partner: ausstehend haelt die Anzeigen in der
+    /// Auswertung ohne eigene Werte, gelandet traegt die Werte des Gastgebers
+    /// (Stream Deck liest Sinkrate und G-Last von hier).
+    #[test]
+    fn sc_status_fuer_die_anzeigen() {
+        let mut s = status();
+        sc_status_fuer_anzeige(&mut s, &ScAnzeige::Folgt { name: None, halten: true });
+        assert_eq!(s["landing_score_finalized"], false);
+        assert!(s["landing_rate_fpm"].is_null() && s["landing_g_force"].is_null());
+        let mut s = status();
+        sc_status_fuer_anzeige(&mut s, &ScAnzeige::Folgt { name: None, halten: false });
+        assert_eq!(s["landing_score_finalized"], true, "nach der Hoechstzahl nicht mehr anhalten");
+        assert!(s["landing_rate_fpm"].is_null());
+        let mut s = status();
+        sc_status_fuer_anzeige(&mut s, &ScAnzeige::Warten);
+        assert_eq!(s["landing_score_finalized"], false);
+        assert!(s["landing_rate_fpm"].is_null());
+        let mut s = status();
+        sc_status_fuer_anzeige(&mut s, &ScAnzeige::Gelandet(gelandet(Some("Anna"))));
+        assert_eq!(s["landing_rate_fpm"], -180.4);
+        assert_eq!(s["landing_g_force"], 1.12);
+        assert_eq!(s["landing_score_finalized"], true);
+        // Gegenprobe: Solo/Nicht-Crew exakt wie bisher, auch kein Flug
+        let mut s = status();
+        sc_status_fuer_anzeige(&mut s, &ScAnzeige::WieBisher);
+        assert_eq!(s, status());
+        let mut n = serde_json::Value::Null;
+        sc_status_fuer_anzeige(&mut n, &ScAnzeige::Folgt { name: None, halten: true });
+        assert!(n.is_null());
+        assert!(sc_nach_aufsetzen(&status()));
+        assert!(!sc_nach_aufsetzen(&json!({"landing_at": null})));
+    }
+
+    /// `/panel/debrief` beim Partner: nie die eigene Landung.
+    #[test]
+    fn sc_debrief_fuer_die_anzeigen() {
+        assert_eq!(sc_debrief(&ScAnzeige::WieBisher, true), None, "Solo: eigenes Protokoll wie bisher");
+        assert_eq!(sc_debrief(&ScAnzeige::Warten, true), Some(serde_json::Value::Null));
+        assert_eq!(sc_debrief(&ScAnzeige::Folgt { name: None, halten: true }, true), Some(serde_json::Value::Null));
+        let panel = sc_debrief(&ScAnzeige::Gelandet(gelandet(Some("J\u{00FC}rgen \u{00B7} K."))), true).unwrap();
+        assert_eq!(panel["score_label"], "SC - Landung von Juergen - K.");
+        assert_eq!(panel["score_numeric"], 91.0);
+        assert_eq!(panel["landing_rate_fpm"], -180.4);
+        assert_eq!(panel["landing_scored_g_force"], 1.12);
+        assert_eq!(panel["bounce_count"], 0);
+        assert!(panel["runway_match"].is_null(), "live liefert keine Bahn, die eigene geht nicht durch");
+        assert!(panel.get("landing_g_force").is_none() && panel.get("grade_letter").is_none());
+        let band = sc_debrief(&ScAnzeige::Gelandet(gelandet(None)), false).unwrap();
+        assert_eq!(band["score_label"], "smooth", "Band: Kategorie, Kennzeichen als Anhang");
+        assert_eq!(band["sc_kennzeichen"], "SC - Landung des Gastgebers");
+        for t in [panel["score_label"].as_str().unwrap(), super::SC_FOLGT] {
+            assert!(t.chars().all(|c| (' '..='~').contains(&c)), "nur ASCII: {t}");
+        }
+        assert_eq!(sc_kennzeichen(Some(&"x".repeat(80))).len(), "SC - Landung von ".len() + 24);
+    }
 
     #[test]
     fn nicht_bewertbar_bekommt_ein_etikett_fuer_die_anzeigen() {

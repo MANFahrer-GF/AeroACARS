@@ -1273,6 +1273,8 @@ where
         modul_sollband,
         // V9 (`zusatz-1`): Zusatzfelder des Moduls, unveraendert (begrenzt).
         zusatz: crate::bewertung::zusatz_aus(&bewertet),
+        // Shared Cockpit (B4): setzt erst das Speichern (Merker von live).
+        shared_cockpit: None,
         // Lernpaket AP4/AP5 (29.09.2026): reine Forensik, nur lokal.
         anflug_gleitpfad: stats.anflug_forensik.gleitpfad.clone(),
         anflug_ruhe: stats.anflug_forensik.ruhe.clone(),
@@ -1529,7 +1531,7 @@ fn record_landing_for_filed_flight(
     }
 
     // ── Nach der Sperre: Historie schreiben und loggen ───────────────────
-    let Some(record) = record else {
+    let Some(mut record) = record else {
         tracing::debug!(
             pirep_id = %flight.pirep_id,
             "no touchdown captured — skipping landing-history record"
@@ -1540,6 +1542,11 @@ fn record_landing_for_filed_flight(
         tracing::warn!("landing store unavailable — landing not recorded");
         return;
     };
+    // Shared Cockpit (B4): Kennzeichen des Partnerflugs aus dem Merker; was
+    // live spaeter liefert, traegt der Merker unter derselben Sperre nach.
+    let _sc = landungs_eingabe::sc_speicher_sperre();
+    record.shared_cockpit = landungs_eingabe::sc_fuer_datensatz(&flight.pirep_id);
+    landungs_eingabe::sc_anstossen(app, &flight.pirep_id, true);
     if let Err(e) = store.upsert(record) {
         tracing::warn!(error = ?e, "could not persist landing record");
     } else {

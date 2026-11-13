@@ -416,14 +416,261 @@ async fn sc_landung_holen(basis: &str, token: &str, pirep_id: &str) -> Option<Sc
 /// (Pilot-Zugang, Token bleibt in Rust). Fehler (kein Token, Netz, 5xx,
 /// unbekannte Antwort) als `sc_landung_fehler`: die Oberflaeche bleibt dann,
 /// wie sie ist.
+///
+/// Die Antwort landet zusaetzlich im Rust-Merker (Sim-Anzeigen,
+/// Kennzeichen am Landungsdatensatz), damit beide dieselbe Antwort sehen.
 #[tauri::command]
-pub(crate) async fn sc_landung_gastgeber(pirep_id: String) -> Result<ScLandung, crate::UiError> {
+pub(crate) async fn sc_landung_gastgeber(app: tauri::AppHandle, pirep_id: String) -> Result<ScLandung, crate::UiError> {
     if !pirep_kennung_gueltig(&pirep_id) {
         return Err(crate::UiError::new("pirep_id_ungueltig", "PIREP-Kennung ungueltig"));
     }
     let fehler = || crate::UiError::new("sc_landung_fehler", "Shared-Cockpit-Landung nicht abrufbar");
     let token = crate::live_zugang::pilot_token().ok_or_else(fehler)?;
-    sc_landung_holen(crate::live_zugang::live_basis(), &token, &pirep_id).await.ok_or_else(fehler)
+    let l = sc_landung_holen(crate::live_zugang::live_basis(), &token, &pirep_id).await.ok_or_else(fehler)?;
+    sc_merker_setzen(&app, &pirep_id, l.clone());
+    Ok(l)
+}
+
+// ── Shared Cockpit: Merker in Rust ──────────────────────────────────────
+//
+// Quelle fuer MSFS-Panel, Flow-Widget, Browser-HUD, Stream Deck (alle ueber
+// `/panel/*`) und das X-Plane-Band, dazu fuer das Kennzeichen am
+// Landungsdatensatz. Warum Rust selbst fragt (statt nur die Antwort der
+// Oberflaeche zu uebernehmen): Die Oberflaeche fragt nur, solange die
+// Landeanzeige offen ist; die Anzeigen im Simulator muessen auch stimmen,
+// wenn der Pilot einen anderen Reiter offen hat. Beide Wege schreiben in
+// denselben Merker, es bleibt eine Antwort von live (nichts wird gerechnet).
+// HTTP laeuft nie im Anzeigetakt: Die Anzeigen lesen nur den Merker und
+// stossen hoechstens einen Hintergrundabruf an.
+
+/// Abstand der Nachfragen nach dem Aufsetzen, solange „ausstehend“.
+const SC_ABSTAND: std::time::Duration = std::time::Duration::from_secs(10);
+/// Hoechstens so viele Abrufe nach dem Aufsetzen (15 min), danach bleibt
+/// es bei „Landung des Gastgebers folgt“, ohne die Anzeigen anzuhalten.
+const SC_HOECHSTENS_NACH_TD: u32 = 90;
+/// Fehlversuche ohne jede Antwort, danach wie bisher (je vor und nach dem Aufsetzen).
+const SC_FEHLVERSUCHE: u32 = 3;
+/// Mehr Fluege behaelt der Merker nicht (aeltere fallen heraus).
+const SC_MERKER_MAX: usize = 64;
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ScEintrag {
+    pub(crate) stand: Option<ScLandung>,
+    /// Kam `stand` nach dem Aufsetzen (oder von der Oberflaeche)?
+    pub(crate) stand_nach_td: bool,
+    pub(crate) zuletzt: Option<std::time::Instant>,
+    pub(crate) versuche_nach_td: u32,
+    pub(crate) fehler: u32,
+    pub(crate) laeuft: bool,
+    pub(crate) td_gesehen: bool,
+    /// Zuletzt in den Landungsdatensatz geschriebenes Kennzeichen.
+    im_datensatz: Option<serde_json::Value>,
+}
+
+/// Was die Anzeigen im Simulator nach dem Aufsetzen zeigen.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ScAnzeige {
+    /// Kein Partner, unbekannt oder Fehler: wie bisher.
+    WieBisher,
+    /// Erste Antwort steht nach dem Aufsetzen noch aus: anhalten, aber
+    /// keine eigene Note zeigen.
+    Warten,
+    /// Partner, Gastgeber noch nicht gelandet. `halten`: Anzeigen bleiben in
+    /// „Auswertung“, bis die Landung kommt (bis zur Hoechstzahl).
+    Folgt { name: Option<String>, halten: bool },
+    /// Partner, Landung des Gastgebers von live.
+    Gelandet(ScLandung),
+}
+
+/// Ist jetzt ein Abruf faellig? (Reine Entscheidung, getestet.)
+pub(crate) fn sc_faellig(e: &ScEintrag, nach_td: bool, jetzt: std::time::Instant) -> bool {
+    if e.laeuft {
+        return false;
+    }
+    let alt = e.zuletzt.is_none_or(|z| jetzt.duration_since(z) >= SC_ABSTAND);
+    match &e.stand {
+        Some(ScLandung::Gelandet { .. }) => false,
+        // Vor dem Aufsetzen kann live die Crew noch nicht kennen: einmal neu fragen.
+        Some(ScLandung::KeineCrew) => nach_td && !e.stand_nach_td && alt,
+        Some(ScLandung::Ausstehend { .. }) => nach_td && alt && e.versuche_nach_td < SC_HOECHSTENS_NACH_TD,
+        None => e.fehler < SC_FEHLVERSUCHE && alt,
+    }
+}
+
+/// Anzeige aus dem Merker (reine Abbildung, getestet). Vor dem Aufsetzen
+/// immer wie bisher.
+pub(crate) fn sc_anzeige_aus(e: Option<&ScEintrag>, nach_td: bool) -> ScAnzeige {
+    if !nach_td {
+        return ScAnzeige::WieBisher;
+    }
+    let Some(e) = e else { return ScAnzeige::WieBisher };
+    match &e.stand {
+        Some(l @ ScLandung::Gelandet { .. }) => ScAnzeige::Gelandet(l.clone()),
+        Some(ScLandung::Ausstehend { gastgeber_name, .. }) => ScAnzeige::Folgt {
+            name: gastgeber_name.clone(),
+            halten: e.versuche_nach_td < SC_HOECHSTENS_NACH_TD,
+        },
+        Some(ScLandung::KeineCrew) => ScAnzeige::WieBisher,
+        // Nur die allererste Anfrage haelt an; Fehler heissen „wie bisher“.
+        None if e.laeuft && e.fehler == 0 => ScAnzeige::Warten,
+        None => ScAnzeige::WieBisher,
+    }
+}
+
+fn sc_merker() -> std::sync::MutexGuard<'static, std::collections::HashMap<String, ScEintrag>> {
+    static M: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, ScEintrag>>> =
+        std::sync::LazyLock::new(Default::default);
+    M.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Ordnet das Schreiben des Kennzeichens und das Speichern des Datensatzes
+/// (`record_landing_for_filed_flight`), damit keins das andere ueberschreibt.
+pub(crate) fn sc_speicher_sperre() -> std::sync::MutexGuard<'static, ()> {
+    static S: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    S.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Anzeige fuer den laufenden Flug; stoesst bei Bedarf den Abruf an.
+pub(crate) fn sc_anzeige(app: &tauri::AppHandle, pirep_id: &str, nach_td: bool) -> ScAnzeige {
+    if pirep_id.is_empty() {
+        return ScAnzeige::WieBisher;
+    }
+    sc_anstossen(app, pirep_id, nach_td);
+    sc_anzeige_aus(sc_merker().get(pirep_id), nach_td)
+}
+
+/// Kennzeichen fuer den Landungsdatensatz (nur Partner).
+pub(crate) fn sc_fuer_datensatz(pirep_id: &str) -> Option<serde_json::Value> {
+    let m = sc_merker();
+    let l = m.get(pirep_id)?.stand.as_ref()?;
+    sc_als_kennzeichen(l)
+}
+
+fn sc_als_kennzeichen(l: &ScLandung) -> Option<serde_json::Value> {
+    match l {
+        ScLandung::KeineCrew => None,
+        _ => serde_json::to_value(l).ok(),
+    }
+}
+
+/// Startet einen Hintergrundabruf, wenn er faellig ist.
+pub(crate) fn sc_anstossen(app: &tauri::AppHandle, pirep_id: &str, nach_td: bool) {
+    if !pirep_kennung_gueltig(pirep_id) {
+        return;
+    }
+    {
+        let mut m = sc_merker();
+        if !m.contains_key(pirep_id) && m.len() >= SC_MERKER_MAX {
+            m.clear();
+        }
+        let e = m.entry(pirep_id.to_string()).or_default();
+        if nach_td && !e.td_gesehen {
+            // Nach dem Aufsetzen neue Fehlversuche.
+            e.td_gesehen = true;
+            e.fehler = 0;
+        }
+        if !sc_faellig(e, nach_td, std::time::Instant::now()) {
+            return;
+        }
+        e.laeuft = true;
+    }
+    let app = app.clone();
+    let pirep = pirep_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        let r = match crate::live_zugang::pilot_token() {
+            Some(token) => sc_landung_holen(crate::live_zugang::live_basis(), &token, &pirep).await,
+            None => None,
+        };
+        let ohne_zugang = crate::live_zugang::pilot_token().is_none();
+        sc_eintragen(&mut sc_merker(), &pirep, r.clone(), nach_td, ohne_zugang);
+        if let Some(l) = r {
+            sc_datensatz_nachtragen(&app, &pirep, &l);
+        }
+    });
+}
+
+/// Ergebnis eines eigenen Abrufs eintragen (rein, getestet).
+pub(crate) fn sc_eintragen(
+    m: &mut std::collections::HashMap<String, ScEintrag>,
+    pirep_id: &str,
+    r: Option<ScLandung>,
+    nach_td: bool,
+    ohne_zugang: bool,
+) {
+    let e = m.entry(pirep_id.to_string()).or_default();
+    e.laeuft = false;
+    e.zuletzt = Some(std::time::Instant::now());
+    if nach_td {
+        e.versuche_nach_td += 1;
+    }
+    match r {
+        Some(l) => {
+            // Ein spaeter „ausstehend“ macht ein „gelandet“ nicht rueckgaengig.
+            if !matches!(e.stand, Some(ScLandung::Gelandet { .. })) {
+                e.stand = Some(l);
+                e.stand_nach_td = nach_td;
+            }
+            e.fehler = 0;
+        }
+        // Ohne Pilot-Zugang gibt es nichts zu fragen: gleich wie bisher.
+        None if ohne_zugang => e.fehler = SC_FEHLVERSUCHE,
+        None => e.fehler += 1,
+    }
+}
+
+/// Antwort der Oberflaeche uebernehmen (gilt als nach dem Aufsetzen).
+fn sc_merker_setzen(app: &tauri::AppHandle, pirep_id: &str, l: ScLandung) {
+    {
+        let mut m = sc_merker();
+        if !m.contains_key(pirep_id) && m.len() >= SC_MERKER_MAX {
+            m.clear();
+        }
+        let e = m.entry(pirep_id.to_string()).or_default();
+        if !matches!(e.stand, Some(ScLandung::Gelandet { .. })) {
+            e.stand = Some(l.clone());
+            e.stand_nach_td = true;
+        }
+        e.fehler = 0;
+    }
+    sc_datensatz_nachtragen(app, pirep_id, &l);
+}
+
+/// Kennzeichen am gespeicherten Datensatz nachtragen, nur dieses Feld. Fehlt
+/// der Datensatz (Flug noch nicht abgegeben), setzt ihn das Speichern.
+fn sc_datensatz_nachtragen(app: &tauri::AppHandle, pirep_id: &str, l: &ScLandung) {
+    let _s = sc_speicher_sperre();
+    // Massgeblich ist der Merker (ein „gelandet“ bleibt, auch wenn diese
+    // Antwort aelter ist).
+    let Some(neu) = sc_fuer_datensatz(pirep_id).or_else(|| sc_als_kennzeichen(l)) else { return };
+    {
+        let m = sc_merker();
+        if m.get(pirep_id).and_then(|e| e.im_datensatz.as_ref()) == Some(&neu) {
+            return;
+        }
+    }
+    if let Some(store) = crate::open_landing_store(app) {
+        if let Ok(Some(rec)) = store.get(pirep_id) {
+            if let Some(rec) = mit_kennzeichen(rec, &neu) {
+                if let Err(e) = store.upsert(rec) {
+                    tracing::warn!(error = ?e, "Shared-Cockpit-Kennzeichen nicht gespeichert");
+                    return;
+                }
+            }
+        }
+    }
+    if let Some(e) = sc_merker().get_mut(pirep_id) {
+        e.im_datensatz = Some(neu);
+    }
+}
+
+/// Neuer Datensatz mit Kennzeichen, oder `None`, wenn es schon so drinsteht.
+/// Messfelder bleiben unberuehrt.
+pub(crate) fn mit_kennzeichen(mut rec: storage::LandingRecord, neu: &serde_json::Value) -> Option<storage::LandingRecord> {
+    if rec.shared_cockpit.as_ref() == Some(neu) {
+        return None;
+    }
+    rec.shared_cockpit = Some(neu.clone());
+    Some(rec)
 }
 
 #[cfg(test)]
@@ -536,6 +783,123 @@ mod tests {
             format!("http://{a}")
         };
         assert_eq!(sc_landung_holen(&tot, "T", "P1").await, None);
+    }
+
+    fn gelandet(name: &str) -> ScLandung {
+        ScLandung::Gelandet {
+            touchdown_id: 9,
+            fuehrender_pirep_id: "H1".into(),
+            gastgeber_name: Some(name.into()),
+            rolle_gastgeber: Some(ScRolle::PF),
+            landing_rate_fpm: -180.0,
+            landing_score: Some(91.0),
+            g_force: Some(1.12),
+            bounce_count: Some(0),
+            score_text: Some("smooth".into()),
+        }
+    }
+
+    fn ausstehend() -> ScLandung {
+        ScLandung::Ausstehend { fuehrender_pirep_id: Some("H1".into()), gastgeber_name: Some("Anna B.".into()), rolle_gastgeber: None }
+    }
+
+    /// Partnerflug: einmal im Flug fragen, nach dem Aufsetzen alle 10 s bis
+    /// „gelandet“, dann Schluss. Die Anzeige folgt dem Merker.
+    #[test]
+    fn sc_merker_partner_ablauf() {
+        use std::collections::HashMap;
+        use std::time::{Duration, Instant};
+        let mut m: HashMap<String, ScEintrag> = HashMap::new();
+        let t0 = Instant::now();
+        // leer: sofort faellig (auch vor dem Aufsetzen), vorher wie bisher
+        assert!(sc_faellig(&ScEintrag::default(), false, t0));
+        assert_eq!(sc_anzeige_aus(None, true), ScAnzeige::WieBisher);
+        // erste Anfrage nach dem Aufsetzen laeuft: anhalten, keine eigene Note
+        let laeuft = ScEintrag { laeuft: true, ..Default::default() };
+        assert_eq!(sc_anzeige_aus(Some(&laeuft), true), ScAnzeige::Warten);
+        assert!(!sc_faellig(&laeuft, true, t0), "nie zwei Abrufe gleichzeitig");
+        assert_eq!(sc_anzeige_aus(Some(&laeuft), false), ScAnzeige::WieBisher, "vor dem Aufsetzen nichts anhalten");
+
+        sc_eintragen(&mut m, "P1", Some(ausstehend()), false, false);
+        let e = &m["P1"];
+        assert!(!sc_faellig(e, false, t0 + Duration::from_secs(60)), "im Flug reicht eine Antwort");
+        assert!(sc_faellig(e, true, t0 + Duration::from_secs(60)), "nach dem Aufsetzen sofort neu");
+        assert_eq!(sc_anzeige_aus(Some(e), true), ScAnzeige::Folgt { name: Some("Anna B.".into()), halten: true });
+
+        sc_eintragen(&mut m, "P1", Some(ausstehend()), true, false);
+        let e = &m["P1"];
+        let z = e.zuletzt.unwrap();
+        assert!(!sc_faellig(e, true, z + Duration::from_secs(9)));
+        assert!(sc_faellig(e, true, z + SC_ABSTAND));
+
+        sc_eintragen(&mut m, "P1", Some(gelandet("Anna B.")), true, false);
+        let e = &m["P1"];
+        assert_eq!(sc_anzeige_aus(Some(e), true), ScAnzeige::Gelandet(gelandet("Anna B.")));
+        assert!(!sc_faellig(e, true, z + Duration::from_secs(3600)), "gelandet beendet");
+        // ein verspaetetes „ausstehend“ macht „gelandet“ nicht rueckgaengig
+        sc_eintragen(&mut m, "P1", Some(ausstehend()), true, false);
+        assert!(matches!(m["P1"].stand, Some(ScLandung::Gelandet { .. })));
+    }
+
+    /// Nach der Hoechstzahl bleibt „folgt“, die Anzeigen werden aber nicht
+    /// mehr angehalten.
+    #[test]
+    fn sc_merker_gibt_nach_hoechstzahl_das_anhalten_auf() {
+        let mut m = std::collections::HashMap::new();
+        for _ in 0..SC_HOECHSTENS_NACH_TD {
+            sc_eintragen(&mut m, "P1", Some(ausstehend()), true, false);
+        }
+        let e = &m["P1"];
+        assert!(!sc_faellig(e, true, std::time::Instant::now() + SC_ABSTAND * 2));
+        assert_eq!(sc_anzeige_aus(Some(e), true), ScAnzeige::Folgt { name: Some("Anna B.".into()), halten: false });
+    }
+
+    /// Gegenprobe Nicht-Crew und Fehler: Anzeige exakt wie bisher.
+    #[test]
+    fn sc_merker_keine_crew_und_fehler_wie_bisher() {
+        use std::time::Instant;
+        let mut m = std::collections::HashMap::new();
+        sc_eintragen(&mut m, "K1", Some(ScLandung::KeineCrew), false, false);
+        let e = &m["K1"];
+        assert_eq!(sc_anzeige_aus(Some(e), true), ScAnzeige::WieBisher);
+        let spaeter = e.zuletzt.unwrap() + SC_ABSTAND;
+        assert!(sc_faellig(e, true, spaeter), "404 im Flug: nach dem Aufsetzen einmal neu fragen");
+        sc_eintragen(&mut m, "K1", Some(ScLandung::KeineCrew), true, false);
+        assert!(!sc_faellig(&m["K1"], true, Instant::now() + SC_ABSTAND * 10), "danach Schluss");
+        assert_eq!(sc_anzeige_aus(Some(&m["K1"]), true), ScAnzeige::WieBisher);
+
+        for _ in 0..SC_FEHLVERSUCHE {
+            sc_eintragen(&mut m, "F1", None, true, false);
+        }
+        assert_eq!(sc_anzeige_aus(Some(&m["F1"]), true), ScAnzeige::WieBisher);
+        assert!(!sc_faellig(&m["F1"], true, Instant::now() + SC_ABSTAND * 10));
+        // ohne Pilot-Zugang: sofort aufgeben
+        sc_eintragen(&mut m, "Z1", None, true, true);
+        assert!(!sc_faellig(&m["Z1"], true, Instant::now() + SC_ABSTAND * 10));
+    }
+
+    /// Das Kennzeichen kommt dazu, die eigene Messung bleibt; gleiches
+    /// Kennzeichen schreibt nicht erneut; KeineCrew gibt kein Kennzeichen.
+    #[test]
+    fn sc_kennzeichen_am_datensatz_ohne_messwerte_anzufassen() {
+        let rec: storage::LandingRecord = serde_json::from_value(serde_json::json!({
+            "pirep_id": "P1", "touchdown_at": "2026-11-13T10:00:00Z", "recorded_at": "2026-11-13T10:30:00Z",
+            "flight_number": "1", "airline_icao": "GSG", "dpt_airport": "EDDF", "arr_airport": "EDDM",
+            "score_numeric": 55, "score_label": "firm", "grade_letter": "D", "landing_rate_fpm": -480.0,
+            "bounce_count": 1, "touchdown_profile": [], "approach_samples": [], "ux_version": 1,
+            "forensics_version": 1, "sub_scores": [], "accident": false, "accident_reasons": []
+        }))
+        .unwrap();
+        let neu = sc_als_kennzeichen(&gelandet("Anna B.")).unwrap();
+        assert_eq!(neu["status"], "gelandet");
+        let mit = mit_kennzeichen(rec, &neu).expect("neues Kennzeichen");
+        assert_eq!(mit.shared_cockpit.as_ref(), Some(&neu));
+        assert_eq!(mit.landing_rate_fpm, Some(-480.0));
+        assert_eq!(mit.score_numeric, Some(55));
+        assert_eq!(mit.bounce_count, 1);
+        assert!(mit_kennzeichen(mit, &neu).is_none(), "schon drin: nicht neu schreiben");
+        assert_eq!(sc_als_kennzeichen(&ScLandung::KeineCrew), None);
+        assert_eq!(sc_als_kennzeichen(&ausstehend()).unwrap()["status"], "ausstehend");
     }
 
     #[test]

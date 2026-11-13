@@ -1835,7 +1835,10 @@
       "punkte": "Punkte",
       "g": "G-Last",
       "springer": "Springer",
-      "hinweis": "Im Shared Cockpit zählt die Landung des Gastgebers. Deine eigene Messung bleibt im Flugprotokoll."
+      "hinweis": "Im Shared Cockpit zählt die Landung des Gastgebers. Deine eigene Messung bleibt im Flugprotokoll.",
+      "landung_von": "Shared Cockpit · Landung von {{name}}",
+      "landung_gastgeber": "Shared Cockpit · Landung des Gastgebers",
+      "ov_subtitle": "letzte {{eigene}} + {{sc}} Shared Cockpit · aus dem Recorder"
     }
   },
   "about": {
@@ -1869,7 +1872,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Shared Cockpit in der Livekarte: Fliegst du als Partner mit, erscheint das Flugzeug deines Gastgebers nicht mehr zusätzlich neben deinem eigenen. Andere Piloten sehen im Kärtchen „Shared Cockpit“ mit beiden Namen und Rollen. Im Shared Cockpit sieht der Partner jetzt die Landung des Gastgebers; wirkt ab dem nächsten Client."
+    "neu_text": "Shared Cockpit in der Livekarte: Fliegst du als Partner mit, erscheint das Flugzeug deines Gastgebers nicht mehr zusätzlich neben deinem eigenen. Andere Piloten sehen im Kärtchen „Shared Cockpit“ mit beiden Namen und Rollen. Im Shared Cockpit sieht der Partner jetzt die Landung des Gastgebers, in der Landeanzeige, im Simulator (Panel, Flow-Widget, X-Plane-Band, Stream Deck) und in der Landungsübersicht mit „SC“; dort zählt der Partnerflug nicht in Durchschnitt und Bestwert. Wirkt ab dem nächsten Client."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",

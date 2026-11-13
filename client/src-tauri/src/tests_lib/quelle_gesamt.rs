@@ -351,6 +351,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `landungs_eingabe::sc_landung_gastgeber` (Stufe `fachlich`, nur lesen von live mit dem
 /// Pilot-Token, Faehigkeit `sc-landung-1`). Tests `landungs_eingabe::tests::sc_landung_*`,
 /// vitest `scLandung.test.tsx`.
+/// — plus Shared Cockpit B4 Landung 13.11.: im Literal von `build_landing_record`
+/// `shared_cockpit: None`, in `record_landing_for_filed_flight` das Kennzeichen aus dem
+/// Merker unter `landungs_eingabe::sc_speicher_sperre` vor `store.upsert` und
+/// `sc_anstossen`. Sonst nichts an `lib.rs`. Tests `landungs_eingabe::tests::sc_*`,
+/// `storage` `shared_cockpit_kennzeichen_*`, vitest `scLandungUebersicht.test.tsx`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -361,4 +366,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "7d725f39c0e11f432c02e85a61618e0b589fc3f3c7e459d9bf9fc3fb8bd9b258";
+const HASH_VOR_DER_ZERLEGUNG: &str = "7d9bf4b4ddd15c5f3a1aa399407bca720f97be5bdbd81b75bf0942c9d780d4fb";

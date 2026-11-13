@@ -306,7 +306,7 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 pirep_id: String,
             }
             match parse_args::<A>(body) {
-                Ok(a) => from_uierr(crate::landungs_eingabe::sc_landung_gastgeber(a.pirep_id).await),
+                Ok(a) => from_uierr(crate::landungs_eingabe::sc_landung_gastgeber(ctx.app.clone(), a.pirep_id).await),
                 Err(e) => Err(e),
             }
         }

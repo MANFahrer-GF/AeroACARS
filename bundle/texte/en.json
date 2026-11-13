@@ -1835,7 +1835,10 @@
       "punkte": "Points",
       "g": "G-load",
       "springer": "Bounces",
-      "hinweis": "In a Shared Cockpit the host’s landing counts. Your own measurement stays in the flight log."
+      "hinweis": "In a Shared Cockpit the host’s landing counts. Your own measurement stays in the flight log.",
+      "landung_von": "Shared Cockpit · Landing by {{name}}",
+      "landung_gastgeber": "Shared Cockpit · Landing by the host",
+      "ov_subtitle": "last {{eigene}} + {{sc}} Shared Cockpit · from the recorder"
     }
   },
   "about": {
@@ -1869,7 +1872,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Shared Cockpit on the live map: when you fly along as partner, your host’s aircraft no longer appears next to your own. Other pilots see “Shared Cockpit” with both names and roles in the info card. In a Shared Cockpit the partner now sees the host’s landing; takes effect with the next client."
+    "neu_text": "Shared Cockpit on the live map: when you fly along as partner, your host’s aircraft no longer appears next to your own. Other pilots see “Shared Cockpit” with both names and roles in the info card. In a Shared Cockpit the partner now sees the host’s landing: in the landing view, in the simulator (panel, Flow widget, X-Plane band, Stream Deck) and in the landings overview marked “SC”, where the partner flight does not count towards averages and best. Takes effect with the next client."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

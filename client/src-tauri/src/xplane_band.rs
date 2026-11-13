@@ -100,6 +100,9 @@ pub fn spawn(app: AppHandle) {
 fn baue(app: &AppHandle, debrief: &mut Option<(String, Value)>) -> sim_xplane::hud_band::BandFrame {
     let mut status = crate::remote::current_flight_status_value(app);
     crate::panel_server::with_display_callsign(&mut status);
+    // Shared Cockpit (B4): beim Partner die Landung des Gastgebers, nie die eigene.
+    let sc = crate::panel_server::sc_anzeige_fuer_status(app, &status);
+    let (sc_debrief, sc_text) = sc_vorbereiten(&mut status, &sc);
     let status_da = !status.is_null();
     if !status_da {
         *debrief = None;
@@ -110,6 +113,7 @@ fn baue(app: &AppHandle, debrief: &mut Option<(String, Value)>) -> sim_xplane::h
         .unwrap_or("")
         .to_string();
     if status_da
+        && sc_debrief.is_none()
         && lage(true, Some(&status)) == Lage::Ergebnis
         && debrief.as_ref().map(|(p, _)| p) != Some(&pirep)
     {
@@ -132,19 +136,145 @@ fn baue(app: &AppHandle, debrief: &mut Option<(String, Value)>) -> sim_xplane::h
     baue_band(&BandEingabe {
         verbunden: true,
         status: Some(&status),
-        debrief: debrief.as_ref().map(|(_, v)| v),
+        debrief: debrief_waehlen(&sc_debrief, debrief.as_ref().map(|(_, v)| v)),
         aktivitaet: akt.as_ref(),
         jetzt_ms: chrono::Utc::now().timestamp_millis(),
         host: "127.0.0.1",
         port: crate::panel_server::PANEL_SERVER_PORT,
         fehler_text: None,
         fehler_seit_ms: None,
+        sc_text: sc_text.as_deref(),
     })
+}
+
+/// Shared Cockpit: Status umstellen, Landeprotokoll und Text fuer das Band.
+/// `None` beim Protokoll = wie bisher (eigene Landung).
+fn sc_vorbereiten(status: &mut Value, sc: &crate::landungs_eingabe::ScAnzeige) -> (Option<Value>, Option<String>) {
+    crate::panel_server::sc_status_fuer_anzeige(status, sc);
+    (crate::panel_server::sc_debrief(sc, false), sc_band_text(sc))
+}
+
+/// Beim Partner nie das eigene Protokoll; `null` heisst „noch keins“.
+fn debrief_waehlen<'a>(sc: &'a Option<Value>, eigen: Option<&'a Value>) -> Option<&'a Value> {
+    match sc {
+        None => eigen,
+        Some(v) => Some(v).filter(|v| !v.is_null()),
+    }
+}
+
+/// Text fuer das Band beim Partner: „folgt“ bzw. das Kennzeichen.
+fn sc_band_text(sc: &crate::landungs_eingabe::ScAnzeige) -> Option<String> {
+    use crate::landungs_eingabe::{ScAnzeige, ScLandung};
+    match sc {
+        ScAnzeige::Folgt { .. } => Some(crate::panel_server::SC_FOLGT.into()),
+        ScAnzeige::Gelandet(ScLandung::Gelandet { gastgeber_name, .. }) => {
+            Some(crate::panel_server::sc_kennzeichen(gastgeber_name.as_deref()))
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::landungs_eingabe::{ScAnzeige, ScLandung, ScRolle};
+    use serde_json::json;
+
+    /// Dieselbe Kette wie `baue`, ohne App: Status → SC-Umstellung → Band.
+    fn band(status: &Value, sc: &ScAnzeige, eigen: Option<&Value>) -> (Lage, String) {
+        let mut status = status.clone();
+        let (sc_debrief, sc_text) = sc_vorbereiten(&mut status, sc);
+        let f = baue_band(&BandEingabe {
+            verbunden: true,
+            status: Some(&status),
+            debrief: debrief_waehlen(&sc_debrief, eigen),
+            aktivitaet: None,
+            jetzt_ms: 0,
+            host: "127.0.0.1",
+            port: 1,
+            fehler_text: None,
+            fehler_seit_ms: None,
+            sc_text: sc_text.as_deref(),
+        });
+        (f.lage, f.zeilen[1].zu_text())
+    }
+
+    fn gelandet() -> ScLandung {
+        ScLandung::Gelandet {
+            touchdown_id: 1,
+            fuehrender_pirep_id: "H1".into(),
+            gastgeber_name: Some("J\u{00FC}rgen K.".into()),
+            rolle_gastgeber: Some(ScRolle::PF),
+            landing_rate_fpm: -180.0,
+            landing_score: Some(91.0),
+            g_force: Some(1.12),
+            bounce_count: Some(0),
+            score_text: Some("firm".into()),
+        }
+    }
+
+    fn nach_dem_aufsetzen() -> Value {
+        json!({"pirep_id":"P1","phase":"landing","landing_score_finalized":true,"landing_at":"2026-11-13T10:00:00Z",
+            "landing_rate_fpm":-512.0,"landing_g_force":1.6,"callsign":"GSG 1"})
+    }
+
+    fn eigene() -> Value {
+        json!({"score_numeric":40,"score_label":"hard","landing_rate_fpm":-512.0,"landing_scored_g_force":1.6,
+            "bounce_count":2,"runway_match":{"runway_ident":"25C"}})
+    }
+
+    /// Partner, Gastgeber gelandet: Werte und Kategorie des Gastgebers, das
+    /// Kennzeichen als Anhang, nichts von der eigenen Messung (-512, 25C).
+    #[test]
+    fn partner_sieht_die_landung_des_gastgebers_im_band() {
+        let (lage, text) = band(&nach_dem_aufsetzen(), &ScAnzeige::Gelandet(gelandet()), Some(&eigene()));
+        assert_eq!(lage, Lage::Ergebnis);
+        assert!(text.contains("91"), "{text}");
+        assert!(text.contains("FIRM"), "{text}");
+        assert!(text.contains("-180"), "{text}");
+        assert!(text.contains("SC - Landung von Juergen K."), "{text}");
+        assert!(!text.contains("512") && !text.contains("25C") && !text.contains("HARD"), "eigene Messung im Band: {text}");
+        assert!(text.chars().all(|c| c == '\t' || (' '..='~').contains(&c)), "nur ASCII: {text}");
+    }
+
+    /// Partner, Gastgeber noch nicht gelandet: „folgt“ statt einer Note.
+    #[test]
+    fn partner_wartet_auf_den_gastgeber_im_band() {
+        let folgt = ScAnzeige::Folgt { name: Some("Anna".into()), halten: true };
+        let (lage, text) = band(&nach_dem_aufsetzen(), &folgt, Some(&eigene()));
+        assert_eq!(lage, Lage::Auswertung);
+        assert!(text.contains("Landung des Gastgebers folgt"), "{text}");
+        assert!(!text.contains("40") && !text.contains("HARD"), "{text}");
+        // nach der Hoechstzahl: nicht mehr angehalten, aber weiter keine eigene Note
+        let (lage, text) = band(&nach_dem_aufsetzen(), &ScAnzeige::Folgt { name: None, halten: false }, Some(&eigene()));
+        assert_eq!(lage, Lage::Ergebnis);
+        assert!(text.contains("Landung des Gastgebers folgt") && !text.contains("HARD") && !text.contains("512"), "{text}");
+        let (lage, text) = band(&nach_dem_aufsetzen(), &ScAnzeige::Warten, Some(&eigene()));
+        assert_eq!(lage, Lage::Auswertung);
+        assert!(text.contains("Landung wird ausgewertet") && !text.contains("HARD"), "{text}");
+    }
+
+    /// Gegenprobe Solo/Nicht-Crew: exakt wie ohne Shared Cockpit.
+    #[test]
+    fn solo_band_unveraendert() {
+        let status = nach_dem_aufsetzen();
+        let vorher = baue_band(&BandEingabe {
+            verbunden: true,
+            status: Some(&status),
+            debrief: Some(&eigene()),
+            aktivitaet: None,
+            jetzt_ms: 0,
+            host: "127.0.0.1",
+            port: 1,
+            fehler_text: None,
+            fehler_seit_ms: None,
+            sc_text: None,
+        });
+        let (lage, text) = band(&status, &ScAnzeige::WieBisher, Some(&eigene()));
+        assert_eq!(lage, vorher.lage);
+        assert_eq!(text, vorher.zeilen[1].zu_text());
+        assert!(text.contains("HARD") && text.contains("25C"));
+    }
 
     #[test]
     fn einstellung_standard_an_und_rundlauf() {

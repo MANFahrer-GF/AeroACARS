@@ -76,7 +76,7 @@ import type {
   SubScoreEntry,
 } from "../lib/landungsDatensatz";
 import { DruckKontext } from "../lib/druck";
-import { istPartner, useScLandung } from "../lib/scLandung";
+import { eigeneLandungen, istPartner, scAmDatensatz, scAnzahl, useScLandung } from "../lib/scLandung";
 import { ScGastgeberLandung } from "./ScGastgeberLandung";
 // Flugkarte (Etappe 3): erst beim Öffnen laden — deck.gl soll den Start nicht bremsen
 // Landungs-Tab: nach dieser Zeit gilt ein offener Abruf als hängend (LAN-Brücke)
@@ -166,6 +166,12 @@ function computeSubScores(r: LandingRecord): SubScore[] {
 // hardcoded-Deutsch. Alt-v2-Records (`< 3`) behalten ihre gespeicherten
 // `extra`-Strings (Legacy).
 
+
+/** Kategorie der Gastgeber-Landung (Schlüsselwort von live), sonst unbewertet. */
+function scKategorie(text: string | null): LandingCategory | "unbewertet" {
+  const k = ["smooth", "acceptable", "firm", "hard", "severe"] as const;
+  return (k as readonly string[]).includes(text ?? "") ? (text as LandingCategory) : "unbewertet";
+}
 
 /** Wie viele Landungen die Übersichts-Kurve zeigt. */
 const KURVE_LAENGE = 12;
@@ -866,7 +872,10 @@ export function LandingDetail({
   // noch keinen fertigen Eintrag).
   const bordbuch = useBordbuchEintrag(isPreview ? null : record.pirep_id);
   // Shared Cockpit (B4): Beim Partner zählt die Landung des Gastgebers (live).
-  const sc = useScLandung(record.pirep_id, { nachfragen: true });
+  const scLive = useScLandung(record.pirep_id, { nachfragen: true });
+  // Antwortet live gerade nicht, gilt das Kennzeichen am Datensatz; sagt live
+  // „keine Crew“, bleibt es beim eigenen Flug.
+  const sc = scLive?.status === "keine_crew" ? null : istPartner(scLive) ? scLive : scAmDatensatz(record);
 
   // Personal-best comparison — best (closest to zero) landing rate
   // across ALL filed PIREPs. None when this is the only record yet.
@@ -876,7 +885,8 @@ export function LandingDetail({
   // zu ranken kuert bei Alt-Datensaetzen die falsche "beste Landung" und
   // stellt eine Zahl in die Kopfzeile, die neben der Kachel nicht aufgeht.
   const personalBest = useMemo(() => {
-    const others = allRecords.filter((r) => r.pirep_id !== record.pirep_id);
+    // Shared Cockpit: Partnerflüge sind keine eigene Bestleistung.
+    const others = eigeneLandungen(allRecords).filter((r) => r.pirep_id !== record.pirep_id);
     // Nur gemessene Landungen können eine Bestleistung sein.
     const messbar = others.filter(istBewertbar);
     if (messbar.length === 0) return null;
@@ -890,6 +900,7 @@ export function LandingDetail({
   // Eine nicht gemessene Landung kann keine Bestleistung schlagen.
   const isNewBest =
     personalBest != null &&
+    !istPartner(sc) &&
     istBewertbar(record) &&
     Math.abs(scoreBasisVs(record) ?? 0) < Math.abs(scoreBasisVs(personalBest) ?? 0);
 
@@ -1135,7 +1146,10 @@ export function LandingPanel({ fokusPirepId = null, onFokusVerbraucht }: { fokus
   const [visibleCount, setVisibleCount] = useState(OVERVIEW_PAGE_SIZE);
   const [airportNames, setAirportNames] = useState<Record<string, string>>({});
   const nachladeGedaechtnisRef = useRef<NachladeGedaechtnis>(leeresGedaechtnis());
-  const stats = useOverviewStats(records);
+  // Shared Cockpit (wie die Webapp): Partnerflüge zählen in keiner Kennzahl.
+  const eigene = useMemo(() => eigeneLandungen(records), [records]);
+  const scZahl = scAnzahl(records);
+  const stats = useOverviewStats(eigene);
   // Prüfstatus beim Live-Server für die jüngsten Flüge (Befund DLH 880).
   const pruefIds = useMemo(
     () =>
@@ -1399,7 +1413,9 @@ export function LandingPanel({ fokusPirepId = null, onFokusVerbraucht }: { fokus
           <div className="landing-ov-header__title">
             <h2>{t("landing.ov_title")}</h2>
             <span className="landing-ov-header__sub">
-              {t("landing.ov_subtitle", { count: records.length })}
+              {scZahl === 0
+                ? t("landing.ov_subtitle", { count: records.length })
+                : t("landing.sc.ov_subtitle", { eigene: eigene.length, sc: scZahl })}
             </span>
           </div>
           <div className="landing-ov-stats">
@@ -1462,13 +1478,13 @@ export function LandingPanel({ fokusPirepId = null, onFokusVerbraucht }: { fokus
             die Zahl als auch die Punkte; ohne Hinweis liest sich der Sprung
             in Durchschnitt, Kurve und Bestwert wie ein Fehler. Die
             Release-Notes kündigen ihn an — die Oberfläche schwieg dazu. */}
-        {gemischteBewertungsstaende(records) && (
+        {gemischteBewertungsstaende(eigene) && (
           <div className="landing-ov-mixed-note">
             {t("landing.ov_mixed_versions")}
           </div>
         )}
 
-        <LandingRateChart records={records} />
+        <LandingRateChart records={eigene} />
 
         <div className="landing-ov-tablewrap">
           <table className="landing-ov-table">
@@ -1533,10 +1549,20 @@ export function LandingPanel({ fokusPirepId = null, onFokusVerbraucht }: { fokus
               {visibleRecords.map((r) => {
                 // `null` heisst: nicht gemessen. Die Zeile bleibt in der
                 // Liste — der Flug fand ja statt —, nur die Sinkrate fehlt.
-                const gemessen = scoreBasisVs(r);
+                // Shared Cockpit: beim Partnerflug die Landung des Gastgebers
+                // (von live, unverändert), nie die eigene Messung.
+                const scR = scAmDatensatz(r);
+                const scG = scR?.status === "gelandet" ? scR : null;
+                const gemessen = scR ? (scG?.landing_rate_fpm ?? null) : scoreBasisVs(r);
                 const rate = gemessen ?? 0;
-                const gWert = scoreG(r);
-                const cat = recordCategory(r) ?? "unbewertet";
+                const gWert = scR ? (scG?.g_force ?? null) : scoreG(r);
+                const punkte = scR ? (scG?.landing_score != null ? Math.round(scG.landing_score) : null) : r.score_numeric;
+                const cat = scR ? scKategorie(scG?.score_text ?? null) : (recordCategory(r) ?? "unbewertet");
+                const scTitel = scR
+                  ? scR.gastgeber_name
+                    ? t("landing.sc.landung_von", { name: scR.gastgeber_name })
+                    : t("landing.sc.landung_gastgeber")
+                  : null;
                 const pattern = r.aircraft_icao || r.aircraft_title || "—";
                 const reg = r.aircraft_registration || "—";
                 const dep = r.dpt_airport;
@@ -1607,9 +1633,9 @@ export function LandingPanel({ fokusPirepId = null, onFokusVerbraucht }: { fokus
                       )}
                     </td>
                     <td className="landing-ov-table__num landing-ov-score">
-                      {r.score_numeric != null ? (
+                      {punkte != null ? (
                         <>
-                          {fmtDeDe(r.score_numeric)}
+                          {fmtDeDe(punkte)}
                           <span className="landing-ov-score__suffix">/100</span>
                         </>
                       ) : (
@@ -1626,9 +1652,15 @@ export function LandingPanel({ fokusPirepId = null, onFokusVerbraucht }: { fokus
                         already real per-row text (not a colour-only cue),
                         so a11y's "never colour alone" concern still holds. */}
                     <td className={`landing-ov-table__num landing-ov-grade landing-ov-grade--${cat}`}>
-                      {r.grade_letter}
+                      {scR ? (
+                        <span className="landing-ov-vermerk" data-testid="sc-kennzeichen" title={scTitel ?? undefined}>
+                          SC
+                        </span>
+                      ) : (
+                        r.grade_letter
+                      )}
                       {/* P-14.02: wie die Webapp-Listen (Bewertet2xVermerk). */}
-                      {bewertetMit2x(r) && (
+                      {!scR && bewertetMit2x(r) && (
                         <span className="landing-ov-vermerk" data-testid="bewertet-mit-2x" title={t("landing.vermerk.titel_2x")}>
                           {t("landing.vermerk.bewertet_2x")}
                         </span>

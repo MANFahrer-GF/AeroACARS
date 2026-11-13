@@ -117,3 +117,23 @@ export function useScLandung(
   if (stand && stand.id === pirepId) return stand.l;
   return pirepId ? (bekannt.get(pirepId) ?? null) : null;
 }
+
+// ── Landungsübersicht (wie die Webapp-Historie) ──────────────────────────
+// Der Partnerflug trägt das Kennzeichen am Datensatz (`shared_cockpit`). Die
+// Zeile zeigt die Landung des Gastgebers mit „SC“; weder sie noch die eigene
+// Messung zählt in Durchschnitt, Kurve, Kategorien oder Bestwert.
+
+/** Kennzeichen am Datensatz, nur für Partnerflüge. */
+export function scAmDatensatz(r: { shared_cockpit?: ScPartnerLandung | null }): ScPartnerLandung | null {
+  return istPartner(r.shared_cockpit ?? null) ? (r.shared_cockpit as ScPartnerLandung) : null;
+}
+
+/** Nur die eigenen Landungen (ohne Partnerflüge) — Grundlage aller Kennzahlen. */
+export function eigeneLandungen<T extends { shared_cockpit?: ScPartnerLandung | null }>(records: readonly T[]): T[] {
+  return records.filter((r) => scAmDatensatz(r) == null);
+}
+
+/** Anzahl der Partnerflüge (für „3 + 1 Shared Cockpit“). */
+export function scAnzahl(records: readonly { shared_cockpit?: ScPartnerLandung | null }[]): number {
+  return records.length - eigeneLandungen(records).length;
+}

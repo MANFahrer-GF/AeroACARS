@@ -266,6 +266,11 @@ pub struct BandEingabe<'a> {
     pub port: u16,
     pub fehler_text: Option<&'a str>,
     pub fehler_seit_ms: Option<i64>,
+    /// Shared Cockpit (B4, nur beim Partner): in `Auswertung` statt „Landung
+    /// wird ausgewertet“ (z. B. „Landung des Gastgebers folgt“), in
+    /// `Ergebnis`/`Rollen` als Anhang (Kennzeichen „SC - Landung von …“).
+    /// `None` = wie bisher.
+    pub sc_text: Option<&'a str>,
 }
 
 // =============================================================================
@@ -1281,7 +1286,7 @@ pub fn baue_band(e: &BandEingabe) -> BandFrame {
                 tail = format!("~RWY {r}");
             }
         }
-        Lage::Auswertung => state(&mut z, "Landung wird ausgewertet", Farbe::Normal),
+        Lage::Auswertung => state(&mut z, e.sc_text.unwrap_or("Landung wird ausgewertet"), Farbe::Normal),
         Lage::Ergebnis | Lage::Rollen => {
             let wert = feld(d, "score_numeric")
                 .map(|v| match v {
@@ -1329,6 +1334,9 @@ pub fn baue_band(e: &BandEingabe) -> BandFrame {
                     ],
                     &mut z,
                 );
+            }
+            if let Some(t) = e.sc_text {
+                tail = t.to_string();
             }
         }
         Lage::AmStand => {
