@@ -1859,7 +1859,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "When sending pictures to Discord there are two new options. “Flight only” shows your name, flight number, route and aircraft, without time, altitude, phase and position. “Name only” shows just your name, nothing else."
+    "neu_text": "Shared Cockpit on the live map: when you fly along as partner, your host’s aircraft no longer appears next to your own. Other pilots see “Shared Cockpit” with both names and roles in the info card."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

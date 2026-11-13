@@ -1859,7 +1859,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Nell’invio di immagini a Discord ci sono due nuove opzioni. “Solo volo” mostra il tuo nome, il numero di volo, la tratta e l’aereo, senza ora, quota, fase e posizione. “Solo nome” mostra solo il tuo nome, nient’altro."
+    "neu_text": "Shared Cockpit sulla mappa live: se voli come partner, l’aereo del tuo host non compare più accanto al tuo. Gli altri piloti vedono “Shared Cockpit” con entrambi i nomi e i ruoli nella scheda."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

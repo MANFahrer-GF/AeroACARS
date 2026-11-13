@@ -6,7 +6,7 @@
 // Marker-Titel lesen, und beim Partner muss der Gastgeber-Eintrag als eigener Flug fehlen.
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, act, cleanup, waitFor } from "@testing-library/react";
+import { render, act, cleanup, waitFor } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import deCommon from "../../../bundle/texte/de.json";
@@ -305,6 +305,14 @@ describe("Eigenes Flugzeug beim Partner nicht doppelt", () => {
     await karte(
       [{ ...GASTGEBER_EINTRAG, shared_cockpit: sc("PF", { spur_pirep_id: null, partner_pirep_id: "" }) }],
       { pirep_id: "null" },
+    );
+    await waitFor(() => expect(vaMarker().length).toBe(1), { timeout: 3000 });
+  });
+
+  it("blendet bei leerer eigener Nummer und leerer Partnernummer nicht aus", async () => {
+    await karte(
+      [{ ...GASTGEBER_EINTRAG, shared_cockpit: sc("PF", { spur_pirep_id: null, partner_pirep_id: "" }) }],
+      { pirep_id: "" },
     );
     await waitFor(() => expect(vaMarker().length).toBe(1), { timeout: 3000 });
   });
