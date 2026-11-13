@@ -11,9 +11,14 @@
 /// v0.7.19 (QS-R2 Finding 2): `flight_id` wird als Fallback mitgegeben.
 /// Wenn `delete_bid(bid_id)` 400/422 liefert (VA-Plugin akzeptiert
 /// `bid_id` nicht), versucht die `delete_bid`-Implementation den
-/// `flight_id`-Body-Pfad; 404 heisst seit 13.11.2026 „schon weg". Hier,
-/// direkt nach file/cancel, ist der Rueckfall unkritisch: seither konnte
-/// keine neue Buchung entstehen. Ohne den
+/// `flight_id`-Body-Pfad; 404 heisst seit 13.11.2026 „schon weg". Die
+/// Aufrufer hier sind nur `flight_end`/`flight_cancel` direkt nach
+/// file/cancel des laufenden Flugs: Seit dessen Start konnte auf diesem
+/// Flug kein zweiter eigener PIREP entstehen (der Flugstart uebernimmt einen
+/// offenen eigenen PIREP desselben Flugs), und die Buchung ist die dieses
+/// Flugs. Der nachgereichte PIREP (`queued_filed`) laeuft NICHT hier durch —
+/// zwischen Start und Nachreichen kann viel Zeit liegen; er geht ueber die
+/// Warteschlange und `bid_aufraeumen_ausfuehren`. Ohne den
 /// Fallback haette der Background-Worker 8x denselben kaputten Pfad
 /// retried. Empty-String-`flight_id` (pre-v0.7.7-Bid) wird zu None
 /// gemapped.
@@ -81,6 +86,22 @@ async fn consume_bid_best_effort(
             )
             .await;
         }
+    }
+}
+
+/// Nachgereichter PIREP (`queued_filed`): Buchung nicht direkt loeschen,
+/// sondern einreihen — der Drain im selben Tick prueft dann Entscheidung,
+/// laufende Fluege und Server, bevor er loescht (Befund 13.11.2026).
+async fn bid_nach_nachreichen_einreihen(
+    app: &AppHandle,
+    pirep_id: &str,
+    bid_id: i64,
+    flight_id: Option<&str>,
+    owner_identity: Option<String>,
+) {
+    if let Some((bid_id, flight_id)) = resolve_bid_cleanup_args(bid_id, flight_id) {
+        enqueue_pending_bid_cleanup(app, pirep_id, bid_id, flight_id, "queued_filed", owner_identity)
+            .await;
     }
 }
 
@@ -306,6 +327,130 @@ fn bid_trifft_laufenden_flug(
             || flight_id.is_some_and(|f| !f.is_empty() && f == l_flug))
 }
 
+/// Lokale Sperre fuer die Hintergrund-/Panel-Wege (Drain, Orphan): laufender
+/// Flug wie `bid_gehoert_laufendem_flug`, dazu ein gerade startender Flug
+/// (`flight_setup_in_progress`). Der Start haelt die Sperre vom Bid-Abruf bis
+/// nach dem prefile — davor kennt der Server den neuen PIREP noch nicht, und
+/// die Buchung, die der Start gerade benutzt, darf nicht verschwinden. Nur
+/// gelesen, nie geholt (sonst scheiterte ein Flugstart daran), und NICHT in
+/// `consume_bid_best_effort`: `flight_end`/`flight_cancel` halten die Sperre
+/// selbst und wuerden sich aussperren.
+fn bid_aufraeumen_lokal_gesperrt(
+    app: &AppHandle,
+    pirep_id: &str,
+    bid_id: Option<i64>,
+    flight_id: Option<&str>,
+) -> bool {
+    app.state::<AppState>().flight_setup_in_progress.load(Ordering::SeqCst)
+        || bid_gehoert_laufendem_flug(app, pirep_id, bid_id, flight_id)
+}
+
+/// Ergebnis von `bid_aufraeumen_ausfuehren`.
+#[derive(Debug)]
+enum BidAufraeumErgebnis {
+    /// `delete_bid` ging durch, mit dieser gesendeten `bid_id`.
+    Geloescht(Option<i64>),
+    /// Die alte Buchung existiert nicht mehr (Entscheidung oder 404).
+    Erledigt,
+    /// Alte Buchung nicht sicher bestimmbar — nichts geloescht.
+    Liegenlassen,
+    /// Ein anderer eigener Flug laeuft auf der Buchung/dem Flug (lokal oder
+    /// laut Server) — nichts geloescht.
+    LaufenderFlug,
+    /// Die laufenden PIREPs liessen sich nicht abfragen — nichts geloescht.
+    ServerUnpruefbar,
+    /// `delete_bid` scheiterte.
+    Fehlgeschlagen(api_client::ApiError),
+}
+
+/// Laeuft laut Server ein ANDERER eigener PIREP auf einem Flug, den das
+/// Loeschen trifft? GSG CoreFixes 1.12.6 bricht beim Loeschen einer Buchung
+/// jeden IN_PROGRESS-PIREP des Piloten auf deren `flight_id` ab. `PirepSummary`
+/// kennt keine `bid_id`, deshalb zaehlt der Flug. Im Zweifel sperren: ist
+/// kein Flug bekannt, sperrt jeder andere laufende PIREP; ein PIREP ohne
+/// `flight_id` in der Antwort ebenso.
+fn server_pirep_sperrt(laufende: &[api_client::PirepSummary], pirep_id: &str, fluege: &[&str]) -> bool {
+    laufende.iter().any(|p| {
+        p.id != pirep_id
+            && (fluege.is_empty()
+                || p.flight_id.as_deref().is_none_or(|f| fluege.contains(&f)))
+    })
+}
+
+/// Raeumt die Buchung eines ALTEN PIREP auf — die einzige Stelle, an der
+/// Drain und Orphan-Weg `delete_bid` rufen (Befund 13.11.2026):
+/// 1. `bid_aufraeum_entscheidung` (keine neuere Buchung treffen),
+/// 2. `lokal_laufend` (laufender oder startender Flug auf diesem Geraet),
+/// 3. unmittelbar vor dem DELETE die eigenen IN_PROGRESS-PIREPs vom Server —
+///    deckt das zweite Geraet und das Fenster zwischen prefile und
+///    `save_active_flight` ab. Scheitert die Abfrage: nicht loeschen.
+///
+/// Zwischen Abfrage und DELETE bleibt ein Fenster von einer Anfragedauer,
+/// das sich clientseitig nicht schliessen laesst.
+async fn bid_aufraeumen_ausfuehren(
+    client: &Client,
+    pirep_id: &str,
+    bid_id: Option<i64>,
+    flight_id: Option<&str>,
+    eigene_bids: Option<&[api_client::Bid]>,
+    pirep_erstellt: Option<&str>,
+    lokal_laufend: impl Fn() -> bool,
+) -> BidAufraeumErgebnis {
+    let (bid_arg, flight_arg) =
+        match bid_aufraeum_entscheidung(bid_id, flight_id, eigene_bids, pirep_erstellt) {
+            BidAufraeumen::Loeschen(b, f) => (b, f),
+            BidAufraeumen::Erledigt => return BidAufraeumErgebnis::Erledigt,
+            BidAufraeumen::Liegenlassen => return BidAufraeumErgebnis::Liegenlassen,
+        };
+    if lokal_laufend() {
+        return BidAufraeumErgebnis::LaufenderFlug;
+    }
+    let mut fluege: Vec<&str> = [flight_arg.as_deref(), flight_id]
+        .into_iter()
+        .flatten()
+        .filter(|f| !f.is_empty())
+        .collect();
+    if let (Some(id), Some(bids)) = (bid_arg, eigene_bids) {
+        fluege.extend(bids.iter().filter(|b| b.id == id).map(|b| b.flight_id.as_str()));
+    }
+    match client.get_user_pireps_in_progress().await {
+        Ok(laufende) if server_pirep_sperrt(&laufende, pirep_id, &fluege) => {
+            return BidAufraeumErgebnis::LaufenderFlug;
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(pirep_id, error = %e, "Bid-Aufraeumen: laufende PIREPs nicht abfragbar — nichts geloescht");
+            return BidAufraeumErgebnis::ServerUnpruefbar;
+        }
+    }
+    match client.delete_bid(bid_arg, flight_arg.as_deref()).await {
+        Ok(()) => BidAufraeumErgebnis::Geloescht(bid_arg),
+        Err(api_client::ApiError::NotFound) => BidAufraeumErgebnis::Erledigt,
+        Err(e) => BidAufraeumErgebnis::Fehlgeschlagen(e),
+    }
+}
+
+/// Was der Drain mit einem Eintrag nach `bid_aufraeumen_ausfuehren` tut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DrainFolge {
+    /// Ziel erreicht, Eintrag entfernen.
+    Entfernen,
+    /// Bleibt, ohne dass ein Versuch zaehlt (laufender Flug).
+    WartetOhneVersuch,
+    /// Bleibt, ein Versuch zaehlt.
+    VersuchZaehlt,
+}
+
+fn drain_folge(ergebnis: &BidAufraeumErgebnis) -> DrainFolge {
+    match ergebnis {
+        BidAufraeumErgebnis::Geloescht(_) | BidAufraeumErgebnis::Erledigt => DrainFolge::Entfernen,
+        BidAufraeumErgebnis::LaufenderFlug => DrainFolge::WartetOhneVersuch,
+        BidAufraeumErgebnis::Liegenlassen
+        | BidAufraeumErgebnis::ServerUnpruefbar
+        | BidAufraeumErgebnis::Fehlgeschlagen(_) => DrainFolge::VersuchZaehlt,
+    }
+}
+
 /// v0.7.19 GAF-707: drain-Pass fuer den PendingBidCleanupQueue. Wird im
 /// spawn_pirep_queue_worker-Tick mit aufgerufen (selbe 60s-Frequenz).
 /// Cap auf 8 Versuche pro Eintrag. Danach wird der Eintrag einmal pro Tick
@@ -447,17 +592,10 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
                 continue;
             }
         }
-        // Befund 13.11.2026: vor JEDEM Loeschen pruefen, dass die Buchung
-        // nicht (mehr) einem neueren Flug gehoert — siehe
-        // `bid_gehoert_laufendem_flug` und `bid_aufraeum_entscheidung`.
-        if bid_gehoert_laufendem_flug(app, &e.pirep_id, e.bid_id, e.flight_id.as_deref()) {
-            tracing::debug!(
-                pirep_id = %e.pirep_id,
-                "pending_bid_cleanup: Buchung gehoert einem laufenden Flug — wartet"
-            );
-            survivors.push(e);
-            continue;
-        }
+        // Befund 13.11.2026: Entscheidung, lokale Sperre und Server-Abfrage
+        // laufen in `bid_aufraeumen_ausfuehren` unmittelbar vor dem DELETE.
+        // 404 auf `delete_bid` heisst dort „schon weg" (Befund 21.09.2026:
+        // vorher zaehlte das als Fehlschlag, bis der Eintrag ausgereizt war).
         if eigene_bids.is_none() {
             eigene_bids = Some(client.get_bids().await.ok());
         }
@@ -466,61 +604,40 @@ async fn drain_pending_bid_cleanup(app: &AppHandle, client: &Client, aktuelle_id
         } else {
             None
         };
-        let (bid_arg, flight_arg) = match bid_aufraeum_entscheidung(
+        let ergebnis = bid_aufraeumen_ausfuehren(
+            client,
+            &e.pirep_id,
             e.bid_id,
             e.flight_id.as_deref(),
             eigene_bids.as_ref().and_then(|abruf| abruf.as_deref()),
             pirep_erstellt.as_deref(),
-        ) {
-            BidAufraeumen::Loeschen(b, f) => (b, f),
-            BidAufraeumen::Erledigt => {
+            || bid_aufraeumen_lokal_gesperrt(app, &e.pirep_id, e.bid_id, e.flight_id.as_deref()),
+        )
+        .await;
+        match drain_folge(&ergebnis) {
+            DrainFolge::Entfernen => {
                 tracing::info!(
                     pirep_id = %e.pirep_id,
-                    "pending_bid_cleanup: alte Buchung existiert nicht mehr — Eintrag entfernt"
+                    reason = %e.reason,
+                    ?ergebnis,
+                    "pending_bid_cleanup: alte Buchung geloescht oder schon weg — Eintrag entfernt"
                 );
-                continue;
             }
-            BidAufraeumen::Liegenlassen => {
+            DrainFolge::WartetOhneVersuch => {
+                tracing::debug!(
+                    pirep_id = %e.pirep_id,
+                    "pending_bid_cleanup: auf Buchung/Flug laeuft ein anderer Flug — wartet"
+                );
+                survivors.push(e);
+            }
+            DrainFolge::VersuchZaehlt => {
                 e.attempts += 1;
                 e.last_attempt_at = Some(Utc::now());
                 tracing::warn!(
                     pirep_id = %e.pirep_id,
                     attempt = e.attempts,
-                    "pending_bid_cleanup: alte Buchung nicht sicher bestimmbar — nichts geloescht"
-                );
-                survivors.push(e);
-                continue;
-            }
-        };
-        e.attempts += 1;
-        e.last_attempt_at = Some(Utc::now());
-        match client.delete_bid(bid_arg, flight_arg.as_deref()).await {
-            Ok(()) => {
-                tracing::info!(
-                    pirep_id = %e.pirep_id,
-                    attempts = e.attempts,
-                    reason = %e.reason,
-                    "pending_bid_cleanup: delete_bid succeeded — Eintrag entfernt"
-                );
-                // Eintrag NICHT in survivors aufnehmen → wird gedroppt.
-            }
-            // 404 heisst hier: den Bid gibt es serverseitig nicht mehr —
-            // genau das wollte der Eintrag erreichen. Vorher zaehlte das
-            // als Fehlschlag, bis der Eintrag nach acht Minuten ausgereizt
-            // war und fuer immer liegen blieb (Befund 21.09.2026).
-            Err(api_client::ApiError::NotFound) => {
-                tracing::info!(
-                    pirep_id = %e.pirep_id,
-                    attempts = e.attempts,
-                    "pending_bid_cleanup: Bid serverseitig schon weg (404) — Eintrag entfernt"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    pirep_id = %e.pirep_id,
-                    attempt = e.attempts,
-                    error = %err,
-                    "pending_bid_cleanup: delete_bid failed — bleibt in Queue"
+                    ?ergebnis,
+                    "pending_bid_cleanup: nichts geloescht — bleibt in Queue"
                 );
                 survivors.push(e);
             }

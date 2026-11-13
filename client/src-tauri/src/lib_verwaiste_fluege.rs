@@ -407,58 +407,36 @@ async fn flight_cancel_orphan(
     // 2) Bid droppen — nur wenn bid_id ODER flight_id vorhanden ist.
     // Befund 13.11.2026: serverseitig neu entscheiden statt den Werten aus
     // dem Panel zu trauen — weder eine neuere Buchung desselben Flugs noch
-    // die eines laufenden Flugs darf hier verschwinden (siehe
-    // `bid_aufraeum_entscheidung`, `bid_gehoert_laufendem_flug`).
-    let loeschen = if bid_id.is_none() && flight_id.is_none() {
-        None
-    } else if bid_gehoert_laufendem_flug(&app, &pirep_id, bid_id, flight_id.as_deref()) {
-        tracing::info!(pirep_id = %pirep_id, "orphan bid gehoert einem laufenden Flug — bleibt");
-        None
+    // die eines laufenden Flugs (lokal, startend, auf einem anderen Geraet)
+    // darf hier verschwinden. Alles in `bid_aufraeumen_ausfuehren`.
+    let ergebnis = if bid_id.is_none() && flight_id.is_none() {
+        BidAufraeumErgebnis::Erledigt
     } else {
-        match bid_aufraeum_entscheidung(
+        bid_aufraeumen_ausfuehren(
+            &client,
+            &pirep_id,
             bid_id,
             flight_id.as_deref(),
             client.get_bids().await.ok().as_deref(),
             pirep_erstellt.as_deref(),
-        ) {
-            BidAufraeumen::Loeschen(b, f) => Some((b, f)),
-            BidAufraeumen::Erledigt => None,
-            BidAufraeumen::Liegenlassen => {
-                tracing::warn!(
-                    pirep_id = %pirep_id,
-                    "orphan bid nicht sicher zuzuordnen — bleibt (manuell auf der Webseite loeschbar)"
-                );
-                None
-            }
-        }
+            || bid_aufraeumen_lokal_gesperrt(&app, &pirep_id, bid_id, flight_id.as_deref()),
+        )
+        .await
     };
-    let mut bid_geloescht: Option<i64> = None;
-    if let Some((bid_id, flight_id)) = loeschen {
-        match client.delete_bid(bid_id, flight_id.as_deref()).await {
-            Ok(()) => {
-                bid_geloescht = bid_id;
-                tracing::info!(
-                    bid_id = ?bid_id,
-                    flight_id = ?flight_id,
-                    "orphan bid dropped"
-                );
-            }
-            Err(ApiError::NotFound) => {
-                // Bid schon weg — ok
-                tracing::info!(bid_id = ?bid_id, "orphan bid already gone on server (404)");
-            }
-            Err(e) => {
-                // PIREP-Cancel war erfolgreich, Bid-Drop nicht — Pilot kann
-                // den Bid via phpVMS-UI manuell loeschen. Aircraft sollte
-                // schon durch cancel_pirep frei sein.
-                tracing::warn!(
-                    bid_id = ?bid_id,
-                    flight_id = ?flight_id,
-                    error = %e,
-                    "delete_bid failed after orphan PIREP cancel — Aircraft sollte trotzdem frei sein"
-                );
-            }
-        }
+    match &ergebnis {
+        BidAufraeumErgebnis::Liegenlassen => tracing::warn!(
+            pirep_id = %pirep_id,
+            "orphan bid nicht sicher zuzuordnen — bleibt (manuell auf der Webseite loeschbar)"
+        ),
+        // PIREP-Cancel war erfolgreich, Bid-Drop nicht — Pilot kann den Bid
+        // via phpVMS-UI manuell loeschen. Aircraft sollte schon durch
+        // cancel_pirep frei sein.
+        BidAufraeumErgebnis::Fehlgeschlagen(e) => tracing::warn!(
+            pirep_id = %pirep_id,
+            error = %e,
+            "delete_bid failed after orphan PIREP cancel — Aircraft sollte trotzdem frei sein"
+        ),
+        anderes => tracing::info!(pirep_id = %pirep_id, ergebnis = ?anderes, "orphan bid cleanup"),
     }
 
     // 3) Lokale Aufraeumung. Wichtig: NICHT den aktiven Flight anfassen
@@ -467,14 +445,33 @@ async fn flight_cancel_orphan(
     discard_queued_positions_for(&app, &pirep_id);
     pirep_queue::remove(&app, &pirep_id);
 
+    let titel = akt("activity.orphan.cancelled", &[("pirep", &pirep_id)]);
+    let (meldung, detail) = match &ergebnis {
+        BidAufraeumErgebnis::LaufenderFlug => (
+            titel.und("activity.orphan.bid_bleibt_laufend", &[]),
+            "PIREP gecancelt. Die Buchung bleibt: auf diesem Flug laeuft gerade ein anderer Flug von dir (eventuell auf einem anderen Geraet).".to_string(),
+        ),
+        BidAufraeumErgebnis::ServerUnpruefbar => (
+            titel.und("activity.orphan.bid_bleibt_unpruefbar", &[]),
+            "PIREP gecancelt. Die Buchung bleibt vorerst, weil der Server nicht bestaetigen konnte, dass auf diesem Flug kein anderer Flug laeuft.".to_string(),
+        ),
+        _ => {
+            let bid_geloescht = match &ergebnis {
+                BidAufraeumErgebnis::Geloescht(b) => *b,
+                _ => None,
+            };
+            (
+                titel.und("activity.orphan.cancelled_detail", &[("bid", &format!("{:?}", bid_geloescht))]),
+                format!("PIREP cancelled, Bid {bid_geloescht:?} dropped, lokale Queues bereinigt."),
+            )
+        }
+    };
     log_activity_t(
         &state,
-        ActivityLevel::Warn, akt("activity.orphan.cancelled", &[("pirep", &pirep_id)]).und("activity.orphan.cancelled_detail", &[("bid", &format!("{:?}", bid_geloescht))]),
+        ActivityLevel::Warn,
+        meldung,
         format!("Verwaister Flug abgebrochen — PIREP {pirep_id}"),
-        Some(format!(
-            "PIREP cancelled, Bid {:?} dropped, lokale Queues bereinigt.",
-            bid_geloescht
-        )),
+        Some(detail),
     );
     record_event(
         &app,

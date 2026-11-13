@@ -2217,6 +2217,8 @@
       "cleaned_detail": "PIREP {{pirep}} cancelled on the server (self-repair at flight start)",
       "cancelled": "Orphaned flight cancelled — PIREP {{pirep}}",
       "cancelled_detail": "PIREP cancelled, bid {{bid}} dropped, local queues cleaned up.",
+      "bid_bleibt_laufend": "PIREP cancelled. The booking stays: another flight of yours is currently running on this flight (possibly on another device).",
+      "bid_bleibt_unpruefbar": "PIREP cancelled. The booking stays for now because the server could not confirm that no other flight of yours is running on this flight. You can delete it on the website.",
       "forgotten": "Orphaned flight forgotten locally — PIREP {{pirep}}",
       "forgotten_detail": "No server request made. PIREP status on phpVMS unchanged."
     },

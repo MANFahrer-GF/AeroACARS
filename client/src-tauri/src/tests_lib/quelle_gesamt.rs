@@ -350,6 +350,9 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// — plus Bid-Aufraeumen nur fuer den eigenen Bid 13.11.: `bid_aufraeum_entscheidung` und
 /// `bid_gehoert_laufendem_flug` in `drain_pending_bid_cleanup` und `flight_cancel_orphan`, Orphan-Zuordnung
 /// nur fuer vor dem PIREP angelegte Buchungen. Tests `bid_aufraeum_entscheidung_tests::*`, `api-client` `delete_bid_tests::*`.
+/// Nachbesserung 13.11.: einzige Loeschstelle `bid_aufraeumen_ausfuehren` (Entscheidung, lokale Sperre inkl.
+/// `flight_setup_in_progress`, eigene IN_PROGRESS-PIREPs vom Server unmittelbar vor `delete_bid`), `queued_filed`
+/// reiht ein statt direkt zu loeschen. Tests `bid_aufraeum_entscheidung_tests::ablauf::*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -360,4 +363,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "273fdfd1b29ac608d18af3830fea22e6b4eca6d5e9d77eb372ab4b7f840cb8ba";
+const HASH_VOR_DER_ZERLEGUNG: &str = "0bdfeaedfec06d571fea342421b15e94ab6da25193991e364f21538a04a0e9e6";
