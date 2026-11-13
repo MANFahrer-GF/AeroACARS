@@ -672,6 +672,18 @@ pub(crate) fn sc_status_fuer_anzeige(status: &mut Value, a: &crate::landungs_ein
         }
         ScAnzeige::NoteFolgt(_) | ScAnzeige::Gelandet(_) => {}
     }
+    // Panel und Widget holen das Protokoll beim Partner neu, sobald sich
+    // dieser Stand aendert (die Note kommt oft erst nach `blocks_on`).
+    // Abgeleitet aus genau dem, was `/panel/debrief` liefert: Schluessel
+    // ueber Aufsetzer und Inhalt, `null` = noch nichts zu holen. Solo: kein Feld.
+    if let Some(d) = sc_debrief(a, true) {
+        let td = match a {
+            ScAnzeige::Gelandet(ScLandung::Gelandet { touchdown_id, .. }) => *touchdown_id,
+            _ => 0,
+        };
+        let stand = if d.is_null() { Value::Null } else { Value::String(format!("{td}|{d}")) };
+        o.insert("sc_landung_stand".into(), stand);
+    }
 }
 
 /// Partner einer Crew (nach dem Aufsetzen bekannt)?
@@ -824,6 +836,48 @@ mod debrief_tests {
         assert_eq!(s["landing_rate_fpm"], -300.0);
         assert_eq!(s["landing_g_force"], 1.3);
         assert_eq!(sc_debrief(&ScAnzeige::NoteFolgt(ohne_note), true), Some(serde_json::Value::Null), "Panel fragt weiter");
+    }
+
+    /// `sc_landung_stand` in `/panel/status`: da genau beim Partner, nicht-null
+    /// genau dann, wenn `/panel/debrief` etwas liefert, und neu, sobald sich
+    /// die Landung des Gastgebers aendert (Panel holt dann einmal neu).
+    #[test]
+    fn sc_landung_stand_folgt_dem_debrief() {
+        let mit = |f: &dyn Fn(&mut ScLandung)| {
+            let mut l = gelandet(Some("Anna"));
+            f(&mut l);
+            l
+        };
+        let ohne_note = mit(&|l| if let ScLandung::Gelandet { landing_score, .. } = l { *landing_score = None });
+        let faelle = [
+            ScAnzeige::Warten,
+            ScAnzeige::Folgt { name: None, halten: true },
+            ScAnzeige::NoteFolgt(ohne_note),
+            ScAnzeige::Gelandet(gelandet(Some("Anna"))),
+        ];
+        for a in &faelle {
+            for p in ["landing", "taxi_in", "blocks_on", "pirep_submitted"] {
+                let mut s = status();
+                s["phase"] = json!(p);
+                sc_status_fuer_anzeige(&mut s, a);
+                let d = sc_debrief(a, true).unwrap();
+                assert!(s.get("sc_landung_stand").is_some(), "{a:?} in {p}");
+                assert_eq!(s["sc_landung_stand"].is_null(), d.is_null(), "{a:?} in {p}");
+            }
+        }
+        let stand = |l: ScLandung| {
+            let mut s = status();
+            sc_status_fuer_anzeige(&mut s, &ScAnzeige::Gelandet(l));
+            s["sc_landung_stand"].as_str().unwrap().to_string()
+        };
+        let a = stand(gelandet(Some("Anna")));
+        assert_eq!(a, stand(gelandet(Some("Anna"))), "gleicher Inhalt, gleicher Stand");
+        assert_ne!(a, stand(mit(&|l| if let ScLandung::Gelandet { landing_rate_fpm, .. } = l { *landing_rate_fpm = Some(-150.0) })));
+        assert_ne!(a, stand(mit(&|l| if let ScLandung::Gelandet { landing_score, .. } = l { *landing_score = Some(70.0) })));
+        assert_ne!(a, stand(mit(&|l| if let ScLandung::Gelandet { touchdown_id, .. } = l { *touchdown_id = 2 })));
+        let mut s = status();
+        sc_status_fuer_anzeige(&mut s, &ScAnzeige::WieBisher);
+        assert!(s.get("sc_landung_stand").is_none(), "Solo: kein Feld");
     }
 
     /// `/panel/debrief` beim Partner: nie die eigene Landung.
