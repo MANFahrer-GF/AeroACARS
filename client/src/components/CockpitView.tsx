@@ -23,6 +23,7 @@ import { SimRateHinweis } from "./SimRateHinweis";
 import { KabinenHinweis } from "./kabine/KabinenHinweis";
 import { VdgsPlatte, useVdgsStand } from "./VdgsBand";
 import { BordbuchHinweis } from "./bordbuch/BordbuchHinweis";
+import { BordbuchImFlug } from "./bordbuch/BordbuchImFlug";
 import { Notice } from "./ui";
 import { istPartner, letzterFlugAlsPartner, merkeFlug, useScLandung } from "../lib/scLandung";
 
@@ -382,6 +383,9 @@ export function CockpitView({
           weatherLoadHint={weatherLoadHint}
         />
       )}
+
+      {/* Bordbuch-Checkliste des laufenden Flugs (13.11.2026), offen, zuklappbar. */}
+      <BordbuchImFlug aktiv={!activeFlight.was_just_resumed} />
 
       {/* Live-Loadsheet wird seit v0.3.0 direkt im ActiveFlightPanel
           gerendert — siehe Import-Kommentar oben. */}

@@ -1872,7 +1872,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Shared Cockpit in der Livekarte: Fliegst du als Partner mit, erscheint das Flugzeug deines Gastgebers nicht mehr zusätzlich neben deinem eigenen. Andere Piloten sehen im Kärtchen „Shared Cockpit“ mit beiden Namen und Rollen. Im Shared Cockpit sieht der Partner jetzt die Landung des Gastgebers, in der Landeanzeige, im Simulator (Panel, Flow-Widget, X-Plane-Band, Stream Deck) und in der Landungsübersicht mit „SC“; dort zählt der Partnerflug nicht in Durchschnitt und Bestwert. Wirkt ab dem nächsten Client."
+    "neu_text": "Im Reiter „Flug“ siehst du jetzt die Bordbuch-Checkliste des laufenden Flugs direkt unter dem Flug. Ein Klick klappt sie zu. Shared Cockpit in der Livekarte: Fliegst du als Partner mit, erscheint das Flugzeug deines Gastgebers nicht mehr zusätzlich neben deinem eigenen. Andere Piloten sehen im Kärtchen „Shared Cockpit“ mit beiden Namen und Rollen. Im Shared Cockpit sieht der Partner jetzt die Landung des Gastgebers, in der Landeanzeige, im Simulator (Panel, Flow-Widget, X-Plane-Band, Stream Deck) und in der Landungsübersicht mit „SC“; dort zählt der Partnerflug nicht in Durchschnitt und Bestwert. Wirkt ab dem nächsten Client."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",

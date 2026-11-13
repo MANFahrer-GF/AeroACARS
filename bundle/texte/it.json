@@ -1872,7 +1872,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Shared Cockpit sulla mappa live: se voli come partner, l’aereo del tuo host non compare più accanto al tuo. Gli altri piloti vedono “Shared Cockpit” con entrambi i nomi e i ruoli nella scheda. Nello Shared Cockpit il partner ora vede l’atterraggio dell’host: nella vista atterraggio, nel simulatore (pannello, widget Flow, banda X-Plane, Stream Deck) e nella panoramica atterraggi con “SC”, dove il volo da partner non conta nella media e nel record. Vale dal prossimo client."
+    "neu_text": "Nella scheda «Volo» ora vedi la checklist del diario di bordo del volo in corso subito sotto il volo. Un clic la chiude. Shared Cockpit sulla mappa live: se voli come partner, l’aereo del tuo host non compare più accanto al tuo. Gli altri piloti vedono “Shared Cockpit” con entrambi i nomi e i ruoli nella scheda. Nello Shared Cockpit il partner ora vede l’atterraggio dell’host: nella vista atterraggio, nel simulatore (pannello, widget Flow, banda X-Plane, Stream Deck) e nella panoramica atterraggi con “SC”, dove il volo da partner non conta nella media e nel record. Vale dal prossimo client."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
