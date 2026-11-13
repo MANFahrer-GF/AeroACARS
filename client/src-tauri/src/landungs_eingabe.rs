@@ -373,7 +373,9 @@ pub(crate) enum ScLandung {
         fuehrender_pirep_id: String,
         gastgeber_name: Option<String>,
         rolle_gastgeber: Option<ScRolle>,
-        landing_rate_fpm: f64,
+        /// `null`/fehlend, wo die Webapp keine Rate zeigt (alte 2.x-Landung,
+        /// „nicht bewertbar“ ohne Simulator-Messung): Anzeige `--`, nie 0.
+        landing_rate_fpm: Option<f64>,
         landing_score: Option<f64>,
         g_force: Option<f64>,
         bounce_count: Option<u32>,
@@ -418,7 +420,8 @@ async fn sc_landung_holen(basis: &str, token: &str, pirep_id: &str) -> Option<Sc
 /// wie sie ist.
 ///
 /// Die Antwort landet zusaetzlich im Rust-Merker (Sim-Anzeigen,
-/// Kennzeichen am Landungsdatensatz), damit beide dieselbe Antwort sehen.
+/// Kennzeichen am Landungsdatensatz), damit beide dieselbe Antwort sehen;
+/// zurueck kommt der massgebliche Stand aus dem Merker (`sc_ersetzt`).
 #[tauri::command]
 pub(crate) async fn sc_landung_gastgeber(app: tauri::AppHandle, pirep_id: String) -> Result<ScLandung, crate::UiError> {
     if !pirep_kennung_gueltig(&pirep_id) {
@@ -427,8 +430,8 @@ pub(crate) async fn sc_landung_gastgeber(app: tauri::AppHandle, pirep_id: String
     let fehler = || crate::UiError::new("sc_landung_fehler", "Shared-Cockpit-Landung nicht abrufbar");
     let token = crate::live_zugang::pilot_token().ok_or_else(fehler)?;
     let l = sc_landung_holen(crate::live_zugang::live_basis(), &token, &pirep_id).await.ok_or_else(fehler)?;
-    sc_merker_setzen(&app, &pirep_id, l.clone());
-    Ok(l)
+    let nach_td = sc_nach_td_fuer(&crate::remote::current_flight_status_value(&app), &pirep_id);
+    Ok(sc_merker_setzen(&app, &pirep_id, l, nach_td))
 }
 
 // ── Shared Cockpit: Merker in Rust ──────────────────────────────────────
@@ -448,6 +451,12 @@ const SC_ABSTAND: std::time::Duration = std::time::Duration::from_secs(10);
 /// Hoechstens so viele Abrufe nach dem Aufsetzen (15 min), danach bleibt
 /// es bei „Landung des Gastgebers folgt“, ohne die Anzeigen anzuhalten.
 const SC_HOECHSTENS_NACH_TD: u32 = 90;
+/// Abstand der Nachfragen, solange „gelandet“ noch ohne Note ist (die Note
+/// setzt live erst mit dem PIREP des Gastgebers).
+const SC_ABSTAND_NOTE: std::time::Duration = std::time::Duration::from_secs(30);
+/// Hoechstens so viele Abrufe ohne Note (60 min), danach bleibt die Landung
+/// ohne Note stehen.
+const SC_HOECHSTENS_NOTE: u32 = 120;
 /// Fehlversuche ohne jede Antwort, danach wie bisher (je vor und nach dem Aufsetzen).
 const SC_FEHLVERSUCHE: u32 = 3;
 /// Mehr Fluege behaelt der Merker nicht (aeltere fallen heraus).
@@ -463,6 +472,10 @@ pub(crate) struct ScEintrag {
     pub(crate) fehler: u32,
     pub(crate) laeuft: bool,
     pub(crate) td_gesehen: bool,
+    /// Abrufe nach dem Aufsetzen, die „gelandet“ noch ohne Note brachten.
+    pub(crate) versuche_note: u32,
+    /// Laeuft der Nachlauf (fragt selbst weiter, auch ohne Anzeige)?
+    nachlauf: bool,
     /// Zuletzt in den Landungsdatensatz geschriebenes Kennzeichen.
     im_datensatz: Option<serde_json::Value>,
 }
@@ -478,6 +491,10 @@ pub(crate) enum ScAnzeige {
     /// Partner, Gastgeber noch nicht gelandet. `halten`: Anzeigen bleiben in
     /// „Auswertung“, bis die Landung kommt (bis zur Hoechstzahl).
     Folgt { name: Option<String>, halten: bool },
+    /// Partner, Gastgeber gelandet, live fuehrt aber noch keine Note (die
+    /// kommt erst mit seinem PIREP). Anzeigen halten wie bei `Folgt`, bis die
+    /// Note da ist (bis zur Hoechstzahl, danach `Gelandet`).
+    NoteFolgt(ScLandung),
     /// Partner, Landung des Gastgebers von live.
     Gelandet(ScLandung),
 }
@@ -489,12 +506,71 @@ pub(crate) fn sc_faellig(e: &ScEintrag, nach_td: bool, jetzt: std::time::Instant
     }
     let alt = e.zuletzt.is_none_or(|z| jetzt.duration_since(z) >= SC_ABSTAND);
     match &e.stand {
-        Some(ScLandung::Gelandet { .. }) => false,
+        // Ohne Note langsamer weiter, bis die Note da ist (begrenzt).
+        Some(ScLandung::Gelandet { .. }) => {
+            nach_td && sc_wartet_auf_note(e) && e.zuletzt.is_none_or(|z| jetzt.duration_since(z) >= SC_ABSTAND_NOTE)
+        }
         // Vor dem Aufsetzen kann live die Crew noch nicht kennen: einmal neu fragen.
         Some(ScLandung::KeineCrew) => nach_td && !e.stand_nach_td && alt,
         Some(ScLandung::Ausstehend { .. }) => nach_td && alt && e.versuche_nach_td < SC_HOECHSTENS_NACH_TD,
         None => e.fehler < SC_FEHLVERSUCHE && alt,
     }
+}
+
+/// Ersetzt `neu` den bisherigen Stand? (Rein, getestet.)
+/// - „ausstehend“/„keine Crew“ ersetzt nie ein „gelandet“;
+/// - dieselbe Landung (`touchdown_id`) mit Note wird nie durch eine Antwort
+///   ohne Note ersetzt (verspaetete Antwort);
+/// - sonst gilt die neuere Antwort: Note und angeglichene Sinkrate kommen
+///   mit dem PIREP des Gastgebers, nach einem Touch-and-Go fuehrt live eine
+///   andere `touchdown_id`. Eine ueberholte Antwort ohne Note heilt sich
+///   selbst, weil ohne Note weiter gefragt wird.
+/// Dieselbe Regel steht in `client/src/lib/scLandung.ts` (`scUebernehmen`).
+pub(crate) fn sc_ersetzt(alt: Option<&ScLandung>, neu: &ScLandung) -> bool {
+    match (alt, neu) {
+        (Some(ScLandung::Gelandet { .. }), ScLandung::Ausstehend { .. } | ScLandung::KeineCrew) => false,
+        (
+            Some(ScLandung::Gelandet { touchdown_id: a, landing_score: Some(_), .. }),
+            ScLandung::Gelandet { touchdown_id: b, landing_score: None, .. },
+        ) => a != b,
+        _ => true,
+    }
+}
+
+/// „gelandet“, aber live fuehrt noch keine Note?
+fn sc_ohne_note(l: &ScLandung) -> bool {
+    matches!(l, ScLandung::Gelandet { landing_score: None, .. })
+}
+
+/// Wird fuer diesen Eintrag noch auf die Note gewartet (gefragt und gehalten)?
+fn sc_wartet_auf_note(e: &ScEintrag) -> bool {
+    e.stand.as_ref().is_some_and(sc_ohne_note) && e.versuche_note < SC_HOECHSTENS_NOTE
+}
+
+/// Antwort in den Eintrag uebernehmen (rein, getestet).
+pub(crate) fn sc_uebernehmen(e: &mut ScEintrag, l: ScLandung, nach_td: bool) {
+    if sc_ersetzt(e.stand.as_ref(), &l) {
+        e.stand = Some(l);
+        e.stand_nach_td = nach_td;
+    }
+    e.fehler = 0;
+}
+
+/// Ist der Flug `pirep_id` laut Flugstatus schon aufgesetzt? (Rein, getestet.)
+/// Laeuft gerade ein anderer Flug oder keiner, ist dieser vorbei.
+pub(crate) fn sc_nach_td_fuer(status: &serde_json::Value, pirep_id: &str) -> bool {
+    if status.get("pirep_id").and_then(serde_json::Value::as_str) != Some(pirep_id) {
+        return true;
+    }
+    crate::panel_server::sc_nach_aufsetzen(status)
+}
+
+/// Kennzeichen aus dem Merker (rein, getestet).
+pub(crate) fn sc_kennzeichen_aus(
+    m: &std::collections::HashMap<String, ScEintrag>,
+    pirep_id: &str,
+) -> Option<serde_json::Value> {
+    sc_als_kennzeichen(m.get(pirep_id)?.stand.as_ref()?)
 }
 
 /// Anzeige aus dem Merker (reine Abbildung, getestet). Vor dem Aufsetzen
@@ -505,14 +581,17 @@ pub(crate) fn sc_anzeige_aus(e: Option<&ScEintrag>, nach_td: bool) -> ScAnzeige 
     }
     let Some(e) = e else { return ScAnzeige::WieBisher };
     match &e.stand {
+        Some(l @ ScLandung::Gelandet { .. }) if sc_wartet_auf_note(e) => ScAnzeige::NoteFolgt(l.clone()),
         Some(l @ ScLandung::Gelandet { .. }) => ScAnzeige::Gelandet(l.clone()),
         Some(ScLandung::Ausstehend { gastgeber_name, .. }) => ScAnzeige::Folgt {
             name: gastgeber_name.clone(),
             halten: e.versuche_nach_td < SC_HOECHSTENS_NACH_TD,
         },
         Some(ScLandung::KeineCrew) => ScAnzeige::WieBisher,
-        // Nur die allererste Anfrage haelt an; Fehler heissen „wie bisher“.
-        None if e.laeuft && e.fehler == 0 => ScAnzeige::Warten,
+        // Nur die allererste Anfrage des Flugs haelt an (noch nie beantwortet
+        // oder gescheitert); Fehler heissen „wie bisher“, auch wenn der
+        // Abruf beim Aufsetzen neue Fehlversuche bekommt.
+        None if e.laeuft && e.zuletzt.is_none() => ScAnzeige::Warten,
         None => ScAnzeige::WieBisher,
     }
 }
@@ -541,9 +620,7 @@ pub(crate) fn sc_anzeige(app: &tauri::AppHandle, pirep_id: &str, nach_td: bool) 
 
 /// Kennzeichen fuer den Landungsdatensatz (nur Partner).
 pub(crate) fn sc_fuer_datensatz(pirep_id: &str) -> Option<serde_json::Value> {
-    let m = sc_merker();
-    let l = m.get(pirep_id)?.stand.as_ref()?;
-    sc_als_kennzeichen(l)
+    sc_kennzeichen_aus(&sc_merker(), pirep_id)
 }
 
 fn sc_als_kennzeichen(l: &ScLandung) -> Option<serde_json::Value> {
@@ -586,6 +663,37 @@ pub(crate) fn sc_anstossen(app: &tauri::AppHandle, pirep_id: &str, nach_td: bool
         if let Some(l) = r {
             sc_datensatz_nachtragen(&app, &pirep, &l);
         }
+        sc_nachlauf(&app, &pirep);
+    });
+}
+
+/// Solange „gelandet“ ohne Note: selbst weiterfragen, auch wenn keine Anzeige
+/// mehr fragt (nach der Abgabe des Partners ist der Flugstatus leer, die Note
+/// kommt erst mit dem PIREP des Gastgebers). Hoechstens ein Nachlauf je Flug,
+/// begrenzt durch `SC_HOECHSTENS_NOTE`; der Datensatz bekommt die Note ueber
+/// `sc_datensatz_nachtragen`.
+fn sc_nachlauf(app: &tauri::AppHandle, pirep_id: &str) {
+    {
+        let mut m = sc_merker();
+        let Some(e) = m.get_mut(pirep_id) else { return };
+        if e.nachlauf || !sc_wartet_auf_note(e) {
+            return;
+        }
+        e.nachlauf = true;
+    }
+    let app = app.clone();
+    let pirep = pirep_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(SC_ABSTAND_NOTE + std::time::Duration::from_secs(1)).await;
+            if !sc_merker().get(&pirep).is_some_and(sc_wartet_auf_note) {
+                break;
+            }
+            sc_anstossen(&app, &pirep, true);
+        }
+        if let Some(e) = sc_merker().get_mut(&pirep) {
+            e.nachlauf = false;
+        }
     });
 }
 
@@ -605,12 +713,10 @@ pub(crate) fn sc_eintragen(
     }
     match r {
         Some(l) => {
-            // Ein spaeter „ausstehend“ macht ein „gelandet“ nicht rueckgaengig.
-            if !matches!(e.stand, Some(ScLandung::Gelandet { .. })) {
-                e.stand = Some(l);
-                e.stand_nach_td = nach_td;
+            sc_uebernehmen(e, l, nach_td);
+            if nach_td && e.stand.as_ref().is_some_and(sc_ohne_note) {
+                e.versuche_note += 1;
             }
-            e.fehler = 0;
         }
         // Ohne Pilot-Zugang gibt es nichts zu fragen: gleich wie bisher.
         None if ohne_zugang => e.fehler = SC_FEHLVERSUCHE,
@@ -618,21 +724,22 @@ pub(crate) fn sc_eintragen(
     }
 }
 
-/// Antwort der Oberflaeche uebernehmen (gilt als nach dem Aufsetzen).
-fn sc_merker_setzen(app: &tauri::AppHandle, pirep_id: &str, l: ScLandung) {
-    {
+/// Antwort der Oberflaeche uebernehmen; `nach_td` aus dem echten Flugstatus
+/// (`sc_nach_td_fuer`). Gibt den massgeblichen Stand zurueck (nach
+/// `sc_ersetzt`), damit Oberflaeche und Sim-Anzeigen dieselbe Antwort sehen.
+fn sc_merker_setzen(app: &tauri::AppHandle, pirep_id: &str, l: ScLandung, nach_td: bool) -> ScLandung {
+    let stand = {
         let mut m = sc_merker();
         if !m.contains_key(pirep_id) && m.len() >= SC_MERKER_MAX {
             m.clear();
         }
         let e = m.entry(pirep_id.to_string()).or_default();
-        if !matches!(e.stand, Some(ScLandung::Gelandet { .. })) {
-            e.stand = Some(l.clone());
-            e.stand_nach_td = true;
-        }
-        e.fehler = 0;
-    }
-    sc_datensatz_nachtragen(app, pirep_id, &l);
+        sc_uebernehmen(e, l.clone(), nach_td);
+        e.stand.clone().unwrap_or(l)
+    };
+    sc_datensatz_nachtragen(app, pirep_id, &stand);
+    sc_nachlauf(app, pirep_id);
+    stand
 }
 
 /// Kennzeichen am gespeicherten Datensatz nachtragen, nur dieses Feld. Fehlt
@@ -719,7 +826,7 @@ mod tests {
                 fuehrender_pirep_id: "H1".into(),
                 gastgeber_name: Some("Anna B.".into()),
                 rolle_gastgeber: Some(ScRolle::PF),
-                landing_rate_fpm: -200.03,
+                landing_rate_fpm: Some(-200.03),
                 landing_score: Some(83.0),
                 g_force: Some(1.14),
                 bounce_count: Some(0),
@@ -729,6 +836,16 @@ mod tests {
         // Nullbare Felder duerfen null sein oder fehlen.
         let knapp = r#"{"status":"gelandet","touchdown_id":1,"fuehrender_pirep_id":"H1","gastgeber_name":null,"rolle_gastgeber":null,"landing_rate_fpm":-90,"landing_score":null}"#;
         assert!(matches!(sc_landung_aus(200, knapp), Some(ScLandung::Gelandet { gastgeber_name: None, g_force: None, .. })));
+        // Rate `null` oder fehlend (Webapp zeigt keine): trotzdem Gastgeber-Landung.
+        for ohne_rate in [
+            r#"{"status":"gelandet","touchdown_id":2,"fuehrender_pirep_id":"H1","landing_rate_fpm":null,"landing_score":70}"#,
+            r#"{"status":"gelandet","touchdown_id":2,"fuehrender_pirep_id":"H1","landing_score":70}"#,
+        ] {
+            assert!(
+                matches!(sc_landung_aus(200, ohne_rate), Some(ScLandung::Gelandet { landing_rate_fpm: None, landing_score: Some(_), .. })),
+                "{ohne_rate}"
+            );
+        }
         let aus = r#"{"status":"ausstehend","fuehrender_pirep_id":"H1","gastgeber_name":"Anna B.","rolle_gastgeber":"PM"}"#;
         assert_eq!(
             sc_landung_aus(200, aus),
@@ -746,7 +863,9 @@ mod tests {
         assert_eq!(sc_landung_aus(401, ""), None);
         assert_eq!(sc_landung_aus(200, "kein json"), None);
         assert_eq!(sc_landung_aus(200, r#"{"status":"keine_crew"}"#), None);
-        assert_eq!(sc_landung_aus(200, r#"{"status":"gelandet","touchdown_id":1,"fuehrender_pirep_id":"H1"}"#), None);
+        // ohne `touchdown_id` bzw. `fuehrender_pirep_id` (Pflicht); die Rate darf fehlen (oben)
+        assert_eq!(sc_landung_aus(200, r#"{"status":"gelandet","fuehrender_pirep_id":"H1","landing_rate_fpm":-90}"#), None);
+        assert_eq!(sc_landung_aus(200, r#"{"status":"gelandet","touchdown_id":1,"landing_rate_fpm":-90}"#), None);
         assert_eq!(sc_landung_aus(200, r#"{"status":"ausstehend","rolle_gastgeber":"XX"}"#), None);
         // Serialisiert fuer die Oberflaeche mit demselben Feld `status`.
         assert_eq!(serde_json::to_value(ScLandung::KeineCrew).unwrap(), serde_json::json!({ "status": "keine_crew" }));
@@ -791,7 +910,7 @@ mod tests {
             fuehrender_pirep_id: "H1".into(),
             gastgeber_name: Some(name.into()),
             rolle_gastgeber: Some(ScRolle::PF),
-            landing_rate_fpm: -180.0,
+            landing_rate_fpm: Some(-180.0),
             landing_score: Some(91.0),
             g_force: Some(1.12),
             bounce_count: Some(0),
@@ -876,6 +995,125 @@ mod tests {
         // ohne Pilot-Zugang: sofort aufgeben
         sc_eintragen(&mut m, "Z1", None, true, true);
         assert!(!sc_faellig(&m["Z1"], true, Instant::now() + SC_ABSTAND * 10));
+    }
+
+    fn landung(touchdown_id: i64, rate: f64, note: Option<f64>) -> ScLandung {
+        ScLandung::Gelandet {
+            touchdown_id,
+            fuehrender_pirep_id: "H1".into(),
+            gastgeber_name: Some("Anna B.".into()),
+            rolle_gastgeber: Some(ScRolle::PF),
+            landing_rate_fpm: Some(rate),
+            landing_score: note,
+            g_force: Some(1.3),
+            bounce_count: Some(0),
+            score_text: Some("firm".into()),
+        }
+    }
+
+    /// Befund 1: live legt die Landung beim Aufsetzen ohne Note an und setzt
+    /// Note und angeglichene Sinkrate erst mit dem PIREP des Gastgebers.
+    /// „gelandet ohne Note“ fragt deshalb (langsamer) weiter, die Anzeigen
+    /// halten, und die Antwort mit Note ersetzt die alte im Merker und im
+    /// Kennzeichen. Eine verspaetete Antwort ohne Note nimmt sie nicht weg.
+    #[test]
+    fn sc_merker_gelandet_ohne_note_fragt_bis_zur_note() {
+        use std::collections::HashMap;
+        use std::time::Duration;
+        let mut m: HashMap<String, ScEintrag> = HashMap::new();
+        sc_eintragen(&mut m, "P1", Some(ausstehend()), true, false);
+        sc_eintragen(&mut m, "P1", Some(landung(7, -310.0, None)), true, false);
+        let e = &m["P1"];
+        let z = e.zuletzt.unwrap();
+        assert!(!sc_faellig(e, true, z + SC_ABSTAND), "langsamerer Takt als bei ausstehend");
+        assert!(sc_faellig(e, true, z + SC_ABSTAND_NOTE), "ohne Note weiterfragen");
+        assert_eq!(sc_anzeige_aus(Some(e), true), ScAnzeige::NoteFolgt(landung(7, -310.0, None)));
+        assert_eq!(sc_kennzeichen_aus(&m, "P1").unwrap()["landing_score"], serde_json::Value::Null);
+
+        sc_eintragen(&mut m, "P1", Some(landung(7, -295.0, Some(83.0))), true, false);
+        let e = &m["P1"];
+        assert_eq!(e.stand, Some(landung(7, -295.0, Some(83.0))), "Note und angeglichene Sinkrate");
+        assert_eq!(sc_anzeige_aus(Some(e), true), ScAnzeige::Gelandet(landung(7, -295.0, Some(83.0))));
+        assert!(!sc_faellig(e, true, z + Duration::from_secs(3600)), "mit Note Schluss");
+        let k = sc_kennzeichen_aus(&m, "P1").unwrap();
+        assert_eq!(k["landing_score"], 83.0, "der Datensatz bekommt die Note");
+        assert_eq!(k["landing_rate_fpm"], -295.0);
+
+        // verspaetete Antworten ohne Note bzw. „ausstehend“ nehmen nichts weg
+        sc_eintragen(&mut m, "P1", Some(landung(7, -310.0, None)), true, false);
+        sc_eintragen(&mut m, "P1", Some(ausstehend()), true, false);
+        assert_eq!(m["P1"].stand, Some(landung(7, -295.0, Some(83.0))));
+    }
+
+    /// Befund 1, Touch-and-Go: der erste Aufsetzer kommt ohne Note, die
+    /// eigentliche Landung hat eine neue `touchdown_id` und ersetzt ihn, auf
+    /// beiden Wegen (eigener Abruf und Antwort der Oberflaeche).
+    #[test]
+    fn sc_merker_neue_touchdown_id_ersetzt_den_ersten_aufsetzer() {
+        let mut m = std::collections::HashMap::new();
+        sc_eintragen(&mut m, "P1", Some(landung(7, -150.0, None)), true, false);
+        sc_eintragen(&mut m, "P1", Some(landung(8, -220.0, None)), true, false);
+        assert_eq!(m["P1"].stand, Some(landung(8, -220.0, None)));
+        sc_eintragen(&mut m, "P1", Some(landung(8, -215.0, Some(77.0))), true, false);
+        assert_eq!(sc_kennzeichen_aus(&m, "P1").unwrap()["touchdown_id"], 8);
+
+        let mut e = ScEintrag::default();
+        sc_uebernehmen(&mut e, landung(7, -150.0, None), true);
+        sc_uebernehmen(&mut e, landung(8, -215.0, Some(77.0)), true);
+        assert_eq!(e.stand, Some(landung(8, -215.0, Some(77.0))));
+        // gleiche Landung mit Note bleibt gegen eine aeltere ohne Note
+        sc_uebernehmen(&mut e, landung(8, -220.0, None), true);
+        assert_eq!(e.stand, Some(landung(8, -215.0, Some(77.0))));
+    }
+
+    /// Nach der Hoechstzahl ohne Note: Schluss mit Fragen und Halten, die
+    /// Landung bleibt ohne Note stehen.
+    #[test]
+    fn sc_merker_ohne_note_gibt_nach_hoechstzahl_auf() {
+        let mut m = std::collections::HashMap::new();
+        for _ in 0..SC_HOECHSTENS_NOTE {
+            sc_eintragen(&mut m, "P1", Some(landung(7, -310.0, None)), true, false);
+        }
+        let e = &m["P1"];
+        assert!(!sc_faellig(e, true, std::time::Instant::now() + SC_ABSTAND_NOTE * 2));
+        assert_eq!(sc_anzeige_aus(Some(e), true), ScAnzeige::Gelandet(landung(7, -310.0, None)));
+    }
+
+    /// Befund 2: Die Oberflaeche fragt schon beim Flugstart; ein fruehes 404
+    /// gilt nicht als „nach dem Aufsetzen“, Rust fragt nach dem Aufsetzen neu.
+    #[test]
+    fn sc_merker_fruehes_404_der_oberflaeche_wird_nach_dem_aufsetzen_neu_gefragt() {
+        let im_flug = serde_json::json!({ "pirep_id": "P1", "phase": "cruise", "landing_at": null });
+        let gelandet = serde_json::json!({ "pirep_id": "P1", "phase": "landing", "landing_at": "2026-11-13T10:00:00Z" });
+        assert!(!sc_nach_td_fuer(&im_flug, "P1"));
+        assert!(sc_nach_td_fuer(&gelandet, "P1"));
+        assert!(sc_nach_td_fuer(&serde_json::Value::Null, "P1"), "kein Flug mehr: vorbei");
+        assert!(sc_nach_td_fuer(&serde_json::json!({ "pirep_id": "P2", "landing_at": null }), "P1"), "anderer Flug laeuft");
+
+        let mut e = ScEintrag::default();
+        sc_uebernehmen(&mut e, ScLandung::KeineCrew, sc_nach_td_fuer(&im_flug, "P1"));
+        assert!(sc_faellig(&e, true, std::time::Instant::now()), "nach dem Aufsetzen neu fragen");
+        // Gegenprobe: 404 nach dem Aufsetzen beendet
+        let mut e = ScEintrag::default();
+        sc_uebernehmen(&mut e, ScLandung::KeineCrew, sc_nach_td_fuer(&gelandet, "P1"));
+        assert!(!sc_faellig(&e, true, std::time::Instant::now()));
+    }
+
+    /// Befund 3: Soloflug, live haengt. Die Anfrage im Flug ist schon
+    /// gescheitert; der Abruf beim Aufsetzen haelt die Anzeigen nicht an.
+    /// Gegenprobe: die allererste Anfrage ueberhaupt haelt an.
+    #[test]
+    fn sc_merker_warten_nur_vor_der_ersten_antwort() {
+        let mut m = std::collections::HashMap::new();
+        sc_eintragen(&mut m, "S1", None, false, false);
+        let e = m.get_mut("S1").unwrap();
+        // wie `sc_anstossen` beim Aufsetzen
+        e.td_gesehen = true;
+        e.fehler = 0;
+        e.laeuft = true;
+        assert_eq!(sc_anzeige_aus(Some(e), true), ScAnzeige::WieBisher);
+        let erste = ScEintrag { laeuft: true, td_gesehen: true, ..Default::default() };
+        assert_eq!(sc_anzeige_aus(Some(&erste), true), ScAnzeige::Warten);
     }
 
     /// Das Kennzeichen kommt dazu, die eigene Messung bleibt; gleiches

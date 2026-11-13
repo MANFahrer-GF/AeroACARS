@@ -613,6 +613,8 @@ pub(crate) fn debrief_fuer_anzeige(mut v: Value) -> Value {
 
 /// Text in den Anzeigen, solange der Gastgeber noch nicht gelandet ist.
 pub(crate) const SC_FOLGT: &str = "Landung des Gastgebers folgt";
+/// Text in den Anzeigen, solange live die Landung noch ohne Note fuehrt.
+pub(crate) const SC_NOTE_FOLGT: &str = "Bewertung des Gastgebers folgt";
 
 /// Kennzeichen „SC - Landung von <Name>“, ASCII, Name hoechstens 24 Zeichen.
 pub(crate) fn sc_kennzeichen(name: Option<&str>) -> String {
@@ -649,21 +651,33 @@ pub(crate) fn sc_nach_aufsetzen(status: &Value) -> bool {
 pub(crate) fn sc_status_fuer_anzeige(status: &mut Value, a: &crate::landungs_eingabe::ScAnzeige) {
     use crate::landungs_eingabe::{ScAnzeige, ScLandung};
     let Some(o) = status.as_object_mut() else { return };
+    // Gehalten wird nur direkt nach dem Aufsetzen; ab `blocks_on` zeigen die
+    // Anzeigen die normale Lage („Am Stand“, „PIREP wartet“), das Band traegt
+    // den SC-Text als Anhang.
+    let direkt_nach_td = matches!(o.get("phase").and_then(Value::as_str), Some("landing" | "taxi_in"));
+    let halten = matches!(a, ScAnzeige::Warten | ScAnzeige::Folgt { halten: true, .. } | ScAnzeige::NoteFolgt(_));
+    if halten && direkt_nach_td {
+        o.insert("landing_score_finalized".into(), Value::Bool(false));
+    }
     match a {
         ScAnzeige::WieBisher => {}
         ScAnzeige::Warten | ScAnzeige::Folgt { .. } => {
-            if matches!(a, ScAnzeige::Warten | ScAnzeige::Folgt { halten: true, .. }) {
-                o.insert("landing_score_finalized".into(), Value::Bool(false));
-            }
             o.insert("landing_rate_fpm".into(), Value::Null);
             o.insert("landing_g_force".into(), Value::Null);
         }
-        ScAnzeige::Gelandet(ScLandung::Gelandet { landing_rate_fpm, g_force, .. }) => {
+        ScAnzeige::NoteFolgt(ScLandung::Gelandet { landing_rate_fpm, g_force, .. })
+        | ScAnzeige::Gelandet(ScLandung::Gelandet { landing_rate_fpm, g_force, .. }) => {
             o.insert("landing_rate_fpm".into(), serde_json::json!(landing_rate_fpm));
             o.insert("landing_g_force".into(), serde_json::json!(g_force));
         }
-        ScAnzeige::Gelandet(_) => {}
+        ScAnzeige::NoteFolgt(_) | ScAnzeige::Gelandet(_) => {}
     }
+}
+
+/// Partner einer Crew (nach dem Aufsetzen bekannt)?
+pub(crate) fn sc_partner(a: &crate::landungs_eingabe::ScAnzeige) -> bool {
+    use crate::landungs_eingabe::ScAnzeige;
+    matches!(a, ScAnzeige::Folgt { .. } | ScAnzeige::NoteFolgt(_) | ScAnzeige::Gelandet(_))
 }
 
 /// Landeprotokoll fuer die Anzeigen beim Partner. `None` = wie bisher (eigene
@@ -702,7 +716,7 @@ pub(crate) fn sc_debrief(a: &crate::landungs_eingabe::ScAnzeige, etikett_kennzei
                 "sc_kennzeichen": kennzeichen,
             }))
         }
-        ScAnzeige::Gelandet(_) => Some(Value::Null),
+        ScAnzeige::NoteFolgt(_) | ScAnzeige::Gelandet(_) => Some(Value::Null),
     }
 }
 
@@ -720,7 +734,7 @@ mod debrief_tests {
             fuehrender_pirep_id: "H1".into(),
             gastgeber_name: name.map(Into::into),
             rolle_gastgeber: None,
-            landing_rate_fpm: -180.4,
+            landing_rate_fpm: Some(-180.4),
             landing_score: Some(90.6),
             g_force: Some(1.12),
             bounce_count: Some(0),
@@ -764,6 +778,52 @@ mod debrief_tests {
         assert!(n.is_null());
         assert!(sc_nach_aufsetzen(&status()));
         assert!(!sc_nach_aufsetzen(&json!({"landing_at": null})));
+    }
+
+    /// Befund 5: Halten nur direkt nach dem Aufsetzen (landing, taxi_in); ab
+    /// `blocks_on` die normale Lage. „Note folgt“ traegt die bekannten Werte
+    /// des Gastgebers (Stream Deck liest sie hier).
+    #[test]
+    fn sc_halten_nur_direkt_nach_dem_aufsetzen() {
+        let mit_phase = |p: &str| {
+            let mut s = status();
+            s["phase"] = json!(p);
+            s
+        };
+        let ohne_note = ScLandung::Gelandet {
+            touchdown_id: 1,
+            fuehrender_pirep_id: "H1".into(),
+            gastgeber_name: None,
+            rolle_gastgeber: None,
+            landing_rate_fpm: Some(-300.0),
+            landing_score: None,
+            g_force: Some(1.3),
+            bounce_count: Some(0),
+            score_text: Some("firm".into()),
+        };
+        let haltend = [
+            ScAnzeige::Warten,
+            ScAnzeige::Folgt { name: None, halten: true },
+            ScAnzeige::NoteFolgt(ohne_note.clone()),
+        ];
+        for a in &haltend {
+            for p in ["landing", "taxi_in"] {
+                let mut s = mit_phase(p);
+                sc_status_fuer_anzeige(&mut s, a);
+                assert_eq!(s["landing_score_finalized"], false, "{a:?} in {p}");
+            }
+            for p in ["blocks_on", "arrived", "pirep_submitted"] {
+                let mut s = mit_phase(p);
+                sc_status_fuer_anzeige(&mut s, a);
+                assert_eq!(s["landing_score_finalized"], true, "{a:?} in {p}: normale Lage");
+                assert_ne!(s["landing_rate_fpm"], -512.0, "nie die eigene Rate");
+            }
+        }
+        let mut s = mit_phase("landing");
+        sc_status_fuer_anzeige(&mut s, &ScAnzeige::NoteFolgt(ohne_note.clone()));
+        assert_eq!(s["landing_rate_fpm"], -300.0);
+        assert_eq!(s["landing_g_force"], 1.3);
+        assert_eq!(sc_debrief(&ScAnzeige::NoteFolgt(ohne_note), true), Some(serde_json::Value::Null), "Panel fragt weiter");
     }
 
     /// `/panel/debrief` beim Partner: nie die eigene Landung.
@@ -835,8 +895,11 @@ async fn activity_handler(
         return r;
     }
     let limit = effective_activity_limit(q.limit);
+    // Shared Cockpit (B4): beim Partner ohne die eigene Aufsetz-Zeile.
+    let status = crate::remote::current_flight_status_value(&ctx.app);
+    let partner = sc_partner(&sc_anzeige_fuer_status(&ctx.app, &status));
     let state = ctx.app.state::<crate::AppState>();
-    let entries = crate::activity_log_tail(&state, limit);
+    let entries = crate::activity_log_tail_anzeige(&state, limit, partner);
     let value = serde_json::to_value(entries).unwrap_or(Value::Null);
     cors_open((StatusCode::OK, Json(value)).into_response())
 }

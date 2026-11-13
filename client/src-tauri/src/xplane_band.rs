@@ -129,9 +129,8 @@ fn baue(app: &AppHandle, debrief: &mut Option<(String, Value)>) -> sim_xplane::h
     }
     let akt = {
         let state = app.state::<crate::AppState>();
-        crate::activity_log_tail(&state, 1)
-            .first()
-            .and_then(|e| serde_json::to_value(e).ok())
+        let log = state.activity_log.lock().expect("activity_log lock");
+        sc_aktivitaet(log.iter().rev(), &sc)
     };
     baue_band(&BandEingabe {
         verbunden: true,
@@ -154,6 +153,16 @@ fn sc_vorbereiten(status: &mut Value, sc: &crate::landungs_eingabe::ScAnzeige) -
     (crate::panel_server::sc_debrief(sc, false), sc_band_text(sc))
 }
 
+/// Juengste Aktivitaet fuer Zeile 1 (beim Partner ohne die eigene Aufsetz-Zeile).
+fn sc_aktivitaet<'a>(
+    neueste_zuerst: impl Iterator<Item = &'a crate::ActivityEntry>,
+    sc: &crate::landungs_eingabe::ScAnzeige,
+) -> Option<Value> {
+    crate::aktivitaet_fuer_anzeige(neueste_zuerst, 1, crate::panel_server::sc_partner(sc))
+        .first()
+        .and_then(|e| serde_json::to_value(e).ok())
+}
+
 /// Beim Partner nie das eigene Protokoll; `null` heisst „noch keins“.
 fn debrief_waehlen<'a>(sc: &'a Option<Value>, eigen: Option<&'a Value>) -> Option<&'a Value> {
     match sc {
@@ -167,6 +176,7 @@ fn sc_band_text(sc: &crate::landungs_eingabe::ScAnzeige) -> Option<String> {
     use crate::landungs_eingabe::{ScAnzeige, ScLandung};
     match sc {
         ScAnzeige::Folgt { .. } => Some(crate::panel_server::SC_FOLGT.into()),
+        ScAnzeige::NoteFolgt(_) => Some(crate::panel_server::SC_NOTE_FOLGT.into()),
         ScAnzeige::Gelandet(ScLandung::Gelandet { gastgeber_name, .. }) => {
             Some(crate::panel_server::sc_kennzeichen(gastgeber_name.as_deref()))
         }
@@ -182,13 +192,21 @@ mod tests {
 
     /// Dieselbe Kette wie `baue`, ohne App: Status → SC-Umstellung → Band.
     fn band(status: &Value, sc: &ScAnzeige, eigen: Option<&Value>) -> (Lage, String) {
+        let (lage, _, text) = band_mit_log(status, sc, eigen, &[]);
+        (lage, text)
+    }
+
+    /// Wie `band`, dazu das Aktivitaetslog (aelteste zuerst) fuer Zeile 1.
+    fn band_mit_log(status: &Value, sc: &ScAnzeige, eigen: Option<&Value>, log: &[Value]) -> (Lage, String, String) {
         let mut status = status.clone();
         let (sc_debrief, sc_text) = sc_vorbereiten(&mut status, sc);
+        let log: Vec<crate::ActivityEntry> = log.iter().map(|v| serde_json::from_value(v.clone()).unwrap()).collect();
+        let akt = sc_aktivitaet(log.iter().rev(), sc);
         let f = baue_band(&BandEingabe {
             verbunden: true,
             status: Some(&status),
             debrief: debrief_waehlen(&sc_debrief, eigen),
-            aktivitaet: None,
+            aktivitaet: akt.as_ref(),
             jetzt_ms: 0,
             host: "127.0.0.1",
             port: 1,
@@ -196,7 +214,91 @@ mod tests {
             fehler_seit_ms: None,
             sc_text: sc_text.as_deref(),
         });
-        (f.lage, f.zeilen[1].zu_text())
+        (f.lage, f.zeilen[0].zu_text(), f.zeilen[1].zu_text())
+    }
+
+    fn eintrag(minute: u32, message: &str, schluessel: &str) -> Value {
+        json!({"timestamp": format!("2026-11-13T10:{minute:02}:00Z"), "level": "info", "message": message,
+            "text": {"zeile": {"schluessel": schluessel, "werte": {}}, "detail": []}})
+    }
+
+    /// Befund 4: beim Partner steht in Zeile 1 (Ticker) nicht die eigene
+    /// Aufsetz-Zeile, sondern die naechstaeltere. Gegenprobe Solo: wie bisher.
+    #[test]
+    fn partner_ticker_ohne_eigene_aufsetz_zeile() {
+        let log = [
+            eintrag(0, "Phase: Landung", "activity.lage.am_boden"),
+            eintrag(1, "Touchdown: V/S -512 fpm, 1.60 G", "activity.touchdown.line"),
+        ];
+        let (_, ticker, _) = band_mit_log(&nach_dem_aufsetzen(), &ScAnzeige::Gelandet(gelandet()), Some(&eigene()), &log);
+        assert!(ticker.contains("Phase: Landung") && !ticker.contains("512"), "{ticker}");
+        let folgt = ScAnzeige::Folgt { name: None, halten: true };
+        let (_, ticker, _) = band_mit_log(&nach_dem_aufsetzen(), &folgt, Some(&eigene()), &log);
+        assert!(!ticker.contains("512"), "{ticker}");
+        let ohne_g = [eintrag(1, "Touchdown: V/S -512 fpm, G nicht gemessen", "activity.touchdown.ohne_g")];
+        let (_, ticker, _) = band_mit_log(&nach_dem_aufsetzen(), &folgt, Some(&eigene()), &ohne_g);
+        assert!(!ticker.contains("512"), "{ticker}");
+        let (_, ticker, _) = band_mit_log(&nach_dem_aufsetzen(), &ScAnzeige::WieBisher, Some(&eigene()), &log);
+        assert!(ticker.contains("Touchdown: V/S -512"), "Solo: {ticker}");
+    }
+
+    /// Befund 5: ab `blocks_on` die normale Lage, das SC-Kennzeichen bzw.
+    /// „folgt“ als Anhang. Direkt nach dem Aufsetzen wird gehalten; in
+    /// `taxi_in` mit fertiger Landung zeigt das Band „Rollen“ (das MSFS-Panel
+    /// holt dort kein Protokoll mehr, siehe Bericht).
+    #[test]
+    fn partner_am_stand_normale_lage_mit_anhang() {
+        let mit_phase = |p: &str| {
+            let mut s = nach_dem_aufsetzen();
+            s["phase"] = json!(p);
+            s
+        };
+        let folgt = ScAnzeige::Folgt { name: None, halten: true };
+        let (lage, text) = band(&mit_phase("blocks_on"), &folgt, Some(&eigene()));
+        assert_eq!(lage, Lage::AmStand);
+        assert!(text.contains("Am Stand") && text.contains("Landung des Gastgebers folgt"), "{text}");
+        let (lage, text) = band(&mit_phase("pirep_submitted"), &ScAnzeige::Gelandet(gelandet()), Some(&eigene()));
+        assert_eq!(lage, Lage::Eingereicht);
+        assert!(text.contains("SC - Landung von Juergen K."), "{text}");
+        let (lage, _) = band(&mit_phase("taxi_in"), &folgt, Some(&eigene()));
+        assert_eq!(lage, Lage::Auswertung);
+        let (lage, text) = band(&mit_phase("taxi_in"), &ScAnzeige::Gelandet(gelandet()), Some(&eigene()));
+        assert_eq!(lage, Lage::Rollen);
+        assert!(text.contains("91") && !text.contains("512"), "{text}");
+        // Gegenprobe Solo am Stand: kein Anhang
+        let (_, text) = band(&mit_phase("blocks_on"), &ScAnzeige::WieBisher, Some(&eigene()));
+        assert!(!text.contains("SC -") && !text.contains("Gastgeber"), "{text}");
+    }
+
+    /// Rate von live `null` (Webapp zeigt keine): weder 0 noch die eigene
+    /// Rate, weder im Band noch in `/panel/status` (Stream Deck).
+    #[test]
+    fn partner_ohne_rate_des_gastgebers() {
+        let mut ohne = gelandet();
+        if let ScLandung::Gelandet { landing_rate_fpm, .. } = &mut ohne {
+            *landing_rate_fpm = None;
+        }
+        let a = ScAnzeige::Gelandet(ohne);
+        let (lage, text) = band(&nach_dem_aufsetzen(), &a, Some(&eigene()));
+        assert_eq!(lage, Lage::Ergebnis);
+        assert!(text.contains("91") && text.contains("SC - Landung von"), "{text}");
+        assert!(!text.contains("512") && !text.contains("Rate\tnv0"), "{text}");
+        let mut s = nach_dem_aufsetzen();
+        crate::panel_server::sc_status_fuer_anzeige(&mut s, &a);
+        assert!(s["landing_rate_fpm"].is_null());
+        assert!(crate::panel_server::sc_debrief(&a, true).unwrap()["landing_rate_fpm"].is_null());
+    }
+
+    /// Gastgeber gelandet, Note fehlt noch: halten mit eigenem Text.
+    #[test]
+    fn partner_wartet_auf_die_note_im_band() {
+        let mut ohne = gelandet();
+        if let ScLandung::Gelandet { landing_score, .. } = &mut ohne {
+            *landing_score = None;
+        }
+        let (lage, text) = band(&nach_dem_aufsetzen(), &ScAnzeige::NoteFolgt(ohne), Some(&eigene()));
+        assert_eq!(lage, Lage::Auswertung);
+        assert!(text.contains("Bewertung des Gastgebers folgt") && !text.contains("HARD"), "{text}");
     }
 
     fn gelandet() -> ScLandung {
@@ -205,7 +307,7 @@ mod tests {
             fuehrender_pirep_id: "H1".into(),
             gastgeber_name: Some("J\u{00FC}rgen K.".into()),
             rolle_gastgeber: Some(ScRolle::PF),
-            landing_rate_fpm: -180.0,
+            landing_rate_fpm: Some(-180.0),
             landing_score: Some(91.0),
             g_force: Some(1.12),
             bounce_count: Some(0),

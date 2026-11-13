@@ -269,7 +269,7 @@ pub struct BandEingabe<'a> {
     /// Shared Cockpit (B4, nur beim Partner): in `Auswertung` statt „Landung
     /// wird ausgewertet“ (z. B. „Landung des Gastgebers folgt“), in
     /// `Ergebnis`/`Rollen` als Anhang (Kennzeichen „SC - Landung von …“).
-    /// `None` = wie bisher.
+    /// In `AmStand`/`Eingereicht` ebenfalls als Anhang. `None` = wie bisher.
     pub sc_text: Option<&'a str>,
 }
 
@@ -1370,6 +1370,12 @@ pub fn baue_band(e: &BandEingabe) -> BandFrame {
                     &mut z,
                 );
             }
+        }
+    }
+    // Shared Cockpit: ab dem Stand die normale Lage, der SC-Text als Anhang.
+    if matches!(l, Lage::AmStand | Lage::Eingereicht) {
+        if let Some(t) = e.sc_text {
+            tail = t.to_string();
         }
     }
     if !tail.is_empty() {

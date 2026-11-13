@@ -356,6 +356,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Merker unter `landungs_eingabe::sc_speicher_sperre` vor `store.upsert` und
 /// `sc_anstossen`. Sonst nichts an `lib.rs`. Tests `landungs_eingabe::tests::sc_*`,
 /// `storage` `shared_cockpit_kennzeichen_*`, vitest `scLandungUebersicht.test.tsx`.
+/// — plus Shared Cockpit B4 Pruefer-Funde 13.11.: `lib_aktivitaet.rs` waehlt fuer Ticker und
+/// `/panel/activity` ueber `aktivitaet_fuer_anzeige` (beim Partner ohne die eigene Aufsetz-Zeile,
+/// Schluessel `activity.touchdown.line`/`ohne_g`); `activity_log_tail` ersetzt durch
+/// `activity_log_tail_anzeige`. Sonst nichts an `lib.rs`. Tests
+/// `xplane_band::tests::partner_ticker_ohne_eigene_aufsetz_zeile`, `aktivitaetSchluessel.test.ts`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -366,4 +371,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "7d9bf4b4ddd15c5f3a1aa399407bca720f97be5bdbd81b75bf0942c9d780d4fb";
+const HASH_VOR_DER_ZERLEGUNG: &str = "9e024ac5730e099c035ed41578c2bd5e44d1e54872486624917c8f2eab6fb2af";
