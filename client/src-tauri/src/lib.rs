@@ -1157,6 +1157,7 @@ pub fn run() {
             hilfe::hilfe_tickets,
             modul_api::modul_api,
             landungs_eingabe::landung_nachbewertung,
+            landungs_eingabe::sc_landung_gastgeber,
             discord_rpc::discord_rpc_get_settings,
             discord_rpc::discord_rpc_set_settings,
             discord_rpc::discord_rpc_get_status,

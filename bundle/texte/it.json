@@ -1826,7 +1826,17 @@
       "title": "Campi aggiuntivi",
       "hinweis": "Campi aggiuntivi del modulo di valutazione. Vengono salvati e mostrati senza modifiche e non contano per il punteggio."
     },
-    "refuelled_in_flight": "Rifornito in volo"
+    "refuelled_in_flight": "Rifornito in volo",
+    "sc": {
+      "titel": "Atterraggio di {{name}} (Shared Cockpit)",
+      "titel_ohne": "Atterraggio dell’host (Shared Cockpit)",
+      "folgt": "L’atterraggio dell’host arriverà a breve.",
+      "sinkrate": "Rateo di discesa",
+      "punkte": "Punti",
+      "g": "Carico G",
+      "springer": "Rimbalzi",
+      "hinweis": "Nello Shared Cockpit conta l’atterraggio dell’host. La tua misurazione resta nel registro di volo."
+    }
   },
   "about": {
     "lizenz": "© {{jahr}} Thomas Kant · Software proprietario, solo per i piloti di German Sky Group. Ridistribuzione ed elusione delle restrizioni di accesso sono vietate.",
@@ -1859,7 +1869,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Shared Cockpit sulla mappa live: se voli come partner, l’aereo del tuo host non compare più accanto al tuo. Gli altri piloti vedono “Shared Cockpit” con entrambi i nomi e i ruoli nella scheda."
+    "neu_text": "Shared Cockpit sulla mappa live: se voli come partner, l’aereo del tuo host non compare più accanto al tuo. Gli altri piloti vedono “Shared Cockpit” con entrambi i nomi e i ruoli nella scheda. Nello Shared Cockpit il partner ora vede l’atterraggio dell’host; vale dal prossimo client."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
@@ -1906,7 +1916,9 @@
     "weather_briefing_hint": "Apri la pagina meteo GSG (mostra il bid attivo)",
     "notifications": "Messaggi",
     "notifications_hint": "Apri la posta in arrivo phpVMS",
-    "weather_briefing_load_hint": "Apertura nel browser — il caricamento della pagina briefing può richiedere fino a 30 s (METAR/TAF/NOTAM/dati pista in tempo reale)."
+    "weather_briefing_load_hint": "Apertura nel browser — il caricamento della pagina briefing può richiedere fino a 30 s (METAR/TAF/NOTAM/dati pista in tempo reale).",
+    "sc_partner_title": "Volo inviato (Shared Cockpit)",
+    "sc_partner_detail": "Il tuo volo verrà accreditato come volo partner non appena il volo dell’host sarà accettato."
   },
   "update": {
     "button_label": "Aggiornamento disponibile",

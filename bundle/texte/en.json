@@ -1826,7 +1826,17 @@
       "title": "Additional fields",
       "hinweis": "Additional fields from the scoring module. They are stored and shown unchanged and do not count towards the score."
     },
-    "refuelled_in_flight": "Refuelled in flight"
+    "refuelled_in_flight": "Refuelled in flight",
+    "sc": {
+      "titel": "Landing by {{name}} (Shared Cockpit)",
+      "titel_ohne": "Host’s landing (Shared Cockpit)",
+      "folgt": "The host’s landing will follow.",
+      "sinkrate": "Sink rate",
+      "punkte": "Points",
+      "g": "G-load",
+      "springer": "Bounces",
+      "hinweis": "In a Shared Cockpit the host’s landing counts. Your own measurement stays in the flight log."
+    }
   },
   "about": {
     "lizenz": "© {{jahr}} Thomas Kant · Proprietary, for German Sky Group pilots only. Redistribution and circumventing the access restriction are prohibited.",
@@ -1859,7 +1869,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "Shared Cockpit on the live map: when you fly along as partner, your host’s aircraft no longer appears next to your own. Other pilots see “Shared Cockpit” with both names and roles in the info card."
+    "neu_text": "Shared Cockpit on the live map: when you fly along as partner, your host’s aircraft no longer appears next to your own. Other pilots see “Shared Cockpit” with both names and roles in the info card. In a Shared Cockpit the partner now sees the host’s landing; takes effect with the next client."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",
@@ -1906,7 +1916,9 @@
     "weather_briefing_hint": "Open the GSG weather briefing page (shows the active bid)",
     "notifications": "Messages",
     "notifications_hint": "Open the phpVMS inbox",
-    "weather_briefing_load_hint": "Opening in your browser — the briefing page may take up to 30 s to load (METAR/TAF/NOTAMs/runway data are fetched live)."
+    "weather_briefing_load_hint": "Opening in your browser — the briefing page may take up to 30 s to load (METAR/TAF/NOTAMs/runway data are fetched live).",
+    "sc_partner_title": "Flight submitted (Shared Cockpit)",
+    "sc_partner_detail": "Your flight will be credited as a partner flight once the host’s flight has been accepted."
   },
   "update": {
     "button_label": "Update available",

@@ -76,6 +76,8 @@ import type {
   SubScoreEntry,
 } from "../lib/landungsDatensatz";
 import { DruckKontext } from "../lib/druck";
+import { istPartner, useScLandung } from "../lib/scLandung";
+import { ScGastgeberLandung } from "./ScGastgeberLandung";
 // Flugkarte (Etappe 3): erst beim Öffnen laden — deck.gl soll den Start nicht bremsen
 // Landungs-Tab: nach dieser Zeit gilt ein offener Abruf als hängend (LAN-Brücke)
 const HAENGT_MS = 60_000;
@@ -863,6 +865,8 @@ export function LandingDetail({
   // Bordbuch dieses Flugs — im Tab und im PDF (in der Live-Vorschau gibt es
   // noch keinen fertigen Eintrag).
   const bordbuch = useBordbuchEintrag(isPreview ? null : record.pirep_id);
+  // Shared Cockpit (B4): Beim Partner zählt die Landung des Gastgebers (live).
+  const sc = useScLandung(record.pirep_id, { nachfragen: true });
 
   // Personal-best comparison — best (closest to zero) landing rate
   // across ALL filed PIREPs. None when this is the only record yet.
@@ -972,17 +976,20 @@ export function LandingDetail({
         </button>
         {/* PDF und Flugkarte als eine Gruppe: die Kopfzeile verteilt ihre Teile auf die Breite */}
         <span className="landing-detail__aktionen">
-          <button
-            type="button"
-            className="landing-export"
-            onClick={() => {
-              setPrintFailed(false);
-              setPrinting(true);
-            }}
-            title={t("landing.report.button")}
-          >
-            🖨 {t("landing.report.button")}
-          </button>
+          {/* Der Bericht druckt die eigene Messung: beim Partner nicht. */}
+          {!istPartner(sc) && (
+            <button
+              type="button"
+              className="landing-export"
+              onClick={() => {
+                setPrintFailed(false);
+                setPrinting(true);
+              }}
+              title={t("landing.report.button")}
+            >
+              🖨 {t("landing.report.button")}
+            </button>
+          )}
           {!isPreview && (
             <button type="button" className="landing-export" onClick={() => setKarteOffen(true)}>
               🗺 {t("flugkarte.fenster.oeffnen")}
@@ -1034,16 +1041,20 @@ export function LandingDetail({
           und ebenso, wenn er inzwischen freigegeben wurde. */}
       {!isPreview && <PruefstatusKasten status={pruefstatus} />}
 
-      <LandungsAbschnitte
-        record={record}
-        subs={subs}
-        callsign={callsign}
-        isPreview={isPreview}
-        isNewBest={isNewBest}
-        personalBest={personalBest}
-        bordbuchEintrag={bordbuch.eintrag}
-        onBordbuchMarkieren={bordbuch.markieren}
-      />
+      {istPartner(sc) ? (
+        <ScGastgeberLandung landung={sc} />
+      ) : (
+        <LandungsAbschnitte
+          record={record}
+          subs={subs}
+          callsign={callsign}
+          isPreview={isPreview}
+          isNewBest={isNewBest}
+          personalBest={personalBest}
+          bordbuchEintrag={bordbuch.eintrag}
+          onBordbuchMarkieren={bordbuch.markieren}
+        />
+      )}
     </div>
   );
 }

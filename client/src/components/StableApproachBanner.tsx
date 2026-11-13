@@ -39,6 +39,9 @@ interface Props {
   simSnapshot: SimSnapshot | null;
   /** Settings-Toggle: Banner komplett aus. Default: ON. */
   enabled: boolean;
+  /** Shared Cockpit (B4): beim Partner kein Hartlande-Hinweis mit der
+   *  eigenen Rate; maßgeblich ist die Landung des Gastgebers. */
+  ohneHartlandung?: boolean;
 }
 
 /** FAA AC 120-71B Stable-Approach-Kriterien:
@@ -212,7 +215,7 @@ export function glideslopeScaleFactor(angleDeg: number | null | undefined): numb
     : 1;
 }
 
-export function StableApproachBanner({ activeFlight, simSnapshot, enabled }: Props) {
+export function StableApproachBanner({ activeFlight, simSnapshot, enabled, ohneHartlandung = false }: Props) {
   const { t } = useTranslation();
   const [hardLandingHint, setHardLandingHint] = useState<{ vs: number; until: number } | null>(null);
 
@@ -232,13 +235,13 @@ export function StableApproachBanner({ activeFlight, simSnapshot, enabled }: Pro
   // No timer guess: the banner only ever appears once the number is the
   // real, final one, however long that refinement actually took.
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || ohneHartlandung) return;
     if (!activeFlight.landing_score_finalized) return;
     const vs = activeFlight.landing_rate_fpm;
     if (vs != null && vs < -600) {
       setHardLandingHint({ vs, until: Date.now() + 20000 });
     }
-  }, [activeFlight.landing_score_finalized, activeFlight.landing_rate_fpm, enabled]);
+  }, [activeFlight.landing_score_finalized, activeFlight.landing_rate_fpm, enabled, ohneHartlandung]);
 
   useEffect(() => {
     if (!hardLandingHint) return;

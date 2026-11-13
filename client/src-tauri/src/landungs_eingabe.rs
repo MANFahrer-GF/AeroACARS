@@ -353,6 +353,79 @@ pub(crate) async fn landung_nachbewertung(pirep_id: String) -> Result<Option<Nac
     Ok(antwort.as_ref().and_then(nachbewertung_aus))
 }
 
+/// Rolle des Gastgebers im Shared Cockpit.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum ScRolle {
+    PF,
+    PM,
+}
+
+/// Shared Cockpit (B4, Faehigkeit `sc-landung-1`): die Landung des
+/// Gastgebers, wie live sie fuer den Partner fuehrt
+/// (`GET /api/sharedcockpit/landung/:pirep_id`). Der Client rechnet nichts
+/// nach, Client und Webapp zeigen dieselbe Landung aus einer Quelle. Die
+/// eigene Messung des Partners bleibt unberuehrt im Flugprotokoll.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum ScLandung {
+    Gelandet {
+        touchdown_id: i64,
+        fuehrender_pirep_id: String,
+        gastgeber_name: Option<String>,
+        rolle_gastgeber: Option<ScRolle>,
+        landing_rate_fpm: f64,
+        landing_score: Option<f64>,
+        g_force: Option<f64>,
+        bounce_count: Option<u32>,
+        score_text: Option<String>,
+    },
+    /// Crew bekannt, der Gastgeber ist noch nicht gelandet.
+    Ausstehend {
+        fuehrender_pirep_id: Option<String>,
+        gastgeber_name: Option<String>,
+        rolle_gastgeber: Option<ScRolle>,
+    },
+    /// Kein Partner einer Crew (auch der Gastgeber selbst): Anzeige wie bisher.
+    KeineCrew,
+}
+
+/// Antwort von live auswerten. 404 heisst „keine Crew“ (auch ein live ohne
+/// diese Route: dann bleibt ebenfalls alles wie bisher). Alles andere, was
+/// nicht dem Vertrag entspricht, ist `None` = Fehler.
+pub(crate) fn sc_landung_aus(status: u16, body: &str) -> Option<ScLandung> {
+    match status {
+        200 => serde_json::from_str::<ScLandung>(body).ok().filter(|l| *l != ScLandung::KeineCrew),
+        404 => Some(ScLandung::KeineCrew),
+        _ => None,
+    }
+}
+
+async fn sc_landung_holen(basis: &str, token: &str, pirep_id: &str) -> Option<ScLandung> {
+    let c = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .ok()?;
+    let r = c.get(format!("{basis}/api/sharedcockpit/landung/{pirep_id}")).bearer_auth(token).send().await.ok()?;
+    let status = r.status().as_u16();
+    let body = r.text().await.ok()?;
+    sc_landung_aus(status, &body)
+}
+
+/// Shared Cockpit: Landung des Gastgebers fuer den eigenen Flug `pirep_id`
+/// (Pilot-Zugang, Token bleibt in Rust). Fehler (kein Token, Netz, 5xx,
+/// unbekannte Antwort) als `sc_landung_fehler`: die Oberflaeche bleibt dann,
+/// wie sie ist.
+#[tauri::command]
+pub(crate) async fn sc_landung_gastgeber(pirep_id: String) -> Result<ScLandung, crate::UiError> {
+    if !pirep_kennung_gueltig(&pirep_id) {
+        return Err(crate::UiError::new("pirep_id_ungueltig", "PIREP-Kennung ungueltig"));
+    }
+    let fehler = || crate::UiError::new("sc_landung_fehler", "Shared-Cockpit-Landung nicht abrufbar");
+    let token = crate::live_zugang::pilot_token().ok_or_else(fehler)?;
+    sc_landung_holen(crate::live_zugang::live_basis(), &token, &pirep_id).await.ok_or_else(fehler)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,6 +459,83 @@ mod tests {
               "ergebnis": { "gesamt": 90, "gesamt_wort": "smooth", "gesamt_buchstabe": "A" } }
         ]});
         assert_eq!(nachbewertung_aus(&nur_tg), None);
+    }
+
+    #[test]
+    fn sc_landung_alle_antworten_nach_vertrag() {
+        let gelandet = r#"{"status":"gelandet","touchdown_id":4711,"fuehrender_pirep_id":"H1","gastgeber_name":"Anna B.",
+            "rolle_gastgeber":"PF","landing_rate_fpm":-200.03,"landing_score":83,"g_force":1.14,"bounce_count":0,"score_text":"acceptable"}"#;
+        assert_eq!(
+            sc_landung_aus(200, gelandet),
+            Some(ScLandung::Gelandet {
+                touchdown_id: 4711,
+                fuehrender_pirep_id: "H1".into(),
+                gastgeber_name: Some("Anna B.".into()),
+                rolle_gastgeber: Some(ScRolle::PF),
+                landing_rate_fpm: -200.03,
+                landing_score: Some(83.0),
+                g_force: Some(1.14),
+                bounce_count: Some(0),
+                score_text: Some("acceptable".into()),
+            })
+        );
+        // Nullbare Felder duerfen null sein oder fehlen.
+        let knapp = r#"{"status":"gelandet","touchdown_id":1,"fuehrender_pirep_id":"H1","gastgeber_name":null,"rolle_gastgeber":null,"landing_rate_fpm":-90,"landing_score":null}"#;
+        assert!(matches!(sc_landung_aus(200, knapp), Some(ScLandung::Gelandet { gastgeber_name: None, g_force: None, .. })));
+        let aus = r#"{"status":"ausstehend","fuehrender_pirep_id":"H1","gastgeber_name":"Anna B.","rolle_gastgeber":"PM"}"#;
+        assert_eq!(
+            sc_landung_aus(200, aus),
+            Some(ScLandung::Ausstehend {
+                fuehrender_pirep_id: Some("H1".into()),
+                gastgeber_name: Some("Anna B.".into()),
+                rolle_gastgeber: Some(ScRolle::PM),
+            })
+        );
+        assert_eq!(sc_landung_aus(200, r#"{"status":"ausstehend","fuehrender_pirep_id":null,"gastgeber_name":null,"rolle_gastgeber":null}"#),
+            Some(ScLandung::Ausstehend { fuehrender_pirep_id: None, gastgeber_name: None, rolle_gastgeber: None }));
+        assert_eq!(sc_landung_aus(404, r#"{"error":"keine_crew"}"#), Some(ScLandung::KeineCrew));
+        // Fehler: 5xx, 401, kaputte oder vertragsfremde Antworten.
+        assert_eq!(sc_landung_aus(500, gelandet), None);
+        assert_eq!(sc_landung_aus(401, ""), None);
+        assert_eq!(sc_landung_aus(200, "kein json"), None);
+        assert_eq!(sc_landung_aus(200, r#"{"status":"keine_crew"}"#), None);
+        assert_eq!(sc_landung_aus(200, r#"{"status":"gelandet","touchdown_id":1,"fuehrender_pirep_id":"H1"}"#), None);
+        assert_eq!(sc_landung_aus(200, r#"{"status":"ausstehend","rolle_gastgeber":"XX"}"#), None);
+        // Serialisiert fuer die Oberflaeche mit demselben Feld `status`.
+        assert_eq!(serde_json::to_value(ScLandung::KeineCrew).unwrap(), serde_json::json!({ "status": "keine_crew" }));
+    }
+
+    #[tokio::test]
+    async fn sc_landung_fragt_live_mit_bearer_und_eigener_nummer() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let basis = format!("http://{}", l.local_addr().unwrap());
+        let h = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut roh = Vec::new();
+            let mut puffer = [0u8; 4096];
+            while !roh.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = s.read(&mut puffer).await.unwrap();
+                roh.extend_from_slice(&puffer[..n]);
+            }
+            let body = r#"{"status":"ausstehend","fuehrender_pirep_id":"H1","gastgeber_name":"Anna B.","rolle_gastgeber":"PF"}"#;
+            let antwort = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+            s.write_all(antwort.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&roh).to_ascii_lowercase()
+        });
+        let r = sc_landung_holen(&basis, "T0K", "P9902").await;
+        assert!(matches!(r, Some(ScLandung::Ausstehend { .. })));
+        let anfrage = h.await.unwrap();
+        assert!(anfrage.starts_with("get /api/sharedcockpit/landung/p9902 "), "{anfrage}");
+        assert!(anfrage.contains("authorization: bearer t0k"), "{anfrage}");
+        // niemand hoert zu: Fehler, kein Absturz
+        let tot = {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let a = l.local_addr().unwrap();
+            drop(l);
+            format!("http://{a}")
+        };
+        assert_eq!(sc_landung_holen(&tot, "T", "P1").await, None);
     }
 
     #[test]

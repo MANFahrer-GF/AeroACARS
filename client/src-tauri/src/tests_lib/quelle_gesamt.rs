@@ -347,6 +347,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Pruefer-Funde 12.11.: `mess_anfrage` typisiert (NaN ohne Panic), Merker `messung_ohne_pin`
 /// (`FlightStats`, `lib_auto_start`, Reset in `lib_landung_abschliessen`), `vs_at_edge_quelle` aus der
 /// Messung, Wandzeit-Beleg in `lib_aufsetz_abtaster.rs`. Tests `msfs_agl_flare_tests::*`.
+/// — plus Shared Cockpit B4 13.11.: EINE Zeile im `generate_handler!`,
+/// `landungs_eingabe::sc_landung_gastgeber` (Stufe `fachlich`, nur lesen von live mit dem
+/// Pilot-Token, Faehigkeit `sc-landung-1`). Tests `landungs_eingabe::tests::sc_landung_*`,
+/// vitest `scLandung.test.tsx`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -357,4 +361,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "71209899e7adef1fa0065a7b47e4b0b97f885f375da6ee4344edb6087bf75d23";
+const HASH_VOR_DER_ZERLEGUNG: &str = "7d725f39c0e11f432c02e85a61618e0b589fc3f3c7e459d9bf9fc3fb8bd9b258";
