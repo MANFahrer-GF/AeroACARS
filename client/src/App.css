@@ -8517,6 +8517,31 @@ button.aa-livemap-events__row:hover {
   padding-top: 8px;
   border-top: 1px solid var(--line);
 }
+/* Shared Cockpit (GSG-Modul): eine Crew, zwei Piloten. Etikett als Plakette,
+   die Rollen daneben als Text. */
+.aa-vapop__sc {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--text);
+}
+.aa-vapop__sc-tag {
+  font-size: 9.5px;
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--acc);
+  background: color-mix(in srgb, var(--acc) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--acc) 45%, transparent);
+}
 
 /* ===================== Logbuch (LogbookView) ===================== */
 .aa-lb { max-width: 1500px; margin: 0 auto; width: 100%; container-type: inline-size; }

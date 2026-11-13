@@ -3777,6 +3777,7 @@
     "field_rest": "RESIDUO",
     "field_eta": "ETA",
     "field_phase": "FASE",
+    "shared_cockpit": "Shared Cockpit",
     "events_title": "EVENTI · {{callsign}}",
     "events_empty": "Ancora nessun evento.",
     "idle_rubric": "NESSUN VOLO ATTIVO",

@@ -3791,6 +3791,7 @@
     "field_rest": "REST",
     "field_eta": "ETA",
     "field_phase": "PHASE",
+    "shared_cockpit": "Shared Cockpit",
     "events_title": "EREIGNISSE · {{callsign}}",
     "events_empty": "Noch keine Ereignisse.",
     "idle_rubric": "KEIN AKTIVER FLUG",
