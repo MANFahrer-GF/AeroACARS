@@ -27,7 +27,7 @@ export function ScGastgeberLandung({ landung }: { landung: ScPartnerLandung }) {
       <h3>{titel}</h3>
       <dl>
         <dt>{t("landing.sc.sinkrate")}</dt>
-        <dd>{Math.round(landung.landing_rate_fpm)} fpm</dd>
+        <dd>{landung.landing_rate_fpm != null ? `${Math.round(landung.landing_rate_fpm)} fpm` : "--"}</dd>
         {landung.landing_score != null && (
           <>
             <dt>{t("landing.sc.punkte")}</dt>

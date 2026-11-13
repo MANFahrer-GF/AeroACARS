@@ -17,7 +17,8 @@ export type ScLandung =
       fuehrender_pirep_id: string;
       gastgeber_name: string | null;
       rolle_gastgeber: ScRolle | null;
-      landing_rate_fpm: number;
+      /** `null`/fehlend, wo die Webapp keine Rate zeigt: Anzeige `--`, nie 0. */
+      landing_rate_fpm?: number | null;
       landing_score: number | null;
       g_force: number | null;
       bounce_count: number | null;
@@ -37,6 +38,11 @@ export type ScPartnerLandung = Exclude<ScLandung, { status: "keine_crew" }>;
 export const SC_NACHFRAGE_MS = 20_000;
 /** Höchstens so viele Abfragen je Flug und Ansicht (gut 15 min). */
 export const SC_HOECHSTENS = 45;
+/** Abstand der Nachfragen, solange „gelandet“ noch ohne Note ist (live setzt
+ *  Note und angeglichene Sinkrate erst mit dem PIREP des Gastgebers). */
+export const SC_NACHFRAGE_NOTE_MS = 60_000;
+/** Höchstens so viele Abfragen ohne Note (60 min). */
+export const SC_HOECHSTENS_NOTE = 60;
 /** Fehlversuche ohne jede Antwort, danach bleibt es still wie bisher. */
 const SC_FEHLVERSUCHE = 3;
 
@@ -62,6 +68,26 @@ export function scVergessen(): void {
   letzterFlug = null;
 }
 
+/**
+ * Welcher Stand gilt nach einer neuen Antwort? Dieselbe Regel wie
+ * `sc_ersetzt` in Rust: „ausstehend“/„keine Crew“ ersetzt nie ein
+ * „gelandet“; dieselbe Landung mit Note wird nie durch eine Antwort ohne
+ * Note ersetzt; sonst gilt die neuere (Note und angeglichene Sinkrate kommen
+ * mit dem PIREP des Gastgebers, nach einem Touch-and-Go eine neue
+ * `touchdown_id`).
+ */
+export function scUebernehmen(alt: ScLandung | null, neu: ScLandung): ScLandung {
+  if (alt?.status !== "gelandet") return neu;
+  if (neu.status !== "gelandet") return alt;
+  if (alt.touchdown_id === neu.touchdown_id && alt.landing_score != null && neu.landing_score == null) return alt;
+  return neu;
+}
+
+/** Gastgeber gelandet, live führt aber noch keine Note. */
+function ohneNote(l: ScLandung | null): boolean {
+  return l?.status === "gelandet" && l.landing_score == null;
+}
+
 /** Partner einer Crew: gelandet oder ausstehend. */
 export function istPartner(l: ScLandung | null): l is ScPartnerLandung {
   return l?.status === "gelandet" || l?.status === "ausstehend";
@@ -70,7 +96,9 @@ export function istPartner(l: ScLandung | null): l is ScPartnerLandung {
 /**
  * Fragt live für den eigenen Flug `pirepId`. Mit `nachfragen` alle
  * {@link SC_NACHFRAGE_MS}, solange „ausstehend“ (höchstens
- * {@link SC_HOECHSTENS} Abfragen); „gelandet“ und „keine Crew“ beenden.
+ * {@link SC_HOECHSTENS} Abfragen), und alle {@link SC_NACHFRAGE_NOTE_MS},
+ * solange „gelandet“ noch ohne Note ist (höchstens {@link SC_HOECHSTENS_NOTE});
+ * „gelandet“ mit Note und „keine Crew“ beenden.
  * `anlass` erzwingt eine neue Abfrage (z. B. das Aufsetzen).
  * `null` = nichts bekannt, Anzeige wie bisher.
  */
@@ -85,12 +113,14 @@ export function useScLandung(
     let timer: number | undefined;
     let aufrufe = 0;
     let fehler = 0;
+    let ohneNoteAufrufe = 0;
     let letzte: ScLandung | null = null;
     const frage = async () => {
       aufrufe++;
       try {
-        const l = await invoke<ScLandung>("sc_landung_gastgeber", { pirepId });
+        const neu = await invoke<ScLandung>("sc_landung_gastgeber", { pirepId });
         if (weg) return;
+        const l = scUebernehmen(letzte ?? bekannt.get(pirepId) ?? null, neu);
         letzte = l;
         bekannt.set(pirepId, l);
         setStand({ id: pirepId, l });
@@ -98,11 +128,17 @@ export function useScLandung(
         if (weg) return;
         fehler++;
       }
-      const weiter =
-        nachfragen &&
+      if (!nachfragen) return;
+      let takt: number | null = null;
+      if (ohneNote(letzte)) {
+        if (ohneNoteAufrufe++ < SC_HOECHSTENS_NOTE) takt = SC_NACHFRAGE_NOTE_MS;
+      } else if (
         aufrufe < SC_HOECHSTENS &&
-        (letzte?.status === "ausstehend" || (letzte === null && fehler < SC_FEHLVERSUCHE));
-      if (weiter) timer = window.setTimeout(() => void frage(), SC_NACHFRAGE_MS);
+        (letzte?.status === "ausstehend" || (letzte === null && fehler < SC_FEHLVERSUCHE))
+      ) {
+        takt = SC_NACHFRAGE_MS;
+      }
+      if (takt != null) timer = window.setTimeout(() => void frage(), takt);
     };
     void Promise.resolve(invoke<{ faehigkeiten?: unknown }>("paket_info"))
       .then((i) => {

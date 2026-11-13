@@ -11,7 +11,10 @@ import deCommon from "../../../bundle/texte/de.json";
 import type { ActiveFlightInfo } from "../types";
 import type { LandingRecord } from "../lib/landungsDatensatz";
 import THY from "../lib/landungsFaelle.thy39.json";
-import { SC_HOECHSTENS, SC_NACHFRAGE_MS, scVergessen } from "../lib/scLandung";
+import {
+  SC_HOECHSTENS, SC_HOECHSTENS_NOTE, SC_NACHFRAGE_MS, SC_NACHFRAGE_NOTE_MS, scUebernehmen, scVergessen,
+  type ScLandung,
+} from "../lib/scLandung";
 
 const lage = vi.hoisted(() => ({
   faehigkeiten: ["sc-landung-1"] as string[],
@@ -64,6 +67,10 @@ const GELANDET = {
 };
 const AUSSTEHEND = { status: "ausstehend", fuehrender_pirep_id: "H1", gastgeber_name: "Anna B.", rolle_gastgeber: "PF" };
 const KEINE_CREW = { status: "keine_crew" };
+/** live beim Aufsetzen: Landung ohne Note, Sinkrate noch nicht angeglichen. */
+const OHNE_NOTE = { ...GELANDET, landing_score: null, landing_rate_fpm: -310 };
+/** Touch-and-Go: erster Aufsetzer, ältere touchdown_id. */
+const TOUCH_AND_GO = { ...GELANDET, touchdown_id: 4710, landing_score: null, landing_rate_fpm: -150 };
 
 const ruhe = () => act(async () => { await new Promise((r) => setTimeout(r, 50)); });
 
@@ -95,6 +102,24 @@ describe("Landungsansicht beim Partner", () => {
     expect(lage.aufrufe).toEqual([{ pirepId: REC.pirep_id }]);
   });
 
+  it("Rate des Gastgebers null oder fehlend: „--“, nie 0 und nie die eigene Messung", async () => {
+    const { landing_rate_fpm: _weg, ...ohneFeld } = GELANDET;
+    void _weg;
+    for (const antwort of [{ ...GELANDET, landing_rate_fpm: null }, ohneFeld]) {
+      lage.sc = [antwort];
+      const { container, unmount } = render(<LandingDetail record={REC} allRecords={[REC]} onBack={() => {}} isPreview={false} />);
+      await ruhe();
+      const karte = screen.getByTestId("sc-landung").textContent ?? "";
+      expect(karte).toContain("Landung von Anna B. (Shared Cockpit)");
+      expect(karte).toContain("--");
+      expect(karte).toContain("83 · gut");
+      expect(karte).not.toMatch(/\b0 fpm/);
+      expect(container.textContent).not.toContain("-46");
+      unmount();
+      scVergessen();
+    }
+  });
+
   it("beim erneuten Öffnen steht die Gastgeber-Landung im ersten Bild, die eigene blitzt nicht auf", async () => {
     lage.sc = [GELANDET];
     const erst = render(<LandingDetail record={REC} allRecords={[REC]} onBack={() => {}} isPreview={false} />);
@@ -120,6 +145,46 @@ describe("Landungsansicht beim Partner", () => {
     // gelandet beendet das Nachfragen
     await act(async () => { await vi.advanceTimersByTimeAsync(SC_NACHFRAGE_MS * 5); });
     expect(lage.aufrufe).toHaveLength(3);
+  });
+
+  it("gelandet ohne Note: fragt langsamer weiter, bis Note und angeglichene Sinkrate da sind", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    lage.sc = [OHNE_NOTE, OHNE_NOTE, GELANDET];
+    render(<LandingDetail record={REC} allRecords={[REC]} onBack={() => {}} isPreview />);
+    await ruhe();
+    expect(screen.getByTestId("sc-landung").textContent).toContain("-310 fpm");
+    expect(screen.getByTestId("sc-landung").textContent).not.toContain("83");
+    await act(async () => { await vi.advanceTimersByTimeAsync(SC_NACHFRAGE_MS); });
+    expect(lage.aufrufe).toHaveLength(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(SC_NACHFRAGE_NOTE_MS); });
+    expect(lage.aufrufe).toHaveLength(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(SC_NACHFRAGE_NOTE_MS); });
+    expect(lage.aufrufe).toHaveLength(3);
+    const karte = screen.getByTestId("sc-landung").textContent;
+    expect(karte).toContain("-200 fpm");
+    expect(karte).toContain("83 · gut");
+    // mit Note Schluss
+    await act(async () => { await vi.advanceTimersByTimeAsync(SC_NACHFRAGE_NOTE_MS * 5); });
+    expect(lage.aufrufe).toHaveLength(3);
+  });
+
+  it("Touch-and-Go: die neue touchdown_id ersetzt den ersten Aufsetzer", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    lage.sc = [TOUCH_AND_GO, GELANDET];
+    render(<LandingDetail record={REC} allRecords={[REC]} onBack={() => {}} isPreview />);
+    await ruhe();
+    expect(screen.getByTestId("sc-landung").textContent).toContain("-150 fpm");
+    await act(async () => { await vi.advanceTimersByTimeAsync(SC_NACHFRAGE_NOTE_MS); });
+    expect(screen.getByTestId("sc-landung").textContent).toContain("-200 fpm");
+  });
+
+  it("ohne Note höchstens SC_HOECHSTENS_NOTE weitere Abfragen", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    lage.sc = [OHNE_NOTE];
+    render(<LandingDetail record={REC} allRecords={[REC]} onBack={() => {}} isPreview />);
+    await ruhe();
+    await act(async () => { await vi.advanceTimersByTimeAsync(SC_NACHFRAGE_NOTE_MS * (SC_HOECHSTENS_NOTE + 10)); });
+    expect(lage.aufrufe).toHaveLength(1 + SC_HOECHSTENS_NOTE);
   });
 
   it("fragt bei „ausstehend“ höchstens SC_HOECHSTENS-mal", async () => {
@@ -231,5 +296,19 @@ describe("Hartlande-Hinweis beim Partner", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     rerender(<StableApproachBanner activeFlight={{ ...f }} simSnapshot={null} enabled />);
     expect((await screen.findByRole("alert")).textContent).toContain("-700");
+  });
+});
+
+describe("scUebernehmen (gleiche Regel wie sc_ersetzt in Rust)", () => {
+  const g = (o: Partial<typeof GELANDET>) => ({ ...GELANDET, ...o }) as ScLandung;
+  it("neuere Landung ersetzt, Note geht nie verloren, gelandet bleibt", () => {
+    expect(scUebernehmen(g({ landing_score: null }), g({}))).toEqual(g({}));
+    expect(scUebernehmen(g({ touchdown_id: 1, landing_score: null }), g({ touchdown_id: 2, landing_score: null })))
+      .toEqual(g({ touchdown_id: 2, landing_score: null }));
+    expect(scUebernehmen(g({}), g({ landing_score: null }))).toEqual(g({}));
+    expect(scUebernehmen(g({}), AUSSTEHEND as ScLandung)).toEqual(g({}));
+    expect(scUebernehmen(g({}), KEINE_CREW as ScLandung)).toEqual(g({}));
+    expect(scUebernehmen(null, AUSSTEHEND as ScLandung)).toEqual(AUSSTEHEND);
+    expect(scUebernehmen(AUSSTEHEND as ScLandung, g({ landing_score: null }))).toEqual(g({ landing_score: null }));
   });
 });
