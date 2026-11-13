@@ -241,6 +241,21 @@ jobs:
             cat "$RUNNER_TEMP/lauf$n.json" || true
           done
           node scripts/ui-selbsttest-auswerten.mjs "$RUNNER_TEMP/lauf1.json" "$RUNNER_TEMP/lauf2.json" "$RUNNER_OS" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Nur bei Rot unter Windows: Git-Bash meldet Ladefehler pauschal als 127.
+      # Hier den echten NTSTATUS und die fehlenden DLLs/Importe benennen.
+      - name: Startfehler benennen (Windows, nur bei Rot)
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $app = "client/src-tauri/target/debug/aeroacars-app.exe"
+          rustc -Vv
+          $p = Start-Process -FilePath $app -PassThru -Wait -NoNewWindow
+          "Exit-Code: 0x{0:X8}" -f $p.ExitCode
+          & "C:\Program Files\Git\usr\bin\ldd.exe" $app
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe | Where-Object FullName -like '*Hostx64\x64*' | Select-Object -First 1
+          & $dumpbin.FullName /dependents $app
+          & $dumpbin.FullName /imports $app | Select-String -Pattern '^\s+\S+\.dll$'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
