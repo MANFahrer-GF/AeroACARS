@@ -434,18 +434,19 @@ fn spawn_pirep_queue_worker(app: AppHandle) {
                                 q.attempt_count
                             )),
                         );
-                        // Best-effort Bid-Cleanup. v0.7.19 (QS-R1 Finding 1):
-                        // transientes Scheitern landet in pending_bid_cleanup
-                        // und wird im naechsten Tick erneut probiert.
-                        consume_bid_best_effort(
+                        // Bid-Cleanup. Befund 13.11.2026: seit dem Start
+                        // dieses PIREP kann viel Zeit vergangen sein — die
+                        // Buchung kann inzwischen einem neuen Flug (auch auf
+                        // einem anderen Geraet) gehoeren. Deshalb nicht direkt
+                        // loeschen, sondern einreihen; der Drain direkt
+                        // darunter prueft vor dem DELETE (siehe
+                        // `bid_aufraeumen_ausfuehren`). flight_id-Fallback
+                        // (v0.7.19 QS-R2 Finding 2) geht mit.
+                        bid_nach_nachreichen_einreihen(
                             &app,
-                            &client,
                             &q.pirep_id,
                             q.bid_id,
-                            // v0.7.19 (QS-R2 Finding 2): flight_id-Fallback
-                            // aus dem persistierten QueuedPirep mitgeben.
                             Some(q.flight_id.as_str()),
-                            "queued_filed",
                             Some(aktuelle_identitaet.clone()),
                         )
                         .await;

@@ -33,6 +33,52 @@ interface VaFlight {
     ias?: number;
     vs?: number;
   } | null;
+  /** Vom GSG-Modul SharedCockpit: eine laufende Crew als EIN Eintrag (Gastgeber),
+   *  der Spurtraeger-Bericht des Partners faellt aus /api/acars raus. Form
+   *  unbekannt, darum `unknown` und nur ueber `scCrew`/`scBerichte` gelesen. */
+  shared_cockpit?: unknown;
+}
+
+/** Eine Berichtsnummer aus dem Shared-Cockpit-Block: nur nichtleere Texte oder Zahlen. */
+function scNummer(v: unknown): string | null {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "string" && v.trim() !== "") return v;
+  return null;
+}
+function scObjekt(v: unknown): Record<string, unknown> | null {
+  return v != null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+function scName(v: unknown): string | null {
+  const n = scObjekt(v)?.name;
+  return typeof n === "string" && n.trim() !== "" ? n : null;
+}
+
+/** PF und PM einer Shared-Cockpit-Crew, oder `null`, wenn der Block fehlt oder
+ *  nicht passt (Rolle nicht genau PF/PM, ein Name fehlt). Der Gastgeber hat
+ *  `rolle_gastgeber`, der Partner die andere Rolle. */
+function scCrew(f: VaFlight): { pf: string; pm: string } | null {
+  const sc = scObjekt(f.shared_cockpit);
+  if (!sc) return null;
+  const rolle = sc.rolle_gastgeber;
+  if (rolle !== "PF" && rolle !== "PM") return null;
+  const gastgeber = scName(sc.gastgeber);
+  const partner = scName(sc.partner);
+  if (!gastgeber || !partner) return null;
+  return rolle === "PF" ? { pf: gastgeber, pm: partner } : { pf: partner, pm: gastgeber };
+}
+
+/** Die Berichtsnummern, unter denen dieser Eintrag auch „mein“ Flug sein kann:
+ *  Der Partner fliegt mit dem Spurtraeger-Bericht, den das Modul aus /api/acars
+ *  nimmt; sein Flugzeug steckt dann im Gastgeber-Eintrag. Braucht keine Namen. */
+function scBerichte(f: VaFlight): string[] {
+  const sc = scObjekt(f.shared_cockpit);
+  if (!sc) return [];
+  return [scNummer(sc.spur_pirep_id), scNummer(sc.partner_pirep_id)].filter((x): x is string => x != null);
+}
+
+/** Ist dieser /api/acars-Eintrag der eigene Flug (direkt oder als Shared-Cockpit-Partner)? */
+function istEigenerFlug(f: VaFlight, pirepId: string): boolean {
+  return String(f.id ?? "") === pirepId || scBerichte(f).includes(pirepId);
 }
 
 /** Eine Kollegen-Marke; `flug` und `lngLat` folgen dem letzten Abruf. */
@@ -60,6 +106,7 @@ function vaPopupHtml(f: VaFlight, eta = "—"): string {
   const cs = f.ident || [f.airline?.icao, f.flight_number].filter(Boolean).join("") || f.flight_number || "—";
   const ac = [f.aircraft?.icao, f.aircraft?.registration].filter(Boolean).join(" · ");
   const pilot = f.user?.name ?? "";
+  const sc = scCrew(f);
   const phaseTxt = f.status_text ?? "";
   // Field feedback (2026-08-03): the colored phase pill from the old popup
   // ("fand ich richtig mega") comes back exactly as it was — same
@@ -85,7 +132,11 @@ function vaPopupHtml(f: VaFlight, eta = "—"): string {
     cell(i18n.t("livemap.field_gs"), gs, " kt") +
     cell(i18n.t("livemap.field_eta"), eta) +
     `</div>` +
-    (ac ? `<div class="aa-vapop__sub">${escHtml(ac)}</div>` : "")
+    (ac ? `<div class="aa-vapop__sub">${escHtml(ac)}</div>` : "") +
+    (sc
+      ? `<div class="aa-vapop__sc"><span class="aa-vapop__sc-tag">${escHtml(i18n.t("livemap.shared_cockpit"))}</span>` +
+        `<span>PF ${escHtml(sc.pf)} · PM ${escHtml(sc.pm)}</span></div>`
+      : "")
   );
 }
 
@@ -152,9 +203,10 @@ export function useVaVerkehr({ mapRef, mapReady, sichtbar, activeFlight, bilderV
     const id = window.setTimeout(() => setFremdeRouteHinweis(null), 4000);
     return () => window.clearTimeout(id);
   }, [fremdeRouteHinweis]);
-  // VA-Flieger ohne den eigenen Flug (steckt auch in /api/acars).
+  // VA-Flieger ohne den eigenen Flug (steckt auch in /api/acars). Beim
+  // Shared-Cockpit-Partner steckt er im Gastgeber-Eintrag (`scBerichte`).
   const vaVisible = useMemo(
-    () => (showVa ? vaFlights.filter((f) => !activeFlight || String(f.id ?? "") !== activeFlight.pirep_id) : []),
+    () => (showVa ? vaFlights.filter((f) => !activeFlight || !istEigenerFlug(f, activeFlight.pirep_id)) : []),
     [showVa, vaFlights, activeFlight],
   );
 
@@ -404,7 +456,7 @@ export function useVaVerkehr({ mapRef, mapReady, sichtbar, activeFlight, bilderV
         el.innerHTML = aircraftSvg(f.aircraft?.icao);
       }
       el.style.setProperty("--ac-color", phaseColor(f.status_text ?? (f.phase != null ? String(f.phase) : null)));
-      el.title = `${f.ident ?? f.flight_number ?? "?"} · ${f.aircraft?.icao ?? ""} · ${f.dpt_airport_id ?? ""}→${f.arr_airport_id ?? ""}`;
+      el.title = `${f.ident ?? f.flight_number ?? "?"} · ${f.aircraft?.icao ?? ""} · ${f.dpt_airport_id ?? ""}→${f.arr_airport_id ?? ""}${scCrew(f) ? " · SC" : ""}`;
       const marker = marke.marker;
       marker.setLngLat(lngLat).setRotation(f.position?.heading ?? 0);
       dr.push({ marker, lat, lon, hdg: f.position?.heading ?? 0, gs: f.position?.gs ?? 0 });

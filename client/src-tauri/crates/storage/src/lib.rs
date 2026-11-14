@@ -1024,6 +1024,14 @@ pub struct LandingRecord {
     /// Zusatz.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zusatz: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Shared Cockpit (B4): Kennzeichen des Partnerflugs, die Landung des
+    /// Gastgebers so, wie live sie liefert (`GET /api/sharedcockpit/landung`,
+    /// `status` `gelandet` oder `ausstehend`, unveraendert). Die Messfelder
+    /// oben bleiben die eigene Messung; die Uebersicht zeigt diese Landung
+    /// nicht als die des Partners und zaehlt sie nirgends mit. Fehlt bei
+    /// allen anderen Fluegen (und bei Datensaetzen von vorher).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_cockpit: Option<serde_json::Value>,
 }
 
 // Lernpaket AP4/AP5: die Forensik-Structs liegen in `landing-scoring`,
@@ -2218,6 +2226,30 @@ mod deleted_landings_tombstone_tests {
             "accident_reasons": [],
         }))
         .expect("test record")
+    }
+
+    /// Shared Cockpit (B4): Alte Datensaetze ohne Feld lesen sich ohne
+    /// Kennzeichen und schreiben sich byte-gleich zurueck (kein neues Feld);
+    /// ein Kennzeichen geht ueber die Platte, die Messfelder bleiben.
+    #[test]
+    fn shared_cockpit_kennzeichen_rueckwaertsvertraeglich_und_ueber_die_platte() {
+        let alt = rec("ALT");
+        assert!(alt.shared_cockpit.is_none());
+        let v = serde_json::to_value(&alt).unwrap();
+        assert!(v.get("shared_cockpit").is_none(), "Datensatz ohne Kennzeichen bekommt kein Feld");
+
+        let dir = temp_dir();
+        let store = LandingStore::open(&dir).unwrap();
+        let mut sc = rec("SC1");
+        let kennzeichen = serde_json::json!({"status":"gelandet","touchdown_id":7,"landing_rate_fpm":-200.0});
+        sc.shared_cockpit = Some(kennzeichen.clone());
+        store.upsert(sc).unwrap();
+        store.upsert(rec("ALT")).unwrap();
+        let gelesen = store.get("SC1").unwrap().unwrap();
+        assert_eq!(gelesen.shared_cockpit, Some(kennzeichen));
+        assert_eq!(gelesen.landing_rate_fpm, Some(-236.0), "eigene Messung bleibt");
+        assert!(store.get("ALT").unwrap().unwrap().shared_cockpit.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn temp_dir() -> PathBuf {

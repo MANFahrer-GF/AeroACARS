@@ -25,6 +25,7 @@ import { VdgsPlatte, useVdgsStand } from "./VdgsBand";
 import { BordbuchHinweis } from "./bordbuch/BordbuchHinweis";
 import { BordbuchImFlug } from "./bordbuch/BordbuchImFlug";
 import { Notice } from "./ui";
+import { istPartner, letzterFlugAlsPartner, merkeFlug, useScLandung } from "../lib/scLandung";
 
 interface Props {
   session: LoginResult;
@@ -81,6 +82,16 @@ export function CockpitView({
   /** v0.12.12-dev: Wetter-Briefing-Lade-Hinweis. Erscheint beim Klick auf
    *  den 🌦-Button (5 s sichtbar) statt als permanenter Schild. */
   const [weatherLoadHint, setWeatherLoadHint] = useState(false);
+  // Shared Cockpit (B4): Ist dieser Flug der eines Partners? Gefragt beim
+  // Start und nach dem Aufsetzen; gemerkt über das Ende des Flugs hinaus
+  // (auch über Reiterwechsel), denn die Abgabe-Meldung kommt erst, wenn
+  // `activeFlight` schon null ist.
+  const sc = useScLandung(activeFlight?.pirep_id ?? null, {
+    nachfragen: false,
+    anlass: activeFlight?.landing_at ?? null,
+  });
+  if (activeFlight) merkeFlug(activeFlight.pirep_id);
+  const alsPartner = letzterFlugAlsPartner();
   useEffect(() => {
     if (!endNotice) return;
     const id = window.setTimeout(() => setEndNotice(null), 8000);
@@ -169,7 +180,13 @@ export function CockpitView({
           : "ℹ"}
       </div>
       <div className="cockpit-pirep-success__text">
-        {endNotice.kind === "filed" && (
+        {(endNotice.kind === "filed" || endNotice.kind === "filed_instead") && alsPartner && (
+          <>
+            <strong>{t("cockpit.sc_partner_title")}</strong>
+            <span>{t("cockpit.sc_partner_detail")}</span>
+          </>
+        )}
+        {endNotice.kind === "filed" && !alsPartner && (
           <>
             <strong>{t("cockpit.pirep_filed_title")}</strong>
             <span>
@@ -181,7 +198,7 @@ export function CockpitView({
             </span>
           </>
         )}
-        {endNotice.kind === "filed_instead" && (
+        {endNotice.kind === "filed_instead" && !alsPartner && (
           <>
             <strong>{t("cockpit.filed_instead_title")}</strong>
             <span>
@@ -349,6 +366,7 @@ export function CockpitView({
         activeFlight={activeFlight}
         simSnapshot={simSnapshot}
         enabled={approachAdvisoriesEnabled}
+        ohneHartlandung={istPartner(sc)}
       />
 
       {/* Bordbuch (26.09.2026): leiser Hinweis an Schlüsselstellen. Ein-/

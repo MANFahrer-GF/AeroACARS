@@ -965,9 +965,28 @@ fn panel_server_set_enabled(app: AppHandle, enabled: bool) -> Result<bool, UiErr
     Ok(enabled)
 }
 
-pub(crate) fn activity_log_tail(state: &AppState, limit: usize) -> Vec<ActivityEntry> {
+/// Shared Cockpit (B4): Auswahl fuer Ticker und `/panel/activity`. Beim
+/// Partner faellt die eigene Aufsetz-Zeile weg (die Anzeigen zeigen die
+/// Landung des Gastgebers); die naechstaeltere Zeile rueckt nach.
+pub(crate) fn aktivitaet_fuer_anzeige<'a>(
+    neueste_zuerst: impl Iterator<Item = &'a ActivityEntry>,
+    limit: usize,
+    partner: bool,
+) -> Vec<ActivityEntry> {
+    neueste_zuerst.filter(|e| !(partner && ist_aufsetz_zeile(e))).take(limit).cloned().collect()
+}
+
+/// Die eigene Aufsetz-Zeile (`touchdown_text`), am Schluessel erkannt.
+fn ist_aufsetz_zeile(e: &ActivityEntry) -> bool {
+    e.text
+        .as_ref()
+        .is_some_and(|t| matches!(t.zeile.schluessel.as_str(), "activity.touchdown.line" | "activity.touchdown.ohne_g"))
+}
+
+/// Juengste Eintraege fuer die Anzeigen (siehe `aktivitaet_fuer_anzeige`).
+pub(crate) fn activity_log_tail_anzeige(state: &AppState, limit: usize, partner: bool) -> Vec<ActivityEntry> {
     let log = state.activity_log.lock().expect("activity_log lock");
-    log.iter().rev().take(limit).cloned().collect()
+    aktivitaet_fuer_anzeige(log.iter().rev(), limit, partner)
 }
 
 /// Wipe the activity log. Useful when the pilot starts a fresh session

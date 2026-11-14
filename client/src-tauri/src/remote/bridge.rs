@@ -298,6 +298,18 @@ pub async fn dispatch(ctx: &RemoteContext, name: &str, body: &Value) -> Dispatch
                 Err(e) => Err(e),
             }
         }
+        // Shared Cockpit (B4): Landung des Gastgebers von live, Token des PCs.
+        "sc_landung_gastgeber" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct A {
+                pirep_id: String,
+            }
+            match parse_args::<A>(body) {
+                Ok(a) => from_uierr(crate::landungs_eingabe::sc_landung_gastgeber(ctx.app.clone(), a.pirep_id).await),
+                Err(e) => Err(e),
+            }
+        }
         // Laufzeit-Paket (3.0): Datendateien des geltenden Stands auch fuer
         // die LAN-Oberflaeche — nur lesen (tabellen/, texte/, grenzwerte/).
         // Dazu die Paket-Uebersicht und „Auf neues Paket pruefen“ (holt nur

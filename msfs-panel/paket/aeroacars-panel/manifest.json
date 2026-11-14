@@ -17,7 +17,7 @@
   "title": "AeroACARS Flight Review",
   "manufacturer": "AeroACARS",
   "creator": "AeroACARS",
-  "package_version": "0.13.1",
+  "package_version": "0.13.2",
   "minimum_game_version": "1.8.16",
   "minimum_compatibility_version": "8.11.0.236",
   "export_type": "Community",
@@ -29,5 +29,5 @@
       "OlderHistory": ""
     }
   },
-  "total_package_size": "102931"
+  "total_package_size": "104984"
 }

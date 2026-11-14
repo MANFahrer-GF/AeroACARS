@@ -33,6 +33,7 @@ fn datagramm_aus(e: &Value) -> String {
         port: e["port"].as_u64().unwrap() as u16,
         fehler_text: e["fehler_text"].as_str(),
         fehler_seit_ms: e["fehler_seit_ms"].as_i64(),
+        sc_text: None,
     };
     let f = baue_band(&eingabe);
     f.zu_datagramm(1, f.ruhig)
@@ -166,6 +167,7 @@ fn flug(jetzt_ms: i64) -> String {
         port: 47847,
         fehler_text: None,
         fehler_seit_ms: None,
+        sc_text: None,
     };
     let f = baue_band(&e);
     let datenzeile = f.zeilen[1].zu_text();
@@ -211,6 +213,7 @@ fn zeitzelle_ohne_ete_rotiert_nur_ueber_flt() {
         port: 1,
         fehler_text: None,
         fehler_seit_ms: None,
+        sc_text: None,
     };
     let z = baue_band(&e).zeilen[1].zu_text();
     assert!(z.contains("\tdlFLT\tnv1 h 30 min"), "{z}");
@@ -231,6 +234,7 @@ fn fehlende_felder_werden_zu_strichen_oder_fallen_weg() {
         port: 1,
         fehler_text: None,
         fehler_seit_ms: None,
+        sc_text: None,
     };
     let f = baue_band(&e);
     assert_eq!(f.lage, Lage::Ergebnis);
@@ -315,6 +319,7 @@ fn datagramm_aus_roh(e: &Value) -> String {
         port: e["port"].as_u64().unwrap() as u16,
         fehler_text: e.get("fehler_text").and_then(Value::as_str),
         fehler_seit_ms: e.get("fehler_seit_ms").and_then(Value::as_i64),
+        sc_text: None,
     };
     let f = baue_band(&eingabe);
     f.zu_datagramm(7, f.ruhig)
@@ -334,6 +339,7 @@ fn ticker_wird_gekuerzt_nicht_abgeschnitten_und_ist_ascii() {
         port: 1,
         fehler_text: None,
         fehler_seit_ms: None,
+        sc_text: None,
     };
     let z = baue_band(&e).zeilen[0].zu_text();
     // Alter n, Meldung b (error); Meldung: Umlaut ersetzt, <= 100 Zeichen, endet auf "...".

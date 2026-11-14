@@ -1,9 +1,11 @@
 /*
- * AeroACARS HUD — v3.10, 11.08.2026: Zeitzelle beruhigt — 30-s-Takt, feste Breite, weiches Ueberblenden (Pilotenbefund: 8-s-Rotation liess den Streifen "atmen" und zog den Blick ins HUD).
+ * AeroACARS HUD — v3.11, 13.11.2026: Shared Cockpit — beim Partner holt das Widget die Landung des Gastgebers neu, sobald `sc_landung_stand` in /panel/status wechselt (die Note kommt oft erst nach blocks_on), und zeigt sie auch am Stand und nach der Abgabe.
+ * v3.10, 11.08.2026: Zeitzelle beruhigt — 30-s-Takt, feste Breite, weiches Ueberblenden (Pilotenbefund: 8-s-Rotation liess den Streifen "atmen" und zog den Blick ins HUD).
  *
  * Spricht mit AeroACARS' fest eingebautem Panel-Server auf Port 47847:
  *   GET /panel/status    Flugstatus, im Sekundentakt abgefragt
- *   GET /panel/debrief   Landeprotokoll, einmal pro Landung
+ *   GET /panel/debrief   Landeprotokoll, einmal pro Landung (Shared-Cockpit-
+ *                        Partner: einmal je `sc_landung_stand`)
  *   GET /panel/activity  juengster ACARS-Log-Eintrag
  *
  * ══════════════════════════════════════════════════════════════════════
@@ -161,6 +163,7 @@
     status: null,
     debrief: null,
     debriefFuer: null,
+    debriefStand: null,  // Shared Cockpit: `sc_landung_stand` des Protokolls
     aktivitaet: null,
     aktivitaetFehlt: false,
     fehlerText: null,
@@ -510,7 +513,7 @@
       .catch(function () { anfrageLaeuft = false; });
   }
 
-  function holeDebrief(pirepId) {
+  function holeDebrief(pirepId, stand) {
     if (anfrageLaeuft) return;
     anfrageLaeuft = true;
     hole('/panel/debrief')
@@ -523,6 +526,7 @@
         if (rec == null) return;
         Z.debrief = rec;
         Z.debriefFuer = pirepId;
+        Z.debriefStand = stand == null ? null : stand;
         zeichne();
       })
       .catch(function () { anfrageLaeuft = false; });
@@ -534,11 +538,25 @@
 
   function neuerStatus(payload) {
     Z.status = payload || null;
-    if (!payload) { Z.debrief = null; Z.debriefFuer = null; }
-    /* Das Landeprotokoll GENAU EINMAL, und erst auf der Kante zu
-       'ergebnis' — vorher sind die Zahlen bekannt falsch (Feld: Rohwert
-       -770 fpm, bewerteter Wert derselben Landung -455). */
-    if (lage() === 'ergebnis' && payload && Z.debriefFuer !== payload.pirep_id) {
+    if (!payload) { Z.debrief = null; Z.debriefFuer = null; Z.debriefStand = null; }
+    if (payload && 'sc_landung_stand' in payload) {
+      /* Shared Cockpit, Partner: das Protokoll ist die Landung des
+         Gastgebers, und die Note kommt meist erst mit dessen PIREP —
+         oft in taxi_in oder nach blocks_on, also nach der Kante. Der
+         Server meldet dafuer einen Stand (Schluessel ueber genau das, was
+         /panel/debrief liefert; null = noch nichts). Geholt wird einmal
+         je neuem Stand, in jeder Lage, nie im Sekundentakt; die
+         Kantenregel unten gilt hier nicht. */
+      var stand = payload.sc_landung_stand;
+      if (stand == null) {
+        if (Z.debriefStand != null) { Z.debrief = null; Z.debriefFuer = null; Z.debriefStand = null; }
+      } else if (Z.debriefStand !== stand || Z.debriefFuer !== payload.pirep_id) {
+        holeDebrief(payload.pirep_id, stand);
+      }
+    } else if (lage() === 'ergebnis' && payload && Z.debriefFuer !== payload.pirep_id) {
+      /* Das Landeprotokoll GENAU EINMAL, und erst auf der Kante zu
+         'ergebnis' — vorher sind die Zahlen bekannt falsch (Feld: Rohwert
+         -770 fpm, bewerteter Wert derselben Landung -455). */
       holeDebrief(payload.pirep_id);
     }
     zeichne();
@@ -977,6 +995,19 @@
       K.tail.textContent = t;
       zeige(K.tail, !!t);
     }
+    /* Shared Cockpit, ab dem Stand: die Landung des Gastgebers als Zellen
+       und das Kennzeichen als Anhang (wie das X-Plane-Band). Solo: nichts,
+       die Ansicht bleibt wie bisher. */
+    var scD = (d && d.sc_kennzeichen && s && Z.debriefFuer === s.pirep_id) ? d : null;
+    function scNote() {
+      return scD ? ['Note', scD.score_numeric != null ? String(scD.score_numeric) : '--'] : null;
+    }
+    function scRate() {
+      return scD ? ['Rate', zahl(scD.landing_rate_fpm, 0) || '--'] : null;
+    }
+    function scAnhang() {
+      if (scD) anhang(nurAscii(scD.sc_kennzeichen));
+    }
 
     switch (l) {
       case 'getrennt':
@@ -1090,9 +1121,12 @@
       case 'amStand':
         lageText('Am Stand');
         setzeZellen([
+          scNote(),
+          scRate(),
           ['Block an', uhrzeitZ(s.block_on_at)],
           ['Blockzeit', verstrichen(s.block_off_at)],
         ]);
+        scAnhang();
         break;
 
       case 'eingereicht': {
@@ -1103,7 +1137,10 @@
         lageText(sauber ? 'PIREP eingereicht' : 'PIREP wartet', sauber ? 'aa2-g' : 'aa2-w');
         setzeZellen([sauber
           ? ['Gesendet', 'OK']
-          : ['Offen', String(s.queued_position_count || 0)]]);
+          : ['Offen', String(s.queued_position_count || 0)],
+          scNote(),
+          scRate()]);
+        scAnhang();
         break;
       }
     }

@@ -162,6 +162,7 @@
     "allow-pmdg-status",
     "allow-remote-server-status",
     "allow-remote-server-stop",
+    "allow-sc-landung-gastgeber",
     "allow-set-auto-file-enabled",
     "allow-set-minimize-to-tray",
     "allow-set-simbrief-settings",

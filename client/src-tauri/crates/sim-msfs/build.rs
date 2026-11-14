@@ -39,8 +39,12 @@ fn main() {
     // Copy SimConnect.dll into OUT_DIR (where the linker looks) AND
     // — critically for runtime — into the directory that holds the
     // final binary. Cargo doesn't expose that path directly, so we
-    // climb three levels out of OUT_DIR:
-    //   target/<profile>/build/<crate>-<hash>/out  →  target/<profile>
+    // take the parent of the `build` ancestor of OUT_DIR:
+    //   target/<profile>/build/<crate>-<hash>/out    (Cargo <= 1.99)
+    //   target/<profile>/build/<crate>/<hash>/out    (Cargo 1.100)
+    //   → target/<profile>
+    // Eine feste Tiefe (frueher `ancestors().nth(3)`) landete mit 1.100
+    // in `target/<profile>/build`; die exe startete dann mit 0xC0000135.
     // That's where the aeroacars-app.exe lives during `cargo run`,
     // so the OS loader will find SimConnect.dll next to it.
     for file in &["SimConnect.dll", "SimConnect.lib"] {
@@ -50,10 +54,10 @@ fn main() {
             eprintln!("warning: could not copy {file} to OUT_DIR: {e}");
         }
     }
-    if let Some(target_dir) = out_path.ancestors().nth(3)
-    // ancestors yields self, so skip(0)→OUT_DIR, skip(1)→out's parent, etc.
-    // We want target/<profile>; that's three levels up from the
-    // ".../build/<crate>-<hash>/out" leaf.
+    if let Some(target_dir) = out_path
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "build"))
+        .and_then(|p| p.parent())
     {
         let dll_dst = target_dir.join("SimConnect.dll");
         match std::fs::copy(lib_dir.join("SimConnect.dll"), &dll_dst) {

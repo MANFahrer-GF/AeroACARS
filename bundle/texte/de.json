@@ -1826,7 +1826,20 @@
       "title": "Zusatzfelder",
       "hinweis": "Zusatzfelder des Bewertungsmoduls. Sie werden unverändert gespeichert und angezeigt, zählen aber nicht zur Note."
     },
-    "refuelled_in_flight": "In der Luft nachgetankt"
+    "refuelled_in_flight": "In der Luft nachgetankt",
+    "sc": {
+      "titel": "Landung von {{name}} (Shared Cockpit)",
+      "titel_ohne": "Landung des Gastgebers (Shared Cockpit)",
+      "folgt": "Landung des Gastgebers folgt.",
+      "sinkrate": "Sinkrate",
+      "punkte": "Punkte",
+      "g": "G-Last",
+      "springer": "Springer",
+      "hinweis": "Im Shared Cockpit zählt die Landung des Gastgebers. Deine eigene Messung bleibt im Flugprotokoll.",
+      "landung_von": "Shared Cockpit · Landung von {{name}}",
+      "landung_gastgeber": "Shared Cockpit · Landung des Gastgebers",
+      "ov_subtitle": "letzte {{eigene}} + {{sc}} Shared Cockpit · aus dem Recorder"
+    }
   },
   "about": {
     "lizenz": "© {{jahr}} Thomas Kant · Proprietär, nur für Piloten der German Sky Group. Weitergabe und Umgehung der Zugangsbeschränkung sind untersagt.",
@@ -1859,7 +1872,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Im Reiter „Flug“ siehst du jetzt die Bordbuch-Checkliste des laufenden Flugs direkt unter dem Flug. Ein Klick klappt sie zu."
+    "neu_text": "Im Reiter „Flug“ siehst du jetzt die Bordbuch-Checkliste des laufenden Flugs direkt unter dem Flug. Ein Klick klappt sie zu. Shared Cockpit in der Livekarte: Fliegst du als Partner mit, erscheint das Flugzeug deines Gastgebers nicht mehr zusätzlich neben deinem eigenen. Andere Piloten sehen im Kärtchen „Shared Cockpit“ mit beiden Namen und Rollen. Im Shared Cockpit sieht der Partner jetzt die Landung des Gastgebers, in der Landeanzeige, im Simulator (Panel, Flow-Widget, X-Plane-Band, Stream Deck) und in der Landungsübersicht mit „SC“; dort zählt der Partnerflug nicht in Durchschnitt und Bestwert. Wirkt ab dem nächsten Client."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",
@@ -1906,7 +1919,9 @@
     "weather_briefing_hint": "Wetter-Briefing auf der GSG-Seite öffnen (zeigt den aktiven Bid)",
     "notifications": "Nachrichten",
     "notifications_hint": "phpVMS-Posteingang öffnen",
-    "weather_briefing_load_hint": "Wird im Browser geöffnet — das Laden der Briefing-Seite kann bis zu 30 s dauern (METAR/TAF/NOTAMs/Bahn-Daten werden live geholt)."
+    "weather_briefing_load_hint": "Wird im Browser geöffnet — das Laden der Briefing-Seite kann bis zu 30 s dauern (METAR/TAF/NOTAMs/Bahn-Daten werden live geholt).",
+    "sc_partner_title": "Flug abgegeben (Shared Cockpit)",
+    "sc_partner_detail": "Dein Flug wird als Partnerflug gutgeschrieben, sobald der Flug des Gastgebers angenommen ist."
   },
   "update": {
     "button_label": "Update verfügbar",
@@ -2217,6 +2232,8 @@
       "cleaned_detail": "PIREP {{pirep}} serverseitig gecancelt (Selbstheilung beim Flugstart)",
       "cancelled": "Verwaister Flug abgebrochen — PIREP {{pirep}}",
       "cancelled_detail": "PIREP gecancelt, Bid {{bid}} entfernt, lokale Warteschlangen bereinigt.",
+      "bid_bleibt_laufend": "PIREP gecancelt. Die Buchung bleibt bestehen: Auf diesem Flug läuft gerade ein anderer Flug von dir (eventuell auf einem anderen Gerät).",
+      "bid_bleibt_unpruefbar": "PIREP gecancelt. Die Buchung bleibt vorerst bestehen, weil der Server nicht bestätigen konnte, dass auf diesem Flug kein anderer Flug von dir läuft. Du kannst sie auf der Webseite löschen.",
       "forgotten": "Verwaister Flug lokal vergessen — PIREP {{pirep}}",
       "forgotten_detail": "Keine Server-Anfrage gemacht. PIREP-Status auf phpVMS unverändert."
     },
@@ -3791,6 +3808,7 @@
     "field_rest": "REST",
     "field_eta": "ETA",
     "field_phase": "PHASE",
+    "shared_cockpit": "Shared Cockpit",
     "events_title": "EREIGNISSE · {{callsign}}",
     "events_empty": "Noch keine Ereignisse.",
     "idle_rubric": "KEIN AKTIVER FLUG",

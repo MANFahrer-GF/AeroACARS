@@ -56,12 +56,15 @@ const CLIENT = resolve(HIER, "..", "client", "src");
 // Mac liegt sie als `aeroacars-live-v3` neben `aeroacars-live` (main = 2.x);
 // gegen die 2.x-Webapp zu prüfen hiesse, zwei Fassungen zu vergleichen, die
 // gar nicht gleich sein sollen. `ANZEIGE_SYNC_WEBAPP` legt den Ort fest.
+//
+// 13.11.2026: live.kant.ovh rollt `main` aus (`vps/ausrollen.sh`), der
+// Webapp-Zweig `v3` steht seit 07.11. und fehlte Schlüssel, die live längst
+// hat. Verglichen wird darum mit `aeroacars-live` (main), der live laufenden
+// Webapp.
 const NEBENAN = resolve(HIER, "..", "..");
 export const WEBAPP = process.env.ANZEIGE_SYNC_WEBAPP
   ? resolve(process.env.ANZEIGE_SYNC_WEBAPP)
-  : existsSync(resolve(NEBENAN, "aeroacars-live-v3", "webapp", "src"))
-    ? resolve(NEBENAN, "aeroacars-live-v3", "webapp", "src")
-    : resolve(NEBENAN, "aeroacars-live", "webapp", "src");
+  : resolve(NEBENAN, "aeroacars-live", "webapp", "src");
 
 /** Die Dateien der Anzeige. Der Abhängigkeitsbaum ist geschlossen. */
 export const DATEIEN = [

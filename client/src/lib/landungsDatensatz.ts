@@ -14,6 +14,7 @@ import type { GatePunkt } from "./stableGate";
 import type { AnflugWind } from "./anflugWind";
 import type { Grenzen } from "./bewertungsGrenzen";
 import type { SollbandPunkt } from "./anflugSollband";
+import type { ScPartnerLandung } from "./scLandung";
 
 /** Kategorie der Gesamtnote (Rust `aggregate_score_label`). */
 export type LandingCategory = "smooth" | "acceptable" | "firm" | "hard" | "severe";
@@ -350,6 +351,11 @@ export interface LandingRecord {
    *  unveraendert gespeichert (hoechstens 16 KB). Nur Anzeige. Fehlt bei
    *  2.x-Datensaetzen und Modulen ohne Zusatz. */
   zusatz?: Record<string, unknown> | null;
+  /** Shared Cockpit (B4): Partnerflug, die Landung des Gastgebers von live
+   *  (`gelandet`/`ausstehend`, unverändert). Die Messfelder bleiben die eigene
+   *  Messung; die Übersicht zeigt sie nicht und zählt den Flug nirgends mit.
+   *  Fehlt bei allen anderen Flügen. */
+  shared_cockpit?: ScPartnerLandung | null;
 
   /** Lernpaket AP4 (29.09.2026): geometrische Gleitpfad-Abweichung mit
    *  Quelle — reine Forensik, keine Note. Fehlt bei älteren Landungen. */

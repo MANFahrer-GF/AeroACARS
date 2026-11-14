@@ -1,7 +1,7 @@
 # AeroACARS Flow-Pro-Widget — Quelldateien
 
 Die drei Quelldateien des In-Sim-HUD fuer **Flow Pro** (parallel42).
-Stand: **v3.8** (dekodiertes METAR vom Server, v1.5.2+).
+Stand: **v3.11** (Shared Cockpit: Landung des Gastgebers je `sc_landung_stand` neu geholt, v3.8: dekodiertes METAR vom Server).
 
 | Datei | Zweck |
 |---|---|

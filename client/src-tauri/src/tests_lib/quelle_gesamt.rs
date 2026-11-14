@@ -347,6 +347,26 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Pruefer-Funde 12.11.: `mess_anfrage` typisiert (NaN ohne Panic), Merker `messung_ohne_pin`
 /// (`FlightStats`, `lib_auto_start`, Reset in `lib_landung_abschliessen`), `vs_at_edge_quelle` aus der
 /// Messung, Wandzeit-Beleg in `lib_aufsetz_abtaster.rs`. Tests `msfs_agl_flare_tests::*`.
+/// — plus Shared Cockpit B4 13.11.: EINE Zeile im `generate_handler!`,
+/// `landungs_eingabe::sc_landung_gastgeber` (Stufe `fachlich`, nur lesen von live mit dem
+/// Pilot-Token, Faehigkeit `sc-landung-1`). Tests `landungs_eingabe::tests::sc_landung_*`,
+/// vitest `scLandung.test.tsx`.
+/// — plus Shared Cockpit B4 Landung 13.11.: im Literal von `build_landing_record`
+/// `shared_cockpit: None`, in `record_landing_for_filed_flight` das Kennzeichen aus dem
+/// Merker unter `landungs_eingabe::sc_speicher_sperre` vor `store.upsert` und
+/// `sc_anstossen`. Sonst nichts an `lib.rs`. Tests `landungs_eingabe::tests::sc_*`,
+/// `storage` `shared_cockpit_kennzeichen_*`, vitest `scLandungUebersicht.test.tsx`.
+/// — plus Shared Cockpit B4 Pruefer-Funde 13.11.: `lib_aktivitaet.rs` waehlt fuer Ticker und
+/// `/panel/activity` ueber `aktivitaet_fuer_anzeige` (beim Partner ohne die eigene Aufsetz-Zeile,
+/// Schluessel `activity.touchdown.line`/`ohne_g`); `activity_log_tail` ersetzt durch
+/// `activity_log_tail_anzeige`. Sonst nichts an `lib.rs`. Tests
+/// `xplane_band::tests::partner_ticker_ohne_eigene_aufsetz_zeile`, `aktivitaetSchluessel.test.ts`.
+/// — plus Bid-Aufraeumen nur fuer den eigenen Bid 13.11.: `bid_aufraeum_entscheidung` und
+/// `bid_gehoert_laufendem_flug` in `drain_pending_bid_cleanup` und `flight_cancel_orphan`, Orphan-Zuordnung
+/// nur fuer vor dem PIREP angelegte Buchungen. Tests `bid_aufraeum_entscheidung_tests::*`, `api-client` `delete_bid_tests::*`.
+/// Nachbesserung 13.11.: einzige Loeschstelle `bid_aufraeumen_ausfuehren` (Entscheidung, lokale Sperre inkl.
+/// `flight_setup_in_progress`, eigene IN_PROGRESS-PIREPs vom Server unmittelbar vor `delete_bid`), `queued_filed`
+/// reiht ein statt direkt zu loeschen. Tests `bid_aufraeum_entscheidung_tests::ablauf::*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -357,4 +377,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "71209899e7adef1fa0065a7b47e4b0b97f885f375da6ee4344edb6087bf75d23";
+const HASH_VOR_DER_ZERLEGUNG: &str = "824a39ecd71ed7a7e10ffdb797543a573af13cff2721b0767d96e4568aefdd34";
