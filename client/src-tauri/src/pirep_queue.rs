@@ -34,7 +34,7 @@
         pub attempt_count: u32,
         pub last_error: Option<String>,
         /// v0.7.19 (QS-R2 Finding 2): phpVMS-Flight-ID als Fallback fuer
-        /// `delete_bid` wenn der bid_id-Pfad 400/404/422 liefert. Leer-
+        /// `delete_bid` wenn der bid_id-Pfad 400/422 liefert. Leer-
         /// String fuer pre-v0.7.7-Resume-Files; wird beim Aufruf als
         /// None behandelt. #[serde(default)] damit alte queued-PIREPs
         /// (vor diesem Feld) weiter laden.

@@ -993,6 +993,11 @@ pub struct Bid {
     #[serde(deserialize_with = "de_str_or_int")]
     pub flight_id: String,
     pub flight: Flight,
+    /// Anlagezeit der Buchung (phpVMS `parent::toArray`, ISO-8601 UTC).
+    /// Unterscheidet beim Aufraeumen eines alten Flugs dessen Buchung von
+    /// einer neueren auf derselben `flight_id`.
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 // ---- PIREP lifecycle types ----
@@ -1358,6 +1363,10 @@ pub struct PirepFull {
     pub arr_airport_id: Option<String>,
     #[serde(default)]
     pub flight_time: Option<i32>,
+    /// Anlagezeit des PIREP (Prefile), ISO-8601 UTC — Vergleichszeit fuer
+    /// die Buchung beim Aufraeumen ohne `bid_id` (Serveruhr gegen Serveruhr).
+    #[serde(default)]
+    pub created_at: Option<String>,
     // `distance` intentionally omitted — phpVMS sometimes returns it as
     // a `{value, unit}` object (e.g. on `/api/pireps/{id}`) and sometimes
     // as a bare `f64` (other endpoints), and we don't need it for any
@@ -2080,23 +2089,28 @@ impl Client {
     /// ruft `removeBid()` auf eine bereits entfernte Buchung und bekommt 200,
     /// ohne etwas zu tun. Zwei Anfragen ohne Wirkung, je abgeschicktem Flug.
     ///
-    /// **Warum das trotzdem so bleibt:** ein 404 auf DELETE ließe sich als
-    /// „schon weg, Ziel erreicht" werten und der zweite Versuch sparen — aber
-    /// 404 heißt auf demselben Pfad auch „diesen Endpunkt gibt es hier nicht".
-    /// Beide sind von außen nicht sicher zu unterscheiden, und die zweite
-    /// Bedeutung stillschweigend als Erfolg zu verbuchen würde einen kaputten
-    /// Endpunkt verdecken. Zwei wirkungslose Anfragen sind der billigere
-    /// Fehler. Der Aufruf selbst wird ohnehin gebraucht — beim Zurückgeben
-    /// einer Buchung OHNE Flugbericht feuert `PirepFiled` nicht.
+    /// **Seit 13.11.2026 ist ein 404 auf `bid_id` „erledigt", ohne Rückfall.**
+    /// Der Rückfall war nicht nur wirkungslos, sondern gefährlich: phpVMS
+    /// `removeBid()` löscht ALLE Buchungen des Piloten auf diesem Flug. Hat
+    /// der Pilot denselben Flug inzwischen neu gebucht, traf ein später
+    /// Aufräumversuch (`drain_pending_bid_cleanup`) die NEUE Buchung, und ab
+    /// GSG CoreFixes 1.12.6 bricht der Server dabei auch einen laufenden
+    /// PIREP am Boden auf diesem Flug ab. Die frühere Sorge, 404 könne auch
+    /// „Endpunkt fehlt" heißen, trägt nicht: `GET /api/user/bids` läuft über
+    /// dieselbe Route, und ein VA-Install ohne DELETE antwortet 405. Der
+    /// Aufruf selbst wird weiter gebraucht — beim Zurückgeben einer Buchung
+    /// OHNE Flugbericht feuert `PirepFiled` nicht.
     ///
     /// phpVMS routes ALL bid CRUD through `/api/user/bids` (kein `{id}` im
     /// Pfad). Die ID reist im JSON-Body als `{ "bid_id": ... }` ODER
     /// `{ "flight_id": ... }`. v0.7.18 (B-011) erlaubt beide Eingaben.
     ///
     /// **Body-Auswahl-Reihenfolge** (siehe Spec §B-011 Backend-API):
-    ///   - `bid_id` Some → erster Versuch `{ bid_id }`.
+    ///   - `bid_id` Some → erster Versuch `{ bid_id }`. 404 → erledigt.
     ///     Bei 422/400 UND `flight_id` Some → zweiter Versuch
-    ///     `{ flight_id }`.
+    ///     `{ flight_id }`. Wer `flight_id` mitgibt, muss vorher geklärt
+    ///     haben, dass auf diesem Flug keine neuere eigene Buchung liegt
+    ///     (siehe `bid_aufraeum_entscheidung` im Client).
     ///   - `bid_id` None, `flight_id` Some → direkt `{ flight_id }`.
     ///   - beide None → `ApiError::InvalidUrl` (Caller-Bug).
     ///
@@ -2133,16 +2147,15 @@ impl Client {
         //
         // v0.7.18 (B-011): Signatur akzeptiert beide IDs als Option.
         // Aufruf-Logik:
-        //   - bid_id Some → erster Versuch `{ bid_id }`. Bei 400/404/422
-        //     UND flight_id Some → zweiter Versuch `{ flight_id }`.
+        //   - bid_id Some → erster Versuch `{ bid_id }`. 404 → erledigt.
+        //     Bei 400/422 UND flight_id Some → zweiter Versuch `{ flight_id }`.
         //   - bid_id None, flight_id Some → direkt `{ flight_id }`.
         //   - beide None → InvalidUrl-Error (Caller-Bug).
         //
-        // v0.7.18 (R2-2): 404 in den Fallback aufgenommen. Wenn die VA
-        // den bid_id-Wert serverseitig schon nicht mehr kennt (verwaister
-        // PIREP, Bid wurde manuell gedroppt etc.), liefert phpVMS 404 statt
-        // 422. Der flight_id-Pfad ist dann der einzige Weg den Bid zu
-        // droppen — genau der Orphan-Cleanup-Fall den B-011 fixt.
+        // v0.7.18 (R2-2) nahm 404 in den Fallback auf; 13.11.2026 wieder
+        // heraus: `Bid::findOrFail` liefert 404, wenn die Buchung weg ist —
+        // genau das Ziel. Der flight_id-Rueckfall haette dann eine NEUERE
+        // Buchung desselben Flugs geloescht (siehe Doc-Kommentar oben).
         //
         // Manche VAs liefern in `PirepSummary` kein `bid_id`, dann ist
         // der flight_id-Pfad der einzige Weg den Bid serverseitig zu
@@ -2171,11 +2184,16 @@ impl Client {
                 .await
                 .map_err(ApiError::from)?;
             let status = response.status();
-            // Bei 400/404/422 (Validation-Fehler oder „bid nicht gefunden"
-            // vom phpVMS-Plugin) und wenn ein flight_id-Fallback verfuegbar
-            // ist: Versuch 2. Bei allen anderen Status-Codes (inkl. 2xx)
-            // durch check_status laufen lassen.
-            if matches!(status.as_u16(), 400 | 404 | 422) && flight_id.is_some() {
+            // 404: Buchung schon weg → erledigt, KEIN Rueckfall.
+            // Bei 400/422 (Validation-Fehler vom VA-Plugin) und wenn ein
+            // flight_id-Fallback verfuegbar ist: Versuch 2. Bei allen anderen
+            // Status-Codes (inkl. 2xx) durch check_status laufen lassen.
+            if status.as_u16() == 404 {
+                tracing::info!(bid_id, "delete_bid: Buchung schon weg (404) — erledigt");
+                let _ = response.text().await;
+                return Ok(());
+            }
+            if matches!(status.as_u16(), 400 | 422) && flight_id.is_some() {
                 tracing::info!(
                     bid_id,
                     status = status.as_u16(),
@@ -4354,5 +4372,110 @@ mod fleet_blaettern_tests {
         });
         assert_eq!(flotte(&basis).len(), 105);
         assert_eq!(zahl.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[cfg(test)]
+mod delete_bid_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    /// Server, der jede Anfrage mit `antwort(body)` beantwortet (Status-Code)
+    /// und alle Bodys mitschreibt. Liest bis `Content-Length` erfuellt ist —
+    /// beim DELETE mit JSON kann der Body in einem zweiten Paket kommen.
+    fn server(antwort: impl Fn(&str) -> u16 + Send + 'static) -> (String, Arc<Mutex<Vec<String>>>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let adresse = format!("http://{}", l.local_addr().unwrap());
+        let bodys = Arc::new(Mutex::new(Vec::new()));
+        let b = bodys.clone();
+        std::thread::spawn(move || {
+            for s in l.incoming() {
+                let Ok(mut s) = s else { break };
+                let mut daten = Vec::new();
+                let mut puffer = [0u8; 8192];
+                let body = loop {
+                    let n = s.read(&mut puffer).unwrap_or(0);
+                    daten.extend_from_slice(&puffer[..n]);
+                    let text = String::from_utf8_lossy(&daten).to_string();
+                    if let Some(ende) = text.find("\r\n\r\n") {
+                        let laenge: usize = text[..ende]
+                            .lines()
+                            .find_map(|z| {
+                                let (k, v) = z.split_once(':')?;
+                                k.eq_ignore_ascii_case("content-length").then(|| v.trim().parse().ok())?
+                            })
+                            .unwrap_or(0);
+                        if daten.len() >= ende + 4 + laenge || n == 0 {
+                            break text[ende + 4..].to_string();
+                        }
+                    } else if n == 0 {
+                        break String::new();
+                    }
+                };
+                let status = antwort(&body);
+                b.lock().unwrap().push(body);
+                let antwort_body = r#"{"data":[]}"#;
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{antwort_body}",
+                    antwort_body.len()
+                );
+            }
+        });
+        (adresse, bodys)
+    }
+
+    fn loeschen(basis: &str, bid_id: Option<i64>, flight_id: Option<&str>) -> Result<(), ApiError> {
+        let client = Client::new(Connection::new(basis, "test").unwrap()).unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(client.delete_bid(bid_id, flight_id))
+    }
+
+    /// Der Fehler: alter Aufraeum-Eintrag, die alte Buchung ist schon weg
+    /// (404 auf `bid_id`), der Pilot hat denselben Flug neu gebucht. Der
+    /// `flight_id`-Rueckfall haette die NEUE Buchung geloescht (phpVMS
+    /// `removeBid` raeumt alle Buchungen des Piloten auf diesem Flug).
+    #[test]
+    fn bid_id_404_ist_erledigt_ohne_flight_id_rueckfall() {
+        let (basis, bodys) = server(|body| if body.contains("bid_id") { 404 } else { 200 });
+        assert!(loeschen(&basis, Some(4711), Some("flug-a")).is_ok());
+        let bodys = bodys.lock().unwrap();
+        assert_eq!(bodys.len(), 1, "nur der bid_id-Versuch: {bodys:?}");
+        assert!(bodys[0].contains("\"bid_id\":4711"));
+        assert!(!bodys.iter().any(|b| b.contains("flight_id")), "{bodys:?}");
+    }
+
+    /// VA-Install lehnt den `bid_id`-Body ab (422): der Rueckfall bleibt.
+    #[test]
+    fn bid_id_422_nimmt_flight_id_rueckfall() {
+        let (basis, bodys) = server(|body| if body.contains("bid_id") { 422 } else { 200 });
+        assert!(loeschen(&basis, Some(4711), Some("flug-a")).is_ok());
+        let bodys = bodys.lock().unwrap();
+        assert_eq!(bodys.len(), 2, "{bodys:?}");
+        assert!(bodys[1].contains("\"flight_id\":\"flug-a\""));
+    }
+
+    /// Berechtigter Orphan-Fall ohne `bid_id`: direkt per `flight_id`.
+    #[test]
+    fn nur_flight_id_loescht_direkt() {
+        let (basis, bodys) = server(|_| 200);
+        assert!(loeschen(&basis, None, Some("flug-a")).is_ok());
+        let bodys = bodys.lock().unwrap();
+        assert_eq!(bodys.len(), 1);
+        assert!(bodys[0].contains("\"flight_id\":\"flug-a\""));
+    }
+
+    /// 422 ohne erlaubten Rueckfall bleibt ein Fehler (Eintrag wird spaeter
+    /// erneut versucht).
+    #[test]
+    fn bid_id_422_ohne_flight_id_ist_fehler() {
+        let (basis, bodys) = server(|_| 422);
+        assert!(loeschen(&basis, Some(4711), None).is_err());
+        assert_eq!(bodys.lock().unwrap().len(), 1);
     }
 }

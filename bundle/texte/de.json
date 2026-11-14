@@ -2232,6 +2232,8 @@
       "cleaned_detail": "PIREP {{pirep}} serverseitig gecancelt (Selbstheilung beim Flugstart)",
       "cancelled": "Verwaister Flug abgebrochen — PIREP {{pirep}}",
       "cancelled_detail": "PIREP gecancelt, Bid {{bid}} entfernt, lokale Warteschlangen bereinigt.",
+      "bid_bleibt_laufend": "PIREP gecancelt. Die Buchung bleibt bestehen: Auf diesem Flug läuft gerade ein anderer Flug von dir (eventuell auf einem anderen Gerät).",
+      "bid_bleibt_unpruefbar": "PIREP gecancelt. Die Buchung bleibt vorerst bestehen, weil der Server nicht bestätigen konnte, dass auf diesem Flug kein anderer Flug von dir läuft. Du kannst sie auf der Webseite löschen.",
       "forgotten": "Verwaister Flug lokal vergessen — PIREP {{pirep}}",
       "forgotten_detail": "Keine Server-Anfrage gemacht. PIREP-Status auf phpVMS unverändert."
     },

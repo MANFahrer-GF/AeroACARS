@@ -2232,6 +2232,8 @@
       "cleaned_detail": "PIREP {{pirep}} annullato sul server (autoriparazione all'avvio del volo)",
       "cancelled": "Volo orfano annullato — PIREP {{pirep}}",
       "cancelled_detail": "PIREP annullato, bid {{bid}} rimosso, code locali ripulite.",
+      "bid_bleibt_laufend": "PIREP annullato. La prenotazione resta: su questo volo è in corso un altro tuo volo (forse su un altro dispositivo).",
+      "bid_bleibt_unpruefbar": "PIREP annullato. Per ora la prenotazione resta, perché il server non ha potuto confermare che su questo volo non sia in corso un altro tuo volo. Puoi eliminarla sul sito web.",
       "forgotten": "Volo orfano dimenticato localmente — PIREP {{pirep}}",
       "forgotten_detail": "Nessuna richiesta al server. Stato del PIREP su phpVMS invariato."
     },
