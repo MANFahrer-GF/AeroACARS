@@ -1266,9 +1266,21 @@ fn worker_loop(shared: Arc<Shared>, stop: Arc<AtomicBool>, kind: SimKind) {
                 // UND Kennung, weil die Kennung im Buch liegt — es gibt
                 // keine Reihenfolge mehr, die schiefgehen koennte.
                 shared.szenerie.lock().verbindung_zuruecksetzen();
-                if let Err(e) = conn.register_telemetry(&haupt_ausgelassen) {
-                    set_error(&shared, format!("RegisterDataDefinition failed: {e}"));
-                    tracing::error!(error = %e, "register_telemetry failed");
+                // ⚠ Reisst die Verbindung beim Registrieren ab (MSFS beendet
+                // sich), EINE Zeile und neu verbinden — ohne Touchdown,
+                // Optionale, Facility und Anfrage, die alle ebenso
+                // scheitern wuerden. `haupt_ausgelassen` bleibt, wie es
+                // war: Die gescheiterten Felder sind keine Ablehnung.
+                if let Err(a) = conn.register_telemetry(&haupt_ausgelassen) {
+                    set_error(
+                        &shared,
+                        format!("SimConnect-Verbindung beim Registrieren abgerissen (HRESULT 0x{:08X})", a.hr),
+                    );
+                    tracing::warn!(
+                        hr = format!("0x{:08X}", a.hr),
+                        versucht = a.versucht,
+                        "SimConnect-Verbindung beim Registrieren abgerissen — verbinde neu"
+                    );
                     drop(conn);
                     sleep_or_stop(&stop, Duration::from_secs(2));
                     continue;
@@ -2853,7 +2865,7 @@ impl Connection {
     }
 
     /// Register every entry in `TELEMETRY_FIELDS` in order.
-    fn register_telemetry(&mut self, ausgelassen: &[usize]) -> Result<(), String> {
+    fn register_telemetry(&mut self, ausgelassen: &[usize]) -> Result<(), telemetry::Abriss> {
         let handle = self.handle;
         let mut send_ids: Vec<(u32, &'static str)> = Vec::new();
         let r = telemetry::hauptdefinition_registrieren(ausgelassen, |field| {
@@ -2879,11 +2891,9 @@ impl Connection {
                     u32::MAX,
                 )
             };
+            // ⚠ Nicht hier loggen: Ob es eine Einzelablehnung ist oder die
+            // Verbindung tot, steht erst nach dem Nachbarn fest.
             if hr != 0 {
-                tracing::error!(
-                    feld = field.name,
-                    "AddToDataDefinition returned 0x{hr:08X} — Hauptfeld ausgelassen (None)"
-                );
                 return Err(hr);
             }
             let mut send_id: sys::DWORD = 0;
@@ -2895,6 +2905,15 @@ impl Connection {
                 Ok(None)
             }
         });
+        if let Some(a) = r.abriss {
+            return Err(a);
+        }
+        for (idx, hr) in r.sofort_abgelehnt.iter().zip(&r.sofort_hr) {
+            tracing::error!(
+                feld = TELEMETRY_FIELDS[*idx].name,
+                "AddToDataDefinition returned 0x{hr:08X} — Hauptfeld ausgelassen (None)"
+            );
+        }
         self.telemetrie_send_ids.extend(send_ids);
         if !r.ausgelassen.is_empty() {
             tracing::warn!(
