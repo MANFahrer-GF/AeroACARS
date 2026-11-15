@@ -372,6 +372,12 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `beendet_den_lauf_sauber` nur noch `Exit`; `lib_tray.rs` baut das Menue einmal und setzt Texte/Icon
 /// nur bei Aenderung per `run_on_main_thread`. Tests `beenden::tests::*`,
 /// `beenden_hauptfaden_wiring_tests::*`, `tray_text_tests::*`, `sauberes_ende_tests::*`.
+/// — plus Pruefer-Funde Beenden 15.11.: `beenden.rs` steht jetzt selbst im Hash (`build.rs`,
+/// `AUSGELAGERTE_MODULE`); Phase als Atomic statt Sperre, `NeustartFolgt`, Notbremse mit wacher Zeit
+/// und Meldung im Hilfsfaden, Hoppie/MQTT parallel zu den Sicher-Schritten, alle Fristen als
+/// Konstanten (`activity_log_abwarten`/`acars_abwarten_beim_beenden` nehmen die Frist als Parameter);
+/// Fenster bleiben beim Beenden weg (`beenden::fenster_zeigen_erlaubt` im Tray und im Zweitstart).
+/// Tests `beenden::tests::*`, `beenden_hauptfaden_wiring_tests::*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -382,4 +388,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "bcb8191d792e905f1864035b45b962fb308c5664d6bd5c57e17fee5e6171664a";
+const HASH_VOR_DER_ZERLEGUNG: &str = "f05511c8e9e5194f83abb8ad291d3258b3bafdd3a2f880e23a2fcf64853ea2c8";

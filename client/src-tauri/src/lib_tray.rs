@@ -172,6 +172,10 @@ fn build_tray_icon(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
+                // 3.1.2: Während des Beendens bleibt das Fenster weg.
+                if !beenden::fenster_zeigen_erlaubt() {
+                    return;
+                }
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.unminimize();
@@ -200,7 +204,7 @@ fn build_tray_icon(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(w) = app.get_webview_window("main") {
                     if w.is_visible().unwrap_or(false) {
                         let _ = w.hide();
-                    } else {
+                    } else if beenden::fenster_zeigen_erlaubt() {
                         let _ = w.show();
                         let _ = w.unminimize();
                         let _ = w.set_focus();

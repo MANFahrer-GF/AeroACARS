@@ -78,6 +78,10 @@ pub struct HoppieHttp {
     base_url: String,
 }
 
+/// Frist einer Hoppie-Anfrage (auch der Abmeldung beim Beenden,
+/// `beenden::FRIST_HOPPIE_MQTT` rechnet damit).
+pub(crate) const HTTP_FRIST: std::time::Duration = std::time::Duration::from_secs(15);
+
 impl HoppieHttp {
     fn new() -> Result<Self, UiError> {
         let http = reqwest::Client::builder()
@@ -85,7 +89,7 @@ impl HoppieHttp {
             // 15s connection timeout per the official docs'
             // recommendation (this is the CONNECT timeout, not the
             // polling rate — see poller.rs for that).
-            .timeout(std::time::Duration::from_secs(15))
+            .timeout(HTTP_FRIST)
             .build()
             .map_err(|e| UiError::new("hoppie_http_init", e.to_string()))?;
         Ok(Self {

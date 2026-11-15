@@ -20,8 +20,8 @@ enum AcarsAuftrag {
 }
 
 /// Beim Beenden: warten, bis alle eingereihten ACARS-Zeilen in der Datei
-/// stehen (höchstens 2 s). Codex-Abnahme 12.10.2026.
-fn acars_abwarten_beim_beenden() {
+/// stehen (höchstens `grenze`, `beenden::FRIST_ACARS`). Codex-Abnahme 12.10.2026.
+fn acars_abwarten_beim_beenden(grenze: Duration) {
     let Some(tx) = ACARS_EINGANG.get() else {
         return;
     };
@@ -30,7 +30,7 @@ fn acars_abwarten_beim_beenden() {
         tracing::error!("ACARS-Postausgang läuft nicht mehr — beim Beenden nicht gesichert");
         return;
     }
-    match fertig_rx.recv_timeout(Duration::from_secs(2)) {
+    match fertig_rx.recv_timeout(grenze) {
         Ok(true) => {}
         Ok(false) => tracing::error!("ACARS-Postausgang beim Beenden nicht gesichert"),
         Err(_) => tracing::error!("ACARS-Postausgang: Sichern beim Beenden dauerte zu lange"),

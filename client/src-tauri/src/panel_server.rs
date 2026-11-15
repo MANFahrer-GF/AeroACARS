@@ -1168,7 +1168,9 @@ async fn cmd_handler(
         DeckBefehl::Metar(ziel) => crate::metar_nachladen(&app, ziel).await,
         DeckBefehl::Fenster(seite) => {
             // Wie „Anzeigen“ im Tray-Menü, dazu der Seitenwechsel.
-            if let Some(w) = app.get_webview_window("main") {
+            // 3.1.2: nicht, solange die App beendet wird.
+            let zeigen = crate::beenden::fenster_zeigen_erlaubt();
+            if let Some(w) = app.get_webview_window("main").filter(|_| zeigen) {
                 let _ = w.show();
                 let _ = w.unminimize();
                 let _ = w.set_focus();

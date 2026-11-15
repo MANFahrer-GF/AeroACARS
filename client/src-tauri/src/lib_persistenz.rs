@@ -291,11 +291,11 @@ fn activity_log_schreiber() -> std::sync::mpsc::Sender<AktivitaetAuftrag> {
 }
 
 /// Warten, bis der zuletzt gemeldete Stand auf der Platte steht (höchstens
-/// 2 s) — beim Beenden der App.
-fn activity_log_abwarten() {
+/// `grenze`, `beenden::FRIST_AKTIVITAET`) — beim Beenden der App.
+fn activity_log_abwarten(grenze: Duration) {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     if activity_log_schreiber().send(AktivitaetAuftrag::Abwarten(tx)).is_ok() {
-        let _ = rx.recv_timeout(Duration::from_secs(2));
+        let _ = rx.recv_timeout(grenze);
     }
 }
 

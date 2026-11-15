@@ -965,6 +965,11 @@ pub fn run() {
             // Live-Server einen Start ohne sauberes Ende der laufenden
             // Instanz — also einen Abbruch, den es nicht gab.
             tracing::info!("Zweiter Programmstart abgefangen — vorhandenes Fenster nach vorn");
+            // 3.1.2: Während des Beendens kein Fenster zurückholen.
+            if !beenden::fenster_zeigen_erlaubt() {
+                tracing::info!("Zweiter Programmstart: Beenden läuft, Fenster bleibt weg");
+                return;
+            }
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
                 let _ = w.unminimize();

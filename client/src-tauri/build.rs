@@ -103,8 +103,10 @@ fn eingebautes_paket_auflisten() {
 /// `mod x;` durch `mod x { … }` ersetzt ist — derselbe Text wie vor der
 /// Zerlegung. Nur fuer Tests; das Programm selbst liest die Datei nie.
 fn produktion_zusammensetzen() {
-    // Module, die vorher als `mod x { … }` in lib.rs standen.
-    const AUSGELAGERTE_MODULE: &[&str] = &["pirep_queue", "nachtrag_queue"];
+    // Module, die vorher als `mod x { … }` in lib.rs standen, dazu
+    // `beenden` (3.1.2: das fruehere Aufraeumen aus dem `.run`-Callback —
+    // der Hash in `quelle_gesamt` deckt es so mit ab).
+    const AUSGELAGERTE_MODULE: &[&str] = &["pirep_queue", "nachtrag_queue", "beenden"];
 
     let wurzel = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let lesen = |name: &str| {
