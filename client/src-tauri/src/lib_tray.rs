@@ -116,30 +116,46 @@ fn compute_tray_display(app: &AppHandle) -> TrayDisplay {
 /// On Windows the icon shows in the system tray (bottom-right);
 /// on macOS in the menubar (top-right) — same code, the OS routes
 /// it to the platform-native location.
-/// Build the tray context menu with the given status-header label.
-/// Extracted so the periodic tray updater can rebuild and swap it
-/// when the active flight's state changes (Tauri 2's TrayIcon has
-/// `set_menu` but no menu getter, so we build fresh each time).
+/// Status-Kopfzeile ohne aktiven Flug — auch der Startwert des Menüs.
+const TRAY_KOPF_LEERLAUF: &str = "AeroACARS — kein aktiver Flug";
+/// Tooltip beim Start (`build_tray_icon`).
+const TRAY_TOOLTIP_START: &str = "AeroACARS";
+
+/// 3.1.2: Die Status-Zeile des einmal gebauten Menüs. Der Updater ändert
+/// nur noch ihren Text; früher baute er alle 5 s ein neues Menü und
+/// `set_menu` zerstörte das alte — auch, während es offen war.
+static TRAY_STATUS_ZEILE: std::sync::OnceLock<tauri::menu::MenuItem<tauri::Wry>> =
+    std::sync::OnceLock::new();
+
+/// Build the tray context menu once (status header, Show, Quit).
+/// Returns the status item so the updater can change its text in place.
 fn build_tray_menu(
     app: &AppHandle,
     status_label: &str,
-) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
+) -> Result<(tauri::menu::Menu<tauri::Wry>, tauri::menu::MenuItem<tauri::Wry>), Box<dyn std::error::Error>> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     let status_item = MenuItem::with_id(app, "status", status_label, false, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let show_item = MenuItem::with_id(app, "show", "Anzeigen / Show", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Beenden / Quit", true, None::<&str>)?;
-    Ok(Menu::with_items(
+    let menu = Menu::with_items(
         app,
         &[&status_item, &separator, &show_item, &quit_item],
-    )?)
+    )?;
+    Ok((menu, status_item))
+}
+
+/// Muss ein Tray-Text neu gesetzt werden? Nur bei geänderter Beschriftung.
+fn tray_text_aendern(bisher: &str, neu: &str) -> bool {
+    bisher != neu
 }
 
 fn build_tray_icon(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
     use tauri::Manager;
 
-    let menu = build_tray_menu(app, "AeroACARS — kein aktiver Flug")?;
+    let (menu, status_item) = build_tray_menu(app, TRAY_KOPF_LEERLAUF)?;
+    let _ = TRAY_STATUS_ZEILE.set(status_item);
 
     // Idle icon = the default app icon, untouched. The periodic
     // tray-updater swaps to a status-badged variant when there's an
@@ -150,12 +166,16 @@ fn build_tray_icon(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .clone();
 
     TrayIconBuilder::with_id("aeroacars-tray")
-        .tooltip("AeroACARS")
+        .tooltip(TRAY_TOOLTIP_START)
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
+                // 3.1.2: Während des Beendens bleibt das Fenster weg.
+                if !beenden::fenster_zeigen_erlaubt() {
+                    return;
+                }
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.unminimize();
@@ -184,7 +204,7 @@ fn build_tray_icon(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(w) = app.get_webview_window("main") {
                     if w.is_visible().unwrap_or(false) {
                         let _ = w.hide();
-                    } else {
+                    } else if beenden::fenster_zeigen_erlaubt() {
                         let _ = w.show();
                         let _ = w.unminimize();
                         let _ = w.set_focus();
@@ -272,8 +292,9 @@ fn spawn_tray_updater(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         // Cache the colored icon variants once at startup so we
         // don't recompute the pixel buffer on every 5 s tick.
+        // Eigene Kopie (`'static`): das Bild geht an den Hauptfaden.
         let base_icon = match app.default_window_icon() {
-            Some(i) => i.clone(),
+            Some(i) => tauri::image::Image::new_owned(i.rgba().to_vec(), i.width(), i.height()),
             None => {
                 tracing::warn!("no default window icon — tray-updater giving up");
                 return;
@@ -282,6 +303,10 @@ fn spawn_tray_updater(app: AppHandle) {
         let active_icon = make_status_icon(&base_icon, TrayState::Active);
         let warning_icon = make_status_icon(&base_icon, TrayState::Warning);
         let error_icon = make_status_icon(&base_icon, TrayState::Error);
+
+        // Was zuletzt am Tray steht — nur Änderungen gehen raus.
+        let mut tooltip_bisher = TRAY_TOOLTIP_START.to_string();
+        let mut kopf_bisher = TRAY_KOPF_LEERLAUF.to_string();
 
         loop {
             tokio::time::sleep(Duration::from_secs(TRAY_UPDATE_INTERVAL_SECS)).await;
@@ -295,34 +320,48 @@ fn spawn_tray_updater(app: AppHandle) {
             *g = Some(display.state);
             drop(g);
 
-            // Push tooltip + (rebuilt) menu so the status header
-            // reflects the current flight info. Tauri 2's TrayIcon
-            // exposes set_menu() but not a getter, so we rebuild the
-            // menu structure each tick — cheap (3 native menu items)
-            // and avoids storing MenuItem<Wry> lifetimes in AppState.
-            if let Some(tray) = app.tray_by_id(&tray_id) {
-                let _ = tray.set_tooltip(Some(&display.tooltip));
-
-                let header_label = display
-                    .menu_header
-                    .clone()
-                    .unwrap_or_else(|| "AeroACARS — kein aktiver Flug".to_string());
-                if let Ok(new_menu) = build_tray_menu(&app, &header_label) {
-                    let _ = tray.set_menu(Some(new_menu));
+            // 3.1.2: Tooltip, Status-Zeile und Icon nur bei Änderung, und
+            // per `run_on_main_thread` OHNE Warten: Die Tray-Aufrufe warten
+            // sonst auf den Hauptfaden und halten so lange einen Tokio-Worker
+            // fest. Auf dem Hauptfaden laufen sie direkt.
+            let header_label = display
+                .menu_header
+                .clone()
+                .unwrap_or_else(|| TRAY_KOPF_LEERLAUF.to_string());
+            let neuer_tooltip = tray_text_aendern(&tooltip_bisher, &display.tooltip)
+                .then(|| display.tooltip.clone());
+            let neuer_kopf = tray_text_aendern(&kopf_bisher, &header_label).then(|| header_label.clone());
+            // Icon swap only on state change (it's a relatively
+            // expensive call on Win, and Mac sometimes flickers).
+            let neues_icon = if prev != Some(display.state) {
+                match display.state {
+                    TrayState::Idle => Some(base_icon.clone()),
+                    TrayState::Active => active_icon.clone(),
+                    TrayState::Warning => warning_icon.clone(),
+                    TrayState::Error => error_icon.clone(),
                 }
-
-                // Icon swap only on state change (it's a relatively
-                // expensive call on Win, and Mac sometimes flickers).
-                if prev != Some(display.state) {
-                    let new_icon = match display.state {
-                        TrayState::Idle => Some(base_icon.clone()),
-                        TrayState::Active => active_icon.clone(),
-                        TrayState::Warning => warning_icon.clone(),
-                        TrayState::Error => error_icon.clone(),
-                    };
-                    if let Some(icon) = new_icon {
-                        let _ = tray.set_icon(Some(icon));
+            } else {
+                None
+            };
+            if neuer_tooltip.is_some() || neuer_kopf.is_some() || neues_icon.is_some() {
+                let a = app.clone();
+                let id = tray_id.clone();
+                let abgesetzt = app.run_on_main_thread(move || {
+                    if let Some(tray) = a.tray_by_id(&id) {
+                        if let Some(t) = neuer_tooltip {
+                            let _ = tray.set_tooltip(Some(&t));
+                        }
+                        if let Some(icon) = neues_icon {
+                            let _ = tray.set_icon(Some(icon));
+                        }
                     }
+                    if let (Some(k), Some(zeile)) = (neuer_kopf, TRAY_STATUS_ZEILE.get()) {
+                        let _ = zeile.set_text(k);
+                    }
+                });
+                if abgesetzt.is_ok() {
+                    tooltip_bisher = display.tooltip.clone();
+                    kopf_bisher = header_label;
                 }
             }
 
@@ -343,3 +382,7 @@ fn spawn_tray_updater(app: AppHandle) {
         }
     });
 }
+
+#[cfg(test)]
+#[path = "tests_lib/tray_text_tests.rs"]
+mod tray_text_tests;

@@ -367,6 +367,18 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Nachbesserung 13.11.: einzige Loeschstelle `bid_aufraeumen_ausfuehren` (Entscheidung, lokale Sperre inkl.
 /// `flight_setup_in_progress`, eigene IN_PROGRESS-PIREPs vom Server unmittelbar vor `delete_bid`), `queued_filed`
 /// reiht ein statt direkt zu loeschen. Tests `bid_aufraeum_entscheidung_tests::ablauf::*`.
+/// — plus Beenden ohne Hauptfaden 15.11. (Feld-Haenger 3.1.0): `mod beenden;`, im `.run`-Callback
+/// `beenden::exit_requested` statt Aufraeumen mit `block_on`, `beenden_beginnt` auch bei `Exit`,
+/// `beendet_den_lauf_sauber` nur noch `Exit`; `lib_tray.rs` baut das Menue einmal und setzt Texte/Icon
+/// nur bei Aenderung per `run_on_main_thread`. Tests `beenden::tests::*`,
+/// `beenden_hauptfaden_wiring_tests::*`, `tray_text_tests::*`, `sauberes_ende_tests::*`.
+/// — plus Pruefer-Funde Beenden 15.11.: `beenden.rs` steht jetzt selbst im Hash (`build.rs`,
+/// `AUSGELAGERTE_MODULE`); Phase als Atomic statt Sperre, `NeustartFolgt`, Notbremse mit wacher Zeit
+/// und Meldung im Hilfsfaden, Hoppie/MQTT parallel zu den Sicher-Schritten, alle Fristen als
+/// Konstanten (`activity_log_abwarten`/`acars_abwarten_beim_beenden` nehmen die Frist als Parameter);
+/// Fenster bleiben beim Beenden weg (`beenden::fenster_zeigen_erlaubt` im Tray, im Zweitstart,
+/// in `vdgs_fenster_oeffnen` und `telemetrie_fenster_oeffnen`).
+/// Tests `beenden::tests::*`, `beenden_hauptfaden_wiring_tests::*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -377,4 +389,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "824a39ecd71ed7a7e10ffdb797543a573af13cff2721b0767d96e4568aefdd34";
+const HASH_VOR_DER_ZERLEGUNG: &str = "458e778a0ff25a9c6d209db21d7b9dd279f41eb14a9c3916d88bbb2a51dd9545";

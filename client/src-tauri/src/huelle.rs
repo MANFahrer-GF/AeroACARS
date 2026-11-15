@@ -44,7 +44,8 @@ pub(crate) fn fuer_systemdialog(app: &tauri::AppHandle) -> Verborgen {
 
 impl Drop for Verborgen {
     fn drop(&mut self) {
-        if let Some(w) = &self.0 {
+        // 3.1.2: Während des Beendens bleibt das Fenster weg.
+        if let Some(w) = self.0.as_ref().filter(|_| crate::beenden::fenster_zeigen_erlaubt()) {
             let _ = w.show();
         }
     }
@@ -142,6 +143,10 @@ fn fehler_aus(v: Value) -> UiError {
 }
 
 fn fenster_zeigen(app: &AppHandle) -> Result<(), UiError> {
+    // 3.1.2: Während des Beendens keine Bestätigung — der Auftrag gilt als abgelehnt.
+    if !crate::beenden::fenster_zeigen_erlaubt() {
+        return Err(abgelehnt());
+    }
     if let Some(w) = app.get_webview_window(FENSTER) {
         let _ = w.unminimize();
         let _ = w.show();
@@ -293,8 +298,21 @@ fn beantworten(id: u64, ok: bool, ergebnis: Option<Value>, fehler: Option<Value>
 pub(crate) async fn update_installieren(app: AppHandle) -> Result<(), UiError> {
     use tauri_plugin_updater::UpdaterExt;
     let fehler = |e: tauri_plugin_updater::Error| UiError::new("update_failed", e.to_string());
+    // 3.1.2: Unter Windows startet `install` das Installationsprogramm und
+    // beendet den Prozess selbst mit `std::process::exit(0)`
+    // (tauri-plugin-updater 2.10.1, `install_inner`) — ohne `ExitRequested`.
+    // Deshalb laeuft das Aufraeumen dort im `on_before_exit`-Haken,
+    // unmittelbar vor dem Start des Installationsprogramms: Scheitert
+    // Download oder Pruefung vorher, bleibt die App heil. Der Haken ersetzt
+    // den eingebauten, der nur `cleanup_before_exit` ruft.
+    let a = app.clone();
     let update = app
-        .updater()
+        .updater_builder()
+        .on_before_exit(move || {
+            crate::beenden::vor_dem_installieren(&a);
+            a.cleanup_before_exit();
+        })
+        .build()
         .map_err(fehler)?
         .check()
         .await
@@ -317,13 +335,17 @@ pub(crate) async fn update_installieren(app: AppHandle) -> Result<(), UiError> {
         )
         .await
         .map_err(fehler)?;
+    // Nur macOS/Linux kommen hier an (Windows endet in `install`, s. o.).
     neustart_helfer_starten(&app);
-    app.restart()
+    // 3.1.2: erst im Nebenfaden aufräumen, dann neu starten (`beenden.rs`).
+    crate::beenden::neu_starten(&app);
+    Ok(())
 }
 
 /// 3.0.0-beta.2.1 (Thomas' Update beta.1→beta.2, 31.10.2026): Unter macOS kam
-/// die App nach dem Update nicht wieder. Das Log endet mitten im Beenden
-/// (nach der MQTT-Abschaltung, vor „block_on fertig“) — der alte Prozess
+/// die App nach dem Update nicht wieder. Das Log endete mitten im Beenden
+/// (nach der MQTT-Abschaltung; das Aufraeumen lief damals noch auf dem
+/// Hauptfaden, seit 3.1.2 in `beenden.rs`) — der alte Prozess
 /// starb nach dem Bundle-Tausch, bevor Tauri bei `RunEvent::Exit` neu startet.
 /// Derselbe `restart()` ohne Bundle-Tausch (`paket_neu_starten`, 30.10.
 /// 20:04) startete sauber neu. Deshalb wartet ein abgekoppelter Helfer in
