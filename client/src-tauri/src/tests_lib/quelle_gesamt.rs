@@ -376,7 +376,8 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// `AUSGELAGERTE_MODULE`); Phase als Atomic statt Sperre, `NeustartFolgt`, Notbremse mit wacher Zeit
 /// und Meldung im Hilfsfaden, Hoppie/MQTT parallel zu den Sicher-Schritten, alle Fristen als
 /// Konstanten (`activity_log_abwarten`/`acars_abwarten_beim_beenden` nehmen die Frist als Parameter);
-/// Fenster bleiben beim Beenden weg (`beenden::fenster_zeigen_erlaubt` im Tray und im Zweitstart).
+/// Fenster bleiben beim Beenden weg (`beenden::fenster_zeigen_erlaubt` im Tray, im Zweitstart,
+/// in `vdgs_fenster_oeffnen` und `telemetrie_fenster_oeffnen`).
 /// Tests `beenden::tests::*`, `beenden_hauptfaden_wiring_tests::*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
@@ -388,4 +389,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "f05511c8e9e5194f83abb8ad291d3258b3bafdd3a2f880e23a2fcf64853ea2c8";
+const HASH_VOR_DER_ZERLEGUNG: &str = "458e778a0ff25a9c6d209db21d7b9dd279f41eb14a9c3916d88bbb2a51dd9545";

@@ -800,6 +800,10 @@ async fn telemetrie_csv_speichern(
 async fn telemetrie_fenster_oeffnen(app: AppHandle) -> Result<(), UiError> {
     use tauri::{WebviewUrl, WebviewWindowBuilder};
 
+    // 3.1.2: Während des Beendens kein Fenster (auch nicht per Deck/Brücke).
+    if !beenden::fenster_zeigen_erlaubt() {
+        return Ok(());
+    }
     if let Some(vorhanden) = app.get_webview_window("telemetrie") {
         let _ = vorhanden.unminimize();
         let _ = vorhanden.show();

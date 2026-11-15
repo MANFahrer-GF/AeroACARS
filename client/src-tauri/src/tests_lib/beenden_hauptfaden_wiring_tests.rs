@@ -73,18 +73,26 @@
     fn exit_requested_wartet_nicht() {
         let k = koerper(SRC, "pub(crate) fn exit_requested(");
         ohne_warten(&k, "beenden::exit_requested");
-        // Alles, was der Hauptfaden beim Beenden aufruft — auch eine Ebene tiefer.
-        for f in [
-            "fn durchlassen(",
-            "fn fenster_ausblenden(",
-            "fn aufraeumen_starten(",
-            "fn notbremse_starten(",
-            "pub(crate) fn uebernehmen(",
-            "pub(crate) fn beenden_uebernehmen(",
-            "pub(crate) fn neu_starten(",
-            "fn phase_setzen(",
-        ] {
-            ohne_warten(&koerper(SRC, f), f);
+        // Jede Funktion in beenden.rs ist wartefrei — außer den vier, die in
+        // eigenen Fäden laufen. Umgekehrte Liste: ein neuer Helfer, den der
+        // Hauptfaden aufruft, ist automatisch mit drin.
+        const IN_EIGENEN_FAEDEN: &[&str] = &["aufraeumen", "sichern_und_abmelden", "notbremse", "vor_dem_installieren"];
+        let produktiv = &SRC[..SRC.find("#[cfg(test)]\nmod tests").expect("Testteil")];
+        let mut geprueft = Vec::new();
+        for zeile in produktiv.lines() {
+            let z = zeile.trim_start();
+            let Some(rest) = z.strip_prefix("pub(crate) fn ").or_else(|| z.strip_prefix("fn ")) else {
+                continue;
+            };
+            let name = &rest[..rest.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(rest.len())];
+            if IN_EIGENEN_FAEDEN.contains(&name) {
+                continue;
+            }
+            ohne_warten(&koerper(produktiv, &format!("fn {name}(")), name);
+            geprueft.push(name);
+        }
+        for pflicht in ["durchlassen", "fenster_ausblenden", "aufraeumen_starten", "notbremse_starten", "uebernehmen", "neu_starten"] {
+            assert!(geprueft.contains(&pflicht), "{pflicht} nicht mehr geprüft — Test anpassen");
         }
         assert!(
             !k.contains("beenden_beginnt"),
@@ -174,6 +182,12 @@
             abschnitt(DECK, "DeckBefehl::Fenster(seite) =>", "Ok(())").contains("fenster_zeigen_erlaubt()"),
             "Deck-Taste holt das Fenster beim Beenden zurück"
         );
+        for marker in ["async fn vdgs_fenster_oeffnen(", "async fn telemetrie_fenster_oeffnen("] {
+            let k = koerper(crate::quelle_gesamt::PRODUKTION, marker);
+            let pruef = k.find("beenden::fenster_zeigen_erlaubt()").unwrap_or_else(|| panic!("{marker} prüft das Beenden nicht"));
+            assert!(pruef < k.find(".show()").expect("show"), "{marker} zeigt vor der Prüfung");
+            assert!(pruef < k.find("WebviewWindowBuilder::new(").expect("Builder"), "{marker} baut vor der Prüfung");
+        }
         const HUELLE: &str = include_str!("../huelle.rs");
         assert!(koerper(HUELLE, "fn fenster_zeigen(").contains("fenster_zeigen_erlaubt()"));
         assert!(koerper(HUELLE, "impl Drop for Verborgen").contains("fenster_zeigen_erlaubt()"));

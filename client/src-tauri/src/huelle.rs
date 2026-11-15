@@ -145,7 +145,7 @@ fn fehler_aus(v: Value) -> UiError {
 fn fenster_zeigen(app: &AppHandle) -> Result<(), UiError> {
     // 3.1.2: Während des Beendens keine Bestätigung — der Auftrag gilt als abgelehnt.
     if !crate::beenden::fenster_zeigen_erlaubt() {
-        return Err(UiError::new("beenden", "AeroACARS wird beendet"));
+        return Err(abgelehnt());
     }
     if let Some(w) = app.get_webview_window(FENSTER) {
         let _ = w.unminimize();
