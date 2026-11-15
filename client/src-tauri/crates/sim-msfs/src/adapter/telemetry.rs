@@ -10534,6 +10534,45 @@ mod tests {
     }
 
     #[test]
+    fn verstreute_ablehnungen_bleiben_auslassungen() {
+        // Drei Ablehnungen ueber die Registrierung verteilt sind keine
+        // tote Verbindung: jeder Erfolg dazwischen setzt die Folge zurueck.
+        let mut n = 0;
+        let r = hauptdefinition_registrieren(&[], |_| {
+            n += 1;
+            if [5, 100, 300].contains(&(n - 1)) {
+                Err(0x8000_4005u32 as i32)
+            } else {
+                Ok(None)
+            }
+        });
+        assert_eq!(r.abriss, None);
+        assert_eq!(r.ausgelassen, vec![5, 100, 300]);
+        assert_eq!(r.sofort_abgelehnt, vec![5, 100, 300]);
+    }
+
+    #[test]
+    fn vorab_ausgelassenes_feld_zaehlt_nicht_zur_folge() {
+        // `a` ist vorab ausgelassen, a+1 und a+2 werden abgelehnt: nur zwei
+        // versuchte Fehler in Folge, also kein Abriss.
+        let a = 10;
+        // Der k-te Aufruf ist Feld k, ab `a` eins weiter (a wird uebersprungen).
+        let mut k = 0;
+        let r = hauptdefinition_registrieren(&[a], |_| {
+            let idx = if k < a { k } else { k + 1 };
+            k += 1;
+            if idx == a + 1 || idx == a + 2 {
+                Err(0x8000_4005u32 as i32)
+            } else {
+                Ok(None)
+            }
+        });
+        assert_eq!(r.abriss, None);
+        assert_eq!(r.ausgelassen, vec![a, a + 1, a + 2]);
+        assert_eq!(r.sofort_abgelehnt, vec![a + 1, a + 2]);
+    }
+
+    #[test]
     fn transponder_kommt_aus_der_optionalen_definition() {
         assert!(TELEMETRY_FIELDS
             .iter()
