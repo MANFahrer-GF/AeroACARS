@@ -168,11 +168,13 @@ fn clear_run_sentinel(app: &AppHandle) {
 /// Z. 2384). Die Markierung blieb liegen, der naechste Start meldete
 /// „Vorheriger Lauf endete ohne sauberes Ende" samt GlitchTip-Eintrag.
 /// `Exit` kommt bei jedem echten Ende, auch nach `ExitRequested`.
+///
+/// 3.1.2: NUR noch `Exit`. Das erste `ExitRequested` wird aufgehalten
+/// (`beenden.rs`); hinge das Aufräumen danach und griffe die Notbremse,
+/// waere die Markierung sonst schon weg und der naechste Start meldete
+/// faelschlich ein sauberes Ende.
 fn beendet_den_lauf_sauber(event: &tauri::RunEvent) -> bool {
-    matches!(
-        event,
-        tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
-    )
+    matches!(event, tauri::RunEvent::Exit)
 }
 
 #[cfg(test)]

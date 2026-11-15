@@ -21,12 +21,14 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Runtime};
 
-/// Ab `ExitRequested` blockiert das geordnete Herunterfahren den Hauptfaden
-/// gewollt (Hoppie-Logoff bis 15 s, MQTT) — dann schweigt der Wächter
-/// (QS v1.9.24: sonst Fehlalarm in GlitchTip bei jedem langsamen Logoff).
+/// Ab dem endgültigen Ende schweigt der Wächter: Tauris eigener Abbau darf
+/// den Hauptfaden halten. Seit 3.1.2 räumt die App im Nebenfaden auf
+/// (`beenden.rs`); während des Aufräumens bleibt der Hauptfaden frei und der
+/// Wächter wach — ein Hänger dort wird jetzt gemeldet.
 static BEENDEN: AtomicBool = AtomicBool::new(false);
 
-/// Aus dem `ExitRequested`-Zweig. Die App bricht ein Beenden nie ab.
+/// Beim durchgelassenen `ExitRequested` und bei `RunEvent::Exit`. Die App
+/// bricht ein Beenden nie ab.
 pub(crate) fn beenden_beginnt() {
     BEENDEN.store(true, Ordering::Release);
 }

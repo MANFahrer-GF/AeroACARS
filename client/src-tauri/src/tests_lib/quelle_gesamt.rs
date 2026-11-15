@@ -367,6 +367,11 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Nachbesserung 13.11.: einzige Loeschstelle `bid_aufraeumen_ausfuehren` (Entscheidung, lokale Sperre inkl.
 /// `flight_setup_in_progress`, eigene IN_PROGRESS-PIREPs vom Server unmittelbar vor `delete_bid`), `queued_filed`
 /// reiht ein statt direkt zu loeschen. Tests `bid_aufraeum_entscheidung_tests::ablauf::*`.
+/// — plus Beenden ohne Hauptfaden 15.11. (Feld-Haenger 3.1.0): `mod beenden;`, im `.run`-Callback
+/// `beenden::exit_requested` statt Aufraeumen mit `block_on`, `beenden_beginnt` auch bei `Exit`,
+/// `beendet_den_lauf_sauber` nur noch `Exit`; `lib_tray.rs` baut das Menue einmal und setzt Texte/Icon
+/// nur bei Aenderung per `run_on_main_thread`. Tests `beenden::tests::*`,
+/// `beenden_hauptfaden_wiring_tests::*`, `tray_text_tests::*`, `sauberes_ende_tests::*`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -377,4 +382,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "824a39ecd71ed7a7e10ffdb797543a573af13cff2721b0767d96e4568aefdd34";
+const HASH_VOR_DER_ZERLEGUNG: &str = "bcb8191d792e905f1864035b45b962fb308c5664d6bd5c57e17fee5e6171664a";

@@ -1120,7 +1120,9 @@ pub(crate) async fn paket_neu_starten(app: tauri::AppHandle) -> Result<(), crate
     // wurde sonst trotzdem neu gestartet).
     neustart_pruefen(&app, &daten, wartet).map_err(|c| crate::UiError::new(c, "Neustart nicht moeglich"))?;
     tracing::info!("Laufzeit-Paket: Neustart fuer den neuen Stand");
-    app.restart()
+    // 3.1.2: erst im Nebenfaden aufraeumen, dann neu starten (`beenden.rs`).
+    crate::beenden::neu_starten(&app);
+    Ok(())
 }
 
 /// Offener Flug JETZT: seine Datei oder ein laufender Flug, der noch nicht

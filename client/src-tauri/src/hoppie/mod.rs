@@ -932,7 +932,7 @@ pub async fn hoppie_disconnect(
 }
 
 /// Shutdown hook: end the CPDLC session before the process goes away.
-/// Called from `lib.rs`'s `ExitRequested` handler, alongside the MQTT
+/// Called from the shutdown thread in `beenden.rs`, alongside the MQTT
 /// publisher teardown.
 pub async fn shutdown(app: &AppHandle, state: &AppState) {
     let mut guard = state.hoppie.lock().await;

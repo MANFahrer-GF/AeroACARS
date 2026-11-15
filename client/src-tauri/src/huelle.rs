@@ -318,7 +318,9 @@ pub(crate) async fn update_installieren(app: AppHandle) -> Result<(), UiError> {
         .await
         .map_err(fehler)?;
     neustart_helfer_starten(&app);
-    app.restart()
+    // 3.1.2: erst im Nebenfaden aufräumen, dann neu starten (`beenden.rs`).
+    crate::beenden::neu_starten(&app);
+    Ok(())
 }
 
 /// 3.0.0-beta.2.1 (Thomas' Update beta.1→beta.2, 31.10.2026): Unter macOS kam

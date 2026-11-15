@@ -31,6 +31,7 @@ mod fahrwerk;
 mod fenster;
 /// v1.9.24: meldet eine eingefrorene Oberfläche (Hauptfaden haengt) ins Log/GlitchTip.
 mod hauptfaden_waechter;
+mod beenden;
 mod bilder;
 mod navdata_cache;
 mod replay_erkennung;
@@ -1282,14 +1283,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building AeroACARS")
         .run(|app_handle, event| {
-            // v0.5.11: clean MQTT publisher shutdown on app exit.
-            // ExitRequested fires once before the process tears down;
-            // we send the LWT-replacement OFFLINE status, give the
-            // network thread a brief moment to flush, then return so
-            // Tauri continues the exit. If we don't do this, the
-            // last-will-and-testament eventually publishes OFFLINE
-            // anyway when the broker times the connection out (~60 s),
-            // but the explicit shutdown is faster and cleaner.
+            // v0.5.11: clean MQTT publisher shutdown on app exit (OFFLINE
+            // status statt LWT nach ~60 s). Seit 3.1.2 in `beenden.rs`:
+            // erstes ExitRequested aufhalten, im Nebenfaden aufräumen,
+            // dann erneut beenden.
             // v1.5.0 (#msfs-hud): Panel-Server stoppen — aber an `Exit`, NICHT
             // an `ExitRequested`.
             //
@@ -1305,6 +1302,9 @@ pub fn run() {
             // gewahrt: es passiert weiterhin VOR dem Abbau von `AppState`,
             // also vor dem Wettlauf, den `panel_server::shutdown` beschreibt.
             if matches!(event, tauri::RunEvent::Exit) {
+                // Auch ohne ExitRequested (Windows-Abmeldung, WM_ENDSESSION):
+                // Tauris Abbau darf den Hauptfaden halten.
+                hauptfaden_waechter::beenden_beginnt();
                 panel_server::shutdown();
             }
             // v0.20 (Process-Integrity): remove this run's sentinel — the
@@ -1313,47 +1313,16 @@ pub fn run() {
             if beendet_den_lauf_sauber(&event) {
                 clear_run_sentinel(app_handle);
             }
-            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
-                // Das Herunterfahren unten blockiert den Hauptfaden gewollt
-                // (Hoppie-Logoff bis 15 s) — kein Fall für den Wächter.
-                hauptfaden_waechter::beenden_beginnt();
-                // Was die Schreib-Fäden noch halten, auf die Platte bringen
-                // (zusammen höchstens 14 s; normal wenige Millisekunden).
-                activity_log_abwarten();
-                // Das Flugprotokoll ist die maßgebliche Aufzeichnung — hier
-                // lieber länger warten (Codex-Gesamtabnahme 12.10.2026).
-                flugprotokoll_abwarten_hoechstens(Duration::from_secs(10));
-                acars_abwarten_beim_beenden();
-                let app_for_mqtt = app_handle.clone();
-                tauri::async_runtime::block_on(async move {
-                    let state = app_for_mqtt.state::<AppState>();
-                    // v1.3.0 (#Hoppie-PDC-CPDLC): end the CPDLC session
-                    // before we go away. Without this the facility keeps
-                    // showing the aircraft as connected and the network
-                    // keeps queueing messages, which then all arrive at
-                    // once on the next start.
-                    hoppie::shutdown(&app_for_mqtt, &state).await;
-                    let handle = state.mqtt.lock().await.take();
-                    if let Some(handle) = handle {
-                        handle.shutdown();
-                        // Brief flush window so the publisher task can
-                        // post the OFFLINE status before tokio shuts
-                        // down. 200 ms is the spec recommendation.
-                        tokio::time::sleep(std::time::Duration::from_millis(200))
-                            .await;
-                    }
-                    // 2.1.3: Beenden-Hänger 19.10.2026 eingrenzen. Fehlt diese
-                    // Zeile, hing es im Hoppie-Logoff oder in der 200-ms-Pause.
-                    tracing::info!("Beenden: Herunterfahren im block_on fertig");
-                });
-                // Fehlt diese Zeile trotz der vorigen, hing die Rückkehr aus block_on.
-                tracing::info!("Beenden: ExitRequested-Zweig fertig, Ereignisschleife darf enden");
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+                // 3.1.2: Aufräumen im Nebenfaden, der Hauptfaden wartet hier
+                // nie (Feld-Hänger 15.11.2026). Siehe `beenden.rs`.
+                beenden::exit_requested(app_handle, *code, api);
             }
         });
 }
 
 /// 2.1.3 (Beenden-Hänger Thomas 19.10.2026): loggt `RunEvent::Exit` als
-/// allererster Hook. Fehlt die Zeile nach „ExitRequested-Zweig fertig“, kam
+/// allererster Hook. Fehlt die Zeile nach „ExitRequested durchgelassen“, kam
 /// die Ereignisschleife nie bei Exit an. Steht sie da, aber nicht
 /// „panel_server: shutdown signalled“, hing ein Plugin-Hook dazwischen.
 fn beenden_protokoll_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
