@@ -1188,7 +1188,22 @@ pub struct Registrierung {
     pub ausgelassen: Vec<usize>,
     /// Davon bei DIESER Registrierung synchron abgelehnt (fuers Log).
     pub sofort_abgelehnt: Vec<usize>,
+    /// HRESULT je Eintrag in `sofort_abgelehnt`, gleiche Reihenfolge.
+    pub sofort_hr: Vec<i32>,
     pub pakete: Paketbuch,
+    /// `Some`: die Verbindung riss beim Registrieren ab. Dann ist NICHTS
+    /// registriert, und `ausgelassen` ist die uebergebene Liste — keine
+    /// Ablehnung dieser Verbindung darf in eine spaetere wandern.
+    pub abriss: Option<Abriss>,
+}
+
+/// Abgebrochene Registrierung: tote Verbindung statt Einzelablehnung.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Abriss {
+    /// HRESULT des letzten gescheiterten Aufrufs.
+    pub hr: i32,
+    /// Versuchte Aufrufe bis zum Abbruch (vorab ausgelassene zaehlen nicht).
+    pub versucht: usize,
 }
 
 /// Registriert die Hauptdefinition ueber `hinzufuegen` (je Feld ein
@@ -1198,6 +1213,11 @@ pub struct Registrierung {
 /// `ausgelassen`, Parser und Laengenwaechter rechnen ohne es. Frueher
 /// brach die Registrierung ab, und jede Neuverbindung scheiterte an
 /// derselben SimVar — Dauerausfall.
+///
+/// ⚠ Scheitern [`crate::handle_frist::ABRISS_NACH_FEHLERN_IN_FOLGE`]
+/// Aufrufe in Folge, ist die Verbindung tot (MSFS beendet sich): sofort
+/// abbrechen, statt jedes weitere Feld zu versuchen und als ausgelassen
+/// zu fuehren (Feldbefund 13.11.2026: 422 Fehler in 7 ms).
 pub fn hauptdefinition_registrieren(
     ausgelassen: &[usize],
     mut hinzufuegen: impl FnMut(&TelemetryField) -> Result<Option<u32>, i32>,
@@ -1206,15 +1226,29 @@ pub fn hauptdefinition_registrieren(
         ausgelassen: ausgelassen.to_vec(),
         ..Default::default()
     };
+    let mut waechter = crate::handle_frist::Abrisswaechter::default();
+    let mut versucht = 0;
     for (idx, feld) in TELEMETRY_FIELDS.iter().enumerate() {
         if ausgelassen.contains(&idx) {
             continue;
         }
+        versucht += 1;
         match hinzufuegen(feld) {
-            Ok(send_id) => r.pakete.registriert(idx, send_id),
-            Err(_) => {
+            Ok(send_id) => {
+                waechter.erfolg();
+                r.pakete.registriert(idx, send_id);
+            }
+            Err(hr) => {
+                if waechter.fehler() {
+                    return Registrierung {
+                        ausgelassen: ausgelassen.to_vec(),
+                        abriss: Some(Abriss { hr, versucht }),
+                        ..Default::default()
+                    };
+                }
                 r.ausgelassen.push(idx);
                 r.sofort_abgelehnt.push(idx);
+                r.sofort_hr.push(hr);
             }
         }
     }
@@ -10437,6 +10471,66 @@ mod tests {
         assert!(!angefragt.contains(&"TOTAL WEIGHT"));
         assert_eq!(r.ausgelassen, vec![tw]);
         assert!(r.sofort_abgelehnt.is_empty());
+    }
+
+    #[test]
+    fn tote_verbindung_bricht_die_registrierung_ab() {
+        // Feldbefund 13.11.2026: MSFS beendet sich, jedes Feld scheitert.
+        let mut aufrufe = 0;
+        let r = hauptdefinition_registrieren(&[], |_| {
+            aufrufe += 1;
+            Err(0x8000_4005u32 as i32)
+        });
+        assert_eq!(aufrufe, crate::handle_frist::ABRISS_NACH_FEHLERN_IN_FOLGE as usize);
+        assert_eq!(
+            r.abriss,
+            Some(Abriss {
+                hr: 0x8000_4005u32 as i32,
+                versucht: aufrufe
+            })
+        );
+        // Keine Auslassung: nach dem Neuverbinden kommt jedes Feld wieder.
+        assert!(r.ausgelassen.is_empty());
+        assert!(r.sofort_abgelehnt.is_empty());
+        assert!(r.sofort_hr.is_empty());
+    }
+
+    #[test]
+    fn abriss_mitten_in_der_registrierung() {
+        // Die Pipe stirbt ab dem zehnten Feld; die vorab ausgelassenen
+        // bleiben, die drei gescheiterten werden NICHT ausgelassen.
+        let mut aufrufe = 0;
+        let r = hauptdefinition_registrieren(&[2], |_| {
+            aufrufe += 1;
+            if aufrufe >= 10 {
+                Err(0x8000_4005u32 as i32)
+            } else {
+                Ok(Some(aufrufe))
+            }
+        });
+        assert_eq!(aufrufe, 12);
+        assert_eq!(r.abriss.map(|a| a.versucht), Some(12));
+        assert_eq!(r.ausgelassen, vec![2]);
+        assert!(r.sofort_abgelehnt.is_empty());
+    }
+
+    #[test]
+    fn zwei_ablehnungen_in_folge_bleiben_auslassungen() {
+        let a = TELEMETRY_FIELDS.iter().position(|f| f.name == "TOTAL WEIGHT").unwrap();
+        // Ohne Vorab-Auslassung ist der n-te Aufruf das n-te Feld.
+        let mut n = 0;
+        let r = hauptdefinition_registrieren(&[], |_| {
+            n += 1;
+            if n - 1 == a || n - 1 == a + 1 {
+                Err(0x8000_4005u32 as i32)
+            } else {
+                Ok(None)
+            }
+        });
+        assert_eq!(r.abriss, None);
+        assert_eq!(r.ausgelassen, vec![a, a + 1]);
+        assert_eq!(r.sofort_abgelehnt, vec![a, a + 1]);
+        assert_eq!(r.sofort_hr, vec![0x8000_4005u32 as i32; 2]);
     }
 
     #[test]
