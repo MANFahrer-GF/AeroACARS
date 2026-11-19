@@ -3,7 +3,8 @@
 
 Holt airports.csv und runways.csv von github.com/davidmegginson/ourairports-data
 zu einem festen Commit, setzt sie in das Format unter bundle/ourairports/ um
-(runways.csv 1:1, airports.csv nur ident,type,latitude_deg,longitude_deg) und
+(runways.csv 1:1 bis auf die Kennung, airports.csv nur ident,type,latitude_deg,longitude_deg;
+ident = icao_code, wo er abweicht) und
 prueft den neuen Stand gegen den alten. Schwellen am 29.10.2026 an drei echten
 Staenden geeicht (Pflichtenheft P-9.42).
 
@@ -53,18 +54,78 @@ BAHN_LAENGE_ANTEIL = 0.10
 BAHN_KURS_GRAD = 5.0
 
 
+def icao_zuordnung(roh: str) -> dict:
+    """id -> ICAO: Plaetze, deren Kennung nicht ihr ICAO-Code ist.
+
+    OurAirports fuehrt umbenannte Plaetze unter der alten Kennung (Lima: ident
+    SPIM, icao_code SPJC; 845 Plaetze am 19.11.2026). Der Client sucht nach
+    ICAO, fand SPJC nicht und meldete im Anflug einen Divert nach „SPIM“.
+    Ist der Code schon eine Kennung, bleibt alles wie geliefert, auch bei
+    einem geschlossenen Platz (FAHS: die richtigen Bahnen haengen an der
+    geschlossenen Zeile, Test `a_wrong_reference_point_does_not_cost_an_airport_its_runways`).
+    Den Code bekommt nur der erste Platz, der ihn traegt. Die neue Zeile steht
+    HINTER der alten (gleiche Bahnen): Der Client entdoppelt Bahnen ueber die
+    Geometrie und behaelt die erste Zeile in ICAO-Form, so bleiben aeltere
+    Clients bei SPIM/MHSC (23 GSG-Fluege) wie bisher; ab dem Client mit
+    `ZWILLINGE` (runway.rs) findet die zweite Kennung dieselben Bahnen. Die
+    doppelte Bahn-id stoert nicht, der Client ordnet ueber airport_ident zu.
+    """
+    zeilen = list(csv.DictReader(io.StringIO(roh)))
+    if not zeilen or "icao_code" not in zeilen[0] or "id" not in zeilen[0]:
+        return {}
+    nach_kennung = {z["ident"]: z for z in zeilen}
+    um, vergeben = {}, set()
+    for z in zeilen:
+        icao = (z.get("icao_code") or "").strip()
+        if not re.fullmatch(r"[A-Z0-9]{4}", icao) or icao == z["ident"] or z["type"] == "closed":
+            continue
+        if icao in vergeben:
+            continue
+        if icao in nach_kennung:
+            continue
+        um[z["id"]] = icao
+        vergeben.add(icao)
+    return um
+
+
+
 def airports_umsetzen(roh: str) -> str:
-    """Rohes airports.csv -> 4-Spalten-Fassung, Werte unveraendert als Text."""
+    """Rohes airports.csv -> 4-Spalten-Fassung, Werte unveraendert als Text,
+    Kennung = ICAO-Code, wo er abweicht ([`icao_zuordnung`])."""
     leser = csv.DictReader(io.StringIO(roh))
     fehlend = [s for s in AIRPORTS_SPALTEN if s not in (leser.fieldnames or [])]
     if fehlend:
         raise ValueError(f"airports.csv: Spalten fehlen: {fehlend}")
+    um = icao_zuordnung(roh)
     aus = io.StringIO()
     schreiber = csv.writer(aus, lineterminator="\n")
     schreiber.writerow(AIRPORTS_SPALTEN)
     for z in leser:
-        schreiber.writerow([z[s] for s in AIRPORTS_SPALTEN])
+        werte = [z[s] for s in AIRPORTS_SPALTEN]
+        schreiber.writerow(werte)
+        neu = um.get(z.get("id"))
+        if neu is not None:
+            schreiber.writerow([neu] + werte[1:])
     return aus.getvalue()
+
+
+def runways_umsetzen(roh_rw: str, roh_ap: str) -> str:
+    """Rohes runways.csv mit denselben Kennungen wie `airports_umsetzen`.
+    Nur betroffene Zeilen aendern sich (airport_ident ueber airport_ref),
+    alle anderen bleiben Byte fuer Byte wie geliefert."""
+    um = icao_zuordnung(roh_ap)
+    if not um:
+        return roh_rw
+    aus = []
+    for i, zeile in enumerate(roh_rw.split("\n")):
+        m = re.match(r'^("?\d+"?),("?)(\d+)\2,"([^"]*)",', zeile) if i else None
+        if m is not None:
+            neu = um.get(m.group(3))
+            if neu is not None:
+                aus.append(zeile)
+                zeile = zeile[: m.start(4)] + neu + zeile[m.end(4):]
+        aus.append(zeile)
+    return "\n".join(aus)
 
 
 def km(a, b):
@@ -200,7 +261,7 @@ def main(argv=None) -> int:
         alt_rw = f.read()
     roh_ap = holen(a.commit, "airports.csv", a.roh_ordner)
     neu_ap = airports_umsetzen(roh_ap)
-    neu_rw = holen(a.commit, "runways.csv", a.roh_ordner)
+    neu_rw = runways_umsetzen(holen(a.commit, "runways.csv", a.roh_ordner), roh_ap)
     bericht = [f"# OurAirports {a.commit}", "", gsg_vermerk, ""]
     if neu_ap == alt_ap and neu_rw == alt_rw:
         print("OurAirports: kein Unterschied")

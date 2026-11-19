@@ -379,6 +379,10 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// Fenster bleiben beim Beenden weg (`beenden::fenster_zeigen_erlaubt` im Tray, im Zweitstart,
 /// in `vdgs_fenster_oeffnen` und `telemetrie_fenster_oeffnen`).
 /// Tests `beenden::tests::*`, `beenden_hauptfaden_wiring_tests::*`.
+/// — plus Divert am selben Platz 19.11. (Lima SPJC/SPIM): `divert_prefetch_decision`
+/// und `correlate_airport_icao` fragen `runway::gleicher_platz` (Zwilling aus dem
+/// Entdoppeln der Bahnen) statt Kennungsgleichheit. Tests
+/// `divert_prefetch_kein_divert_fuer_umbenannten_platz`, `zweite_kennung_ist_ueberall_derselbe_platz`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -389,4 +393,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "458e778a0ff25a9c6d209db21d7b9dd279f41eb14a9c3916d88bbb2a51dd9545";
+const HASH_VOR_DER_ZERLEGUNG: &str = "4ff8618ed70125e3e00bb56234a7f1ebd209f7968e0d5d6ac9b4843f1ac6cc15";

@@ -228,5 +228,80 @@ class Umsetzen(unittest.TestCase):
             oa.airports_umsetzen('"id","ident"\n"1","EDDF"\n')
 
 
+ROH_AP_KOPF = '"id","ident","type","name","latitude_deg","longitude_deg","icao_code","gps_code"\n'
+ROH_RW_KOPF = '"id","airport_ref","airport_ident","length_ft","le_ident","he_ident"\n'
+
+
+class IcaoStattKennung(unittest.TestCase):
+    """Sichtung 19.11.2026: Lima steht in OurAirports als SPIM (icao_code SPJC);
+    der Client sah im Anflug auf SPJC einen Divert nach „SPIM“."""
+
+    ROH_AP = ROH_AP_KOPF + (
+        '"6217","SPIM","large_airport","Jorge Chavez","-12.0219","-77.114305","SPJC","SPJC"\n'
+        '"1","EDDF","large_airport","Frankfurt","50.0333","8.5706","EDDF","EDDF"\n'
+        '"2","FAHT","medium_airport","Eastgate","-24.36","31.04","FAHS","FAHS"\n'
+        '"3","FAHS","closed","Non-Existent","-24.4","31.0","",""\n'
+        '"4","OLD1","small_airport","Alt","1","1","NEW1",""\n'
+        '"5","NEW1","small_airport","Belegt","2","2","",""\n'
+        '"6","AU-0539","large_airport","Western Sydney","-33.9","150.7","YSWS",""\n'
+        '"7","XX-1","small_airport","Kein Code","3","3","",""\n'
+        '"8","BAD1","small_airport","Ungueltig","4","4","ab-1",""\n')
+    ROH_RW = ROH_RW_KOPF + (
+        '238150,6217,"SPIM",11506,"16L","34R"\n'
+        '1,1,"EDDF",13123,"07C","25C"\n'
+        '2,2,"FAHT",8000,"04","22"\n'
+        '3,3,"FAHS",1000,"01","19"\n'
+        '4,4,"OLD1",2000,"09","27"\n')
+
+    def test_icao_ersetzt_die_kennung(self):
+        aus = oa.airports_umsetzen(self.ROH_AP)
+        zeilen = aus.split("\n")
+        self.assertIn("SPJC,large_airport,-12.0219,-77.114305", zeilen)
+        self.assertIn("YSWS,large_airport,-33.9,150.7", zeilen)
+        self.assertIn("SPIM,large_airport,-12.0219,-77.114305", zeilen, "alte ICAO-Kennung bleibt als Zweitzeile")
+        self.assertIn("AU-0539,large_airport,-33.9,150.7", zeilen, "jede alte Kennung bleibt")
+        self.assertIn("EDDF,large_airport,50.0333,8.5706", zeilen)
+        self.assertIn("XX-1,small_airport,3,3", zeilen, "ohne icao_code bleibt die Kennung")
+        self.assertIn("BAD1,small_airport,4,4", zeilen, "ungueltiger icao_code wird nicht uebernommen")
+
+    def test_belegter_code_bleibt_wie_geliefert_auch_geschlossen(self):
+        # FAHS: die richtigen Bahnen haengen an der geschlossenen Zeile.
+        zeilen = oa.airports_umsetzen(self.ROH_AP).split("\n")
+        self.assertIn("FAHT,medium_airport,-24.36,31.04", zeilen)
+        self.assertIn("FAHS,closed,-24.4,31.0", zeilen)
+        self.assertEqual(sum(1 for z in zeilen if z.startswith("FAHS,")), 1)
+
+    def test_echte_kollision_behaelt_die_kennung(self):
+        zeilen = oa.airports_umsetzen(self.ROH_AP).split("\n")
+        self.assertIn("OLD1,small_airport,1,1", zeilen)
+        self.assertIn("NEW1,small_airport,2,2", zeilen)
+
+    def test_neue_zeile_steht_hinter_der_alten(self):
+        ap = oa.airports_umsetzen(self.ROH_AP)
+        self.assertLess(ap.index("SPIM,"), ap.index("SPJC,"))
+        rw = oa.runways_umsetzen(self.ROH_RW, self.ROH_AP)
+        self.assertLess(rw.index('"SPIM"'), rw.index('"SPJC"'))
+
+    def test_bahnen_wandern_mit(self):
+        aus = oa.runways_umsetzen(self.ROH_RW, self.ROH_AP)
+        self.assertIn('238150,6217,"SPJC",11506,"16L","34R"', aus.split("\n"))
+        self.assertIn('238150,6217,"SPIM",11506,"16L","34R"', aus.split("\n"), "Bahnen auch unter der alten Kennung")
+        self.assertIn('3,3,"FAHS",1000,"01","19"', aus.split("\n"), "Bahnen des geschlossenen Platzes bleiben")
+        self.assertNotIn('2,2,"FAHS"', aus)
+        self.assertIn('4,4,"OLD1",2000,"09","27"', aus.split("\n"))
+        self.assertTrue(aus.startswith(ROH_RW_KOPF))
+
+    def test_derselbe_code_nur_einmal(self):
+        roh = ROH_AP_KOPF + '"1","AA-1","small_airport","A","1","1","ZZZZ",""\n"2","AA-2","small_airport","B","2","2","ZZZZ",""\n'
+        zeilen = oa.airports_umsetzen(roh).split("\n")
+        self.assertIn("ZZZZ,small_airport,1,1", zeilen)
+        self.assertIn("AA-2,small_airport,2,2", zeilen)
+
+    def test_ohne_icao_spalte_unveraendert(self):
+        roh = '"id","ident","type","name","latitude_deg","longitude_deg"\n"1","EDDF","large_airport","F","50","8"\n'
+        rw_roh = ROH_RW_KOPF + '1,1,"EDDF",13123,"07C","25C"\n'
+        self.assertEqual(oa.runways_umsetzen(rw_roh, roh), rw_roh)
+
+
 if __name__ == "__main__":
     unittest.main()

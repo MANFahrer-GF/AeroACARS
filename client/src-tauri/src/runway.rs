@@ -360,7 +360,7 @@ pub fn nearest_airport_reference(
     if !lat.is_finite() || !lon.is_finite() {
         return None;
     }
-    let exclude = exclude_icao.trim().to_uppercase();
+    let exclude = platz_kanon(exclude_icao);
     let max_m = max_nm * 1852.0;
     // Coarse box first (1° lat ≈ 111 km; longitude shrinks with cos(lat)).
     let lat_span = (max_m / 111_000.0).max(0.05);
@@ -369,11 +369,15 @@ pub fn nearest_airport_reference(
 
     let mut best: Option<(String, f64)> = None;
     for (icao, entry) in airports_by_ident().iter() {
-        if *icao == exclude || !entry.landable {
+        if !entry.landable {
             continue;
         }
         let (alat, alon) = (entry.lat, entry.lon);
         if (alat - lat).abs() > lat_span || lon_delta_deg(alon, lon) > lon_span {
+            continue;
+        }
+        // Auch der Zwilling des ausgeschlossenen Platzes ist kein „anderer Platz“.
+        if platz_kanon(icao) == exclude {
             continue;
         }
         let d = haversine_m(lat, lon, alat, alon);
@@ -458,6 +462,33 @@ fn airports_by_ident() -> &'static std::collections::HashMap<String, AirportRef>
 /// scan (`divert_prefetch_decision`) no longer need to: the scan is gone.
 static RUNWAYS_BY_IDENT: OnceLock<std::collections::HashMap<String, Vec<u32>>> = OnceLock::new();
 
+/// Kennungen, deren Bahnen beim Entdoppeln einem Zwilling zugeschlagen wurden:
+/// (entfernt, behalten). Derselbe Platz steht in OurAirports unter alter und
+/// neuer Kennung (Lima SPIM/SPJC, Palmerola MHSC/MHPR, EDDM/DE-0901). Ohne
+/// diesen Eintrag fand die zweite Kennung keine Bahn, der Abstand zum
+/// geplanten Ziel war „unbekannt“ und der Anflug galt als Divert.
+static ZWILLINGE: OnceLock<Vec<(String, String)>> = OnceLock::new();
+
+/// Entfernte Kennung -> behaltene, aus [`ZWILLINGE`].
+static ZWILLING_ZU: OnceLock<std::collections::HashMap<String, String>> = OnceLock::new();
+
+/// Die Kennung, unter der die Bahnen eines Platzes stehen (Zwilling aufgeloest).
+fn platz_kanon(icao: &str) -> String {
+    let icao = icao.trim().to_uppercase();
+    let zu = ZWILLING_ZU.get_or_init(|| {
+        let _ = runways();
+        ZWILLINGE.get().map(|v| v.iter().cloned().collect()).unwrap_or_default()
+    });
+    zu.get(&icao).cloned().unwrap_or(icao)
+}
+
+/// Derselbe Platz unter gleicher oder zweiter Kennung (Lima SPJC/SPIM,
+/// Palmerola MHPR/MHSC, EDDM/DE-0901), Sichtung 19.11.2026. Alle Stellen, die
+/// „ist das der geplante Platz?“ fragen, nutzen diese eine Antwort.
+pub fn gleicher_platz(a: &str, b: &str) -> bool {
+    platz_kanon(a) == platz_kanon(b)
+}
+
 fn runways_by_ident() -> &'static std::collections::HashMap<String, Vec<u32>> {
     RUNWAYS_BY_IDENT.get_or_init(|| {
         let mut map: std::collections::HashMap<String, Vec<u32>> =
@@ -466,6 +497,15 @@ fn runways_by_ident() -> &'static std::collections::HashMap<String, Vec<u32>> {
             map.entry(row.airport_ident.to_uppercase())
                 .or_default()
                 .push(i as u32);
+        }
+        // Eine entfernte Kennung ohne eigene Bahn bekommt die ihres Zwillings.
+        for (weg, bleibt) in ZWILLINGE.get().map(|v| v.as_slice()).unwrap_or(&[]) {
+            if map.contains_key(weg) {
+                continue;
+            }
+            if let Some(bahnen) = map.get(bleibt).cloned() {
+                map.insert(weg.clone(), bahnen);
+            }
         }
         map
     })
@@ -727,6 +767,9 @@ fn runways() -> &'static Vec<RunwayRow> {
         let mut by_key: std::collections::HashMap<(i64, i64, String), usize> =
             std::collections::HashMap::with_capacity(out.len());
         let mut to_drop: Vec<bool> = vec![false; out.len()];
+        // (entfernt, behalten): derselbe Platz unter zweiter Kennung, fuer
+        // [`runways_by_ident`] (Sichtung 19.11.2026: Lima SPIM/SPJC).
+        let mut zwillinge: Vec<(String, String)> = Vec::new();
         for (idx, row) in out.iter().enumerate() {
             let key = (
                 (row.le_lat * 1e5).round() as i64,
@@ -741,10 +784,12 @@ fn runways() -> &'static Vec<RunwayRow> {
                     if new_is_icao && !existing_is_icao {
                         // Replace the national-id row with the ICAO row.
                         to_drop[existing_idx] = true;
+                        zwillinge.push((existing.airport_ident.to_uppercase(), row.airport_ident.to_uppercase()));
                         by_key.insert(key, idx);
                     } else {
                         // Keep the existing row, drop this one.
                         to_drop[idx] = true;
+                        zwillinge.push((row.airport_ident.to_uppercase(), existing.airport_ident.to_uppercase()));
                     }
                 }
                 None => {
@@ -759,6 +804,8 @@ fn runways() -> &'static Vec<RunwayRow> {
             .collect();
         tracing::debug!(count = final_out.len(), "runway table after ICAO dedupe");
         repair_corrupt_thresholds(&mut final_out);
+        zwillinge.retain(|(weg, bleibt)| weg != bleibt);
+        let _ = ZWILLINGE.set(zwillinge);
         final_out
     })
 }
