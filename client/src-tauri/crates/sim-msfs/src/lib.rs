@@ -129,3 +129,48 @@ mod stub {
 
 #[cfg(not(target_os = "windows"))]
 pub use stub::*;
+
+/// Quelltext-Pruefung fuer `adapter.rs` (auf macOS/Linux nicht uebersetzt,
+/// Muster wie in `facility.rs`).
+#[cfg(test)]
+mod optionale_abfrage_tests {
+    const ADAPTER: &str = include_str!("adapter.rs");
+
+    fn nur_code(s: &str) -> String {
+        s.lines()
+            .filter(|z| !z.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    /// Morgenbericht 19.11.2026: Unter MSFS 2020 lehnt der Simulator die
+    /// optionale SimVar `FUEL TOTAL QUANTITY WEIGHT EX1` ab (send_id 430), die
+    /// folgende Abfrage auf die leere Definition endet in UNRECOGNIZED_ID
+    /// (send_id 431) und stand als WARN ohne Feld im Log und als „neues
+    /// Fehlermuster“ im Health-Report. Die Abfrage merkt ihre Kennung, und nur
+    /// UNRECOGNIZED_ID darauf gilt als erwartet (Codex: jede andere Ausnahme
+    /// der Abfrage bleibt eine Warnung).
+    #[test]
+    fn die_abfrage_einer_optionalen_simvar_merkt_ihre_kennung() {
+        let start = ADAPTER.find("fn register_optionale(").expect("register_optionale vorhanden");
+        let ende = ADAPTER[start + 1..].find("\n    fn ").map_or(ADAPTER.len(), |i| start + 1 + i);
+        let rumpf = nur_code(&ADAPTER[start..ende]);
+        let abfrage = rumpf.find("SimConnect_RequestDataOnSimObject(").expect("Abfrage im Rumpf");
+        let nach = &rumpf[abfrage..];
+        let kennung = nach.find("SimConnect_GetLastSentPacketID(").expect("Kennung nach der Abfrage geholt");
+        assert!(nach[kennung..].contains("self.optionale_abfrage_ids.push("), "Kennung der Abfrage gemerkt");
+    }
+
+    #[test]
+    fn nur_unrecognized_id_auf_die_abfrage_wird_herabgestuft() {
+        let code = nur_code(ADAPTER);
+        let bedingung = "ifname==\"UNRECOGNIZED_ID\"&&conn.optionale_abfrage_ids.contains(&send_id){";
+        let stelle = code.find(bedingung).expect("Herabstufung nur fuer UNRECOGNIZED_ID auf eine Abfragekennung");
+        let block = &code[stelle..stelle + 200];
+        assert!(block.contains("tracing::info!(") && block.contains("continue;"), "als INFO und ohne Warnung");
+        assert_eq!(code.matches("optionale_abfrage_ids.contains(").count(), 1, "keine zweite, weitere Herabstufung");
+    }
+}
