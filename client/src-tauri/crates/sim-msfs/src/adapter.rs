@@ -2061,6 +2061,13 @@ fn run_dispatch(
                         conn.haupt_abgelehnt.push(idx);
                         return;
                     }
+                    if name == "UNRECOGNIZED_ID" && conn.optionale_abfrage_ids.contains(&send_id) {
+                        tracing::info!(
+                            send_id,
+                            "Abfrage einer vom Simulator abgelehnten optionalen SimVar (Folge, erwartet)"
+                        );
+                        continue;
+                    }
                     if feld.is_some_and(|n| OPTIONALE_FELDER.iter().any(|f| f.name == n)) {
                         // Erwartet (z. B. EX1 unter MSFS 2020) und folgenlos:
                         // nur dieser Wert bleibt None.
@@ -2798,6 +2805,10 @@ struct Connection {
     /// optionalen Definitionen. NUR fuers Log: der `index` einer Ausnahme
     /// ist die Nummer des PARAMETERS, nicht die eines Felds.
     telemetrie_send_ids: Vec<(u32, &'static str)>,
+    /// Paketkennungen der `RequestDataOnSimObject` je optionaler SimVar: ein
+    /// `UNRECOGNIZED_ID` darauf ist die Folge einer abgelehnten optionalen
+    /// Definition, jede andere Ausnahme bleibt eine Warnung.
+    optionale_abfrage_ids: Vec<u32>,
     /// Paketkennungen der Hauptdefinition — entscheidet, welches Feld
     /// nach einer Ablehnung beim Neuregistrieren ausgelassen wird.
     haupt_pakete: telemetry::Paketbuch,
@@ -2847,6 +2858,7 @@ impl Connection {
             mess_bloecke_beruehrt: 0,
             blockwaechter: telemetry::Blockwaechter::default(),
             telemetrie_send_ids: Vec::new(),
+            optionale_abfrage_ids: Vec::new(),
             haupt_pakete: telemetry::Paketbuch::default(),
             haupt_ausgelassen: Vec::new(),
             haupt_abgelehnt: Vec::new(),
@@ -2983,6 +2995,13 @@ impl Connection {
                     0,
                 )
             };
+            // Kennung der Abfrage merken: lehnt der Simulator die SimVar ab
+            // (EX1 unter MSFS 2020), endet sie in UNRECOGNIZED_ID — nur DIESE
+            // Folge ist erwartet (Morgenbericht 19.11.2026, Codex).
+            let mut abfrage_id: sys::DWORD = 0;
+            if unsafe { sys::SimConnect_GetLastSentPacketID(self.handle, &mut abfrage_id) } == 0 {
+                self.optionale_abfrage_ids.push(abfrage_id);
+            }
             if hr != 0 {
                 return Err(format!(
                     "RequestDataOnSimObject for optional SimVar \"{}\" returned 0x{hr:08X}",
