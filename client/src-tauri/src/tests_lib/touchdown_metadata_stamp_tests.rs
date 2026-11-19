@@ -5525,6 +5525,59 @@
         );
     }
 
+    /// Sichtung 19.11.2026 (Pilot 5, 16.11. 17:31 UTC): Anflug auf Lima, geplant
+    /// SPJC. OurAirports fuehrte Lima nur als SPIM (icao_code SPJC), der Abstand
+    /// zu SPJC war „unbekannt“ und der Client meldete einen Divert nach SPIM.
+    /// Mit den echten Paketdaten: kein Divert, unter beiden Kennungen; und ein
+    /// umbenannter Platz ohne alte ICAO-Kennung (Western Sydney) ist auffindbar.
+    #[test]
+    fn divert_prefetch_kein_divert_fuer_umbenannten_platz() {
+        for geplant in ["SPJC", "SPIM", "MHSC", "MHPR"] {
+            let (lat, lon) = if geplant.starts_with("SP") { (-11.97, -77.13) } else { (14.42, -87.62) };
+            let mut stats = FlightStats::default();
+            let mut snap = rollout_snap();
+            snap.lat = lat;
+            snap.lon = lon;
+            snap.on_ground = false;
+            snap.altitude_agl_ft = 1500.0;
+            snap.vertical_speed_fpm = -700.0;
+            let t0 = td_at();
+            let stabil = crate::grenzwerte::grenzwerte().abgabe.divert_prefetch_stable_secs.wert;
+            for s in [0, stabil, stabil + 5] {
+                assert_eq!(
+                    divert_prefetch_decision(&mut stats, &snap, geplant, t0 + chrono::Duration::seconds(s)),
+                    None,
+                    "{geplant}: Anflug auf den geplanten Platz ist kein Divert"
+                );
+            }
+        }
+        assert!(crate::runway::distance_to_airport_m("YSWS", -33.89, 150.72).is_some(), "YSWS unter ICAO auffindbar");
+    }
+
+    /// Codex-Pruefung 19.11.2026: dieselbe Frage „ist das der geplante Platz?“
+    /// stellen auch die Landeplatz-Zuordnung (Szenerie, Aufsetzen) und die
+    /// Abgabe-Pruefung „steht er an einem anderen Platz?“.
+    #[test]
+    fn zweite_kennung_ist_ueberall_derselbe_platz() {
+        use crate::runway::{gleicher_platz, nearest_airport_reference};
+        assert!(gleicher_platz("SPJC", "SPIM") && gleicher_platz("spim", "SPJC"));
+        assert!(gleicher_platz("MHSC", "MHPR"));
+        assert!(!gleicher_platz("SPJC", "SPLP"), "Nachbarplatz bleibt ein anderer Platz");
+        // Aufsetzen auf SPJC/16L: der Schluessel bleibt der geplante Code.
+        for geplant in ["SPJC", "SPIM"] {
+            assert_eq!(correlate_airport_icao(geplant, -12.0090, -77.1206), geplant);
+        }
+        assert_eq!(correlate_airport_icao("SPLP", -12.0090, -77.1206), "SPIM", "echter Divert bleibt ein Divert");
+        // Am Stand in Lima: kein „anderer Platz“, egal unter welcher Kennung geplant.
+        for geplant in ["SPJC", "SPIM"] {
+            let anderer = nearest_airport_reference(-12.0219, -77.1143, 2.0, geplant);
+            assert!(
+                anderer.as_ref().is_none_or(|(icao, _)| !gleicher_platz(icao, "SPJC")),
+                "{geplant}: Zwilling als anderer Platz gemeldet: {anderer:?}"
+            );
+        }
+    }
+
     /// An ON-PLAN approach (nearest field == planned) never pre-fetches.
     #[test]
     fn divert_prefetch_silent_on_plan_approach() {

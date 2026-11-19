@@ -67,8 +67,9 @@ fn correlate_airport_icao(arr_airport: &str, td_lat: f64, td_lon: f64) -> String
     };
     let nearest_icao = nearest.icao.trim().to_uppercase();
     // On-plan fast path: nearest IS the plan → byte-identical to the old
-    // `arr_airport`-keyed lookup.
-    if nearest_icao == planned {
+    // `arr_airport`-keyed lookup. Auch unter zweiter Kennung (SPIM fuer SPJC,
+    // Codex-Pruefung 19.11.2026): der Schluessel bleibt der geplante Code.
+    if runway::gleicher_platz(&nearest_icao, &planned) {
         return planned;
     }
     // Ambiguity tie-break (on-plan invariant guard): if the planned airport
@@ -79,7 +80,7 @@ fn correlate_airport_icao(arr_airport: &str, td_lat: f64, td_lon: f64) -> String
     // old `arr_airport`-keyed path for non-diverts.
     let planned_in_candidates = nearby
         .iter()
-        .find(|na| na.icao.trim().eq_ignore_ascii_case(&planned));
+        .find(|na| runway::gleicher_platz(&na.icao, &planned));
     if let Some(planned_cand) = planned_in_candidates {
         let gap_nm = (planned_cand.distance_m - nearest.distance_m) / 1852.0;
         if gap_nm <= crate::grenzwerte::grenzwerte().ausrollen.correlate_airport_ambiguity_nm.wert {
@@ -185,8 +186,10 @@ fn divert_prefetch_decision(
         return None;
     };
     let nearest_icao = nearest.icao.trim().to_uppercase();
-    // Same airport as planned → not a divert; nothing to pre-fetch.
-    if nearest_icao == planned {
+    // Same airport as planned → not a divert; nothing to pre-fetch. Das
+    // gilt auch fuer denselben Platz unter zweiter Kennung (Lima SPJC/SPIM,
+    // Sichtung 19.11.2026).
+    if runway::gleicher_platz(&nearest_icao, &planned) {
         stats.divert_prefetch_stable_since = None;
         return None;
     }
