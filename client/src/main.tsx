@@ -8,6 +8,7 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { appVersion } from "./lib/appVersion";
 import { texteAusPaketLaden } from "./i18n";
 import { flotteAusPaketLaden } from "./lib/aircraftIcon";
 import "./App.css";
@@ -15,7 +16,7 @@ import { applyTheme, getInitialTheme } from "./theme";
 import { sichtbereichHalten } from "./lib/sichtbereich";
 import { GsgSkinProvider } from "./components/GsgSkinProvider";
 import { BasemapProvider } from "./components/BasemapContext";
-import { initSentry, consentIsUnset, setConsent, Sentry } from "./lib/sentry";
+import { initSentry, setSentryVersion, consentIsUnset, setConsent, Sentry } from "./lib/sentry";
 import {
   invoke,
   isTauri,
@@ -38,7 +39,10 @@ import type { ActiveFlightInfo } from "./types";
 // v0.9.0 (#GlitchTip): Sentry-Init MUSS frueh laufen, sonst gehen
 // Bootstrap-Fehler im weissen Bildschirm unter. Init macht KEIN
 // Network-Call wenn DSN nicht in Build-Time-Env gesetzt war.
-initSentry(typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0");
+// Sofort starten (Fehler beim Hochfahren); die Release-Kennung = Version des
+// laufenden Clients, nicht die des Pakets, wird nachgetragen (19.11.2026).
+initSentry();
+void appVersion().then(setSentryVersion);
 
 // Laufzeit-Paket (P-3.53, P-3.56): Flottentabelle und Texte des geltenden
 // Stands kommen VOR dem ersten Zeichnen — sonst blieben bereits gezeichnete

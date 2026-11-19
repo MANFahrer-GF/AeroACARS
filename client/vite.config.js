@@ -39,8 +39,6 @@ import react from "@vitejs/plugin-react";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 var host = process.env.TAURI_DEV_HOST;
-// v0.9.0 (#GlitchTip): Client-Version fuer Sentry-release-tag
-var pkg = JSON.parse(readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8"));
 // https://vite.dev/config/
 // v3 (Etappe 5, P-8.20): Das HUD (Panel-Server /hud) laedt Skript und Stil
 // des Widgets ueber denselben Lader wie die Oberflaeche — darum liegen sie im
@@ -65,9 +63,9 @@ export default defineConfig(function () { return __awaiter(void 0, void 0, void 
     return __generator(this, function (_a) {
         return [2 /*return*/, ({
                 plugins: [react(), hudDateien],
-                define: {
-                    __APP_VERSION__: JSON.stringify(pkg.version),
-                },
+                // Keine Versionsnummer im Paket: die liefert der Client zur Laufzeit
+                // (src/lib/appVersion.ts, 19.11.2026) — sonst baute jeder Versions-Commit
+                // eine neue Oberflaeche und Generation 104 meldete auf 3.1.3 noch 3.1.2.
                 // v0.8.3: Chunk-Splitting. Vorher landete alles in einem 824 KB
                 // index-*.js — Vite warnte "chunks larger than 500 kB". Tauri laedt
                 // den Frontend-Bundle aus dem Filesystem (kein Netz-Latenz-Impact),

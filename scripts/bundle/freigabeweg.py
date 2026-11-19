@@ -6,7 +6,11 @@ live ausschliesslich in ourairports/ -> darf ohne Einzelfreigabe hinaus.
 Rueckgabe 1: alles andere (auch: kein veroeffentlichter Stand lesbar) ->
 Freigabe durch Thomas.
 
-Aufruf: python3 -I freigabeweg.py <paket/manifest.json> <live-basis | Manifest-Datei>
+Mit --unveraendert (19.11.2026): Rueckgabe 0, wenn KEINE Datei abweicht — der
+Lauf erzeugt dann keine Generation (ein Versions-Commit baute vorher eine neue
+Generation ohne neuen Inhalt). Kein Stand lesbar -> 1, der Lauf geht weiter.
+
+Aufruf: python3 -I freigabeweg.py [--unveraendert] <paket/manifest.json> <live-basis | Manifest-Datei>
 Ist das zweite Argument eine Datei, wird sie als veroeffentlichtes Manifest
 gelesen (Tests); sonst wird es von <basis>/api/bundle/current geholt.
 """
@@ -26,6 +30,12 @@ def nur_ourairports(neu: dict, alt: dict) -> list:
     return sorted(p for p in set(n) | set(a) if not p.startswith("ourairports/") and n.get(p) != a.get(p))
 
 
+def abweichend(neu: dict, alt: dict) -> list:
+    """Alle Pfade, die sich unterscheiden (auch neue oder fehlende)."""
+    n, a = dateien(neu), dateien(alt)
+    return sorted(p for p in set(n) | set(a) if n.get(p) != a.get(p))
+
+
 def veroeffentlicht(quelle: str) -> dict:
     if os.path.isfile(quelle):
         with open(quelle, encoding="utf-8") as f:
@@ -37,6 +47,9 @@ def veroeffentlicht(quelle: str) -> dict:
 
 
 def main(argv) -> int:
+    nur_gleich = len(argv) > 1 and argv[1] == "--unveraendert"
+    if nur_gleich:
+        argv = argv[:1] + argv[2:]
     with open(argv[1], encoding="utf-8") as f:
         neu = json.load(f)
     try:
@@ -44,6 +57,10 @@ def main(argv) -> int:
     except Exception as e:  # kein Stand lesbar -> immer Freigabe
         print("kein veroeffentlichter Stand lesbar:", e)
         return 1
+    if nur_gleich:
+        anders = abweichend(neu, alt)
+        print("abweichend vom veroeffentlichten Stand:", anders or "nichts")
+        return 1 if anders else 0
     andere = nur_ourairports(neu, alt)
     print("ausserhalb ourairports/ geaendert:", andere or "nichts")
     return 1 if andere else 0
