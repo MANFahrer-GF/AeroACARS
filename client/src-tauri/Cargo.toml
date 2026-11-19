@@ -34,10 +34,13 @@ members = [
     # Beobachtung, Multipart, Windows-Teile. Kein tauri, kein reqwest.
     "crates/bilder-kern",
 ]
+# Gepatchte rumqttc-Kopie (Happy Eyeballs, siehe [patch.crates-io] unten):
+# kein Workspace-Mitglied, ihre eigenen Tests laufen nicht mit --workspace.
+exclude = ["vendor/rumqttc"]
 resolver = "2"
 
 [workspace.package]
-version = "3.1.3"
+version = "3.1.4"
 edition = "2021"
 # Proprietaer seit 29.09.2026 — siehe LICENSE im Repo-Wurzelordner.
 license = "LicenseRef-AeroACARS-Proprietary"
@@ -340,3 +343,10 @@ tauri = { version = "2", features = ["test"] }
 
 [lints]
 workspace = true
+
+# rumqttc 0.25.1 mit Happy Eyeballs (RFC 8305) im TCP-Aufbau: Hat
+# live.kant.ovh einen AAAA-Eintrag und verschluckt das Netz des Piloten
+# IPv6, hing der MQTT-Aufbau sonst bis zum Timeout und IPv4 kam nie dran.
+# Begruendung, Diff zum Original und Ausbau: vendor/rumqttc/AEROACARS-PATCH.md
+[patch.crates-io]
+rumqttc = { path = "vendor/rumqttc" }
