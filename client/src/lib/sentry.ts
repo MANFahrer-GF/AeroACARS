@@ -69,11 +69,25 @@ export function setConsent(enabled: boolean): void {
   }
 }
 
+/** Version des laufenden Clients; bis zur Antwort des Clients „unbekannt“. */
+let laufendeVersion = "unbekannt";
+let sentryAktiv = false;
+
+/**
+ * Traegt die Client-Version nach (appVersion.ts, 19.11.2026). Sentry startet
+ * sofort, die Version kommt Millisekunden spaeter; Ereignisse davor tragen
+ * „unbekannt“ statt der falschen Paketversion.
+ */
+export function setSentryVersion(version: string): void {
+  laufendeVersion = version;
+  if (sentryAktiv) Sentry.setTag("app.version", version);
+}
+
 /**
  * Initialisiert Sentry. No-Op wenn DSN nicht in build-time-env gesetzt war.
  * MUSS sehr frueh in main.tsx aufgerufen werden.
  */
-export function initSentry(appVersion: string): boolean {
+export function initSentry(): boolean {
   const dsn = (import.meta.env.VITE_SENTRY_DSN_CLIENT as string | undefined)?.trim();
   if (!dsn) {
     // Kein Log noisy machen — viele Builds laufen ohne DSN (Dev, contributors).
@@ -82,7 +96,6 @@ export function initSentry(appVersion: string): boolean {
 
   Sentry.init({
     dsn,
-    release: `aeroacars-client@${appVersion}`,
     environment: import.meta.env.PROD ? "production" : "development",
     sendDefaultPii: false,
     tracesSampleRate: 0,
@@ -94,6 +107,7 @@ export function initSentry(appVersion: string): boolean {
     beforeSend(event) {
       // Consent-Gate. Wird live aus localStorage gelesen, damit Toggle sofort wirkt.
       if (!getConsent()) return null;
+      event.release = `aeroacars-client@${laufendeVersion}`;
       try {
         return redactEvent(event);
       } catch (err) {
@@ -105,10 +119,11 @@ export function initSentry(appVersion: string): boolean {
     initialScope: {
       tags: {
         "app.component": "client",
-        "app.version": appVersion,
+        "app.version": laufendeVersion,
       },
     },
   });
+  sentryAktiv = true;
   return true;
 }
 

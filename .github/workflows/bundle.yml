@@ -132,6 +132,16 @@ jobs:
       # Generation. live legt sie als gen/<G>/notiz.json ab, die Verwaltung
       # (Reiter „AeroACARS 3“ → „Pakete & Module“) zeigt sie an. Schlaegt sie
       # fehl, geht das Paket ohne Notiz weiter.
+      # 19.11.2026: Gleicher Inhalt wie der veroeffentlichte Stand (z. B. ein
+      # Versions-Commit, seit die Oberflaeche keine Versionsnummer mehr traegt)
+      # erzeugt keine Generation: nicht signieren, kein Vorab, keine Freigabe.
+      - name: Unveraendert gegenueber live?
+        id: gleich
+        run: |
+          if python3 -I scripts/bundle/freigabeweg.py --unveraendert paket/manifest.json https://live.kant.ovh; then
+            echo "gleich=ja" >> "$GITHUB_OUTPUT"
+            echo "::notice::Paket gleich dem veroeffentlichten Stand — keine neue Generation"
+          fi
       - name: Paket-Skripte testen (Freigabeweg, Begleitnotiz)
         run: python3 -I -m unittest discover -s scripts/bundle
       - name: Begleitnotiz (Kernaufgabe, Commits seit der Freigabe)
@@ -147,6 +157,7 @@ jobs:
       # neuen paket.neu_text bricht hier ab; Hinweistext und Commits stehen in
       # der Zusammenfassung — der Seite, auf der freigegeben wird.
       - name: Hinweis „Neu in Generation N“ gesetzt?
+        if: steps.gleich.outputs.gleich != 'ja'
         run: |
           if [ ! -f paket/notiz.json ]; then
             echo "::error::Ohne Begleitnotiz laesst sich der Hinweistext nicht pruefen"
@@ -155,6 +166,7 @@ jobs:
           python3 -I scripts/bundle/hinweis.py paket/notiz.json --zusammenfassung "$GITHUB_STEP_SUMMARY"
       - name: Signieren
         id: signieren
+        if: steps.gleich.outputs.gleich != 'ja'
         env:
           SCHLUESSEL: ${{ secrets.BUNDLE_MINISIGN_KEY }}
         run: |
@@ -182,6 +194,7 @@ jobs:
           echo "signiert=ja" >> "$GITHUB_OUTPUT"
       - name: Freigabeweg waehlen (P-3.12, P-9.43)
         id: umgebung
+        if: steps.gleich.outputs.gleich != 'ja'
         env:
           NUR_OA: ${{ inputs.nur_ourairports }}
         # Ohne Einzelfreigabe nur, wenn der Lauf vom Wochenlauf kommt UND sich

@@ -42,21 +42,13 @@ function texte(markup: string): string[] {
 }
 
 describe("PDF-Bericht der Landeanalyse", () => {
-  it("nennt die Version, die wirklich läuft", () => {
-    const pkg = JSON.parse(
-      readFileSync(resolve(__dirname, "..", "..", "package.json"), "utf-8"),
-    ) as { version: string };
+  it("nennt die Version des laufenden Clients, nicht die des Pakets", () => {
     const quelle = readFileSync(resolve(__dirname, "LandingPanel.tsx"), "utf-8");
-    expect(
-      /const REPORT_APP_VERSION =\s*\n?\s*typeof __APP_VERSION__/.test(quelle),
-      "Die Version steht als getippte Konstante im Quelltext. Sie driftet " +
-        `— das Paket ist bei ${pkg.version}. Aus __APP_VERSION__ lesen.`,
-    ).toBe(true);
-    // Und keine getippte Fassungsnummer daneben.
-    expect(
-      /REPORT_APP_VERSION = "\d+\.\d+/.test(quelle),
-      "getippte Versionsnummer gefunden",
-    ).toBe(false);
+    // 19.11.2026: Generation 104 auf Client 3.1.3 druckte „3.1.2“ — die
+    // Version stand fest im Paket. Sie kommt jetzt vom Client (appVersion.ts).
+    expect(quelle).toContain("useAppVersion()");
+    expect(quelle).not.toContain("__APP_VERSION__");
+    expect(/version: "\d+\.\d+/.test(quelle), "getippte Versionsnummer gefunden").toBe(false);
   });
 
   it("formatiert Datum und Uhrzeit in der Sprache der App", () => {

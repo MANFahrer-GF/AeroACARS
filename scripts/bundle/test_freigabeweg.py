@@ -14,13 +14,13 @@ def m(**dateien):
 
 
 class Freigabeweg(unittest.TestCase):
-    def lauf(self, neu, alt):
+    def lauf(self, neu, alt, *schalter):
         with tempfile.TemporaryDirectory() as d:
             pn, pa = os.path.join(d, "neu.json"), os.path.join(d, "alt.json")
             json.dump(neu, open(pn, "w"))
             if alt is not None:
                 json.dump(alt, open(pa, "w"))
-            return fw.main(["", pn, pa])
+            return fw.main(["", *schalter, pn, pa])
 
     def test_nur_ourairports_geaendert_ohne_freigabe(self):
         self.assertEqual(self.lauf(m(ourairports__runways_csv="b", texte__de="t"), m(ourairports__runways_csv="a", texte__de="t")), 0)
@@ -34,6 +34,14 @@ class Freigabeweg(unittest.TestCase):
 
     def test_kein_veroeffentlichter_stand_braucht_freigabe(self):
         self.assertEqual(self.lauf(m(ourairports__x="a"), None), 1)
+
+    # 19.11.2026: ein Versions-Commit erzeugte eine Generation ohne neuen Inhalt.
+    def test_unveraendert_nur_bei_gleichem_inhalt(self):
+        gleich = m(ourairports__x="a", ui__index_html="u")
+        self.assertEqual(self.lauf(gleich, gleich, "--unveraendert"), 0)
+        self.assertEqual(self.lauf(m(ourairports__x="b", ui__index_html="u"), gleich, "--unveraendert"), 1, "auch OurAirports zaehlt")
+        self.assertEqual(self.lauf(m(ourairports__x="a"), gleich, "--unveraendert"), 1, "fehlende Datei")
+        self.assertEqual(self.lauf(gleich, None, "--unveraendert"), 1, "ohne veroeffentlichten Stand weiterbauen")
 
 
 if __name__ == "__main__":

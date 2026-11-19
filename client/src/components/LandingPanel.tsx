@@ -1,3 +1,4 @@
+import { useAppVersion } from "../lib/appVersion";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AltbestandKontext } from "./InfoBadge";
 import { createPortal } from "react-dom";
@@ -489,28 +490,15 @@ function LandingRateChart({ records }: { records: LandingRecord[] }) {
  */
 const BERICHT_SCHRIFT_MINDEST = 11;
 
-/**
- * App-Version für die Report-Fußzeile — aus dem Paket, nicht von Hand.
- *
- * Hier stand eine getippte Konstante: `"0.12.8"`. Die App war bei 1.7.0,
- * und jeder ausgedruckte Bericht behauptete seit fünf Versionen einen
- * falschen Stand. Genau dafür ist ein Bericht da — jemand legt ihn zur
- * Seite und sieht später nach, womit er erzeugt wurde.
- *
- * `__APP_VERSION__` setzt Vite aus `package.json` (siehe
- * `vite.config.ts`). Im Testlauf ohne Vite-Define fehlt es, deshalb der
- * Rückfall.
- */
-const REPORT_APP_VERSION =
-  typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
-
 /** v0.12.8-dev: Fußzeile — EINMAL am Ende des fließenden Dokuments
  *  (vorher pro Seite). Generierungs-Datum + App-Version. */
 function ReportFooter() {
   const { t } = useTranslation();
+  // Die Version des laufenden Clients, nicht die des Pakets (appVersion.ts).
+  const version = useAppVersion();
   const generated = t("landing.report.generated", {
     date: new Date().toLocaleDateString(i18n.language || undefined),
-    version: REPORT_APP_VERSION,
+    version,
   });
   return (
     <div className="report-footer">
