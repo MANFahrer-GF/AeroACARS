@@ -50,3 +50,9 @@ sim-core = { path = "../sim-core" }
 # v0.7.1: SubScoreEntry-Wire-Format kommt aus der landing-scoring Crate
 # (Spec §3.1 SSoT). PirepPayload re-exportiert die SubScores 1:1.
 landing-scoring = { path = "../landing-scoring" }
+
+[dev-dependencies]
+# Happy-Eyeballs-Tests (tests/happy_eyeballs.rs) laufen mit angehaltener
+# Tokio-Uhr (start_paused): Zeiten sind exakt und auf ausgelasteten
+# CI-Runnern stabil.
+tokio = { workspace = true, features = ["test-util"] }
