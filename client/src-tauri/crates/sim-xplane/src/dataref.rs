@@ -1070,7 +1070,9 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "sim/flightmodel/engine/ENGN_FF_[3]",
         field: FieldId::Eng4FuelFlow,
     },
-    // Ans Ende (Index = Position): Druckhöhe in ft (DataRefs.txt, XP 12).
+    // Ans Ende (Index = Position): Druckhöhe in ft. Nur für X-Plane 12 belegt
+    // (DataRefs.txt) — Ausnahme von der Regel im Kopf; ohne Wert bleibt die
+    // Druckhöhe leer.
     DatarefEntry {
         name: "sim/flightmodel2/position/pressure_altitude",
         field: FieldId::PressureAltitudeFt,
@@ -3937,7 +3939,7 @@ mod druckhoehe_tests {
         let eintrag = CATALOG.iter().find(|e| e.field == FieldId::PressureAltitudeFt).expect("im Katalog");
         assert_eq!(eintrag.name, "sim/flightmodel2/position/pressure_altitude");
         let mut s = XPlaneState::default();
-        // X-Plane 11 ohne den DataRef: 0, also keine Druckhöhe.
+        // Kein Wert vom Simulator (0): keine Druckhöhe.
         assert_eq!(s.to_snapshot(Simulator::XPlane11).altitude_pressure_ft, None);
         s.apply_field(FieldId::PressureAltitudeFt, 35_000.0);
         assert_eq!(s.to_snapshot(Simulator::XPlane12).altitude_pressure_ft, Some(35_000.0));

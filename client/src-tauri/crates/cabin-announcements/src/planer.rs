@@ -141,14 +141,11 @@ pub struct Flugdaten {
     pub reisehoehe_ansage: bool,
 }
 
-/// „Reiseflughöhe erreicht“ ab Mittelstrecke (geplante Flugzeit, wie das
-/// Modul „mittelstrecke“ zählt).
-const REISEHOEHE_AB_PLAN_MIN: u32 = 120;
-/// So lange muss die Höhe gehalten sein (Thomas 26.11.2026) …
+/// „Reiseflughöhe erreicht“ ab 1,5 h geplanter Flugzeit (Thomas 26.11.2026).
+const REISEHOEHE_AB_PLAN_MIN: u32 = 90;
+/// So lange muss die Höhe gehalten sein, auch unter dem Plan (Thomas
+/// 26.11.2026: „längstens 10 min“).
 const REISEHOEHE_STABIL_S: i64 = 600;
-/// … und so lange, wenn sie mehr als 2.000 ft unter dem Plan liegt (das ist
-/// meist eine Zwischenhöhe vor dem weiteren Steigen).
-const REISEHOEHE_UNTER_PLAN_STABIL_S: i64 = 1_200;
 /// Schwankung, die noch als „gleiche Höhe“ gilt.
 const REISEHOEHE_BAND_FT: f64 = 200.0;
 /// Darunter gilt vielerorts QNH, die Druckhöhe wäre nicht die angezeigte Höhe.
@@ -559,9 +556,7 @@ impl Planer {
             _ => (hoehe, t.jetzt),
         };
         self.reisehoehe = Some((bezug, seit, t.jetzt));
-        let unter_plan = self.flug.reiseflughoehe_ft.is_some_and(|p| bezug < f64::from(p) - 2_000.0);
-        let noetig = if unter_plan { REISEHOEHE_UNTER_PLAN_STABIL_S } else { REISEHOEHE_STABIL_S };
-        if t.jetzt - seit < noetig {
+        if t.jetzt - seit < REISEHOEHE_STABIL_S {
             return;
         }
         if self.restflug_min(t.jetzt, t.rest_min).is_some_and(|m| m <= REISEHOEHE_REST_MIN) {
@@ -3990,17 +3985,17 @@ mod tests {
     }
 
     #[test]
-    fn reisehoehe_unter_dem_plan_braucht_zwanzig_minuten() {
+    fn reisehoehe_auch_weit_unter_dem_plan_nach_zehn_minuten() {
         let mut p = reise_planer(240, 38_000);
-        assert_eq!(reise_um(&mut p, 3_000, |_| (Cruise, Some(30_000.0))), vec![1_800]);
+        assert_eq!(reise_um(&mut p, 3_000, |_| (Cruise, Some(30_000.0))), vec![1_200]);
     }
 
     #[test]
     fn reisehoehe_nie_ohne_voraussetzungen() {
         let hoch = |_| (Cruise, Some(36_000.0));
         // Kurzer Flug, unbekannte Druckhöhe, unter FL180, Steigflug.
-        assert!(reise_um(&mut reise_planer(119, 36_000), 3_000, hoch).is_empty());
-        assert!(!reise_um(&mut reise_planer(120, 36_000), 3_000, hoch).is_empty(), "Gegenprobe ab Mittelstrecke");
+        assert!(reise_um(&mut reise_planer(89, 36_000), 3_000, hoch).is_empty());
+        assert!(!reise_um(&mut reise_planer(90, 36_000), 3_000, hoch).is_empty(), "Gegenprobe ab 1,5 h");
         assert!(reise_um(&mut reise_planer(240, 36_000), 3_000, |_| (Cruise, None)).is_empty());
         assert!(reise_um(&mut reise_planer(240, 17_000), 3_000, |_| (Cruise, Some(17_000.0))).is_empty());
         // Niedrig geplant: kommt nie, die Halbzeit behält die Höhe.
