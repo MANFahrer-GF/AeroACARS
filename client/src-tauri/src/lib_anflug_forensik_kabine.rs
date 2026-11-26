@@ -432,6 +432,7 @@ fn kabinen_flugdaten(
             .filter(|f| f.is_finite() && *f > 0.0)
             .map(|f| f.round() as u32),
         abheben_epoch: stats.takeoff_at.map(|t| t.timestamp()),
+        reisehoehe_ansage: true,
     }
 }
 

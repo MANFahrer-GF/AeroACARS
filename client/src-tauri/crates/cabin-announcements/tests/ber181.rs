@@ -35,6 +35,7 @@ fn ausloeser_passen_zu_michaels_cockpit() {
         ziel_plan_icao: Some("EDDL".into()),
         reiseflughoehe_ft: Some(20_000),
         abheben_epoch: None,
+        reisehoehe_ansage: false,
     });
     let mut wann: BTreeMap<Slot, i64> = BTreeMap::new();
     let mut entfallen = Vec::new();

@@ -23,6 +23,11 @@ const schreiben = (datei, inhalt) => {
 
 // ---- Bilder ---------------------------------------------------------------
 
+// Rasterer (resvg als WebAssembly) ins Paket — wird nicht eingecheckt;
+// vor `vorbereiten`, sonst scheitert der Bau im frischen Klon.
+fs.mkdirSync(`${ORDNER}/wasm`, { recursive: true });
+fs.copyFileSync(path.resolve(import.meta.dirname, "../node_modules/@resvg/resvg-wasm/index_bg.wasm"), `${ORDNER}/wasm/resvg.wasm`);
+
 await vorbereiten(ORDNER);
 
 const ruhe = { erreichbar: false, status: null, kabine: null, debrief: null, jetzt: new Date(0) };
@@ -37,9 +42,6 @@ for (const [id, t] of Object.entries(TASTEN)) {
 }
 for (const [id, r] of Object.entries(REGLER)) schreiben(`${ORDNER}/imgs/actions/${id}.svg`, listenIconSvg(r.icon));
 schreiben(`${ORDNER}/imgs/actions/kachel.svg`, listenIconSvg("route"));
-// Rasterer (resvg als WebAssembly) ins Paket — wird nicht eingecheckt.
-fs.mkdirSync(`${ORDNER}/wasm`, { recursive: true });
-fs.copyFileSync(path.resolve(import.meta.dirname, "../node_modules/@resvg/resvg-wasm/index_bg.wasm"), `${ORDNER}/wasm/resvg.wasm`);
 schreiben(`${ORDNER}/imgs/plugin/kategorie.svg`, listenIconSvg("plane", 28));
 // Das Plugin-Symbol (Marketplace, Plugin-Liste) muss PNG sein. macOS'
 // `sips` rastert SVG; die Dateien liegen im Repo, nur wer das Symbol

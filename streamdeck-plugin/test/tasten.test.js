@@ -278,9 +278,17 @@ test("jede Zielseite für den langen Druck erlaubt der Client (DECK_SEITEN in pa
   const genutzt = Object.entries(TASTEN).filter(([, t]) => t.seite);
   assert.ok(genutzt.length >= 15);
   for (const [id, t] of genutzt) assert.ok(erlaubt.has(t.seite), `${id}: ${t.seite}`);
-  // Die App kennt diese Tabs (Tab-Typ in App.tsx).
-  const app = fs.readFileSync(path.resolve(import.meta.dirname, "../../client/src/App.tsx"), "utf8");
-  for (const seite of erlaubt) assert.ok(app.includes(`"${seite}"`), seite);
+  // Die App führt jede erlaubte Seite auf einen Reiter (`reiterAusSeite` in
+  // Sidebar.tsx): selbst ein Reiter oder eine umgeleitete alte Seite.
+  const app = fs.readFileSync(path.resolve(import.meta.dirname, "../../client/src/components/Sidebar.tsx"), "utf8");
+  const reiter = app.match(/const REITER = \[([^\]]*)\]/);
+  const umleitung = app.match(/export function reiterAusSeite\([\s\S]*?\n\}/);
+  assert.ok(reiter && umleitung, "REITER oder reiterAusSeite nicht gefunden");
+  const bekannt = new Set([
+    ...[...reiter[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]),
+    ...[...umleitung[0].matchAll(/seite === "([a-z]+)"/g)].map((m) => m[1]),
+  ]);
+  for (const seite of erlaubt) assert.ok(bekannt.has(seite), seite);
 });
 
 test("METAR ohne Windangabe: Sicht, Wolken und Temperatur bleiben sichtbar (Codex)", () => {

@@ -109,6 +109,7 @@ fn planer_an_echten_fluegen() {
             ziel_plan_icao: Some("ZIEL".into()),
             reiseflughoehe_ft: Some(max_alt as u32),
             abheben_epoch: None,
+            reisehoehe_ansage: false,
         });
         let mut w = Warteschlange::default();
         let mut zeitachse = Vec::new();

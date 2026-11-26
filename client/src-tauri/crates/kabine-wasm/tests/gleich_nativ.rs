@@ -127,6 +127,7 @@ fn gleichschritt(name: &str, datei: &str, flugzeit_min: u32, reise_ft: u32, zwei
         ziel_plan_icao: Some("ZIEL".into()),
         reiseflughoehe_ft: Some(reise_ft),
         abheben_epoch: None,
+        reisehoehe_ansage: false,
     };
     let erste = d.ticks[0].1;
     let mut p = Planer::fortsetzen(flug.clone(), erste);

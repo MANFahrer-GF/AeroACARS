@@ -62,6 +62,7 @@ fn fliegen_rundlauf(datei: &str, flugzeit_min: u32, reise_ft: u32, zweiter_servi
         ziel_plan_icao: Some("ZIEL".into()),
         reiseflughoehe_ft: Some(reise_ft),
         abheben_epoch: None,
+        reisehoehe_ansage: false,
     }, erste);
     p.reiseflug80_art(zweiter_service);
     let mut w = Warteschlange::default();

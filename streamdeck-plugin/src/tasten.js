@@ -48,6 +48,7 @@ export const ANSAGEN = {
   kommando_start: "Start",
   chime10000_steigflug: "10.000 ft",
   anschnallzeichen_aus: "Gurte aus",
+  reiseflughoehe_erreicht: "Reisehöhe",
   reiseflug25: "Service",
   reiseflug50: "Halbzeit",
   reiseflug80: "2. Service",

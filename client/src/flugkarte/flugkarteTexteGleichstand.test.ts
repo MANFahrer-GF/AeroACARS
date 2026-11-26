@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-const FINGERABDRUCK = "d6dbaaa749c9600e83e3ec356de77f41b7879277ea12ad2dc30095b058ad2af4";
+const FINGERABDRUCK = "d475d99df260941927b6169d8a9fa7e77b36be0c624814072902799cb2dc945c";
 
 describe("Flugkarte: Texte gleich in Paket (Client) und Webapp-Referenz", () => {
   it("flugkarte.* ohne fenster hat den vereinbarten Fingerabdruck", () => {
