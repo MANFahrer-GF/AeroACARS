@@ -1875,7 +1875,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Il rapporto di atterraggio e le segnalazioni anonime di errore ora indicano la versione di AeroACARS effettivamente in uso sul tuo computer."
+    "neu_text": "Novità da AeroACARS 3.2.0: sui voli da 1,5 ore in su il comandante annuncia il raggiungimento della quota di crociera, con la quota effettivamente volata, la destinazione e il tempo di volo rimanente."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
