@@ -24,7 +24,7 @@ import {
  *  eigene Schalter). Reihenfolge wie im Flug. */
 const GRUPPEN: [string, string[]][] = [
   ["gruppe_boden", ["boarding", "boarding_abgeschlossen", "begruessung_tueren_zu", "sicherheit", "kapitaen_begruessung"]],
-  ["gruppe_reise", ["anschnallzeichen_aus", "reiseflug25", "reiseflug50", "reiseflug80", "ende_service"]],
+  ["gruppe_reise", ["anschnallzeichen_aus", "reiseflughoehe_erreicht", "reiseflug25", "reiseflug50", "reiseflug80", "ende_service"]],
   ["gruppe_ankunft", ["kapitaen_sinkflug", "kabine_sinkflug", "nach_der_landung", "aussteigen"]],
   ["gruppe_ereignis", ["verspaetung_gate", "turbulenz", "turbulenz_vorbei", "warteschleife", "durchstarten", "umleitung"]],
 ];

@@ -383,6 +383,8 @@ pub(crate) const PRODUKTION: &str = include_str!(concat!(env!("OUT_DIR"), "/prod
 /// und `correlate_airport_icao` fragen `runway::gleicher_platz` (Zwilling aus dem
 /// Entdoppeln der Bahnen) statt Kennungsgleichheit. Tests
 /// `divert_prefetch_kein_divert_fuer_umbenannten_platz`, `zweite_kennung_ist_ueberall_derselbe_platz`.
+/// — plus „Reiseflughöhe erreicht“ 26.11.: `kabinen_flugdaten` setzt `reisehoehe_ansage`.
+/// Tests `reisehoehe_*` (cabin-announcements), `reiseflughoehe_nennt_die_geflogene_hoehe_und_die_halbzeit_keine`.
 #[test]
 fn lib_rs_ist_der_gepruefte_stand() {
     use sha2::{Digest, Sha256};
@@ -393,4 +395,4 @@ fn lib_rs_ist_der_gepruefte_stand() {
     assert_eq!(hash, HASH_VOR_DER_ZERLEGUNG, "lib.rs weicht vom zuletzt geprueften Stand ab — Hash und Liste nachziehen");
 }
 
-const HASH_VOR_DER_ZERLEGUNG: &str = "4ff8618ed70125e3e00bb56234a7f1ebd209f7968e0d5d6ac9b4843f1ac6cc15";
+const HASH_VOR_DER_ZERLEGUNG: &str = "117c5bc0e2945035f9722b7213bfb77476344ed5326facf12a6d34ef6dc34766";

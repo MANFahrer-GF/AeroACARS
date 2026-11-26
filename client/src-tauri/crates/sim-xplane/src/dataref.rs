@@ -111,6 +111,7 @@ pub enum FieldId {
     ApuSwitch,
     PitotHeat,
     QnhInHg,
+    PressureAltitudeFt,
     OatC,
     Mach,
     // v0.3.0 additions (universal X-Plane standard DataRefs):
@@ -1069,6 +1070,11 @@ pub const CATALOG: &[DatarefEntry] = &[
         name: "sim/flightmodel/engine/ENGN_FF_[3]",
         field: FieldId::Eng4FuelFlow,
     },
+    // Ans Ende (Index = Position): Druckhöhe in ft (DataRefs.txt, XP 12).
+    DatarefEntry {
+        name: "sim/flightmodel2/position/pressure_altitude",
+        field: FieldId::PressureAltitudeFt,
+    },
 ];
 
 /// v0.16.9: body-frame horizontal velocity, derived from the WORLD-frame
@@ -1233,6 +1239,8 @@ pub struct XPlaneState {
     pub apu_switch: bool,
     pub pitot_heat: bool,
     pub qnh_inhg: f32,
+    /// Druckhöhe (Standardatmosphäre) in ft; 0 = nicht geliefert.
+    pub pressure_altitude_ft: f32,
     pub oat_c: f32,
     pub mach: f32,
     // v0.3.0 additions (universal):
@@ -1831,6 +1839,7 @@ impl XPlaneState {
             FieldId::ApuSwitch => self.apu_switch = value > 0.5,
             FieldId::PitotHeat => self.pitot_heat = value > 0.5,
             FieldId::QnhInHg => self.qnh_inhg = value,
+            FieldId::PressureAltitudeFt => self.pressure_altitude_ft = value,
             FieldId::OatC => self.oat_c = value,
             FieldId::Mach => self.mach = value,
             // v0.3.0 — universal additions
@@ -2066,12 +2075,11 @@ impl XPlaneState {
             lon: self.lon,
             altitude_msl_ft: self.altitude_msl_m / M_PER_FT,
             altitude_agl_ft: self.altitude_agl_m / M_PER_FT,
-            // v0.7.17 (B-003): X-Plane stellt diese MSFS-spezifischen
-            // Pendants nicht direkt zur Verfuegung (X-Plane berechnet
-            // pressure altitude implizit aus baro+QNH); wir lassen sie
-            // hier None und debuggen ausschliesslich den MSFS-Pfad.
+            // v0.7.17 (B-003): `INDICATED ALTITUDE` gibt es nur im
+            // MSFS-Pfad. Die Druckhöhe liefert X-Plane 12 direkt
+            // (Kabinenansage „Reiseflughöhe erreicht“).
             altitude_indicated_ft: None,
-            altitude_pressure_ft: None,
+            altitude_pressure_ft: (self.pressure_altitude_ft != 0.0).then_some(f64::from(self.pressure_altitude_ft)),
             heading_deg_true: self.heading_true_deg,
             heading_deg_magnetic: self.heading_magnetic_deg,
             pitch_deg: self.pitch_deg,
@@ -3916,5 +3924,22 @@ mod xplane_luecken_tests {
             s.to_snapshot(Simulator::XPlane12).eng_n1_pct,
             Some(vec![60.0, 0.25])
         );
+    }
+}
+
+// ---- Druckhöhe (Kabinenansage „Reiseflughöhe erreicht“) ----
+#[cfg(test)]
+mod druckhoehe_tests {
+    use super::*;
+
+    #[test]
+    fn druckhoehe_kommt_in_den_snapshot_und_fehlt_ohne_wert() {
+        let eintrag = CATALOG.iter().find(|e| e.field == FieldId::PressureAltitudeFt).expect("im Katalog");
+        assert_eq!(eintrag.name, "sim/flightmodel2/position/pressure_altitude");
+        let mut s = XPlaneState::default();
+        // X-Plane 11 ohne den DataRef: 0, also keine Druckhöhe.
+        assert_eq!(s.to_snapshot(Simulator::XPlane11).altitude_pressure_ft, None);
+        s.apply_field(FieldId::PressureAltitudeFt, 35_000.0);
+        assert_eq!(s.to_snapshot(Simulator::XPlane12).altitude_pressure_ft, Some(35_000.0));
     }
 }

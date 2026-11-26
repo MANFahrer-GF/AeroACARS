@@ -34,6 +34,10 @@ pub enum Slot {
     KommandoStart,
     Chime10000Steigflug,
     AnschnallzeichenAus,
+    /// „Reiseflughöhe erreicht“ (Thomas 26.11.2026): eigene Ansage des
+    /// Kapitäns ab Mittelstrecke, sobald die Höhe 10 min gehalten ist. Wird
+    /// erst dann geschrieben, mit der geflogenen Höhe.
+    ReiseflughoeheErreicht,
     Reiseflug25,
     Reiseflug50,
     Reiseflug80,
@@ -58,7 +62,7 @@ pub enum Slot {
 }
 
 impl Slot {
-    pub const ALLE: [Slot; 27] = [
+    pub const ALLE: [Slot; 28] = [
         Slot::Boarding,
         Slot::BoardingAbgeschlossen,
         Slot::BegruessungTuerenZu,
@@ -68,6 +72,7 @@ impl Slot {
         Slot::KommandoStart,
         Slot::Chime10000Steigflug,
         Slot::AnschnallzeichenAus,
+        Slot::ReiseflughoeheErreicht,
         Slot::Reiseflug25,
         Slot::Reiseflug50,
         Slot::Reiseflug80,
@@ -98,7 +103,7 @@ impl Slot {
             | KommandoPlaetzeLandung
             | KommandoTuerenEntschaerfen => Rolle::Kommando,
             Chime10000Steigflug | Chime10000Sinkflug => Rolle::Chime,
-            KapitaenBegruessung | Reiseflug50 | KapitaenSinkflug
+            KapitaenBegruessung | ReiseflughoeheErreicht | Reiseflug50 | KapitaenSinkflug
             | VerspaetungGate | Warteschleife | Durchstarten | Umleitung => Rolle::Kapitaen,
             Boarding | BegruessungTuerenZu | Sicherheit | AnschnallzeichenAus | Reiseflug25
             | Reiseflug80 | EndeService | KabineSinkflug | NachDerLandung | Aussteigen | Turbulenz
@@ -128,6 +133,7 @@ impl Slot {
             Sicherheit => 180,
             KapitaenBegruessung => 60,
             AnschnallzeichenAus => 40,
+            ReiseflughoeheErreicht => 30,
             Reiseflug25 | Reiseflug80 | EndeService => 30,
             Reiseflug50 => 40,
             KapitaenSinkflug => 40,
@@ -271,6 +277,7 @@ mod tests {
             [
                 "boarding", "boarding_abgeschlossen", "begruessung_tueren_zu", "kommando_tueren_scharf", "sicherheit",
                 "kapitaen_begruessung", "kommando_start", "chime10000_steigflug", "anschnallzeichen_aus",
+                "reiseflughoehe_erreicht",
                 "reiseflug25", "reiseflug50", "reiseflug80", "ende_service", "kapitaen_sinkflug", "kabine_sinkflug",
                 "chime10000_sinkflug", "kommando_landung_vorbereiten", "kommando_plaetze_landung",
                 "nach_der_landung", "kommando_tueren_entschaerfen", "aussteigen", "verspaetung_gate",

@@ -458,6 +458,11 @@ pub(crate) struct Lauf {
     /// Abflug wartete auf einen englischen Text, den es nie gab).
     slot_sprachen: HashMap<Slot, Vec<String>>,
     texte: HashMap<(Slot, String), String>,
+    /// Geflogene Höhe (ft, Druckhöhe auf 100 gerundet), als „Reiseflughöhe
+    /// erreicht“ fällig wurde — sie steht dann in deren Text.
+    reisehoehe_ft: Option<i64>,
+    /// Der Simulator liefert eine Druckhöhe (sonst kommt die Ansage nie).
+    druckhoehe_da: bool,
     angefragt: HashSet<String>,
     fehlversuche: HashMap<String, (u8, i64)>,
     anlass: u32,
@@ -1233,7 +1238,8 @@ const GONGS: [Slot; 2] = [Slot::Chime10000Steigflug, Slot::Chime10000Sinkflug];
 fn ist_ereignis(s: Slot) -> bool {
     matches!(
         s,
-        Slot::VerspaetungGate
+        Slot::ReiseflughoeheErreicht
+            | Slot::VerspaetungGate
             | Slot::Turbulenz
             | Slot::TurbulenzVorbei
             | Slot::Warteschleife
@@ -2437,6 +2443,11 @@ fn takt_kern(
         }
     }
 
+    stats.kabinen_lauf.druckhoehe_da |= snap.altitude_pressure_ft.is_some();
+    if faellig.iter().any(|f| f.slot == Slot::ReiseflughoeheErreicht) {
+        stats.kabinen_lauf.reisehoehe_ft = snap.altitude_pressure_ft.map(|h| (h / 100.0).round() as i64 * 100);
+    }
+
     // ---- Texte holen: nur, was auf diesem Flug noch kommt ----
     let auftraege = auftraege_sammeln(stats, &faellig, flugart, schritt.phase, schritt.rest_min, einst.boarding_musik, jetzt);
     // ---- Auffrischung der Sinkflug-Ansage des Kapitäns (vor dem Abspielen,
@@ -3113,6 +3124,20 @@ fn ton_auftrag(
     });
 }
 
+/// Hören die Gäste die Höhe aus „Reiseflughöhe erreicht“? Gelaufen laut
+/// Verlauf (übersteht einen Neustart), gerade wartend oder noch zu erwarten.
+/// Verfallen, entfallen, stumm oder fehlgeschlagen zählt nicht.
+fn reisehoehe_angesagt_oder_offen(stats: &FlightStats) -> bool {
+    let slot = Slot::ReiseflughoeheErreicht;
+    let lauf = &stats.kabinen_lauf;
+    if let Some(g) = lauf.verlauf.iter().rev().find(|g| g.slot == slot && !g.vorschau) {
+        // `None` läuft gerade; „unbekannt“ lief beim Beenden der App.
+        return matches!(g.ergebnis.as_deref(), None | Some("gespielt" | "abgebrochen" | "unbekannt"));
+    }
+    lauf.warteschlange.wartend().contains(&slot)
+        || lauf.druckhoehe_da && stats.kabinen_planer.as_ref().is_some_and(|p| p.kommt_noch(slot, stats.phase))
+}
+
 /// Die Anfrage an den GSG-Server. Der Server kennt Airline, Flugnummer,
 /// Muster, Städte und Zeitzonen selbst; hier steht, was nur der Client weiß.
 fn anfrage_bauen(
@@ -3143,6 +3168,16 @@ fn anfrage_bauen(
     let wetter = stats.arr_metar_snap.as_ref().and_then(|m| {
         m.temperature_c.map(|t| serde_json::json!({ "temperatur_c": t, "lage": wetterlage(m) }))
     });
+    // Höhe: „Reiseflughöhe erreicht“ nennt die geflogene. Die Halbzeit nennt
+    // keine mehr, wenn diese Ansage lief oder noch kommt — sonst die geplante.
+    let reisehoehe = Slot::ReiseflughoeheErreicht;
+    let hoehe_ft = if slots.contains(&reisehoehe) {
+        serde_json::json!(stats.kabinen_lauf.reisehoehe_ft)
+    } else if teil == "halbzeit" && reisehoehe_angesagt_oder_offen(stats) {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!(flugdaten.reiseflughoehe_ft)
+    };
     let mut anfrage = serde_json::json!({
         "pirep_id": flight.pirep_id,
         "teil": teil,
@@ -3162,7 +3197,7 @@ fn anfrage_bauen(
             "rest_min": stats.landung_erwartet.map(|t| ((t - jetzt) / 60).max(0)),
             "utc_versatz_abflug_min": stats.utc_versatz_abflug_min,
             "utc_versatz_ziel_min": stats.utc_versatz_ziel_min,
-            "reiseflughoehe_ft": flugdaten.reiseflughoehe_ft,
+            "reiseflughoehe_ft": hoehe_ft,
             "wetter_ziel": wetter,
             "umleitung_icao": stats.umleitung_ziel,
         }
@@ -5377,6 +5412,7 @@ mod tests {
                 ziel_plan_icao: None,
                 reiseflughoehe_ft: None,
                 abheben_epoch: None,
+                reisehoehe_ansage: false,
             },
             phase,
         )
@@ -5725,6 +5761,7 @@ mod tests {
             ziel_plan_icao: Some("EDDF".into()),
             reiseflughoehe_ft: Some(reise_ft as u32),
             abheben_epoch: ab,
+            reisehoehe_ansage: false,
         };
         st.kabinen_planer = Some(crate::kabinenplaner::Planer::neu(flug(None)));
         // Profil: Boden 18 min, Steigflug 2.000 ft/min, Sinkflug 1.800 ft/min,
@@ -6972,6 +7009,76 @@ mod tests {
         let now = DateTime::<Utc>::from_timestamp(jetzt, 0).unwrap();
         let k = takt_kern(st, &test_flug(), &Einstellungen::default(), snap, now, None, &mut z);
         (k, z)
+    }
+
+    /// „Reiseflughöhe erreicht“ über den echten Takt-Kern: nach 10 min eine
+    /// Ereignis-Anfrage mit der geflogenen Höhe; die Halbzeit danach ohne
+    /// Höhe. Gegenprobe ohne Druckhöhe: keine Ansage, Halbzeit mit Planhöhe.
+    #[test]
+    fn reiseflughoehe_nennt_die_geflogene_hoehe_und_die_halbzeit_keine() {
+        for (druck, erwartet) in [(Some(33_987.0), true), (None, false)] {
+            let mut flug = test_flug();
+            flug.planned_flight_time_min = Some(240);
+            let mut st = kern_stats(Beta::Ja, true);
+            st.planned_cruise_alt_ft = Some(35_000.0);
+            // Den Planer legt der Takt selbst an (wie im Betrieb).
+            st.kabinen_planer = None;
+            let mut z = Zaehler::default();
+            let takt = |st: &mut FlightStats, z: &mut Zaehler, snap: &SimSnapshot, jetzt: i64| {
+                takt_kern(st, &flug, &Einstellungen::default(), snap, chrono::TimeZone::timestamp_opt(&Utc, jetzt, 0).unwrap(), None, z);
+            };
+            st.phase = crate::FlightPhase::Boarding;
+            takt(&mut st, &mut z, &gate_snap(false), 1_000);
+            st.phase = crate::FlightPhase::Cruise;
+            st.takeoff_at = chrono::TimeZone::timestamp_opt(&Utc, 1_100, 0).single();
+            let snap = SimSnapshot { on_ground: false, altitude_msl_ft: 34_300.0, altitude_pressure_ft: druck, ..SimSnapshot::default() };
+            for jetzt in (2_000..=2_700).step_by(10) {
+                takt(&mut st, &mut z, &snap, jetzt);
+            }
+            let hoehen: Vec<_> = z
+                .drehbuch
+                .iter()
+                .filter(|(_, a)| a["slots"] == serde_json::json!(["reiseflughoehe_erreicht"]))
+                .map(|(_, a)| (a["teil"].clone(), a["flug"]["reiseflughoehe_ft"].clone()))
+                .collect();
+            let want = if erwartet { vec![(serde_json::json!("ereignis"), serde_json::json!(34_000))] } else { vec![] };
+            assert_eq!(hoehen, want);
+            let halbzeit = anfrage_bauen(&st, &flug, &Einstellungen::default(), "halbzeit", &HALBZEIT, 0, 2_700);
+            let want = if erwartet { serde_json::Value::Null } else { serde_json::json!(35_000) };
+            assert_eq!(halbzeit["flug"]["reiseflughoehe_ft"], want);
+        }
+    }
+
+    /// Prüfer B1: Auch nach einem Neustart nennt die Halbzeit keine zweite
+    /// Höhe, wenn die Ansage lief. Kam sie nie (verfallen, stumm, Fehler),
+    /// bleibt die Planhöhe.
+    #[test]
+    fn halbzeit_hoehe_richtet_sich_nach_dem_verlauf() {
+        let flug = test_flug();
+        for (ergebnis, ohne) in [
+            (Some("gespielt"), true),
+            (Some("unbekannt"), true),
+            (Some("abgebrochen"), true),
+            (None, true),
+            (Some("entfallen"), false),
+            (Some("stumm"), false),
+            (Some("fehler"), false),
+        ] {
+            let mut st = kern_stats(Beta::Ja, true);
+            st.planned_cruise_alt_ft = Some(35_000.0);
+            // Neustart: nur der Verlauf ist da, kein Planer, keine Höhe.
+            st.kabinen_planer = None;
+            verbuchen(&mut st.kabinen_lauf, Slot::ReiseflughoeheErreicht, "gespielt", None, 100);
+            st.kabinen_lauf.verlauf.last_mut().unwrap().ergebnis = ergebnis.map(str::to_string);
+            let text = serde_json::to_string(&st.kabinen_lauf.verlauf).unwrap();
+            if ergebnis.is_some() {
+                st.kabinen_lauf = Lauf::default();
+                verlauf_uebernehmen(&mut st.kabinen_lauf, Some(text));
+            }
+            let a = anfrage_bauen(&st, &flug, &Einstellungen::default(), "halbzeit", &HALBZEIT, 0, 2_700);
+            let want = if ohne { serde_json::Value::Null } else { serde_json::json!(35_000) };
+            assert_eq!(a["flug"]["reiseflughoehe_ft"], want, "{ergebnis:?}");
+        }
     }
 
     /// Echter Takt-Kern bei Haken im Loadsheet: null Drehbuch-, null
@@ -8235,6 +8342,7 @@ mod auffrischung_tests {
             ziel_plan_icao: Some("EDDF".into()),
             reiseflughoehe_ft: Some(37_000),
             abheben_epoch: None,
+            reisehoehe_ansage: false,
         }
     }
 

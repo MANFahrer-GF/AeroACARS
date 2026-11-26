@@ -135,7 +135,30 @@ pub struct Flugdaten {
     /// Wiedereinstieg aus `stats.takeoff_at`, damit 25/50/80 % vom echten
     /// Abheben zählen und nicht vom Neustart.
     pub abheben_epoch: Option<i64>,
+    /// Der Host kennt [`Slot::ReiseflughoeheErreicht`]. Ein älterer Client
+    /// setzt das nicht, ein neues Paket-Modul meldet sie ihm dann nie.
+    #[serde(default)]
+    pub reisehoehe_ansage: bool,
 }
+
+/// „Reiseflughöhe erreicht“ ab Mittelstrecke (geplante Flugzeit, wie das
+/// Modul „mittelstrecke“ zählt).
+const REISEHOEHE_AB_PLAN_MIN: u32 = 120;
+/// So lange muss die Höhe gehalten sein (Thomas 26.11.2026) …
+const REISEHOEHE_STABIL_S: i64 = 600;
+/// … und so lange, wenn sie mehr als 2.000 ft unter dem Plan liegt (das ist
+/// meist eine Zwischenhöhe vor dem weiteren Steigen).
+const REISEHOEHE_UNTER_PLAN_STABIL_S: i64 = 1_200;
+/// Schwankung, die noch als „gleiche Höhe“ gilt.
+const REISEHOEHE_BAND_FT: f64 = 200.0;
+/// Darunter gilt vielerorts QNH, die Druckhöhe wäre nicht die angezeigte Höhe.
+const REISEHOEHE_AB_FT: f64 = 18_000.0;
+/// Weniger Restflugzeit: Die Sinkflug-Ansage ist näher, sie entfällt.
+const REISEHOEHE_REST_MIN: f64 = 35.0;
+/// Längere Lücke zwischen zwei Takten: Die Höhe gilt nicht als gehalten.
+const REISEHOEHE_LUECKE_S: i64 = 120;
+/// So lange darf sie auf Text, Ton und eine freie Pause warten.
+const REISEHOEHE_VERFALL_S: i64 = 420;
 
 /// Phase, ab der ein Slot nicht mehr ausgelöst wird (wie der `Verfall` in
 /// [`Planer::tick`]); `None` = an keine Phase gebunden.
@@ -148,7 +171,11 @@ fn spaetestens_vor(slot: Slot) -> Option<FlightPhase> {
         S::Boarding | S::BoardingAbgeschlossen | S::BegruessungTuerenZu | S::Sicherheit => P::TakeoffRoll,
         // Kommt sie am Boden nicht mehr dran, nach dem Start (Thomas 18.10.2026).
         S::KapitaenBegruessung => P::Descent,
-        S::AnschnallzeichenAus | S::Reiseflug25 | S::Reiseflug50 | S::Reiseflug80 => P::Descent,
+        S::AnschnallzeichenAus
+        | S::ReiseflughoeheErreicht
+        | S::Reiseflug25
+        | S::Reiseflug50
+        | S::Reiseflug80 => P::Descent,
         S::EndeService => P::Approach,
         S::KapitaenSinkflug | S::KabineSinkflug => P::Final,
         S::NachDerLandung => P::BlocksOn,
@@ -168,7 +195,8 @@ fn ausloese_rang(slot: Slot) -> u8 {
         S::KapitaenBegruessung => P::TaxiOut,
         S::KommandoStart => P::TakeoffRoll,
         S::Chime10000Steigflug | S::AnschnallzeichenAus => P::Climb,
-        S::Reiseflug25
+        S::ReiseflughoeheErreicht
+        | S::Reiseflug25
         | S::Reiseflug50
         | S::Reiseflug80
         | S::Turbulenz
@@ -411,6 +439,9 @@ pub struct Planer {
     /// Wiedereinstieg nach dem Boarding (Neustart): Ein beobachtetes Abheben
     /// gibt es dann nicht.
     wiedereinstieg: bool,
+    /// Gehaltene Druckhöhe: Bezug (ft), seit wann, letzter Takt.
+    #[serde(default)]
+    reisehoehe: Option<(f64, i64, i64)>,
 }
 
 impl Planer {
@@ -443,6 +474,10 @@ impl Planer {
         if r >= rang(FlightPhase::Cruise) {
             p.steigflug_vorbei = true;
             p.gemeldet.insert(Slot::AnschnallzeichenAus);
+            // Nach einem Neustart im Reiseflug ist „erreicht“ vorbei.
+            if p.flug.reisehoehe_ansage {
+                p.gemeldet.insert(Slot::ReiseflughoeheErreicht);
+            }
             p.reiseflug_still_nachziehen = true;
         }
         p.letzte_phase = Some(phase);
@@ -493,6 +528,47 @@ impl Planer {
         if zweiter_service.is_some() {
             self.zweiter_service = zweiter_service;
         }
+    }
+
+    fn reisehoehe_passt(&self) -> bool {
+        self.flug.reisehoehe_ansage
+            && self.flug.geplante_flugzeit_min.is_some_and(|m| m >= REISEHOEHE_AB_PLAN_MIN)
+            && self.flug.reiseflughoehe_ft.is_none_or(|h| f64::from(h) >= REISEHOEHE_AB_FT)
+    }
+
+    /// „Reiseflughöhe erreicht“, einmal je Flug: Phase Reiseflug und die
+    /// Druckhöhe lange genug gehalten. Ohne Druckhöhe keine Ansage.
+    fn reisehoehe_takt(&mut self, aus: &mut Vec<Faellig>, t: &Tick) {
+        let slot = Slot::ReiseflughoeheErreicht;
+        if !self.reisehoehe_passt() || self.schon(slot) {
+            return;
+        }
+        let hoehe = t.lage["snapshot"]["altitude_pressure_ft"]
+            .as_f64()
+            .filter(|h| t.phase == FlightPhase::Cruise && !t.am_boden && *h >= REISEHOEHE_AB_FT);
+        let Some(hoehe) = hoehe else {
+            self.reisehoehe = None;
+            return;
+        };
+        let (bezug, seit) = match self.reisehoehe {
+            Some((bezug, seit, zuletzt))
+                if (hoehe - bezug).abs() <= REISEHOEHE_BAND_FT && t.jetzt - zuletzt <= REISEHOEHE_LUECKE_S =>
+            {
+                (bezug, seit)
+            }
+            _ => (hoehe, t.jetzt),
+        };
+        self.reisehoehe = Some((bezug, seit, t.jetzt));
+        let unter_plan = self.flug.reiseflughoehe_ft.is_some_and(|p| bezug < f64::from(p) - 2_000.0);
+        let noetig = if unter_plan { REISEHOEHE_UNTER_PLAN_STABIL_S } else { REISEHOEHE_STABIL_S };
+        if t.jetzt - seit < noetig {
+            return;
+        }
+        if self.restflug_min(t.jetzt, t.rest_min).is_some_and(|m| m <= REISEHOEHE_REST_MIN) {
+            self.entfaellt(slot, Entfall::ZuWenigZeit);
+            return;
+        }
+        self.melde(aus, slot, Verfall::Um(t.jetzt + REISEHOEHE_VERFALL_S));
     }
 
     fn reiseflug_passt(&self, slot: Slot) -> bool {
@@ -738,6 +814,7 @@ impl Planer {
             && !self.abgewaehlt.contains(&slot)
             && !self.schon(slot)
             && (!reiseflug || self.reiseflug_passt(slot))
+            && (slot != Slot::ReiseflughoeheErreicht || self.reisehoehe_passt())
             // Reiseflug unter 10.000 ft über dem Platz: Der Gong kommt nie.
             && !(match slot {
                 Slot::Chime10000Steigflug => Some(self.bezug_start()),
@@ -1074,6 +1151,7 @@ impl Planer {
                 }
             }
         }
+        self.reisehoehe_takt(&mut aus, t);
         if t.phase == Cruise {
             self.steigflug_vorbei = true;
             // Nur der beobachtete Übergang zählt: Nach einem Wiedereinstieg im
@@ -1405,6 +1483,7 @@ mod tests {
             ziel_plan_icao: Some("LFBO".into()),
             reiseflughoehe_ft: Some(37_000),
             abheben_epoch: None,
+            reisehoehe_ansage: false,
         }
     }
 
@@ -3867,5 +3946,93 @@ mod tests {
         p.kapitaen_sinkflug = KapitaenSinkflug::Gespielt(9_000);
         assert!(p.tick(&tick(10_000, Descent, 19_000.0, -1_800.0)).iter().any(|x| x.slot == Slot::KabineSinkflug));
         assert!(p.ruhephase(&tick(10_600, Descent, 9_000.0, -1_800.0)));
+    }
+
+    fn reise(jetzt: i64, phase: FlightPhase, druck: Option<f64>) -> Tick {
+        Tick { lage: serde_json::json!({ "snapshot": { "altitude_pressure_ft": druck } }), ..tick(jetzt, phase, druck.unwrap_or(0.0), 0.0) }
+    }
+
+    fn reise_planer(min: u32, plan_ft: u32) -> Planer {
+        Planer::neu(Flugdaten { reisehoehe_ansage: true, reiseflughoehe_ft: Some(plan_ft), abheben_epoch: Some(0), ..flug(min) })
+    }
+
+    /// Sekunden, zu denen „Reiseflughöhe erreicht“ fällig wurde (10-s-Takt).
+    fn reise_um(p: &mut Planer, bis: i64, takt: impl Fn(i64) -> (FlightPhase, Option<f64>)) -> Vec<i64> {
+        (600..=bis)
+            .step_by(10)
+            .filter(|&s| {
+                let (phase, druck) = takt(s);
+                p.tick(&reise(s, phase, druck)).iter().any(|f| f.slot == Slot::ReiseflughoeheErreicht)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reisehoehe_nach_zehn_minuten_gleicher_hoehe_einmal() {
+        let mut p = reise_planer(240, 36_000);
+        // Schwankungen im Band zählen als gleiche Höhe; später ein Step Climb.
+        let um = reise_um(&mut p, 9_000, |s| (Cruise, Some(if s > 4_000 { 38_000.0 } else { 36_000.0 + (s % 300) as f64 / 3.0 })));
+        assert_eq!(um, vec![1_200]);
+    }
+
+    #[test]
+    fn reisehoehe_zaehlt_nach_hoehenwechsel_und_luecke_neu() {
+        let mut p = reise_planer(240, 36_000);
+        assert_eq!(reise_um(&mut p, 3_000, |s| (Cruise, Some(if s < 1_000 { 34_000.0 } else { 36_000.0 }))), vec![1_600]);
+        let mut p = reise_planer(240, 36_000);
+        for s in (600..=900).step_by(10) {
+            p.tick(&reise(s, Cruise, Some(36_000.0)));
+        }
+        // 300 s ohne Takt: Die Höhe gilt erst ab dem Wiedersehen.
+        assert!(p.tick(&reise(1_200, Cruise, Some(36_000.0))).iter().all(|f| f.slot != Slot::ReiseflughoeheErreicht));
+        let um: Vec<i64> = (1_210..2_000).step_by(10).filter(|&s| p.tick(&reise(s, Cruise, Some(36_000.0))).iter().any(|f| f.slot == Slot::ReiseflughoeheErreicht)).collect();
+        assert_eq!(um, vec![1_800]);
+    }
+
+    #[test]
+    fn reisehoehe_unter_dem_plan_braucht_zwanzig_minuten() {
+        let mut p = reise_planer(240, 38_000);
+        assert_eq!(reise_um(&mut p, 3_000, |_| (Cruise, Some(30_000.0))), vec![1_800]);
+    }
+
+    #[test]
+    fn reisehoehe_nie_ohne_voraussetzungen() {
+        let hoch = |_| (Cruise, Some(36_000.0));
+        // Kurzer Flug, unbekannte Druckhöhe, unter FL180, Steigflug.
+        assert!(reise_um(&mut reise_planer(119, 36_000), 3_000, hoch).is_empty());
+        assert!(!reise_um(&mut reise_planer(120, 36_000), 3_000, hoch).is_empty(), "Gegenprobe ab Mittelstrecke");
+        assert!(reise_um(&mut reise_planer(240, 36_000), 3_000, |_| (Cruise, None)).is_empty());
+        assert!(reise_um(&mut reise_planer(240, 17_000), 3_000, |_| (Cruise, Some(17_000.0))).is_empty());
+        // Niedrig geplant: kommt nie, die Halbzeit behält die Höhe.
+        assert!(!reise_planer(240, 17_000).kommt_noch(Slot::ReiseflughoeheErreicht, Cruise));
+        assert!(reise_um(&mut reise_planer(240, 36_000), 3_000, |_| (Cruise, Some(17_900.0))).is_empty());
+        assert!(reise_um(&mut reise_planer(240, 36_000), 3_000, |_| (Climb, Some(36_000.0))).is_empty());
+        // Älterer Client (ohne Kennung).
+        let mut alt = Planer::neu(Flugdaten { abheben_epoch: Some(0), ..flug(240) });
+        assert!(reise_um(&mut alt, 3_000, hoch).is_empty());
+        assert!(!alt.kommt_noch(Slot::ReiseflughoeheErreicht, Cruise));
+        // Abgewählt und nach einem Neustart im Reiseflug.
+        let mut ab = reise_planer(240, 36_000);
+        ab.abwaehlen([Slot::ReiseflughoeheErreicht]);
+        assert!(reise_um(&mut ab, 3_000, hoch).is_empty());
+        let mut neu = Planer::fortsetzen(Flugdaten { reisehoehe_ansage: true, abheben_epoch: Some(0), ..flug(240) }, Cruise);
+        assert!(reise_um(&mut neu, 3_000, hoch).is_empty());
+        // Zu kurz vor dem Sinkflug: entfällt mit Grund.
+        let mut spaet = reise_planer(240, 36_000);
+        let um: Vec<i64> = (600..=1_300).step_by(10).filter(|&s| {
+            let t = Tick { rest_min: Some(30.0), ..reise(s, Cruise, Some(36_000.0)) };
+            spaet.tick(&t).iter().any(|f| f.slot == Slot::ReiseflughoeheErreicht)
+        }).collect();
+        assert!(um.is_empty());
+        assert!(spaet.entfallene_abholen().contains(&(Slot::ReiseflughoeheErreicht, Entfall::ZuWenigZeit)));
+    }
+
+    /// Start beim Boarding mit `fortsetzen` (wie der Host): Die Ansage kommt.
+    #[test]
+    fn reisehoehe_im_normalen_ablauf_mit_fortsetzen() {
+        let mut p = Planer::fortsetzen(Flugdaten { reisehoehe_ansage: true, reiseflughoehe_ft: Some(36_000), abheben_epoch: Some(0), ..flug(240) }, Boarding);
+        assert!(p.kommt_noch(Slot::ReiseflughoeheErreicht, Boarding));
+        assert_eq!(reise_um(&mut p, 3_000, |_| (Cruise, Some(36_000.0))), vec![1_200]);
+        assert!(!p.kommt_noch(Slot::ReiseflughoeheErreicht, Cruise));
     }
 }
