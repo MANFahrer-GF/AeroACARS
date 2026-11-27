@@ -1875,7 +1875,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "New from AeroACARS 3.2.0: on flights of 1.5 hours or more, the captain announces reaching cruising altitude, with the altitude actually flown, the destination and the remaining flight time."
+    "neu_text": "New: the captain's \"cruising altitude reached\" announcement now also plays in business jets and small aircraft, on flights of 1.5 hours or more, short and personal."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

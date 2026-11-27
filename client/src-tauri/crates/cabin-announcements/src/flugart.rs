@@ -65,6 +65,9 @@ impl Flugart {
                     | Slot::Chime10000Steigflug
                     | Slot::Chime10000Sinkflug
                     | Slot::KapitaenSinkflug
+                    // Thomas 27.11.2026 (IFA6709, GLEX auf FL430): auch im
+                    // Bizjet sagt der Kapitän die erreichte Höhe kurz an.
+                    | Slot::ReiseflughoeheErreicht
                     | Slot::VerspaetungGate
                     | Slot::Warteschleife
                     | Slot::Durchstarten
@@ -127,6 +130,7 @@ mod tests {
         assert!(Flugart::Bizjet.erlaubt(Slot::Chime10000Steigflug));
         assert!(Flugart::Bizjet.erlaubt(Slot::Chime10000Sinkflug));
         assert!(Flugart::Bizjet.erlaubt(Slot::Sicherheit));
+        assert!(Flugart::Bizjet.erlaubt(Slot::ReiseflughoeheErreicht));
         // … Kabinenansagen und Kommandos nein.
         assert!(!Flugart::Bizjet.erlaubt(Slot::Boarding));
         assert!(!Flugart::Bizjet.erlaubt(Slot::KabineSinkflug));
