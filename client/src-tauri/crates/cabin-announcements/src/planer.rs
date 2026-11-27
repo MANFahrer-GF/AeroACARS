@@ -4030,4 +4030,16 @@ mod tests {
         assert_eq!(reise_um(&mut p, 3_000, |_| (Cruise, Some(36_000.0))), vec![1_200]);
         assert!(!p.kommt_noch(Slot::ReiseflughoeheErreicht, Cruise));
     }
+
+    /// IFA6709 (27.11.2026): GLEX 125 min geplant, FL430 ab Reiseflug fast
+    /// eine Stunde gehalten — als Bizjet kam keine Ansage.
+    #[test]
+    fn reisehoehe_auch_im_bizjet() {
+        let mut p = Planer::neu(Flugdaten { flugart: Some(Flugart::Bizjet), ..reise_planer(125, 43_000).flug });
+        assert!(p.kommt_noch(Slot::ReiseflughoeheErreicht, Climb));
+        assert_eq!(reise_um(&mut p, 4_000, |_| (Cruise, Some(43_000.0))), vec![1_200]);
+        // Gegenprobe: Fracht (aus) bekommt sie weiterhin nicht.
+        let mut f = Planer::neu(Flugdaten { flugart: Some(Flugart::Aus), ..reise_planer(125, 43_000).flug });
+        assert!(reise_um(&mut f, 4_000, |_| (Cruise, Some(43_000.0))).is_empty());
+    }
 }

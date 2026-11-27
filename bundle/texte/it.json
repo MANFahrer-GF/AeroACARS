@@ -1875,7 +1875,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Novità da AeroACARS 3.2.0: sui voli da 1,5 ore in su il comandante annuncia il raggiungimento della quota di crociera, con la quota effettivamente volata, la destinazione e il tempo di volo rimanente."
+    "neu_text": "Novità: l'annuncio del comandante «quota di crociera raggiunta» ora c'è anche su business jet e piccoli aerei, sui voli da 1,5 ore in su, breve e personale."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",
