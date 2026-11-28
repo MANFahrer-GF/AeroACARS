@@ -175,7 +175,7 @@
       "sicherheit": "nach der Begrüßung",
       "kapitaen_begruessung": "beim Rollen zur Bahn",
       "anschnallzeichen_aus": "im Steigflug, wenn das Anschnallzeichen erlischt",
-      "reiseflughoehe_erreicht": "ab 1,5 Stunden Flugzeit, wenn die Reiseflughöhe 10 Minuten gehalten ist",
+      "reiseflughoehe_erreicht": "ab 1,5 Stunden Flugzeit, wenn die Reiseflughöhe 5 Minuten gehalten ist",
       "reiseflug25": "kurz nach Erreichen der Reiseflughöhe",
       "reiseflug50": "zur Halbzeit des Reiseflugs",
       "reiseflug80": "etwa 90 Minuten vor dem Sinkflug",
@@ -315,7 +315,7 @@
       "kommando_start": "Kommt beim Rollen zur Bahn, sobald das Flugzeug rollt (ab 3 Knoten) und das Landelicht an ist (es muss seit dem Verlassen der Parkposition einmal aus gewesen sein); beim Zurückschieben noch nicht. Meldet das Flugzeug kein Landelicht oder bleibt es vom Gate an an, beim Startlauf.",
       "chime10000_steigflug": "Gong beim Steigen durch 10.000 Fuß.",
       "anschnallzeichen_aus": "Kommt im Steigflug, wenn du das Anschnallzeichen ausschaltest, auch unter 10.000 Fuß. Steht es auf AUTO, ab 10.000 Fuß. Bleibt es an, kommt sie nicht, und der Service wartet.",
-      "reiseflughoehe_erreicht": "Ab 1,5 Stunden Flugzeit: Der Kapitän meldet sich, wenn die Höhe 10 Minuten gehalten ist, ab Flugfläche 180, und nennt die geflogene Höhe.",
+      "reiseflughoehe_erreicht": "Ab 1,5 Stunden Flugzeit: Der Kapitän meldet sich, wenn die Höhe 5 Minuten gehalten ist, ab Flugfläche 180, und nennt die geflogene Höhe.",
       "reiseflug25": "10 Minuten nach Erreichen der Reiseflughöhe (und nach „Anschnallzeichen aus“), spätestens nach einem Viertel der Zeit bis zum Sinkflug. Auf Flügen unter einer Stunde gleich nach „Anschnallzeichen aus“.",
       "reiseflug50": "Zur Halbzeit der Zeit bis zum Sinkflug, mindestens 15 Minuten nach der vorigen Reiseflug-Ansage.",
       "reiseflug80": "Zweiter Service: etwa 90 Minuten vor dem Sinkflug, frühestens 15 Minuten nach der Ansage zur Halbzeit; reicht die Zeit nicht, entfällt er. Das Ende des Service bzw. Bordverkaufs ist eine eigene Ansage kurz vor dem Sinkflug.",
@@ -1875,7 +1875,7 @@
     "neu_titel": "Neu in Generation {{n}}",
     "neu_titel_ohne": "Neu in diesem Paket",
     "neu_verstanden": "Verstanden",
-    "neu_text": "Neu: Die Global Express (GLEX) zeigt jetzt bei der Landung die Abweichung von der Anfluggeschwindigkeit Vref, als Richtwert ohne Bewertung."
+    "neu_text": "Neu: Der Kapitän meldet die erreichte Reiseflughöhe jetzt schon nach 5 Minuten auf gleicher Höhe statt nach 10, auf Flügen ab 1,5 Stunden, auch im Bizjet."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP erfolgreich eingereicht",

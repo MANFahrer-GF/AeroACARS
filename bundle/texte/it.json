@@ -175,7 +175,7 @@
       "sicherheit": "dopo il benvenuto",
       "kapitaen_begruessung": "durante il rullaggio verso la pista",
       "anschnallzeichen_aus": "in salita, quando si spegne il segnale cinture",
-      "reiseflughoehe_erreicht": "da 1,5 ore di volo, quando la quota di crociera è mantenuta da 10 minuti",
+      "reiseflughoehe_erreicht": "da 1,5 ore di volo, quando la quota di crociera è mantenuta da 5 minuti",
       "reiseflug25": "poco dopo aver raggiunto la quota di crociera",
       "reiseflug50": "a metà della crociera",
       "reiseflug80": "circa 90 minuti prima della discesa",
@@ -315,7 +315,7 @@
       "kommando_start": "Arriva durante il rullaggio verso la pista non appena l'aereo si muove (da 3 nodi) e le luci di atterraggio sono accese (devono essere state spente almeno una volta dopo aver lasciato il parcheggio); non ancora durante il pushback. Se l'aereo non le segnala o restano accese dal gate, alla corsa di decollo.",
       "chime10000_steigflug": "Gong salendo attraverso 10.000 piedi.",
       "anschnallzeichen_aus": "Arriva in salita quando spegni il segnale delle cinture, anche sotto 10.000 piedi. In AUTO da 10.000 piedi. Se resta acceso non arriva e il servizio aspetta.",
-      "reiseflughoehe_erreicht": "Da 1,5 ore di volo: il comandante parla quando la quota è mantenuta da 10 minuti, dal livello di volo 180, e indica la quota effettivamente volata.",
+      "reiseflughoehe_erreicht": "Da 1,5 ore di volo: il comandante parla quando la quota è mantenuta da 5 minuti, dal livello di volo 180, e indica la quota effettivamente volata.",
       "reiseflug25": "10 minuti dopo aver raggiunto la quota di crociera (e dopo \"cinture spente\"), al più tardi dopo un quarto del tempo fino alla discesa. Sui voli sotto un'ora subito dopo \"cinture spente\".",
       "reiseflug50": "A metà del tempo fino alla discesa, almeno 15 minuti dopo l'annuncio di crociera precedente.",
       "reiseflug80": "Secondo servizio: circa 90 minuti prima della discesa, non prima di 15 minuti dopo l'annuncio a metà volo; se il tempo non basta viene saltato. La fine del servizio o della vendita a bordo è un annuncio a parte poco prima della discesa.",
@@ -1875,7 +1875,7 @@
     "neu_titel": "Novità nella generazione {{n}}",
     "neu_titel_ohne": "Novità in questo pacchetto",
     "neu_verstanden": "Ho capito",
-    "neu_text": "Novità: il Global Express (GLEX) ora mostra all’atterraggio lo scostamento dalla velocità di avvicinamento Vref, come valore indicativo senza valutazione."
+    "neu_text": "Novità: il comandante annuncia la quota di crociera già dopo 5 minuti alla stessa quota invece di 10, sui voli da 1,5 ore in su, anche sui business jet."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP inviato con successo",

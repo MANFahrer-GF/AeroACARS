@@ -7011,7 +7011,7 @@ mod tests {
         (k, z)
     }
 
-    /// „Reiseflughöhe erreicht“ über den echten Takt-Kern: nach 10 min eine
+    /// „Reiseflughöhe erreicht“ über den echten Takt-Kern: nach 5 min eine
     /// Ereignis-Anfrage mit der geflogenen Höhe; die Halbzeit danach ohne
     /// Höhe. Gegenprobe ohne Druckhöhe: keine Ansage, Halbzeit mit Planhöhe.
     #[test]
