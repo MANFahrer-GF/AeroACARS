@@ -175,7 +175,7 @@
       "sicherheit": "after the welcome",
       "kapitaen_begruessung": "while taxiing to the runway",
       "anschnallzeichen_aus": "in the climb, when the seatbelt sign goes off",
-      "reiseflughoehe_erreicht": "from 1.5 hours of flight time, once the cruise altitude has been held for 10 minutes",
+      "reiseflughoehe_erreicht": "from 1.5 hours of flight time, once the cruise altitude has been held for 5 minutes",
       "reiseflug25": "shortly after reaching cruise altitude",
       "reiseflug50": "halfway through the cruise",
       "reiseflug80": "about 90 minutes before descent",
@@ -315,7 +315,7 @@
       "kommando_start": "Plays while taxiing to the runway as soon as the aircraft is moving (from 3 knots) and the landing lights are on (they must have been off once since leaving the stand); not yet during pushback. If the aircraft reports no landing lights or they stay on from the gate, at the take-off roll.",
       "chime10000_steigflug": "Chime when climbing through 10,000 ft.",
       "anschnallzeichen_aus": "Plays in the climb when you switch the seat belt sign off, also below 10,000 ft. On AUTO from 10,000 ft. If it stays on, it does not play and the service waits.",
-      "reiseflughoehe_erreicht": "From 1.5 hours of flight time: the captain speaks up once the altitude has been held for 10 minutes, from flight level 180, and states the altitude actually flown.",
+      "reiseflughoehe_erreicht": "From 1.5 hours of flight time: the captain speaks up once the altitude has been held for 5 minutes, from flight level 180, and states the altitude actually flown.",
       "reiseflug25": "10 minutes after reaching cruise altitude (and after \"seat belt sign off\"), at the latest after a quarter of the time to descent. On flights under one hour right after \"seat belt sign off\".",
       "reiseflug50": "At half of the time to descent, at least 15 minutes after the previous cruise announcement.",
       "reiseflug80": "Second service: about 90 minutes before descent, at the earliest 15 minutes after the halfway announcement; if there is not enough time, it is skipped. The end of service or onboard sales is a separate announcement shortly before descent.",
@@ -1875,7 +1875,7 @@
     "neu_titel": "New in generation {{n}}",
     "neu_titel_ohne": "New in this package",
     "neu_verstanden": "Got it",
-    "neu_text": "New: the Global Express (GLEX) now shows the deviation from the Vref approach speed at landing, as a reference value without a rating."
+    "neu_text": "New: the captain now announces the cruising altitude after 5 minutes at the same level instead of 10, on flights of 1.5 hours or more, business jets included."
   },
   "cockpit": {
     "pirep_filed_title": "PIREP filed successfully",

@@ -35,7 +35,7 @@ pub enum Slot {
     Chime10000Steigflug,
     AnschnallzeichenAus,
     /// „Reiseflughöhe erreicht“ (Thomas 26.11.2026): eigene Ansage des
-    /// Kapitäns ab 1,5 h Flugzeit, sobald die Höhe 10 min gehalten ist. Wird
+    /// Kapitäns ab 1,5 h Flugzeit, sobald die Höhe 5 min gehalten ist. Wird
     /// erst dann geschrieben, mit der geflogenen Höhe.
     ReiseflughoeheErreicht,
     Reiseflug25,

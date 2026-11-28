@@ -144,8 +144,9 @@ pub struct Flugdaten {
 /// „Reiseflughöhe erreicht“ ab 1,5 h geplanter Flugzeit (Thomas 26.11.2026).
 const REISEHOEHE_AB_PLAN_MIN: u32 = 90;
 /// So lange muss die Höhe gehalten sein, auch unter dem Plan (Thomas
-/// 26.11.2026: „längstens 10 min“).
-const REISEHOEHE_STABIL_S: i64 = 600;
+/// 26.11.2026: „längstens 10 min“; 28.11.2026 nach AIB 451, FL410 um
+/// 14:41, Ansage 14:52 „relativ spät“: 5 min).
+const REISEHOEHE_STABIL_S: i64 = 300;
 /// Schwankung, die noch als „gleiche Höhe“ gilt.
 const REISEHOEHE_BAND_FT: f64 = 200.0;
 /// Darunter gilt vielerorts QNH, die Druckhöhe wäre nicht die angezeigte Höhe.
@@ -3963,31 +3964,31 @@ mod tests {
     }
 
     #[test]
-    fn reisehoehe_nach_zehn_minuten_gleicher_hoehe_einmal() {
+    fn reisehoehe_nach_fuenf_minuten_gleicher_hoehe_einmal() {
         let mut p = reise_planer(240, 36_000);
         // Schwankungen im Band zählen als gleiche Höhe; später ein Step Climb.
         let um = reise_um(&mut p, 9_000, |s| (Cruise, Some(if s > 4_000 { 38_000.0 } else { 36_000.0 + (s % 300) as f64 / 3.0 })));
-        assert_eq!(um, vec![1_200]);
+        assert_eq!(um, vec![900]);
     }
 
     #[test]
     fn reisehoehe_zaehlt_nach_hoehenwechsel_und_luecke_neu() {
         let mut p = reise_planer(240, 36_000);
-        assert_eq!(reise_um(&mut p, 3_000, |s| (Cruise, Some(if s < 1_000 { 34_000.0 } else { 36_000.0 }))), vec![1_600]);
+        assert_eq!(reise_um(&mut p, 3_000, |s| (Cruise, Some(if s < 800 { 34_000.0 } else { 36_000.0 }))), vec![1_100]);
         let mut p = reise_planer(240, 36_000);
-        for s in (600..=900).step_by(10) {
+        for s in (600..=850).step_by(10) {
             p.tick(&reise(s, Cruise, Some(36_000.0)));
         }
-        // 300 s ohne Takt: Die Höhe gilt erst ab dem Wiedersehen.
+        // 350 s ohne Takt: Die Höhe gilt erst ab dem Wiedersehen.
         assert!(p.tick(&reise(1_200, Cruise, Some(36_000.0))).iter().all(|f| f.slot != Slot::ReiseflughoeheErreicht));
         let um: Vec<i64> = (1_210..2_000).step_by(10).filter(|&s| p.tick(&reise(s, Cruise, Some(36_000.0))).iter().any(|f| f.slot == Slot::ReiseflughoeheErreicht)).collect();
-        assert_eq!(um, vec![1_800]);
+        assert_eq!(um, vec![1_500]);
     }
 
     #[test]
-    fn reisehoehe_auch_weit_unter_dem_plan_nach_zehn_minuten() {
+    fn reisehoehe_auch_weit_unter_dem_plan_nach_fuenf_minuten() {
         let mut p = reise_planer(240, 38_000);
-        assert_eq!(reise_um(&mut p, 3_000, |_| (Cruise, Some(30_000.0))), vec![1_200]);
+        assert_eq!(reise_um(&mut p, 3_000, |_| (Cruise, Some(30_000.0))), vec![900]);
     }
 
     #[test]
@@ -4027,7 +4028,7 @@ mod tests {
     fn reisehoehe_im_normalen_ablauf_mit_fortsetzen() {
         let mut p = Planer::fortsetzen(Flugdaten { reisehoehe_ansage: true, reiseflughoehe_ft: Some(36_000), abheben_epoch: Some(0), ..flug(240) }, Boarding);
         assert!(p.kommt_noch(Slot::ReiseflughoeheErreicht, Boarding));
-        assert_eq!(reise_um(&mut p, 3_000, |_| (Cruise, Some(36_000.0))), vec![1_200]);
+        assert_eq!(reise_um(&mut p, 3_000, |_| (Cruise, Some(36_000.0))), vec![900]);
         assert!(!p.kommt_noch(Slot::ReiseflughoeheErreicht, Cruise));
     }
 
@@ -4037,7 +4038,7 @@ mod tests {
     fn reisehoehe_auch_im_bizjet() {
         let mut p = Planer::neu(Flugdaten { flugart: Some(Flugart::Bizjet), ..reise_planer(125, 43_000).flug });
         assert!(p.kommt_noch(Slot::ReiseflughoeheErreicht, Climb));
-        assert_eq!(reise_um(&mut p, 4_000, |_| (Cruise, Some(43_000.0))), vec![1_200]);
+        assert_eq!(reise_um(&mut p, 4_000, |_| (Cruise, Some(43_000.0))), vec![900]);
         // Gegenprobe: Fracht (aus) bekommt sie weiterhin nicht.
         let mut f = Planer::neu(Flugdaten { flugart: Some(Flugart::Aus), ..reise_planer(125, 43_000).flug });
         assert!(reise_um(&mut f, 4_000, |_| (Cruise, Some(43_000.0))).is_empty());
