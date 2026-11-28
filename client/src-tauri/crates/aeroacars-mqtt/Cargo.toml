@@ -56,3 +56,5 @@ landing-scoring = { path = "../landing-scoring" }
 # Tokio-Uhr (start_paused): Zeiten sind exakt und auf ausgelasteten
 # CI-Runnern stabil.
 tokio = { workspace = true, features = ["test-util"] }
+# tests/ausfall_log.rs liest das echte Log mit.
+tracing-subscriber.workspace = true

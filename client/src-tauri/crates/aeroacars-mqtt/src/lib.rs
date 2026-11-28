@@ -40,6 +40,7 @@ use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 use url::Url;
 
+mod ausfall;
 pub mod backup;
 pub mod bordbuch;
 pub mod chat;
@@ -2819,6 +2820,9 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
         let _drive_lebt = drive_lebt_tx;
         let mut subscribed = false;
         let mut chat_subscribed = false;
+        // Nur fuers Log: Abo-Versuche bei toter Leitung bleiben stumm.
+        let mut verbunden = false;
+        let mut ausfall = ausfall::AusfallProtokoll::default();
         loop {
             // v0.19.x FIX: race the eventloop poll against the shutdown
             // signal so a logout actually stops this loop instead of
@@ -2871,6 +2875,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                                     &chat_tx,
                                 );
                             }
+                            verbunden = false;
                             subscribed = false;
                             chat_subscribed = false;
                             if let Some(auf) = link_state_for(LinkEvent::WatchdogTimeout) {
@@ -2883,6 +2888,10 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                     match poll_result {
                         Ok(Event::Incoming(Packet::ConnAck(_))) => {
                             info!("MQTT CONNACK received");
+                            if let Some(zeile) = ausfall.verbunden(tokio::time::Instant::now()) {
+                                info!("{zeile}");
+                            }
+                            verbunden = true;
                             // v1.5.7 (#mqtt-outage, QS-Befund): NICHT-blockierend.
                             //
                             // Hier lag der eigentliche Fünf-Stunden-Hänger aus
@@ -2907,11 +2916,13 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                                 &subscribe_client,
                                 &subscribe_topic,
                                 &mut subscribed,
+                                verbunden,
                             );
                             try_subscribe_once(
                                 &subscribe_client,
                                 &subscribe_chat_topic,
                                 &mut chat_subscribed,
+                                verbunden,
                             );
                             if let Some(auf) = link_state_for(LinkEvent::ConnAck) {
                                 let _ = link_tx.send(auf);
@@ -2955,7 +2966,12 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                             }
                         }
                         Err(e) => {
-                            warn!("MQTT poll error: {e} — backing off 5 s");
+                            if let Some(zeile) =
+                                ausfall.fehlversuch(tokio::time::Instant::now(), &e.to_string())
+                            {
+                                warn!("{zeile}");
+                            }
+                            verbunden = false;
                             // rumqttc hat `clean()` schon gefahren: Unbestaetigtes
                             // und die Auftraege aus dem Kanal liegen in `pending`
                             // und fallen beim naechsten CONNACK (clean_session).
@@ -2987,6 +3003,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                             &subscribe_client,
                             &subscribe_topic,
                             &mut subscribed,
+                            verbunden,
                         );
                     }
                     if !chat_subscribed {
@@ -2994,6 +3011,7 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
                             &subscribe_client,
                             &subscribe_chat_topic,
                             &mut chat_subscribed,
+                            verbunden,
                         );
                     }
                 }
@@ -3240,16 +3258,25 @@ pub fn start(cfg: MqttConfig) -> Result<Handle> {
 /// Signatur ändern, also bewusst hinsehen. Ein Test könnte das nicht
 /// besser absichern (QS-Runde 3: eine Mutation ohne `await` verändert das
 /// Verhalten gar nicht, eine mit `await` kompiliert nicht).
-fn try_subscribe_once(client: &AsyncClient, topic: &str, subscribed: &mut bool) {
+fn try_subscribe_once(
+    client: &AsyncClient,
+    topic: &str,
+    subscribed: &mut bool,
+    melden: bool,
+) {
     match client.try_subscribe(topic, QoS::AtLeastOnce) {
         Ok(()) => {
-            info!(topic = %topic, "Rueckkanal abonniert");
+            if melden {
+                info!(topic = %topic, "Rueckkanal abonniert");
+            }
             *subscribed = true;
         }
         Err(e) => {
             // Voller Auftragskanal ist der Normalfall nach einem Ausfall —
             // kein Fehler, nur "später nochmal".
-            debug!("Abo auf {topic} zurueckgestellt: {e}");
+            if melden {
+                debug!("Abo auf {topic} zurueckgestellt: {e}");
+            }
         }
     }
 }
