@@ -298,7 +298,7 @@ mod tests {
         for b in text.bytes() {
             h = (h ^ b as u64).wrapping_mul(0x100000001b3);
         }
-        assert_eq!((h, text.len()), (0xfa67773c778e3ef6, 2917));
+        assert_eq!((h, text.len()), (0xc7418b04f8e745fc, 2955));
     }
 
     #[test]
@@ -329,6 +329,15 @@ mod tests {
         assert!((e.vref_kt - 129.8).abs() < 0.2, "{}", e.vref_kt);
         assert_eq!(e.quelle, "faa_ungeprueft");
         assert_eq!(e.toleranz_kt, None);
+    }
+
+    #[test]
+    fn glex_rechnet_aus_der_faa_zeile_ohne_urteil() {
+        // Health-Report 28.11.2026: 9/9 Landungen ohne Vref-Abweichung.
+        // FAA: 131 kt bei MALW 78 600 lb (35 652 kg); GSG-Landung 26,5 t.
+        let e = vref_bestimmen(Some("GLEX"), Some(26_500.0), None, Some(true)).unwrap();
+        assert!((e.vref_kt - 112.9).abs() < 0.2, "{}", e.vref_kt);
+        assert_eq!((e.quelle, e.toleranz_kt), ("faa_ungeprueft", None));
     }
 
     #[test]
