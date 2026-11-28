@@ -518,6 +518,14 @@
    }
   },
   {
+   "icao": "GLEX",
+   "vref_kt": 131.0,
+   "gewicht_kg": 35652.0,
+   "status": {
+    "art": "Ungeprueft"
+   }
+  },
+  {
    "icao": "GLF5",
    "vref_kt": 136.0,
    "gewicht_kg": 34156.0,
